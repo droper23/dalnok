@@ -1,0 +1,14 @@
+# Build output
+.build/
+build/
+dist/
+*.app
+DerivedData/
+.swiftpm/
+# macOS
+.DS_Store
+# Obsidian: keep shared config out; per-user workspace state never committed
+.obsidian/
+.trash/
+# Local test media (large / licensed audio stays out of git)
+test-media/local/

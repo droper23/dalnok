@@ -1,0 +1,19 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  macos:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: swift --version && xcodebuild -version
+      - name: Build (debug, real-time effect checks are errors)
+        run: swift build
+      - name: Unit tests
+        run: swift test
+      - name: Release build
+        run: swift build -c release
+      # CI runners have no reliable audio device; live smoke test is local-only.
