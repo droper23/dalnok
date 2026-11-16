@@ -4,16 +4,26 @@ on:
     branches: [main]
   pull_request:
 jobs:
-  macos:
+  build-test:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
       - name: Toolchain
         run: swift --version && xcodebuild -version
-      - name: Build (debug, real-time effect checks are errors)
+      - name: Build
         run: swift build
-      - name: Unit tests
+      - name: Engine tests
         run: swift test
       - name: Release build
         run: swift build -c release
-      # CI runners have no reliable audio device; live smoke test is local-only.
+      # No audio device or GUI session on CI: live smoke test and app self-test run locally (scripts/check.sh).
+
+  rt-effects:
+    # Xcode's clang on hosted runners may predate [[clang::nonblocking]]; use Homebrew LLVM.
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install LLVM
+        run: brew install llvm
+      - name: Real-time effect analysis
+        run: scripts/ci/rt-effects.sh

@@ -44,9 +44,10 @@ void mixClip(const RenderClip &clip, int64_t pos, int frames, float *l, float *r
     const int o = static_cast<int>(a - pos);
     const float *sl = m.channel(0) + src;
     const float *sr = m.channelCount() > 1 ? m.channel(1) + src : sl;
+    // Overwrite, not add: the top-most overlapping clip wins (z-order).
     for (int i = 0; i < n; ++i) {
-        l[o + i] += sl[i];
-        r[o + i] += sr[i];
+        l[o + i] = sl[i];
+        r[o + i] = sr[i];
     }
 }
 
@@ -63,8 +64,7 @@ void renderBlock(const RenderState &state, int64_t pos, int frames, float *left,
 
         bool any = false;
         for (const RenderClip &c : t.clips) {
-            if (c.start >= pos + frames) break;
-            if (c.start + c.length <= pos) continue;
+            if (c.start >= pos + frames || c.start + c.length <= pos) continue;
             if (!any) {
                 clear(s.trackL, frames);
                 clear(s.trackR, frames);

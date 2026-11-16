@@ -8,9 +8,10 @@ Foundation evaluated ([[Foundation Evaluation]]), license chosen (GPLv3+), archi
 ## Phase 1: Minimum working DAW 🔶
 - **M1 ✅** Native window, audio device, import, waveform, play/pause/seek, multiple tracks, gain/pan/mute,
   offline render and WAV export (engine/CLI).
-- **M2 ⬜** Engine-side project model, command system, and undo. Clip move and trim in the UI.
-- **M3 ⬜** Save and open a versioned project (JSON plus media references). Export dialog. Missing-file relink.
-- **M4 ⬜** Output device selection, sample-rate change handling, meters.
+- **M2 ✅** Engine-owned model, command catalog, snapshot undo. Clip move, trim, split, and delete in the UI.
+  Project save and open (JSON v1, atomic). Export Mix. Offline media.
+- **M3 ⬜** Command palette (⌘K), output device picker and sample-rate changes, meters, background project loading.
+- **M4 ⬜** Relink offline media, copy-to-project option, project templates. Phase 1 exit review.
 
 ## Phase 2: Recording and editing ⬜
 Input and recording (with a Scarlett test rig), monitoring, split, fades, crossfades, autosave and crash

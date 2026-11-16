@@ -1,6 +1,7 @@
 // Transport bar and track header column.
 // SPDX-License-Identifier: GPL-3.0-or-later
 import AppKit
+import AtriumEngine
 
 @MainActor
 final class TransportBar: NSView {
@@ -92,28 +93,43 @@ final class TransportBar: NSView {
     @objc private func importTapped() { onImport?() }
 }
 
+/// Slider that brackets each mouse interaction in an undo group, so one drag = one undo step.
+@MainActor
+final class GroupedSlider: NSSlider {
+    var onBegin: (() -> Void)?
+    var onEnd: (() -> Void)?
+    private(set) var tracking = false
+    override func mouseDown(with event: NSEvent) {
+        tracking = true
+        onBegin?()
+        super.mouseDown(with: event) // runs the tracking loop until mouse-up
+        onEnd?()
+        tracking = false
+    }
+}
+
 @MainActor
 final class TrackHeaderRow: NSView {
-    let track: TrackModel
+    let trackId: AtriumTrackId
     let session: Session
+    private let swatch = NSView()
+    private let nameLabel = NSTextField(labelWithString: "")
     private let gainLabel = NSTextField(labelWithString: "0.0 dB")
     private let mute = NSButton(title: "M", target: nil, action: nil)
+    private let gain = GroupedSlider(value: 0, minValue: -60, maxValue: 6, target: nil, action: nil)
+    private let pan = GroupedSlider(value: 0, minValue: -1, maxValue: 1, target: nil, action: nil)
 
-    init(track: TrackModel, session: Session) {
-        self.track = track
+    init(track: TrackView, session: Session) {
+        self.trackId = track.id
         self.session = session
         super.init(frame: .zero)
         wantsLayer = true
 
-        let swatch = NSView()
         swatch.wantsLayer = true
-        swatch.layer?.backgroundColor = track.color.cgColor
         swatch.layer?.cornerRadius = 1.5
-
-        let name = NSTextField(labelWithString: track.name)
-        name.font = .systemFont(ofSize: 12, weight: .semibold)
-        name.textColor = Theme.text
-        name.lineBreakMode = .byTruncatingTail
+        nameLabel.font = .systemFont(ofSize: 12, weight: .semibold)
+        nameLabel.textColor = Theme.text
+        nameLabel.lineBreakMode = .byTruncatingTail
 
         mute.setButtonType(.pushOnPushOff)
         mute.bezelStyle = .texturedRounded
@@ -121,16 +137,17 @@ final class TrackHeaderRow: NSView {
         mute.target = self
         mute.action = #selector(toggleMute)
         mute.toolTip = "Mute"
-        mute.setAccessibilityLabel("Mute \(track.name)")
 
-        let gain = NSSlider(value: 0, minValue: -60, maxValue: 6, target: self, action: #selector(gainChanged(_:)))
-        gain.controlSize = .small
-        gain.toolTip = "Volume (double-click label to reset)"
-        gain.setAccessibilityLabel("Volume \(track.name)")
-        let pan = NSSlider(value: 0, minValue: -1, maxValue: 1, target: self, action: #selector(panChanged(_:)))
-        pan.controlSize = .small
-        pan.toolTip = "Pan"
-        pan.setAccessibilityLabel("Pan \(track.name)")
+        for (slider, name) in [(gain, "Volume"), (pan, "Pan")] {
+            slider.controlSize = .small
+            slider.target = self
+            slider.trackFillColor = Theme.accent
+            slider.toolTip = name
+            slider.onBegin = { [weak self] in self?.session.engine.beginGroup(name) }
+            slider.onEnd = { [weak self] in self?.session.engine.endGroup() }
+        }
+        gain.action = #selector(gainChanged(_:))
+        pan.action = #selector(panChanged(_:))
 
         gainLabel.font = Theme.mono(10)
         gainLabel.textColor = Theme.textDim
@@ -139,7 +156,7 @@ final class TrackHeaderRow: NSView {
         panLabel.font = .systemFont(ofSize: 10)
         panLabel.textColor = Theme.textDim
 
-        for v in [swatch, name, mute, gain, pan, gainLabel, panLabel] {
+        for v in [swatch, nameLabel, mute, gain, pan, gainLabel, panLabel] {
             v.translatesAutoresizingMaskIntoConstraints = false
             addSubview(v)
         }
@@ -148,28 +165,43 @@ final class TrackHeaderRow: NSView {
             swatch.topAnchor.constraint(equalTo: topAnchor, constant: 3),
             swatch.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -4),
             swatch.widthAnchor.constraint(equalToConstant: 3),
-            name.leadingAnchor.constraint(equalTo: swatch.trailingAnchor, constant: 10),
-            name.topAnchor.constraint(equalTo: topAnchor, constant: 10),
-            name.trailingAnchor.constraint(lessThanOrEqualTo: mute.leadingAnchor, constant: -6),
+            nameLabel.leadingAnchor.constraint(equalTo: swatch.trailingAnchor, constant: 10),
+            nameLabel.topAnchor.constraint(equalTo: topAnchor, constant: 10),
+            nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: mute.leadingAnchor, constant: -6),
             mute.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
-            mute.centerYAnchor.constraint(equalTo: name.centerYAnchor),
+            mute.centerYAnchor.constraint(equalTo: nameLabel.centerYAnchor),
             mute.widthAnchor.constraint(equalToConstant: 26),
-            gain.leadingAnchor.constraint(equalTo: name.leadingAnchor),
-            gain.topAnchor.constraint(equalTo: name.bottomAnchor, constant: 12),
+            gain.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor),
+            gain.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 12),
             gain.trailingAnchor.constraint(equalTo: gainLabel.leadingAnchor, constant: -6),
             gainLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
             gainLabel.centerYAnchor.constraint(equalTo: gain.centerYAnchor),
             gainLabel.widthAnchor.constraint(equalToConstant: 52),
-            pan.leadingAnchor.constraint(equalTo: name.leadingAnchor),
+            pan.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor),
             pan.topAnchor.constraint(equalTo: gain.bottomAnchor, constant: 8),
             pan.trailingAnchor.constraint(equalTo: gain.trailingAnchor),
             panLabel.leadingAnchor.constraint(equalTo: gainLabel.leadingAnchor),
             panLabel.centerYAnchor.constraint(equalTo: pan.centerYAnchor),
         ])
+        update(track)
     }
 
     required init?(coder: NSCoder) { fatalError() }
     override var isFlipped: Bool { true }
+
+    /// Applies model values (after edits, undo, or scripts) without fighting an active drag.
+    func update(_ t: TrackView) {
+        swatch.layer?.backgroundColor = t.color.cgColor
+        nameLabel.stringValue = t.name
+        mute.state = t.muted ? .on : .off
+        mute.contentTintColor = t.muted ? Theme.accent : nil
+        mute.setAccessibilityLabel("Mute \(t.name)")
+        gain.setAccessibilityLabel("Volume \(t.name)")
+        pan.setAccessibilityLabel("Pan \(t.name)")
+        if !gain.tracking { gain.doubleValue = t.gainDb.isFinite ? Double(t.gainDb) : -60 }
+        if !pan.tracking { pan.doubleValue = Double(t.pan) }
+        gainLabel.stringValue = t.gainDb.isFinite && t.gainDb > -59.9 ? String(format: "%+.1f dB", t.gainDb) : "-∞ dB"
+    }
 
     override func draw(_ dirtyRect: NSRect) {
         Theme.panelRaised.setFill()
@@ -181,21 +213,16 @@ final class TrackHeaderRow: NSView {
     @objc private func gainChanged(_ s: NSSlider) {
         var db = Float(s.doubleValue)
         if abs(db) < 0.4 { db = 0; s.doubleValue = 0 } // detent at unity
-        session.setGain(track, db: db <= -59.9 ? -.infinity : db)
-        gainLabel.stringValue = db <= -59.9 ? "-∞ dB" : String(format: "%+.1f dB", db)
+        session.setGain(trackId, db: db <= -59.9 ? -.infinity : db)
     }
 
     @objc private func panChanged(_ s: NSSlider) {
         var p = Float(s.doubleValue)
         if abs(p) < 0.04 { p = 0; s.doubleValue = 0 }
-        session.setPan(track, p)
+        session.setPan(trackId, p)
     }
 
-    @objc private func toggleMute() {
-        session.setMute(track, mute.state == .on)
-        mute.contentTintColor = mute.state == .on ? Theme.accent : nil
-        window?.contentView?.needsDisplay = true
-    }
+    @objc private func toggleMute() { session.setMute(trackId, mute.state == .on) }
 }
 
 /// Column of track headers; vertically synced with the timeline.
@@ -203,6 +230,7 @@ final class TrackHeaderRow: NSView {
 final class TrackHeaderColumn: NSView {
     let session: Session
     private var rows: [TrackHeaderRow] = []
+    private let rowClip = FlippedView()
     var scrollY: CGFloat = 0 { didSet { needsLayout = true } }
 
     init(session: Session) {
@@ -210,24 +238,33 @@ final class TrackHeaderColumn: NSView {
         super.init(frame: .zero)
         wantsLayer = true
         layer?.backgroundColor = Theme.panel.cgColor
-        layer?.masksToBounds = true
+        rowClip.wantsLayer = true
+        rowClip.layer?.masksToBounds = true
+        addSubview(rowClip)
     }
 
     required init?(coder: NSCoder) { fatalError() }
     override var isFlipped: Bool { true }
 
-    func reload() {
-        rows.forEach { $0.removeFromSuperview() }
-        rows = session.tracks.map { TrackHeaderRow(track: $0, session: session) }
-        rows.forEach { addSubview($0) }
-        needsLayout = true
+    /// Reuses rows by track id so in-progress slider drags survive model updates.
+    func sync() {
+        let tracks = session.tracks
+        if rows.map(\.trackId) != tracks.map(\.id) {
+            var byId = Dictionary(uniqueKeysWithValues: rows.map { ($0.trackId, $0) })
+            rows = tracks.map { t in byId.removeValue(forKey: t.id) ?? TrackHeaderRow(track: t, session: session) }
+            byId.values.forEach { $0.removeFromSuperview() }
+            rows.forEach { if $0.superview == nil { rowClip.addSubview($0) } }
+            needsLayout = true
+        }
+        for (row, t) in zip(rows, tracks) { row.update(t) }
     }
 
     override func layout() {
         super.layout()
+        rowClip.frame = CGRect(x: 0, y: Theme.rulerHeight, width: bounds.width - 1, height: max(0, bounds.height - Theme.rulerHeight))
         for (i, row) in rows.enumerated() {
-            row.frame = CGRect(x: 0, y: Theme.rulerHeight + CGFloat(i) * Theme.trackHeight - scrollY,
-                               width: bounds.width, height: Theme.trackHeight)
+            row.frame = CGRect(x: 0, y: CGFloat(i) * Theme.trackHeight - scrollY, width: rowClip.bounds.width,
+                               height: Theme.trackHeight)
         }
     }
 
@@ -241,4 +278,8 @@ final class TrackHeaderColumn: NSView {
         NSRect(x: 0, y: Theme.rulerHeight - 1, width: bounds.width, height: 1).fill()
         NSRect(x: bounds.width - 1, y: 0, width: 1, height: bounds.height).fill()
     }
+}
+
+final class FlippedView: NSView {
+    override var isFlipped: Bool { true }
 }

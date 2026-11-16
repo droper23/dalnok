@@ -21,10 +21,22 @@ let usage = """
 usage:
   atrium-cli play <audio-file> [--seconds N] [--churn]   live playback on the default device
   atrium-cli render <audio-file> <out.wav> [--bits 16|24|32]
+  atrium-cli render-project <project.atrium> <out.wav> [--bits 16|24|32]
+  atrium-cli command <project.atrium> <command> [args-json] [--save]   run a catalog command
+  atrium-cli commands                                                  list the command catalog
 """
 
 let args = Array(CommandLine.arguments.dropFirst())
-guard let cmd = args.first, args.count >= 2 else { print(usage); exit(2) }
+guard let cmd = args.first, args.count >= 2 || cmd == "commands" else { print(usage); exit(2) }
+
+func openProject(_ path: String) -> OpaquePointer {
+    let engine = atrium_engine_create(48_000)!
+    var err = [CChar](repeating: 0, count: 512)
+    var missing: Int32 = 0
+    guard atrium_project_load(engine, path, &missing, &err, 512) == ATRIUM_OK else { fail(cstr(err)) }
+    if missing > 0 { print("warning: \(missing) media file(s) offline") }
+    return engine
+}
 func opt(_ name: String) -> String? { args.firstIndex(of: name).flatMap { $0 + 1 < args.count ? args[$0 + 1] : nil } }
 
 switch cmd {
@@ -35,7 +47,7 @@ case "play":
     let rate = atrium_engine_sample_rate(engine)
     let media = load(args[1], rate: rate)
     let track = atrium_track_add(engine, "Track 1")
-    _ = atrium_clip_add(engine, track, media, 0, 0, 0)
+    _ = atrium_clip_add(engine, track, atrium_pool_add(engine, media, args[1]), 0, 0, 0)
 
     var err = [CChar](repeating: 0, count: 512)
     guard atrium_engine_start_device(engine, &err, 512) == ATRIUM_OK else { fail("device: \(cstr(err))") }
@@ -46,7 +58,7 @@ case "play":
         if churn {
             // Stress the snapshot handoff: structural edits while playing.
             let t = atrium_track_add(engine, "churn")
-            _ = atrium_clip_add(engine, t, media, Int64(churnOps % 1000) * 64, 0, 4_096)
+            _ = atrium_clip_add(engine, t, atrium_pool_add(engine, media, args[1]), Int64(churnOps % 1000) * 64, 0, 4_096)
             atrium_track_remove(engine, t)
             churnOps += 1
             usleep(500)
@@ -82,7 +94,7 @@ case "render":
     let bits = Int32(opt("--bits") ?? "24") ?? 24
     let engine = atrium_engine_create(48_000)!
     let media = load(args[1], rate: 48_000)
-    _ = atrium_clip_add(engine, atrium_track_add(engine, "Track 1"), media, 0, 0, 0)
+    _ = atrium_clip_add(engine, atrium_track_add(engine, "Track 1"), atrium_pool_add(engine, media, args[1]), 0, 0, 0)
     var err = [CChar](repeating: 0, count: 512)
     let frames = atrium_session_length(engine)
     let t0 = Date()
@@ -92,6 +104,39 @@ case "render":
                  Double(frames) / 48_000 / dt))
     atrium_media_release(media)
     atrium_engine_destroy(engine)
+
+case "render-project":
+    guard args.count >= 3 else { print(usage); exit(2) }
+    let engine = openProject(args[1])
+    var err = [CChar](repeating: 0, count: 512)
+    let frames = atrium_session_length(engine)
+    guard frames > 0 else { fail("project is empty") }
+    guard atrium_render_to_wav(engine, args[2], 0, frames, Int32(opt("--bits") ?? "24") ?? 24, &err, 512) == ATRIUM_OK
+    else { fail(cstr(err)) }
+    print("rendered \(frames) frames to \(args[2])")
+    atrium_engine_destroy(engine)
+
+case "commands":
+    for i in 0..<atrium_command_count() {
+        var n: UnsafePointer<CChar>?, t: UnsafePointer<CChar>?, a: UnsafePointer<CChar>?
+        _ = atrium_command_info(i, &n, &t, &a)
+        print(String(cString: n!).padding(toLength: 18, withPad: " ", startingAt: 0),
+              String(cString: t!).padding(toLength: 24, withPad: " ", startingAt: 0), String(cString: a!))
+    }
+
+case "command":
+    guard args.count >= 3 else { print(usage); exit(2) }
+    let engine = openProject(args[1])
+    let json = args.count >= 4 && !args[3].hasPrefix("--") ? args[3] : "{}"
+    var out = [CChar](repeating: 0, count: 1 << 20)
+    let st = atrium_command_run(engine, args[2], json, &out, out.count)
+    print(cstr(out))
+    if st == ATRIUM_OK && args.contains("--save") {
+        var err = [CChar](repeating: 0, count: 512)
+        guard atrium_project_save(engine, args[1], &err, 512) == ATRIUM_OK else { fail(cstr(err)) }
+    }
+    atrium_engine_destroy(engine)
+    exit(st == ATRIUM_OK ? 0 : 1)
 
 default:
     print(usage)

@@ -25,6 +25,23 @@ void atomicMax(std::atomic<uint64_t> &a, uint64_t v) ATRIUM_NONBLOCKING {
 }
 } // namespace
 
+float dbToGain(float db) { return db <= -96.0f ? 0.0f : std::pow(10.0f, std::min(db, 12.0f) / 20.0f); }
+
+// ---- Model lookups --------------------------------------------------------
+
+TrackState *Model::track(AtriumTrackId id) {
+    for (auto &t : tracks) if (t.id == id) return &t;
+    return nullptr;
+}
+const TrackState *Model::track(AtriumTrackId id) const { return const_cast<Model *>(this)->track(id); }
+ClipState *Model::clip(AtriumClipId id) {
+    for (auto &c : clips) if (c.id == id) return &c;
+    return nullptr;
+}
+const ClipState *Model::clip(AtriumClipId id) const { return const_cast<Model *>(this)->clip(id); }
+
+// ---- Lifecycle ------------------------------------------------------------
+
 Engine::Engine(double sampleRate) : sampleRate_(sampleRate) {
     if (sampleRate_ <= 0) sampleRate_ = defaultOutputSampleRate();
     if (sampleRate_ <= 0) sampleRate_ = 48000.0;
@@ -59,79 +76,306 @@ void Engine::collectGarbage() {
     while (retired_.pop(s)) delete s;
 }
 
-// ---- Session model ------------------------------------------------------
+// ---- Media pool -----------------------------------------------------------
 
-AtriumTrackId Engine::addTrack(const std::string &name) {
-    const auto id = nextTrack_++;
-    tracks_[id].name = name;
-    commit();
+AtriumMediaId Engine::poolAdd(std::shared_ptr<const Media> media, const std::string &path) {
+    if (!media) return 0;
+    if (!path.empty())
+        for (const auto &[id, e] : pool_)
+            if (e.path == path && e.handle->impl) return id;
+    const auto id = nextMedia_++;
+    PoolEntry &e = pool_[id];
+    e.path = path;
+    e.frames = media->frames();
+    e.channels = media->channelCount();
+    e.handle = std::make_unique<AtriumMedia>(AtriumMedia{std::move(media)});
     return id;
 }
 
-bool Engine::removeTrack(AtriumTrackId id) {
-    if (!tracks_.erase(id)) return false;
-    std::erase_if(clips_, [id](const auto &kv) { return kv.second.track == id; });
-    commit();
-    return true;
-}
-
-bool Engine::setGainDb(AtriumTrackId id, float db) {
-    auto it = tracks_.find(id);
-    if (it == tracks_.end()) return false;
-    db = std::min(db, 12.0f);
-    const float lin = db <= -96.0f ? 0.0f : std::pow(10.0f, db / 20.0f);
-    it->second.runtime->gain.store(lin, std::memory_order_relaxed);
-    return true;
-}
-
-bool Engine::setPan(AtriumTrackId id, float pan) {
-    auto it = tracks_.find(id);
-    if (it == tracks_.end() || std::isnan(pan)) return false;
-    it->second.runtime->pan.store(std::clamp(pan, -1.0f, 1.0f), std::memory_order_relaxed);
-    return true;
-}
-
-bool Engine::setMute(AtriumTrackId id, bool muted) {
-    auto it = tracks_.find(id);
-    if (it == tracks_.end()) return false;
-    it->second.runtime->muted.store(muted, std::memory_order_relaxed);
-    return true;
-}
-
-AtriumClipId Engine::addClip(AtriumTrackId track, std::shared_ptr<const Media> media, int64_t start, int64_t offset,
-                             int64_t length) {
-    if (!tracks_.count(track) || !media || start < 0 || offset < 0 || offset >= media->frames()) return 0;
-    const int64_t avail = media->frames() - offset;
-    length = length <= 0 ? avail : std::min(length, avail);
-    const auto id = nextClip_++;
-    clips_[id] = Clip{track, std::move(media), start, offset, length};
-    commit();
-    return id;
-}
-
-bool Engine::removeClip(AtriumClipId id) {
-    if (!clips_.erase(id)) return false;
-    commit();
-    return true;
+const PoolEntry *Engine::poolEntry(AtriumMediaId id) const {
+    auto it = pool_.find(id);
+    return it == pool_.end() ? nullptr : &it->second;
 }
 
 int64_t Engine::sessionLength() const {
     int64_t end = 0;
-    for (const auto &[_, c] : clips_) end = std::max(end, c.start + c.length);
+    for (const auto &c : model_.clips) end = std::max(end, c.start + c.length);
     return end;
 }
 
+// ---- Edit machinery -------------------------------------------------------
+
+namespace {
+constexpr size_t kMaxUndo = 500;
+}
+
+template <typename F>
+bool Engine::edit(const char *name, bool structural, F &&fn) {
+    Model before = model_;
+    if (!fn(model_)) {
+        model_ = std::move(before);
+        return false;
+    }
+    if (groupDepth_ == 0) {
+        undo_.push_back({name, std::move(before)});
+    } else if (!groupRecorded_) {
+        undo_.push_back({groupName_.empty() ? name : groupName_, std::move(before)});
+        groupRecorded_ = true;
+    }
+    if (undo_.size() > kMaxUndo) undo_.erase(undo_.begin());
+    redo_.clear();
+    ++revision_;
+    if (structural) commit();
+    return true;
+}
+
+void Engine::syncRuntimes() {
+    for (const auto &t : model_.tracks) {
+        t.runtime->gain.store(dbToGain(t.gainDb), std::memory_order_relaxed);
+        t.runtime->pan.store(t.pan, std::memory_order_relaxed);
+        t.runtime->muted.store(t.muted, std::memory_order_relaxed);
+    }
+}
+
+void Engine::restore(Model m) {
+    model_ = std::move(m);
+    syncRuntimes();
+    ++revision_;
+    commit();
+}
+
+bool Engine::undo() {
+    groupDepth_ = 0;
+    if (undo_.empty()) return false;
+    UndoStep step = std::move(undo_.back());
+    undo_.pop_back();
+    redo_.push_back({step.name, model_});
+    restore(std::move(step.model));
+    return true;
+}
+
+bool Engine::redo() {
+    groupDepth_ = 0;
+    if (redo_.empty()) return false;
+    UndoStep step = std::move(redo_.back());
+    redo_.pop_back();
+    undo_.push_back({step.name, model_});
+    restore(std::move(step.model));
+    return true;
+}
+
+void Engine::beginGroup(const std::string &name) {
+    if (groupDepth_++ == 0) {
+        groupName_ = name;
+        groupRecorded_ = false;
+    }
+}
+
+void Engine::endGroup() {
+    if (groupDepth_ > 0) --groupDepth_;
+}
+
+void Engine::resetModel() {
+    model_ = Model{};
+    pool_.clear();
+    undo_.clear();
+    redo_.clear();
+    groupDepth_ = 0;
+    nextColor_ = 0;
+    ++revision_;
+    savedRevision_ = revision_;
+}
+
+void Engine::newProject() {
+    resetModel();
+    commit();
+}
+
+// ---- Commands -------------------------------------------------------------
+
+namespace {
+bool fail(std::string &err, const char *msg) {
+    err = msg;
+    return false;
+}
+std::string stem(const std::string &path) {
+    const auto slash = path.find_last_of('/');
+    std::string base = slash == std::string::npos ? path : path.substr(slash + 1);
+    const auto dot = base.find_last_of('.');
+    return dot == std::string::npos || dot == 0 ? base : base.substr(0, dot);
+}
+} // namespace
+
+AtriumTrackId Engine::addTrack(const std::string &name, std::string &err) {
+    const auto id = nextTrack_;
+    const bool ok = edit("New Track", true, [&](Model &m) {
+        TrackState t;
+        t.id = id;
+        t.name = name.empty() ? "Track " + std::to_string(m.tracks.size() + 1) : name;
+        t.color = nextColor_;
+        t.runtime = std::make_shared<TrackRuntime>();
+        m.tracks.push_back(std::move(t));
+        return true;
+    });
+    if (!ok) return fail(err, "could not add track"), 0;
+    ++nextTrack_;
+    ++nextColor_;
+    return id;
+}
+
+bool Engine::removeTrack(AtriumTrackId id, std::string &err) {
+    return edit("Delete Track", true, [&](Model &m) {
+        if (!m.track(id)) return fail(err, "no such track");
+        std::erase_if(m.tracks, [id](const TrackState &t) { return t.id == id; });
+        std::erase_if(m.clips, [id](const ClipState &c) { return c.track == id; });
+        return true;
+    });
+}
+
+bool Engine::renameTrack(AtriumTrackId id, const std::string &name, std::string &err) {
+    return edit("Rename Track", false, [&](Model &m) {
+        TrackState *t = m.track(id);
+        if (!t) return fail(err, "no such track");
+        if (name.empty()) return fail(err, "name must not be empty");
+        t->name = name;
+        return true;
+    });
+}
+
+bool Engine::setGainDb(AtriumTrackId id, float db, std::string &err) {
+    return edit("Volume", false, [&](Model &m) {
+        TrackState *t = m.track(id);
+        if (!t) return fail(err, "no such track");
+        if (std::isnan(db)) return fail(err, "gain is NaN");
+        t->gainDb = db <= -96.0f ? -INFINITY : std::min(db, 12.0f);
+        t->runtime->gain.store(dbToGain(t->gainDb), std::memory_order_relaxed);
+        return true;
+    });
+}
+
+bool Engine::setPan(AtriumTrackId id, float pan, std::string &err) {
+    return edit("Pan", false, [&](Model &m) {
+        TrackState *t = m.track(id);
+        if (!t) return fail(err, "no such track");
+        if (std::isnan(pan)) return fail(err, "pan is NaN");
+        t->pan = std::clamp(pan, -1.0f, 1.0f);
+        t->runtime->pan.store(t->pan, std::memory_order_relaxed);
+        return true;
+    });
+}
+
+bool Engine::setMute(AtriumTrackId id, bool muted, std::string &err) {
+    return edit(muted ? "Mute" : "Unmute", false, [&](Model &m) {
+        TrackState *t = m.track(id);
+        if (!t) return fail(err, "no such track");
+        t->muted = muted;
+        t->runtime->muted.store(muted, std::memory_order_relaxed);
+        return true;
+    });
+}
+
+AtriumClipId Engine::addClip(AtriumTrackId track, AtriumMediaId media, int64_t start, int64_t offset, int64_t length,
+                             std::string &err) {
+    const PoolEntry *pe = poolEntry(media);
+    const auto id = nextClip_;
+    const bool ok = edit("Add Clip", true, [&](Model &m) {
+        if (!m.track(track)) return fail(err, "no such track");
+        if (!pe) return fail(err, "no such media");
+        if (start < 0 || offset < 0 || offset >= pe->frames) return fail(err, "start/offset out of range");
+        const int64_t avail = pe->frames - offset;
+        ClipState c;
+        c.id = id;
+        c.track = track;
+        c.media = media;
+        c.start = start;
+        c.offset = offset;
+        c.length = length <= 0 ? avail : std::min(length, avail);
+        c.name = pe->path.empty() ? "Audio" : stem(pe->path);
+        m.clips.push_back(std::move(c));
+        return true;
+    });
+    if (!ok) return 0;
+    ++nextClip_;
+    return id;
+}
+
+bool Engine::removeClip(AtriumClipId id, std::string &err) {
+    return edit("Delete Clip", true, [&](Model &m) {
+        if (!m.clip(id)) return fail(err, "no such clip");
+        std::erase_if(m.clips, [id](const ClipState &c) { return c.id == id; });
+        return true;
+    });
+}
+
+bool Engine::moveClip(AtriumClipId id, AtriumTrackId track, int64_t start, std::string &err) {
+    return edit("Move Clip", true, [&](Model &m) {
+        auto it = std::find_if(m.clips.begin(), m.clips.end(), [id](const ClipState &c) { return c.id == id; });
+        if (it == m.clips.end()) return fail(err, "no such clip");
+        if (!m.track(track)) return fail(err, "no such track");
+        if (start < 0) return fail(err, "start must be >= 0");
+        ClipState c = *it;
+        c.track = track;
+        c.start = start;
+        m.clips.erase(it);
+        m.clips.push_back(std::move(c)); // moved clips come to the top
+        return true;
+    });
+}
+
+bool Engine::setClipRegion(AtriumClipId id, int64_t start, int64_t offset, int64_t length, std::string &err) {
+    return edit("Trim Clip", true, [&](Model &m) {
+        ClipState *c = m.clip(id);
+        if (!c) return fail(err, "no such clip");
+        const PoolEntry *pe = poolEntry(c->media);
+        const int64_t frames = pe ? pe->frames : 0;
+        if (start < 0 || offset < 0 || length <= 0 || offset + length > frames)
+            return fail(err, "region out of range");
+        c->start = start;
+        c->offset = offset;
+        c->length = length;
+        return true;
+    });
+}
+
+AtriumClipId Engine::splitClip(AtriumClipId id, int64_t at, std::string &err) {
+    const auto rightId = nextClip_;
+    const bool ok = edit("Split Clip", true, [&](Model &m) {
+        auto it = std::find_if(m.clips.begin(), m.clips.end(), [id](const ClipState &c) { return c.id == id; });
+        if (it == m.clips.end()) return fail(err, "no such clip");
+        if (at <= it->start || at >= it->start + it->length) return fail(err, "split point not inside clip");
+        ClipState right = *it;
+        const int64_t leftLen = at - it->start;
+        it->length = leftLen;
+        right.id = rightId;
+        right.start = at;
+        right.offset += leftLen;
+        right.length -= leftLen;
+        m.clips.insert(it + 1, std::move(right)); // same z-level as the original
+        return true;
+    });
+    if (!ok) return 0;
+    ++nextClip_;
+    return rightId;
+}
+
+// ---- Snapshot compilation -------------------------------------------------
+
 std::unique_ptr<RenderState> Engine::compile() const {
     auto s = std::make_unique<RenderState>();
-    for (const auto &[id, t] : tracks_) {
+    for (const auto &t : model_.tracks) {
         RenderTrack rt;
         rt.runtime = t.runtime;
-        for (const auto &[_, c] : clips_) {
-            if (c.track != id) continue;
-            rt.clips.push_back({c.media, c.start, c.offset, c.length});
-            if (c.media->channelCount() > 1) rt.monoSource = false;
+        for (const auto &c : model_.clips) {
+            if (c.track != t.id) continue;
+            const PoolEntry *pe = poolEntry(c.media);
+            if (!pe || !pe->handle->impl) continue; // offline media renders silence
+            const auto &media = pe->handle->impl;
+            // Defensive clamp: never read past the decoded media.
+            const int64_t len = std::min(c.length, media->frames() - c.offset);
+            if (len <= 0) continue;
+            rt.clips.push_back({media, c.start, c.offset, len});
+            if (media->channelCount() > 1) rt.monoSource = false;
         }
-        std::sort(rt.clips.begin(), rt.clips.end(), [](auto &a, auto &b) { return a.start < b.start; });
         s->tracks.push_back(std::move(rt));
     }
     return s;

@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Verifies real-time effect analysis ([[clang::nonblocking]]) with a compiler
+# that supports it, independent of the Xcode version on the machine.
+# Fails if any engine source violates the effects OR if the analysis is inert.
+# SPDX-License-Identifier: GPL-3.0-or-later
+set -euo pipefail
+cd "$(dirname "$0")/../.."
+CXX="${CXX:-$(brew --prefix llvm)/bin/clang++}"
+SDK="$(xcrun --show-sdk-path)"
+flags=(-std=c++20 -fsyntax-only -isysroot "$SDK" -Iengine/include -Iengine/src -Werror=function-effects)
+"$CXX" --version | head -1
+for f in engine/src/*.cpp engine/src/platform/macos/*.cpp; do
+  "$CXX" "${flags[@]}" "$f"
+done
+echo "engine sources: effect-clean"
+neg=$(mktemp -d)/neg.cpp
+printf '#include "rt.hpp"\n#include <vector>\nvoid f(std::vector<float>& v) ATRIUM_NONBLOCKING { v.push_back(1.f); }\n' > "$neg"
+if "$CXX" "${flags[@]}" "$neg" 2>/dev/null; then
+  echo "ERROR: allocation inside ATRIUM_NONBLOCKING compiled — effect analysis is not active" >&2
+  exit 1
+fi
+echo "negative check: violation correctly rejected"

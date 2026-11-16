@@ -1,6 +1,20 @@
 # Changelog
 
 ## [Unreleased]
+### Added (2026-11-16, Phase 1 M2)
+- Engine-owned project model with a media pool, z-ordered clips, and whole-model snapshot undo/redo
+  (500 steps) with named steps and groups.
+- Clip move, trim, and split commands. Overlapping clips: top wins.
+- Command catalog (18 commands) with JSON in and out (`atrium_command_run`). `atrium-cli commands|command|render-project`.
+- Project files: versioned JSON, atomic save, relative-path relocation, offline media, sample-rate rescaling.
+- macOS app: clip drag/trim with grid snapping (⌃ bypasses), selection, Delete, Split at Playhead (⌘T),
+  Undo/Redo with step names, New/Open/Save/Save As with unsaved-changes prompt, Export Mix (⌘B).
+- App `--selftest` mode (28 end-to-end checks). CI job enforcing real-time effect analysis with Homebrew LLVM.
+### Changed
+- C API v2: `atrium_clip_add` takes a pool media id; model queries replace the UI mirror.
+### Fixed
+- Menu commands did nothing when the main window wasn't key. They now target the window controller.
+- Track header rows no longer draw over the ruler area when scrolled.
 ### Added (2026-11-16)
 - Engine: C API, Core Audio output, lock-free snapshot handoff, transport with de-click fades,
   per-track gain, pan, and mute with smoothing, in-memory media decoding with sample-rate conversion,

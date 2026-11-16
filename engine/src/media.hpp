@@ -3,6 +3,7 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -46,3 +47,8 @@ public:
 WavWriter *openWavWriter(const std::string &path, double sampleRate, int32_t bits, std::string &err);
 
 } // namespace atrium
+
+// The C API's opaque media handle: one reference to shared, immutable media.
+struct AtriumMedia {
+    std::shared_ptr<const atrium::Media> impl;
+};

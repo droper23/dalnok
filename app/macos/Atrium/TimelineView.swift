@@ -1,6 +1,8 @@
-// Arrangement timeline: ruler, track lanes, clips with waveforms, playhead.
+// Arrangement timeline: ruler, track lanes, clips with waveforms, playhead,
+// selection, and clip move/trim with snapping.
 // SPDX-License-Identifier: GPL-3.0-or-later
 import AppKit
+import AtriumEngine
 import QuartzCore
 
 @MainActor
@@ -9,14 +11,27 @@ final class TimelineView: NSView {
     var sampleRate: Double { session.engine.sampleRate }
 
     /// Leftmost visible timeline frame and zoom (frames per point).
-    var scrollFrame: Double = 0 { didSet { clampScroll(); needsDisplay = true; updatePlayhead() } }
+    var scrollFrame: Double = 0 { didSet { if scrollFrame < 0 { scrollFrame = 0 }; needsDisplay = true; updatePlayhead() } }
     var framesPerPoint: Double = 480 { didSet { needsDisplay = true; updatePlayhead() } }
     var scrollY: CGFloat = 0 { didSet { needsDisplay = true; onVerticalScroll?(scrollY) } }
     var onVerticalScroll: ((CGFloat) -> Void)?
     var onSeek: (() -> Void)?
+    var onSelectionChange: (() -> Void)?
+
+    var selectedClip: AtriumClipId? { didSet { needsDisplay = true; onSelectionChange?() } }
 
     private let playheadLayer = CALayer()
     private var mins: [Float] = [], maxs: [Float] = []
+
+    private enum Zone { case body, leftEdge, rightEdge }
+    private struct Drag {
+        let clip: ClipView
+        let zone: Zone
+        let startX: CGFloat
+        var changed = false
+    }
+    private var drag: Drag?
+    private let edgeWidth: CGFloat = 7
 
     init(session: Session) {
         self.session = session
@@ -35,9 +50,11 @@ final class TimelineView: NSView {
 
     func xPos(forFrame f: Double) -> CGFloat { CGFloat((f - scrollFrame) / framesPerPoint) }
     func frame(forX x: CGFloat) -> Double { scrollFrame + Double(x) * framesPerPoint }
-
-    private func clampScroll() {
-        if scrollFrame < 0 { scrollFrame = 0 }
+    func laneY(_ index: Int) -> CGFloat { Theme.rulerHeight + CGFloat(index) * Theme.trackHeight - scrollY }
+    func trackIndex(atY y: CGFloat) -> Int? {
+        guard y >= Theme.rulerHeight else { return nil }
+        let i = Int(floor((y - Theme.rulerHeight + scrollY) / Theme.trackHeight))
+        return i >= 0 && i < session.tracks.count ? i : nil
     }
 
     func zoomToFit() {
@@ -59,11 +76,28 @@ final class TimelineView: NSView {
 
     /// Page-follow while playing.
     func followPlayhead() {
-        guard session.engine.isPlaying else { return }
+        guard session.engine.isPlaying, drag == nil else { return }
         let x = xPos(forFrame: Double(session.engine.position))
         if x > bounds.width - 24 || x < 0 {
             scrollFrame = Double(session.engine.position) - 24 * framesPerPoint
         }
+    }
+
+    // MARK: Grid & snapping
+
+    /// A "nice" ruler step in seconds so labels sit >= ~90 pt apart.
+    func gridStep() -> Double {
+        let target = framesPerPoint / sampleRate * 90
+        let steps: [Double] = [0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600]
+        return steps.first { $0 >= target } ?? 600
+    }
+
+    /// Snaps to the minor grid (a quarter of the ruler step). Hold Control to bypass.
+    func snap(_ frame: Double, bypass: Bool) -> Int64 {
+        let f = max(0, frame)
+        guard !bypass else { return Int64(f.rounded()) }
+        let q = gridStep() / 4 * sampleRate
+        return Int64((f / q).rounded() * q)
     }
 
     // MARK: Drawing
@@ -74,16 +108,30 @@ final class TimelineView: NSView {
         drawLanes(ctx)
         drawGrid(ctx, scale: scale)
         for (i, track) in session.tracks.enumerated() {
-            let laneY = Theme.rulerHeight + CGFloat(i) * Theme.trackHeight - scrollY
-            guard laneY + Theme.trackHeight > Theme.rulerHeight, laneY < bounds.height else { continue }
-            for clip in track.clips { drawClip(ctx, clip, track: track, laneY: laneY, scale: scale) }
+            let y = laneY(i)
+            guard y + Theme.trackHeight > Theme.rulerHeight, y < bounds.height else { continue }
+            for clip in track.clips { drawClip(ctx, clip, track: track, laneY: y, scale: scale) }
         }
         drawRuler(ctx, scale: scale)
+        if session.tracks.isEmpty { drawEmptyState() }
+    }
+
+    private func drawEmptyState() {
+        let p = NSMutableParagraphStyle()
+        p.alignment = .center
+        let title: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 15, weight: .medium),
+                                                     .foregroundColor: Theme.textDim, .paragraphStyle: p]
+        let sub: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 12),
+                                                   .foregroundColor: Theme.textDim.withAlphaComponent(0.7), .paragraphStyle: p]
+        let mid = bounds.midY
+        ("Drop audio files here" as NSString).draw(in: CGRect(x: 0, y: mid - 22, width: bounds.width, height: 22), withAttributes: title)
+        ("or press ⌘I to import  ·  ⌘O to open a project" as NSString)
+            .draw(in: CGRect(x: 0, y: mid + 4, width: bounds.width, height: 18), withAttributes: sub)
     }
 
     private func drawLanes(_ ctx: CGContext) {
         for i in 0..<max(session.tracks.count, 1) {
-            let y = Theme.rulerHeight + CGFloat(i) * Theme.trackHeight - scrollY
+            let y = laneY(i)
             ctx.setFillColor((i % 2 == 0 ? Theme.laneA : Theme.laneB).cgColor)
             ctx.fill(CGRect(x: 0, y: y, width: bounds.width, height: Theme.trackHeight))
             ctx.setFillColor(Theme.separator.cgColor)
@@ -91,18 +139,9 @@ final class TimelineView: NSView {
         }
     }
 
-    /// Picks a "nice" grid step in seconds so labels sit >= ~90 pt apart.
-    private func gridStep() -> Double {
-        let secondsPerPoint = framesPerPoint / sampleRate
-        let target = secondsPerPoint * 90
-        let steps: [Double] = [0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600]
-        return steps.first { $0 >= target } ?? 600
-    }
-
     private func drawGrid(_ ctx: CGContext, scale: CGFloat) {
         let step = gridStep()
-        let first = floor(frame(forX: 0) / sampleRate / step) * step
-        var t = first
+        var t = floor(frame(forX: 0) / sampleRate / step) * step
         let endT = frame(forX: bounds.width) / sampleRate
         let px = 1 / scale
         while t <= endT {
@@ -148,71 +187,173 @@ final class TimelineView: NSView {
         return String(format: "%d:%06.3f", m, s)
     }
 
-    private func drawClip(_ ctx: CGContext, _ clip: ClipModel, track: TrackModel, laneY: CGFloat, scale: CGFloat) {
-        let x0 = xPos(forFrame: Double(clip.start)), x1 = xPos(forFrame: Double(clip.start + clip.length))
-        guard x1 > 0, x0 < bounds.width else { return }
-        let rect = CGRect(x: x0, y: laneY + 3, width: max(2, x1 - x0), height: Theme.trackHeight - 7)
+    private func clipRect(_ clip: ClipView, laneY: CGFloat) -> CGRect {
+        let x0 = xPos(forFrame: Double(clip.start)), x1 = xPos(forFrame: Double(clip.end))
+        return CGRect(x: x0, y: laneY + 3, width: max(2, x1 - x0), height: Theme.trackHeight - 7)
+    }
+
+    private func drawClip(_ ctx: CGContext, _ clip: ClipView, track: TrackView, laneY: CGFloat, scale: CGFloat) {
+        let rect = clipRect(clip, laneY: laneY)
+        guard rect.maxX > 0, rect.minX < bounds.width else { return }
         let path = CGPath(roundedRect: rect, cornerWidth: 4, cornerHeight: 4, transform: nil)
-        let base = track.color
+        let base = clip.offline ? Theme.textDim : track.color
+        let selected = clip.id == selectedClip
+        let dim = track.muted || clip.offline
 
         ctx.saveGState()
         ctx.addPath(path)
         ctx.clip()
-        ctx.setFillColor(base.withAlphaComponent(track.muted ? 0.08 : 0.22).cgColor)
+        ctx.setFillColor(base.withAlphaComponent(dim ? 0.08 : (selected ? 0.32 : 0.22)).cgColor)
         ctx.fill(rect)
-        // Title strip
         let titleH: CGFloat = 16
-        ctx.setFillColor(base.withAlphaComponent(track.muted ? 0.25 : 0.75).cgColor)
+        ctx.setFillColor(base.withAlphaComponent(dim ? 0.25 : (selected ? 0.95 : 0.75)).cgColor)
         ctx.fill(CGRect(x: rect.minX, y: rect.minY, width: rect.width, height: titleH))
         let attrs: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: 10.5, weight: .semibold),
             .foregroundColor: Theme.hex(0x101113, 0.9),
         ]
-        (clip.media.name as NSString).draw(at: CGPoint(x: max(rect.minX, 0) + 6, y: rect.minY + 1.5), withAttributes: attrs)
+        let title = clip.offline ? "\(clip.name) — offline" : clip.name
+        (title as NSString).draw(at: CGPoint(x: max(rect.minX, 0) + 6, y: rect.minY + 1.5), withAttributes: attrs)
 
-        // Waveform: one min/max column per device pixel across the visible span.
-        let visX0 = max(x0, 0), visX1 = min(x1, bounds.width)
-        let columns = Int(((visX1 - visX0) * scale).rounded(.up))
-        if columns > 0 {
-            let fpc = framesPerPoint / Double(scale)
-            let startFrame = Int64(frame(forX: visX0)) - clip.start
-            let waveTop = rect.minY + titleH + 2, waveH = rect.maxY - waveTop - 3
-            let chans = min(clip.media.channels, 2)
-            let laneH = waveH / CGFloat(chans)
-            ctx.setStrokeColor(base.blended(withFraction: 0.35, of: .white)!.withAlphaComponent(track.muted ? 0.3 : 0.95).cgColor)
-            ctx.setLineWidth(1 / scale)
-            for ch in 0..<chans {
-                clip.media.peaks(channel: ch, start: startFrame, framesPerColumn: fpc, count: columns, mins: &mins, maxs: &maxs)
-                let mid = waveTop + laneH * (CGFloat(ch) + 0.5)
-                let half = laneH * 0.48
-                for i in 0..<columns {
-                    let px = visX0 + (CGFloat(i) + 0.5) / scale
-                    var top = mid - CGFloat(maxs[i]) * half, bot = mid - CGFloat(mins[i]) * half
-                    if bot - top < 1 / scale { top = mid - 0.5 / scale; bot = mid + 0.5 / scale }
-                    ctx.move(to: CGPoint(x: px, y: top))
-                    ctx.addLine(to: CGPoint(x: px, y: bot))
-                }
-                ctx.strokePath()
-            }
+        if let media = session.engine.poolMedia(clip.media) {
+            drawWaveform(ctx, media: media, clip: clip, rect: rect, top: rect.minY + titleH + 2, color: base, dim: dim, scale: scale)
         }
         ctx.restoreGState()
 
         ctx.addPath(path)
-        ctx.setStrokeColor(base.withAlphaComponent(0.9).cgColor)
-        ctx.setLineWidth(1)
+        ctx.setStrokeColor((selected ? Theme.text : base.withAlphaComponent(0.9)).cgColor)
+        ctx.setLineWidth(selected ? 1.5 : 1)
         ctx.strokePath()
     }
 
-    // MARK: Interaction
-
-    override func mouseDown(with event: NSEvent) { seek(to: event) }
-    override func mouseDragged(with event: NSEvent) {
-        if convert(event.locationInWindow, from: nil).y < Theme.rulerHeight { seek(to: event) }
+    /// One min/max column per device pixel across the visible span.
+    private func drawWaveform(_ ctx: CGContext, media: OpaquePointer, clip: ClipView, rect: CGRect, top: CGFloat,
+                              color: NSColor, dim: Bool, scale: CGFloat) {
+        let visX0 = max(rect.minX, 0), visX1 = min(rect.maxX, bounds.width)
+        let columns = Int(((visX1 - visX0) * scale).rounded(.up))
+        guard columns > 0 else { return }
+        if mins.count < columns { mins = [Float](repeating: 0, count: columns); maxs = mins }
+        let fpc = framesPerPoint / Double(scale)
+        let sourceStart = Int64(frame(forX: visX0)) - clip.start + clip.offset
+        let waveH = rect.maxY - top - 3
+        let chans = min(Int(atrium_media_channels(media)), 2)
+        let laneH = waveH / CGFloat(chans)
+        ctx.setStrokeColor(color.blended(withFraction: 0.35, of: .white)!.withAlphaComponent(dim ? 0.3 : 0.95).cgColor)
+        ctx.setLineWidth(1 / scale)
+        for ch in 0..<chans {
+            atrium_media_peaks(media, Int32(ch), sourceStart, fpc, &mins, &maxs, Int64(columns))
+            let mid = top + laneH * (CGFloat(ch) + 0.5)
+            let half = laneH * 0.48
+            for i in 0..<columns {
+                let px = visX0 + (CGFloat(i) + 0.5) / scale
+                var t = mid - CGFloat(maxs[i]) * half, b = mid - CGFloat(mins[i]) * half
+                if b - t < 1 / scale { t = mid - 0.5 / scale; b = mid + 0.5 / scale }
+                ctx.move(to: CGPoint(x: px, y: t))
+                ctx.addLine(to: CGPoint(x: px, y: b))
+            }
+            ctx.strokePath()
+        }
     }
 
-    private func seek(to event: NSEvent) {
+    // MARK: Hit testing
+
+    private func hit(_ p: CGPoint) -> (ClipView, Zone)? {
+        guard let ti = trackIndex(atY: p.y) else { return nil }
+        let track = session.tracks[ti]
+        // Topmost clip first.
+        for clip in track.clips.reversed() {
+            let r = clipRect(clip, laneY: laneY(ti))
+            guard r.insetBy(dx: -2, dy: 0).contains(p) else { continue }
+            let edge = min(edgeWidth, r.width / 3)
+            if p.x <= r.minX + edge { return (clip, .leftEdge) }
+            if p.x >= r.maxX - edge { return (clip, .rightEdge) }
+            return (clip, .body)
+        }
+        return nil
+    }
+
+    // MARK: Mouse
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseMoved, .activeInKeyWindow, .inVisibleRect],
+                                       owner: self))
+    }
+
+    override func mouseMoved(with event: NSEvent) {
         let p = convert(event.locationInWindow, from: nil)
-        session.engine.seek(Int64(max(0, frame(forX: p.x))))
+        switch hit(p)?.1 {
+        case .leftEdge?, .rightEdge?: NSCursor.resizeLeftRight.set()
+        case .body?: NSCursor.openHand.set()
+        case nil: NSCursor.arrow.set()
+        }
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        let p = convert(event.locationInWindow, from: nil)
+        if p.y < Theme.rulerHeight { seek(toX: p.x); return }
+        guard let (clip, zone) = hit(p) else {
+            selectedClip = nil
+            seek(toX: p.x)
+            return
+        }
+        selectedClip = clip.id
+        drag = Drag(clip: clip, zone: zone, startX: p.x)
+        session.engine.beginGroup(zone == .body ? "Move Clip" : "Trim Clip")
+        if zone == .body { NSCursor.closedHand.set() }
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        let p = convert(event.locationInWindow, from: nil)
+        guard var d = drag else {
+            if p.y < Theme.rulerHeight { seek(toX: p.x) }
+            return
+        }
+        let bypass = event.modifierFlags.contains(.control)
+        let delta = Double(p.x - d.startX) * framesPerPoint
+        let c = d.clip
+        guard let current = session.clip(c.id) else { return }
+        switch d.zone {
+        case .body:
+            let start = snap(Double(c.start) + delta, bypass: bypass)
+            let track = trackIndex(atY: p.y).map { session.tracks[$0].id } ?? current.track
+            if start != current.start || track != current.track {
+                session.moveClip(c.id, track: track, start: start)
+                d.changed = true
+            }
+        case .leftEdge:
+            // Keep the right edge fixed; reveal or hide audio on the left.
+            var start = snap(Double(c.start) + delta, bypass: bypass)
+            start = max(start, c.start - c.offset)            // can't reveal before media start
+            start = min(start, c.end - 1)                      // keep at least one frame
+            let offset = c.offset + (start - c.start)
+            if start != current.start {
+                session.setRegion(c.id, start: start, offset: offset, length: c.end - start)
+                d.changed = true
+            }
+        case .rightEdge:
+            var end = snap(Double(c.end) + delta, bypass: bypass)
+            end = min(end, c.start + (c.mediaFrames - c.offset)) // can't extend past media end
+            end = max(end, c.start + 1)
+            if end != current.end {
+                session.setRegion(c.id, start: c.start, offset: c.offset, length: end - c.start)
+                d.changed = true
+            }
+        }
+        drag = d
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        guard drag != nil else { return }
+        session.engine.endGroup()
+        drag = nil
+        mouseMoved(with: event)
+        onSelectionChange?()
+    }
+
+    private func seek(toX x: CGFloat) {
+        session.engine.seek(Int64(max(0, frame(forX: x))))
         updatePlayhead()
         onSeek?()
     }
@@ -241,6 +382,17 @@ final class TimelineView: NSView {
         let anchor = frame(forX: x)
         framesPerPoint = min(max(framesPerPoint * factor, 0.25), sampleRate * 10)
         scrollFrame = anchor - Double(x) * framesPerPoint
+    }
+
+    /// Window-coordinate center of a clip (used by the self-test to synthesize drags).
+    func windowPoint(ofClip id: AtriumClipId, zone: String = "body") -> CGPoint? {
+        for (i, t) in session.tracks.enumerated() {
+            guard let c = t.clips.first(where: { $0.id == id }) else { continue }
+            let r = clipRect(c, laneY: laneY(i))
+            let x = zone == "left" ? r.minX + 2 : zone == "right" ? r.maxX - 2 : min(max(r.midX, 10), bounds.width - 10)
+            return convert(CGPoint(x: x, y: r.midY), to: nil)
+        }
+        return nil
     }
 
     override func layout() {

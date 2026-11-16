@@ -35,7 +35,7 @@ struct RenderClip {
 
 struct RenderTrack {
     std::shared_ptr<TrackRuntime> runtime;
-    std::vector<RenderClip> clips; // sorted by start
+    std::vector<RenderClip> clips; // z-order: later clips overwrite earlier ones
     bool monoSource = true;        // every clip is mono -> constant-power pan law
 };
 

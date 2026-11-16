@@ -21,11 +21,17 @@ Swift/AppKit front end on macOS. GPL-3.0-or-later. This repo is also the project
 - `scripts/check.sh` builds, tests, and runs a live audio smoke test (needs an output device).
 - `scripts/bundle.sh` creates `dist/Atrium.app`.
 - `.build/debug/Atrium <files…> --snapshot out.png [--play]` renders the UI to a PNG for visual checks.
+- `.build/debug/Atrium <files…> --selftest <dir>` drives real menus and synthesized drags end to end.
+  Extend `app/macos/Atrium/SelfTest.swift` for every new UI interaction.
+- `.build/debug/atrium-cli commands`, `command <proj> <name> '<json>' [--save]`, `render-project`.
+- `scripts/ci/rt-effects.sh` runs the real-time effect analysis (uses Homebrew LLVM on CI).
 
 ## Hard rules
 - **Audio thread:** anything reachable from the device callback is marked `ATRIUM_NONBLOCKING`. Clang
   checks it at compile time, and violations are build errors. That code must never allocate, free, lock,
   do I/O, or throw. Data reaches the audio thread as immutable `RenderState` snapshots or atomics only.
+- **Model:** every mutation is an `Engine::edit` command (undoable), and every user-visible action also gets
+  a catalog entry in `commands.cpp`. Front ends never cache model state; they re-query on revision change.
 - New engine features need a test with explicit numeric tolerances. Audio changes need an offline-render test.
 - Never report a feature as working without evidence: test output, CLI output, or a snapshot.
 - Dependencies must be permissive or system frameworks. Record each one in `04 - Research/Licensing.md`.
