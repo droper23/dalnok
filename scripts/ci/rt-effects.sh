@@ -7,11 +7,13 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 CXX="${CXX:-$(brew --prefix llvm)/bin/clang++}"
 SDK="$(xcrun --show-sdk-path)"
-flags=(-std=c++20 -fsyntax-only -isysroot "$SDK" -Iengine/include -Iengine/src -Werror=function-effects)
+flags=(-std=c++20 -fsyntax-only -isysroot "$SDK" -Iengine/include -Iengine/src -Iengine/dsp/include
+       -Iengine/third_party/pugixml -Iengine/third_party/signalsmith -DSIGNALSMITH_USE_ACCELERATE -Werror=function-effects)
 "$CXX" --version | head -1
-for f in engine/src/*.cpp engine/src/platform/macos/*.cpp; do
+# Every engine source (all subfolders) plus the DSP target.
+while IFS= read -r f; do
   "$CXX" "${flags[@]}" "$f"
-done
+done < <(find engine/src engine/dsp/src -name '*.cpp' | sort)
 echo "engine sources: effect-clean"
 neg=$(mktemp -d)/neg.cpp
 printf '#include "rt.hpp"\n#include <vector>\nvoid f(std::vector<float>& v) DALNOK_NONBLOCKING { v.push_back(1.f); }\n' > "$neg"
