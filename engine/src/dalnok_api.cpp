@@ -3,6 +3,7 @@
 #include "dalnok/dalnok.h"
 #include "commands.hpp"
 #include "engine.hpp"
+#include "import/import.hpp"
 
 #include <algorithm>
 #include <cstring>
@@ -218,6 +219,7 @@ DalnokStatus dalnok_clip_info(const DalnokEngine *e, DalnokClipId id, DalnokClip
     out->fade_in = c->fadeIn;
     out->fade_out = c->fadeOut;
     out->fade_curve = c->fadeCurve;
+    out->gain_db = c->gainDb;
     copyOut(out->name, sizeof out->name, c->name);
     return DALNOK_OK;
 }
@@ -262,6 +264,11 @@ DalnokStatus dalnok_track_move(DalnokEngine *e, DalnokTrackId t, int32_t index) 
 DalnokStatus dalnok_clip_set_fades(DalnokEngine *e, DalnokClipId c, int64_t in, int64_t out, DalnokFadeCurve curve) {
     std::string err;
     return e ? statusFor(e->impl.setClipFades(c, in, out, static_cast<int32_t>(curve), err), err) : DALNOK_ERR_INVALID_ARG;
+}
+
+DalnokStatus dalnok_clip_set_gain_db(DalnokEngine *e, DalnokClipId c, float db) {
+    std::string err;
+    return e ? statusFor(e->impl.setClipGain(c, db, err), err) : DALNOK_ERR_INVALID_ARG;
 }
 
 DalnokClipId dalnok_clip_add(DalnokEngine *e, DalnokTrackId t, DalnokMediaId m, int64_t start, int64_t offset,
@@ -369,6 +376,37 @@ DalnokStatus dalnok_project_apply(DalnokEngine *e, DalnokProjectData *data) {
     return DALNOK_OK;
 }
 void dalnok_project_data_release(DalnokProjectData *data) { delete data; }
+
+DalnokStatus dalnok_project_import_report(const char *path, char *report, size_t report_len, char *err, size_t err_len) {
+    if (!path) return DALNOK_ERR_INVALID_ARG;
+    dalnok::import::Result r;
+    std::string msg;
+    if (!dalnok::import::importProject(path, r, msg)) {
+        copyOut(err, err_len, msg);
+        return msg.rfind("cannot open", 0) == 0 ? DALNOK_ERR_IO : DALNOK_ERR_FORMAT;
+    }
+    copyOut(report, report_len, json::serialize(r.report.toJson(), true));
+    return DALNOK_OK;
+}
+
+DalnokStatus dalnok_project_import(const char *path, double sr, DalnokProjectData **out, int32_t *missing_out,
+                                   char *report, size_t report_len, char *err, size_t err_len) {
+    if (!path || !out || !(sr > 0)) return DALNOK_ERR_INVALID_ARG;
+    *out = nullptr;
+    std::string msg, rep;
+    int32_t missing = 0;
+    auto p = Engine::prepareImport(path, sr, missing, rep, msg);
+    if (!p) {
+        copyOut(err, err_len, msg);
+        return msg.rfind("cannot open", 0) == 0 ? DALNOK_ERR_IO
+             : msg.rfind("unsupported", 0) == 0 || msg.find("not implemented") != std::string::npos ? DALNOK_ERR_UNSUPPORTED
+                                                                                                    : DALNOK_ERR_FORMAT;
+    }
+    copyOut(report, report_len, rep);
+    if (missing_out) *missing_out = missing;
+    *out = new DalnokProjectData{std::move(p)};
+    return DALNOK_OK;
+}
 
 // ---- Command catalog --------------------------------------------------------
 

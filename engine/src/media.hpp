@@ -38,6 +38,13 @@ private:
 bool decodeAudioFile(const std::string &path, double sampleRate,
                      std::vector<std::vector<float>> &channels, std::string &err);
 
+// Reads a property list (XML or binary) into JSON-like values (macOS: CoreFoundation).
+namespace json { struct Value; }
+bool readPropertyList(const std::string &path, json::Value &out, std::string &err);
+
+// Reads only the header: native sample rate, length in frames, channel count.
+bool probeAudioFile(const std::string &path, double &sampleRate, int64_t &frames, int32_t &channels, std::string &err);
+
 class WavWriter {
 public:
     virtual ~WavWriter() = default;

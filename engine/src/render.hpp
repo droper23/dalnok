@@ -44,6 +44,7 @@ struct RenderClip {
     int64_t length = 0; // frames
     int64_t fadeIn = 0, fadeOut = 0; // frames, fadeIn + fadeOut <= length
     int32_t curve = kFadeLinear;
+    float gain = 1.0f; // linear clip gain
 };
 
 struct RenderTrack {

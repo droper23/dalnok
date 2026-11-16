@@ -350,6 +350,16 @@ bool Engine::setClipFades(DalnokClipId id, int64_t fadeIn, int64_t fadeOut, int3
     });
 }
 
+bool Engine::setClipGain(DalnokClipId id, float gainDb, std::string &err) {
+    return edit("Clip Gain", true, [&](Model &m) {
+        ClipState *c = m.clip(id);
+        if (!c) return fail(err, "no such clip");
+        if (std::isnan(gainDb)) return fail(err, "gain is NaN");
+        c->gainDb = gainDb <= -96.0f ? -INFINITY : std::min(gainDb, 24.0f);
+        return true;
+    });
+}
+
 bool Engine::poolRelink(DalnokMediaId id, std::shared_ptr<const Media> media, const std::string &path,
                         std::string &err) {
     auto it = pool_.find(id);
@@ -472,7 +482,7 @@ std::unique_ptr<RenderState> Engine::compile() const {
                 fi = static_cast<int64_t>(static_cast<double>(fi) * k);
                 fo = len - fi;
             }
-            rt.clips.push_back({media, c.start, c.offset, len, fi, fo, c.fadeCurve});
+            rt.clips.push_back({media, c.start, c.offset, len, fi, fo, c.fadeCurve, dbToGain(c.gainDb)});
             if (media->channelCount() > 1) rt.monoSource = false;
         }
         s->tracks.push_back(std::move(rt));

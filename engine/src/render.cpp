@@ -55,10 +55,11 @@ void mixClip(const RenderClip &clip, int64_t pos, int frames, float *l, float *r
     const float *sr = m.channelCount() > 1 ? m.channel(1) + src : sl;
     const int64_t t0 = a - clip.start, len = clip.length;
     const bool faded = t0 < clip.fadeIn || t0 + n > len - clip.fadeOut;
+    const float g = clip.gain;
     if (!faded) {
         for (int i = 0; i < n; ++i) {
-            l[o + i] = sl[i];
-            r[o + i] = sr[i];
+            l[o + i] = sl[i] * g;
+            r[o + i] = sr[i] * g;
         }
         return;
     }
@@ -71,8 +72,8 @@ void mixClip(const RenderClip &clip, int64_t pos, int frames, float *l, float *r
             env *= fadeShape((static_cast<float>(len - t) - 0.5f) / static_cast<float>(clip.fadeOut), clip.curve);
         const float under = clip.curve == kFadeEqualPower ? __builtin_sqrtf(std::max(0.0f, 1.0f - env * env))
                                                           : 1.0f - env;
-        l[o + i] = l[o + i] * under + sl[i] * env;
-        r[o + i] = r[o + i] * under + sr[i] * env;
+        l[o + i] = l[o + i] * under + sl[i] * g * env;
+        r[o + i] = r[o + i] * under + sr[i] * g * env;
     }
 }
 

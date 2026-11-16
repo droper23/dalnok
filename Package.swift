@@ -15,16 +15,18 @@ let package = Package(
         .target(
             name: "DalnokEngine",
             path: "engine",
-            sources: ["src"],
+            sources: ["src", "third_party/pugixml/pugixml.cpp"],
             publicHeadersPath: "include",
             cxxSettings: [
                 .headerSearchPath("src"),
+                .headerSearchPath("third_party/pugixml"),
                 .unsafeFlags(["-Wall", "-Wextra", "-Wfunction-effects", "-Werror=function-effects"]),
             ],
             linkerSettings: [
                 .linkedFramework("AudioToolbox"),
                 .linkedFramework("CoreAudio"),
                 .linkedFramework("CoreFoundation"),
+                .linkedLibrary("z"),
             ]
         ),
         // Native macOS front end (AppKit).

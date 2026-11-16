@@ -25,6 +25,7 @@ usage:
   dalnok-cli command <project.dalnok> <command> [args-json] [--save]   run a catalog command
   dalnok-cli commands                                                  list the command catalog
   dalnok-cli bench [--tracks N] [--seconds S]                          render-cost benchmark (no device)
+  dalnok-cli import <project.rpp|.als|.logicx|.fcpxml|stems-folder> [--save out.dalnok] [--render out.wav] [--quiet]
 """
 
 let args = Array(CommandLine.arguments.dropFirst())
@@ -138,6 +139,39 @@ case "command":
     }
     dalnok_engine_destroy(engine)
     exit(st == DALNOK_OK ? 0 : 1)
+
+case "import" where args.contains("--report-only"):
+    var report = [CChar](repeating: 0, count: 1 << 16)
+    var err = [CChar](repeating: 0, count: 1024)
+    guard dalnok_project_import_report(args[1], &report, report.count, &err, err.count) == DALNOK_OK else {
+        fail("import failed: \(cstr(err))")
+    }
+    print(cstr(report))
+
+case "import":
+    let engine = dalnok_engine_create(48_000)!
+    var data: OpaquePointer?
+    var missing: Int32 = 0
+    var report = [CChar](repeating: 0, count: 1 << 16)
+    var err = [CChar](repeating: 0, count: 1024)
+    let t0 = Date()
+    let st = dalnok_project_import(args[1], 48_000, &data, &missing, &report, report.count, &err, err.count)
+    guard st == DALNOK_OK else { fail("import failed (\(st.rawValue)): \(cstr(err))") }
+    dalnok_project_apply(engine, data)
+    let ms = Date().timeIntervalSince(t0) * 1000
+    if !args.contains("--quiet") { print(cstr(report)) }
+    print(String(format: "imported %d tracks, session %.1f s, %d offline, in %.0f ms", dalnok_track_count(engine),
+                 Double(dalnok_session_length(engine)) / 48_000, missing, ms))
+    if let out = opt("--save") {
+        guard dalnok_project_save(engine, out, &err, 1024) == DALNOK_OK else { fail(cstr(err)) }
+        print("saved \(out)")
+    }
+    if let out = opt("--render") {
+        let n = dalnok_session_length(engine)
+        guard n > 0, dalnok_render_to_wav(engine, out, 0, n, 24, &err, 1024) == DALNOK_OK else { fail("render: \(cstr(err))") }
+        print("rendered \(out)")
+    }
+    dalnok_engine_destroy(engine)
 
 case "bench":
     // N stereo tracks, each with a fully-faded clip over shared media; measures the

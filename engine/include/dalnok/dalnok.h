@@ -166,6 +166,7 @@ typedef struct {
     int64_t fade_in;      /* frames */
     int64_t fade_out;     /* frames */
     int32_t fade_curve;   /* DalnokFadeCurve */
+    float gain_db;        /* clip gain; -INFINITY = silent */
     char name[128];
 } DalnokClipInfo;
 DalnokStatus dalnok_clip_info(const DalnokEngine *engine, DalnokClipId clip, DalnokClipInfo *out);
@@ -210,6 +211,9 @@ typedef enum { DALNOK_FADE_LINEAR = 0, DALNOK_FADE_EQUAL_POWER = 1 } DalnokFadeC
 DalnokStatus dalnok_clip_set_fades(DalnokEngine *engine, DalnokClipId clip, int64_t fade_in, int64_t fade_out,
                                    DalnokFadeCurve curve);
 
+/* Clip (region) gain in dB, applied before the track fader. Clamped to +24. */
+DalnokStatus dalnok_clip_set_gain_db(DalnokEngine *engine, DalnokClipId clip, float gain_db);
+
 /* ---- Undo ------------------------------------------------------------ */
 
 bool dalnok_undo(DalnokEngine *engine);
@@ -249,6 +253,19 @@ DalnokStatus dalnok_project_prepare(const char *path, double sample_rate, Dalnok
                                     int32_t *missing_out, char *err, size_t err_len); /* [any thread] */
 DalnokStatus dalnok_project_apply(DalnokEngine *engine, DalnokProjectData *data);
 void dalnok_project_data_release(DalnokProjectData *data); /* [any thread] */
+
+/* Imports another DAW's project: REAPER (.rpp), Ableton Live (.als), Logic Pro
+ * (.logicx), Final Cut Pro XML exported from Logic (.fcpxml), or a folder of
+ * stems. Produces data for dalnok_project_apply (the result starts unsaved) and
+ * a JSON migration report: {"app","version","imported":{tracks,clips,media,
+ * missingMedia},"skipped":{reason:count},"notes":[...]}. [any thread] */
+/* Analyzes another DAW's project without loading any audio: fills the same
+ * migration report as dalnok_project_import. Fast; for previews. [any thread] */
+DalnokStatus dalnok_project_import_report(const char *path, char *report_json, size_t report_len, char *err,
+                                          size_t err_len);
+DalnokStatus dalnok_project_import(const char *path, double sample_rate, DalnokProjectData **out,
+                                   int32_t *missing_out, char *report_json, size_t report_len, char *err,
+                                   size_t err_len);
 
 /* True if the model changed since the last save/load/new. */
 bool dalnok_project_dirty(const DalnokEngine *engine);

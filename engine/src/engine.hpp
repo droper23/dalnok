@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <filesystem>
 #include <map>
 #include <memory>
 #include <string>
@@ -36,6 +37,7 @@ struct ClipState {
     int64_t start = 0, offset = 0, length = 0;
     int64_t fadeIn = 0, fadeOut = 0; // frames
     int32_t fadeCurve = 0;           // FadeCurve
+    float gainDb = 0;                // clip (region/item) gain
     std::string name;
 };
 
@@ -108,6 +110,7 @@ public:
     bool setClipRegion(DalnokClipId id, int64_t start, int64_t offset, int64_t length, std::string &err);
     DalnokClipId splitClip(DalnokClipId id, int64_t at, std::string &err);
     bool setClipFades(DalnokClipId id, int64_t fadeIn, int64_t fadeOut, int32_t curve, std::string &err);
+    bool setClipGain(DalnokClipId id, float gainDb, std::string &err);
 
     // Undo
     bool undo();
@@ -130,6 +133,11 @@ public:
     static std::unique_ptr<PreparedProject> prepareProject(const std::string &path, double sampleRate,
                                                            int32_t &missing, std::string &err);
     void applyProject(std::unique_ptr<PreparedProject> p);
+    // Imports another DAW's project (see import/import.hpp) into a prepared project + JSON report.
+    static std::unique_ptr<PreparedProject> prepareImport(const std::string &path, double sampleRate, int32_t &missing,
+                                                          std::string &reportJson, std::string &err);
+    static std::unique_ptr<PreparedProject> prepareDocument(const json::Value &doc, const std::filesystem::path &dir,
+                                                            double sampleRate, int32_t &missing, std::string &err);
     bool dirty() const { return revision_ != savedRevision_; }
     json::Value describe() const; // model as JSON (used by save and session.describe)
 
@@ -213,6 +221,7 @@ struct Engine::PreparedProject {
     DalnokMediaId maxMedia = 0;
     int32_t maxColor = -1;
     double sampleRate = 0;
+    bool imported = false; // came from another DAW: starts dirty, untitled
 };
 
 float dbToGain(float db);

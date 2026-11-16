@@ -107,6 +107,32 @@ bool decodeAudioFile(const std::string &path, double sampleRate, std::vector<std
     return true;
 }
 
+bool probeAudioFile(const std::string &path, double &sampleRate, int64_t &frames, int32_t &channels, std::string &err) {
+    CFURLRef url = makeURL(path);
+    if (!url) {
+        err = "invalid path";
+        return false;
+    }
+    ExtAudioFileRef file = nullptr;
+    OSStatus s = ExtAudioFileOpenURL(url, &file);
+    CFRelease(url);
+    if (s != noErr) {
+        err = statusErr("open audio file", s);
+        return false;
+    }
+    AudioStreamBasicDescription fmt{};
+    UInt32 size = sizeof(fmt);
+    ExtAudioFileGetProperty(file, kExtAudioFileProperty_FileDataFormat, &size, &fmt);
+    SInt64 n = 0;
+    size = sizeof(n);
+    ExtAudioFileGetProperty(file, kExtAudioFileProperty_FileLengthFrames, &size, &n);
+    ExtAudioFileDispose(file);
+    sampleRate = fmt.mSampleRate;
+    frames = n;
+    channels = static_cast<int32_t>(fmt.mChannelsPerFrame);
+    return sampleRate > 0;
+}
+
 namespace {
 
 class ExtWavWriter final : public WavWriter {

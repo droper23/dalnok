@@ -95,6 +95,12 @@ const CommandDef kCommands[] = {
          if (curve != "linear" && curve != "equalPower") return err = "curve must be linear or equalPower", DALNOK_ERR_INVALID_ARG;
          return status(e.setClipFades(c, fi, fo, curve == "equalPower" ? kFadeEqualPower : kFadeLinear, err), err);
      }},
+    {"clip.setGain", "Set Clip Gain", "{clip, db}", [](ARGS) {
+         DalnokClipId c;
+         double db;
+         if (!needInt(a, "clip", c, err) || !needNumber(a, "db", db, err)) return DALNOK_ERR_INVALID_ARG;
+         return status(e.setClipGain(c, static_cast<float>(db), err), err);
+     }},
     {"clip.add", "Add Clip", "{track, media, start?, offset?, length?}", [](ARGS) {
          DalnokTrackId t;
          DalnokMediaId m;

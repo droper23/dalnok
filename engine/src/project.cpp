@@ -11,6 +11,7 @@
 // Positions are frames at "sampleRate"; loading into an engine at another
 // rate rescales them.
 #include "engine.hpp"
+#include "import/import.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -106,6 +107,7 @@ json::Value Engine::describe() const {
             cv.set("offset", c.offset);
             cv.set("length", c.length);
             cv.set("name", c.name);
+            if (c.gainDb != 0) cv.set("gainDb", std::isfinite(c.gainDb) ? json::Value(static_cast<double>(c.gainDb)) : json::Value());
             if (c.fadeIn > 0) cv.set("fadeIn", c.fadeIn);
             if (c.fadeOut > 0) cv.set("fadeOut", c.fadeOut);
             if (c.fadeCurve != 0) cv.set("fadeCurve", c.fadeCurve == kFadeEqualPower ? "equalPower" : "linear");
@@ -205,8 +207,14 @@ std::unique_ptr<Engine::PreparedProject> Engine::prepareProject(const std::strin
         err = "invalid project file: " + err;
         return nullptr;
     }
+    return prepareDocument(doc, fs::absolute(fs::path(path)).parent_path(), sampleRate, missing, err);
+}
+
+std::unique_ptr<Engine::PreparedProject> Engine::prepareDocument(const json::Value &doc, const fs::path &projectDir,
+                                                                double sampleRate, int32_t &missing, std::string &err) {
+    missing = 0;
     if (!doc.isObject() || doc.getString("format", "") != "dalnok-project") {
-        err = "not an Dalnok project";
+        err = "not a Dalnok project";
         return nullptr;
     }
     if (doc.getNumber("version", 0) > kFormatVersion) {
@@ -220,7 +228,6 @@ std::unique_ptr<Engine::PreparedProject> Engine::prepareProject(const std::strin
     }
     const double ratio = sampleRate / fileRate;
     auto scale = [ratio](int64_t frames) { return static_cast<int64_t>(std::llround(static_cast<double>(frames) * ratio)); };
-    const fs::path projectDir = fs::absolute(fs::path(path)).parent_path();
 
     // Build everything into temporaries; swap in only on success.
     std::map<DalnokMediaId, PoolEntry> pool;
@@ -295,6 +302,9 @@ std::unique_ptr<Engine::PreparedProject> Engine::prepareProject(const std::strin
                     c.offset = scale(toInt(cv, "offset"));
                     c.length = scale(toInt(cv, "length"));
                     c.name = cv.getString("name", "Audio");
+                    if (const json::Value *g = cv.get("gainDb"))
+                        c.gainDb = g->isNumber() ? std::min(static_cast<float>(g->number), 24.0f) : -INFINITY;
+                    if (c.gainDb <= -96.0f) c.gainDb = -INFINITY;
                     c.fadeIn = std::max<int64_t>(0, scale(toInt(cv, "fadeIn")));
                     c.fadeOut = std::max<int64_t>(0, scale(toInt(cv, "fadeOut")));
                     c.fadeCurve = cv.getString("fadeCurve", "linear") == "equalPower" ? kFadeEqualPower : kFadeLinear;
@@ -304,8 +314,12 @@ std::unique_ptr<Engine::PreparedProject> Engine::prepareProject(const std::strin
                         err = "invalid clip";
                         return nullptr;
                     }
-                    // Rounding from rate conversion can overshoot by a frame.
-                    c.length = std::min(c.length, std::max<int64_t>(1, pe->second.frames - c.offset));
+                    // Rounding from rate conversion can overshoot by a frame. Offline media has no
+                    // trustworthy length, so its clips keep the lengths stored in the project.
+                    if (pe->second.handle->impl)
+                        c.length = std::min(c.length, std::max<int64_t>(1, pe->second.frames - c.offset));
+                    else
+                        pe->second.frames = std::max(pe->second.frames, c.offset + c.length);
                     maxClip = std::max(maxClip, c.id);
                     model.clips.push_back(std::move(c));
                 }
@@ -335,8 +349,18 @@ void Engine::applyProject(std::unique_ptr<PreparedProject> p) {
     nextColor_ = p->maxColor + 1;
     syncRuntimes();
     ++revision_;
-    savedRevision_ = revision_;
+    savedRevision_ = p->imported ? revision_ - 1 : revision_; // an import is unsaved work
     commit();
+}
+
+std::unique_ptr<Engine::PreparedProject> Engine::prepareImport(const std::string &path, double sampleRate,
+                                                              int32_t &missing, std::string &reportJson, std::string &err) {
+    import::Result r;
+    if (!import::importProject(path, r, err)) return nullptr;
+    reportJson = json::serialize(r.report.toJson(), true);
+    auto p = prepareDocument(r.document, fs::absolute(fs::path(path)).parent_path(), sampleRate, missing, err);
+    if (p) p->imported = true;
+    return p;
 }
 
 bool Engine::loadProject(const std::string &path, int32_t &missing, std::string &err) {
