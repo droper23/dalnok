@@ -174,100 +174,165 @@ final class FaderControl: NSControl {
     override func resignFirstResponder() -> Bool { needsDisplay = true; return true }
 }
 
-// MARK: - Pan knob
+// MARK: - Rotary knob
 
-/// Rotary pan (270° sweep). Vertical drag; ⇧ for fine; ⌥-click or double-click centers.
+/// Flat rotary knob (Valhalla-style minimalism: solid face, bold pointer, no
+/// skeuomorphic gradients). On hover, drag or keyboard focus the face shrinks
+/// to reveal a glowing value ring underneath, like the halo LEDs on a Scarlett
+/// 4th-gen gain knob. Layer-based so the reveal animates smoothly.
+/// Vertical drag; ⇧ for fine; ⌥-click or double-click resets; scroll; arrows.
 @MainActor
-final class PanKnob: NSControl {
-    var pan: Float = 0 { didSet { needsDisplay = true; setAccessibilityValue(Self.format(pan)) } }
-    var tint: NSColor = Theme.text { didSet { needsDisplay = true } }
+class RotaryKnob: NSControl {
+    /// Normalized value: −1…1 when `bipolar`, else 0…1.
+    var value: Double = 0 { didSet { layoutLayers(); setAccessibilityValue(format(value)) } }
+    var bipolar = true
+    var defaultValue: Double = 0
+    var tint: NSColor = Theme.accent { didSet { haloValue.strokeColor = tint.cgColor; haloValue.shadowColor = tint.cgColor } }
+    var format: (Double) -> String = { String(format: "%.0f%%", $0 * 100) }
     var onBegin: (() -> Void)?
-    var onChange: ((Float) -> Void)?
+    var onChange: ((Double) -> Void)?
     var onEnd: (() -> Void)?
     private(set) var tracking = false
-    private var dragStart: (y: CGFloat, pan: Float)?
+    private var hovering = false
+    private var dragStart: (y: CGFloat, value: Double)?
+
+    private let haloTrack = CAShapeLayer()
+    private let haloValue = CAShapeLayer()
+    private let face = CAShapeLayer()
+    private let pointer = CAShapeLayer()
+    static let revealScale: CGFloat = 0.68
 
     override init(frame: NSRect) {
         super.init(frame: frame)
+        wantsLayer = true
+        layer?.masksToBounds = false
+        for l in [haloTrack, haloValue] {
+            l.fillColor = nil
+            l.lineWidth = 3
+            l.lineCap = .round
+            layer?.addSublayer(l)
+        }
+        haloTrack.strokeColor = Theme.hex(0xFFFFFF, 0.08).cgColor
+        haloValue.strokeColor = tint.cgColor
+        haloValue.shadowColor = tint.cgColor
+        haloValue.shadowRadius = 4
+        haloValue.shadowOpacity = 0.9
+        haloValue.shadowOffset = .zero
+        face.fillColor = Theme.hex(0x3A3E46).cgColor
+        face.strokeColor = Theme.hex(0x000000, 0.35).cgColor
+        face.lineWidth = 1
+        pointer.strokeColor = Theme.hex(0xF2F3F5).cgColor
+        pointer.lineWidth = 2
+        pointer.lineCap = .round
+        face.addSublayer(pointer)
+        layer?.addSublayer(face)
         setAccessibilityElement(true)
         setAccessibilityRole(.slider)
-        setAccessibilityValue(Self.format(pan))
+        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self))
+        setRevealed(false, animated: false)
     }
     required init?(coder: NSCoder) { fatalError() }
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
-    override var intrinsicContentSize: NSSize { NSSize(width: 26, height: 26) }
+    override var intrinsicContentSize: NSSize { NSSize(width: 30, height: 30) }
 
-    static func format(_ p: Float) -> String {
-        let v = Int((abs(p) * 100).rounded())
-        return v == 0 ? "C" : (p < 0 ? "L\(v)" : "R\(v)")
+    // Angles in the flipped view: −90° points up; the sweep is ±135° around it.
+    private func angle(_ v: Double) -> CGFloat {
+        let n = bipolar ? v : v * 2 - 1
+        return (-90 + CGFloat(n) * 135) * .pi / 180
     }
 
-    override func draw(_ dirtyRect: NSRect) {
-        guard let ctx = NSGraphicsContext.current?.cgContext else { return }
-        let r = min(bounds.width, bounds.height) / 2 - 2.5
+    override func layout() {
+        super.layout()
+        layoutLayers()
+    }
+
+    private func layoutLayers() {
+        let r = min(bounds.width, bounds.height) / 2
+        guard r > 4 else { return }
         let c = CGPoint(x: bounds.midX, y: bounds.midY)
-        // Angles (flipped view: y down). 0 at top, ±135°.
-        func angle(_ p: Float) -> CGFloat { (-90 + CGFloat(p) * 135) * .pi / 180 }
-        // Track arc.
-        ctx.setLineWidth(2.5); ctx.setLineCap(.round)
-        ctx.setStrokeColor(Theme.hex(0x0A0B0D).cgColor)
-        ctx.addArc(center: c, radius: r, startAngle: angle(-1), endAngle: angle(1), clockwise: false); ctx.strokePath()
-        // Value arc from center.
-        if abs(pan) > 0.005 {
-            ctx.setStrokeColor(tint.withAlphaComponent(0.85).cgColor)
-            ctx.addArc(center: c, radius: r, startAngle: angle(min(0, pan)), endAngle: angle(max(0, pan)), clockwise: false)
-            ctx.strokePath()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        let ringR = r - 2.5
+        let track = CGMutablePath()
+        track.addArc(center: c, radius: ringR, startAngle: angle(bipolar ? -1 : 0), endAngle: angle(1), clockwise: false)
+        haloTrack.path = track
+        let from = bipolar ? min(0, value) : 0, to = bipolar ? max(0, value) : value
+        let arc = CGMutablePath()
+        if abs(to - from) > 0.004 {
+            arc.addArc(center: c, radius: ringR, startAngle: angle(from), endAngle: angle(to), clockwise: false)
+        } else {
+            // A lit dot at the center position, so "centered" is visible too.
+            arc.addArc(center: c, radius: ringR, startAngle: angle(from) - 0.04, endAngle: angle(from) + 0.04, clockwise: false)
         }
-        // Body.
-        let body = CGRect(x: c.x - r + 3, y: c.y - r + 3, width: (r - 3) * 2, height: (r - 3) * 2)
-        ctx.setShadow(offset: CGSize(width: 0, height: 1), blur: 2, color: NSColor.black.withAlphaComponent(0.6).cgColor)
-        ctx.setFillColor((tracking ? Theme.controlHi : Theme.control).cgColor)
-        ctx.fillEllipse(in: body)
-        ctx.setShadow(offset: .zero, blur: 0, color: nil)
-        // Pointer.
-        let a = angle(pan)
-        ctx.setStrokeColor(Theme.text.cgColor); ctx.setLineWidth(1.5)
-        ctx.move(to: CGPoint(x: c.x + cos(a) * (r - 8), y: c.y + sin(a) * (r - 8)))
-        ctx.addLine(to: CGPoint(x: c.x + cos(a) * (r - 3.5), y: c.y + sin(a) * (r - 3.5)))
-        ctx.strokePath()
-        if window?.firstResponder === self {
-            ctx.setStrokeColor(NSColor.keyboardFocusIndicatorColor.cgColor); ctx.setLineWidth(1)
-            ctx.strokeEllipse(in: bounds.insetBy(dx: 0.5, dy: 0.5))
-        }
+        haloValue.path = arc
+        // Face covers the ring at rest (scale 1); scales around its center.
+        face.bounds = bounds
+        face.position = c
+        let faceR = r - 0.5
+        face.path = CGPath(ellipseIn: CGRect(x: c.x - faceR, y: c.y - faceR, width: faceR * 2, height: faceR * 2), transform: nil)
+        let a = angle(value)
+        let ptr = CGMutablePath()
+        ptr.move(to: CGPoint(x: c.x + cos(a) * faceR * 0.28, y: c.y + sin(a) * faceR * 0.28))
+        ptr.addLine(to: CGPoint(x: c.x + cos(a) * faceR * 0.78, y: c.y + sin(a) * faceR * 0.78))
+        pointer.path = ptr
+        CATransaction.commit()
     }
 
-    private func set(_ p: Float) {
-        var v = min(1, max(-1, p))
-        if abs(v) < 0.02 { v = 0 } // center detent
-        pan = v
-        onChange?(v)
-        ValueBubble.show(Self.format(v), above: self, at: bounds.midX)
+    private func setRevealed(_ on: Bool, animated: Bool) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(!animated)
+        CATransaction.setAnimationDuration(0.16)
+        CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(name: .easeOut))
+        face.setAffineTransform(on ? CGAffineTransform(scaleX: Self.revealScale, y: Self.revealScale) : .identity)
+        haloValue.opacity = on ? 1 : 0
+        haloTrack.opacity = on ? 1 : 0
+        face.fillColor = (on ? Theme.hex(0x44484F) : Theme.hex(0x3A3E46)).cgColor
+        CATransaction.commit()
+    }
+
+    private func updateReveal() { setRevealed(hovering || tracking || window?.firstResponder === self, animated: true) }
+
+    override func mouseEntered(with event: NSEvent) { hovering = true; updateReveal() }
+    override func mouseExited(with event: NSEvent) { hovering = false; updateReveal() }
+
+    private func set(_ v: Double) {
+        var x = min(1, max(bipolar ? -1 : 0, v))
+        if abs(x - defaultValue) < 0.02 { x = defaultValue } // detent
+        value = x
+        onChange?(x)
+        ValueBubble.show(format(x), above: self, at: bounds.midX)
     }
 
     override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
         onBegin?()
         if event.modifierFlags.contains(.option) || event.clickCount == 2 {
-            set(0); onEnd?(); ValueBubble.hide(); return
+            set(defaultValue); onEnd?(); ValueBubble.hide(); return
         }
         tracking = true
-        dragStart = (event.locationInWindow.y, pan)
-        ValueBubble.show(Self.format(pan), above: self, at: bounds.midX)
+        updateReveal()
+        dragStart = (event.locationInWindow.y, value)
+        ValueBubble.show(format(value), above: self, at: bounds.midX)
     }
     override func mouseDragged(with event: NSEvent) {
         guard let s = dragStart else { return }
-        let scale: Float = event.modifierFlags.contains(.shift) ? 0.002 : 0.012
-        set(s.pan + Float(event.locationInWindow.y - s.y) * scale)
+        let range = bipolar ? 2.0 : 1.0
+        let perPoint = (event.modifierFlags.contains(.shift) ? 0.001 : 0.006) * range
+        set(s.value + Double(event.locationInWindow.y - s.y) * perPoint)
     }
     override func mouseUp(with event: NSEvent) {
-        tracking = false; dragStart = nil; needsDisplay = true
-        ValueBubble.hide(); onEnd?()
+        tracking = false
+        dragStart = nil
+        hovering = bounds.contains(convert(event.locationInWindow, from: nil))
+        updateReveal()
+        ValueBubble.hide()
+        onEnd?()
     }
     override func scrollWheel(with event: NSEvent) {
-        let d = Float(event.hasPreciseScrollingDeltas ? event.scrollingDeltaY / 300 : event.scrollingDeltaY / 30)
+        let d = Double(event.hasPreciseScrollingDeltas ? event.scrollingDeltaY / 300 : event.scrollingDeltaY / 30)
         guard d != 0 else { return }
-        onBegin?(); set(pan + d); onEnd?()
+        onBegin?(); set(value + d * (bipolar ? 1 : 0.5)); onEnd?()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { ValueBubble.hide() }
     }
     override func keyDown(with event: NSEvent) {
@@ -277,11 +342,37 @@ final class PanKnob: NSControl {
         default: super.keyDown(with: event)
         }
     }
-    private func nudge(_ d: Float) { onBegin?(); set(pan + d); onEnd?(); ValueBubble.hide() }
+    private func nudge(_ d: Double) { onBegin?(); set(value + d); onEnd?(); ValueBubble.hide() }
     override func accessibilityPerformIncrement() -> Bool { nudge(0.1); return true }
     override func accessibilityPerformDecrement() -> Bool { nudge(-0.1); return true }
-    override func becomeFirstResponder() -> Bool { needsDisplay = true; return true }
-    override func resignFirstResponder() -> Bool { needsDisplay = true; return true }
+    override func becomeFirstResponder() -> Bool { DispatchQueue.main.async { self.updateReveal() }; return true }
+    override func resignFirstResponder() -> Bool { DispatchQueue.main.async { self.updateReveal() }; return true }
+    /// For screenshots/tests: show the revealed state without a mouse.
+    func previewReveal(_ on: Bool) { hovering = on; updateReveal() }
+}
+
+/// Pan: a bipolar knob reading L/C/R.
+@MainActor
+final class PanKnob: RotaryKnob {
+    var pan: Float {
+        get { Float(value) }
+        set { value = Double(newValue) }
+    }
+    var onPanChange: ((Float) -> Void)?
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        bipolar = true
+        format = PanKnob.format
+        onChange = { [weak self] v in self?.onPanChange?(Float(v)) }
+        setAccessibilityValue(format(value))
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    static func format(_ p: Double) -> String {
+        let v = Int((abs(p) * 100).rounded())
+        return v == 0 ? "C" : (p < 0 ? "L\(v)" : "R\(v)")
+    }
 }
 
 // MARK: - Toggle chip (Mute / Solo / later Record)

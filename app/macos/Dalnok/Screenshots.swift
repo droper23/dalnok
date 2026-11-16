@@ -31,11 +31,24 @@ enum Screenshots {
             if app.session.tracks.count > 1, let hats = app.session.tracks[1].clips.first {
                 app.session.setStretch(hats.id, length: Int64(Double(hats.length) * 1.1), rate: 1 / 1.1, pitch: 0, preservePitch: true)
             }
+            // Knob states: a few pans off-center; one knob shown revealed (hover state).
+            let pans: [Float] = [0, -0.35, 0.6, -0.8, 0.25]
+            for (i, t) in app.session.tracks.enumerated() where i < pans.count { app.session.setPan(t.id, pans[i]) }
+            if app.session.tracks.count > 2 { w.headers.rows[2].pan.previewReveal(true) }
             w.timeline.selectedClip = app.session.tracks.last?.clips.first?.id
             app.engine.seek(Int64(app.engine.sampleRate * 2))
             app.engine.play()
             try? await Task.sleep(for: .seconds(1.2))
             png(w.window!.contentView!, dir.appendingPathComponent("arrangement.png"))
+            if w.headers.rows.count > 2 {
+                let rows = w.headers.rows.prefix(3)
+                let rect = rows.map { $0.convert($0.bounds, to: w.window!.contentView!) }.reduce(CGRect.null) { $0.union($1) }
+                if let v = w.window?.contentView, let rep = v.bitmapImageRepForCachingDisplay(in: rect) {
+                    v.cacheDisplay(in: rect, to: rep)
+                    try? rep.representation(using: .png, properties: [:])?.write(to: dir.appendingPathComponent("knobs.png"))
+                }
+                w.headers.rows[2].pan.previewReveal(false)
+            }
             app.engine.pause()
             w.showCommandPalette(nil)
             w.palette.filter("sp")

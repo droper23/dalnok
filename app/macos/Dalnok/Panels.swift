@@ -147,7 +147,7 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
         fader.onChange = { [weak self] db in guard let self else { return }; self.session.setGain(self.trackId, db: db) }
         fader.onEnd = { [weak self] in self?.session.engine.endGroup() }
         pan.onBegin = { [weak self] in self?.session.engine.beginGroup("Pan") }
-        pan.onChange = { [weak self] p in guard let self else { return }; self.session.setPan(self.trackId, p) }
+        pan.onPanChange = { [weak self] p in guard let self else { return }; self.session.setPan(self.trackId, p) }
         pan.onEnd = { [weak self] in self?.session.engine.endGroup() }
         meter.vertical = true
         meter.toolTip = "Post-fader level (click to reset the clip indicator)"
@@ -172,9 +172,9 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
             fader.centerYAnchor.constraint(equalTo: pan.centerYAnchor),
             fader.heightAnchor.constraint(equalToConstant: 18),
             pan.trailingAnchor.constraint(equalTo: meter.leadingAnchor, constant: -10),
-            pan.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 14),
-            pan.widthAnchor.constraint(equalToConstant: 26),
-            pan.heightAnchor.constraint(equalToConstant: 26),
+            pan.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 12),
+            pan.widthAnchor.constraint(equalToConstant: 30),
+            pan.heightAnchor.constraint(equalToConstant: 30),
             meter.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
             meter.topAnchor.constraint(equalTo: topAnchor, constant: 10),
             meter.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
