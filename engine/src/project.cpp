@@ -20,6 +20,7 @@
 #include <set>
 #include <sstream>
 #include <unistd.h>
+#include <vector>
 
 namespace fs = std::filesystem;
 
@@ -94,6 +95,7 @@ json::Value Engine::describe() const {
         tv.set("gainDb", std::isfinite(t.gainDb) ? Value(static_cast<double>(t.gainDb)) : Value());
         tv.set("pan", static_cast<double>(t.pan));
         tv.set("mute", t.muted);
+        if (t.solo) tv.set("solo", true);
         Value clips = Value::makeArray();
         for (const auto &c : model_.clips) {
             if (c.track != t.id) continue;
@@ -104,6 +106,9 @@ json::Value Engine::describe() const {
             cv.set("offset", c.offset);
             cv.set("length", c.length);
             cv.set("name", c.name);
+            if (c.fadeIn > 0) cv.set("fadeIn", c.fadeIn);
+            if (c.fadeOut > 0) cv.set("fadeOut", c.fadeOut);
+            if (c.fadeCurve != 0) cv.set("fadeCurve", c.fadeCurve == kFadeEqualPower ? "equalPower" : "linear");
             clips.push(std::move(cv));
         }
         tv.set("clips", std::move(clips));
@@ -113,12 +118,70 @@ json::Value Engine::describe() const {
     return root;
 }
 
-bool Engine::saveProject(const std::string &path, std::string &err) {
+namespace {
+bool sameContents(const fs::path &x, const fs::path &y) {
+    std::error_code ec;
+    if (fs::file_size(x, ec) != fs::file_size(y, ec) || ec) return false;
+    std::ifstream fx(x, std::ios::binary), fy(y, std::ios::binary);
+    std::vector<char> bx(1 << 16), by(1 << 16);
+    while (fx && fy) {
+        fx.read(bx.data(), static_cast<std::streamsize>(bx.size()));
+        fy.read(by.data(), static_cast<std::streamsize>(by.size()));
+        if (fx.gcount() != fy.gcount() || !std::equal(bx.begin(), bx.begin() + fx.gcount(), by.begin())) return false;
+    }
+    return true;
+}
+
+// Copies `src` into `dir` keeping its name. An identical file already there is
+// reused; a different file with the same name gets " 2", " 3", ... appended.
+bool copyIntoFolder(const fs::path &src, const fs::path &dir, fs::path &dest, std::string &err) {
+    std::error_code ec;
+    fs::create_directories(dir, ec);
+    if (ec) {
+        err = "cannot create " + dir.string() + ": " + ec.message();
+        return false;
+    }
+    const std::string stem = src.stem().string(), ext = src.extension().string();
+    for (int n = 1; n < 10000; ++n) {
+        dest = dir / (n == 1 ? stem + ext : stem + " " + std::to_string(n) + ext);
+        if (!fs::exists(dest)) {
+            fs::copy_file(src, dest, ec);
+            if (ec) {
+                err = "cannot copy " + src.string() + ": " + ec.message();
+                return false;
+            }
+            return true;
+        }
+        if (sameContents(src, dest)) return true;
+    }
+    err = "too many files named " + stem + ext;
+    return false;
+}
+} // namespace
+
+bool Engine::saveProject(const std::string &path, std::string &err, bool copyMedia) {
+    const fs::path projectDir = fs::absolute(fs::path(path)).parent_path();
+    if (copyMedia) {
+        // Copy first; only if every copy succeeds do the pool paths change.
+        std::set<DalnokMediaId> used;
+        for (const auto &c : model_.clips) used.insert(c.media);
+        std::map<DalnokMediaId, std::string> newPaths;
+        const fs::path audioDir = projectDir / "Audio Files";
+        for (const auto id : used) {
+            const PoolEntry *e = poolEntry(id);
+            if (!e || e->path.empty() || !fs::exists(e->path)) continue; // offline or generated
+            const auto rel = fs::path(e->path).lexically_relative(projectDir);
+            if (!rel.empty() && *rel.begin() != "..") continue;         // already inside the project folder
+            fs::path dest;
+            if (!copyIntoFolder(e->path, audioDir, dest, err)) return false;
+            newPaths[id] = dest.string();
+        }
+        for (const auto &[id, p] : newPaths) pool_[id].path = p;
+    }
     json::Value doc = json::Value::makeObject();
     doc.set("format", "dalnok-project");
     doc.set("version", kFormatVersion);
     json::Value body = describe();
-    const fs::path projectDir = fs::absolute(fs::path(path)).parent_path();
     for (auto &[key, value] : body.object) {
         if (key != "media") continue;
         for (auto &m : value.array) {
@@ -218,6 +281,7 @@ std::unique_ptr<Engine::PreparedProject> Engine::prepareProject(const std::strin
             if (t.gainDb <= -96.0f) t.gainDb = -INFINITY;
             t.pan = std::clamp(static_cast<float>(tv.getNumber("pan", 0)), -1.0f, 1.0f);
             t.muted = tv.getBool("mute", false);
+            t.solo = tv.getBool("solo", false);
             t.runtime = std::make_shared<TrackRuntime>();
             maxTrack = std::max(maxTrack, t.id);
             maxColor = std::max(maxColor, t.color);
@@ -231,6 +295,9 @@ std::unique_ptr<Engine::PreparedProject> Engine::prepareProject(const std::strin
                     c.offset = scale(toInt(cv, "offset"));
                     c.length = scale(toInt(cv, "length"));
                     c.name = cv.getString("name", "Audio");
+                    c.fadeIn = std::max<int64_t>(0, scale(toInt(cv, "fadeIn")));
+                    c.fadeOut = std::max<int64_t>(0, scale(toInt(cv, "fadeOut")));
+                    c.fadeCurve = cv.getString("fadeCurve", "linear") == "equalPower" ? kFadeEqualPower : kFadeLinear;
                     auto pe = pool.find(c.media);
                     if (c.id <= 0 || !clipIds.insert(c.id).second || pe == pool.end() || c.start < 0 ||
                         c.offset < 0 || c.length <= 0) {

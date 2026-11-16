@@ -162,16 +162,21 @@ bool Engine::edit(const char *name, bool structural, F &&fn) {
     if (undo_.size() > kMaxUndo) undo_.erase(undo_.begin());
     redo_.clear();
     ++revision_;
+    syncRuntimes();
     if (structural) commit();
     return true;
 }
 
 void Engine::syncRuntimes() {
+    int32_t solos = 0;
     for (const auto &t : model_.tracks) {
         t.runtime->gain.store(dbToGain(t.gainDb), std::memory_order_relaxed);
         t.runtime->pan.store(t.pan, std::memory_order_relaxed);
         t.runtime->muted.store(t.muted, std::memory_order_relaxed);
+        t.runtime->solo.store(t.solo, std::memory_order_relaxed);
+        solos += t.solo;
     }
+    soloCount_.store(solos, std::memory_order_relaxed);
 }
 
 void Engine::restore(Model m) {
@@ -311,6 +316,54 @@ bool Engine::setMute(DalnokTrackId id, bool muted, std::string &err) {
     });
 }
 
+bool Engine::setSolo(DalnokTrackId id, bool solo, std::string &err) {
+    return edit(solo ? "Solo" : "Unsolo", false, [&](Model &m) {
+        TrackState *t = m.track(id);
+        if (!t) return fail(err, "no such track");
+        t->solo = solo;
+        return true;
+    });
+}
+
+bool Engine::moveTrack(DalnokTrackId id, int32_t index, std::string &err) {
+    return edit("Move Track", true, [&](Model &m) {
+        auto it = std::find_if(m.tracks.begin(), m.tracks.end(), [id](const TrackState &t) { return t.id == id; });
+        if (it == m.tracks.end()) return fail(err, "no such track");
+        if (index < 0 || index >= static_cast<int32_t>(m.tracks.size())) return fail(err, "index out of range");
+        TrackState t = std::move(*it);
+        m.tracks.erase(it);
+        m.tracks.insert(m.tracks.begin() + index, std::move(t));
+        return true;
+    });
+}
+
+bool Engine::setClipFades(DalnokClipId id, int64_t fadeIn, int64_t fadeOut, int32_t curve, std::string &err) {
+    return edit("Fade", true, [&](Model &m) {
+        ClipState *c = m.clip(id);
+        if (!c) return fail(err, "no such clip");
+        if (fadeIn < 0 || fadeOut < 0) return fail(err, "fades must be >= 0");
+        if (curve != kFadeLinear && curve != kFadeEqualPower) return fail(err, "unknown fade curve");
+        c->fadeIn = fadeIn;
+        c->fadeOut = fadeOut;
+        c->fadeCurve = curve;
+        return true;
+    });
+}
+
+bool Engine::poolRelink(DalnokMediaId id, std::shared_ptr<const Media> media, const std::string &path,
+                        std::string &err) {
+    auto it = pool_.find(id);
+    if (it == pool_.end()) return fail(err, "no such media");
+    if (!media) return fail(err, "no media");
+    it->second.path = path;
+    it->second.frames = media->frames();
+    it->second.channels = media->channelCount();
+    it->second.handle = std::make_unique<DalnokMedia>(DalnokMedia{std::move(media)});
+    ++revision_;
+    commit();
+    return true;
+}
+
 DalnokClipId Engine::addClip(DalnokTrackId track, DalnokMediaId media, int64_t start, int64_t offset, int64_t length,
                              std::string &err) {
     const PoolEntry *pe = poolEntry(media);
@@ -387,6 +440,8 @@ DalnokClipId Engine::splitClip(DalnokClipId id, int64_t at, std::string &err) {
         right.start = at;
         right.offset += leftLen;
         right.length -= leftLen;
+        right.fadeIn = 0;      // the right part keeps the original fade-out
+        it->fadeOut = 0;       // the left part keeps the original fade-in
         m.clips.insert(it + 1, std::move(right)); // same z-level as the original
         return true;
     });
@@ -410,7 +465,14 @@ std::unique_ptr<RenderState> Engine::compile() const {
             // Defensive clamp: never read past the decoded media.
             const int64_t len = std::min(c.length, media->frames() - c.offset);
             if (len <= 0) continue;
-            rt.clips.push_back({media, c.start, c.offset, len});
+            // Fades longer than the clip are scaled down proportionally.
+            int64_t fi = std::min(c.fadeIn, len), fo = std::min(c.fadeOut, len);
+            if (fi + fo > len) {
+                const double k = static_cast<double>(len) / static_cast<double>(fi + fo);
+                fi = static_cast<int64_t>(static_cast<double>(fi) * k);
+                fo = len - fi;
+            }
+            rt.clips.push_back({media, c.start, c.offset, len, fi, fo, c.fadeCurve});
             if (media->channelCount() > 1) rt.monoSource = false;
         }
         s->tracks.push_back(std::move(rt));
@@ -473,7 +535,7 @@ void Engine::process(float *left, float *right, int frames) DALNOK_NONBLOCKING {
             continue;
         }
         if (current_) {
-            renderBlock(*current_, rtPosition_, n, l, r, scratch_, true);
+            renderBlock(*current_, rtPosition_, n, l, r, scratch_, true, soloCount_.load(std::memory_order_relaxed) > 0);
         } else {
             for (int i = 0; i < n; ++i) l[i] = r[i] = 0.0f;
         }
@@ -503,10 +565,11 @@ void Engine::process(float *left, float *right, int frames) DALNOK_NONBLOCKING {
 bool Engine::renderOffline(int64_t start, int64_t frames, float *left, float *right) {
     if (start < 0 || frames < 0 || !left || !right) return false;
     const auto state = compile();
+    const bool anySolo = soloCount_.load() > 0;
     Scratch scratch{};
     for (int64_t done = 0; done < frames;) {
         const int n = static_cast<int>(std::min<int64_t>(kMaxBlock, frames - done));
-        renderBlock(*state, start + done, n, left + done, right + done, scratch, false);
+        renderBlock(*state, start + done, n, left + done, right + done, scratch, false, anySolo);
         done += n;
     }
     return true;
@@ -526,7 +589,7 @@ bool Engine::renderToWav(const std::string &path, int64_t start, int64_t frames,
         const auto chunk = std::min<int64_t>(static_cast<int64_t>(l.size()), frames - done);
         for (int64_t o = 0; o < chunk;) {
             const int n = static_cast<int>(std::min<int64_t>(kMaxBlock, chunk - o));
-            renderBlock(*state, start + done + o, n, l.data() + o, r.data() + o, scratch, false);
+            renderBlock(*state, start + done + o, n, l.data() + o, r.data() + o, scratch, false, soloCount_.load() > 0);
             o += n;
         }
         if (!w->write(l.data(), r.data(), chunk, err)) return false;

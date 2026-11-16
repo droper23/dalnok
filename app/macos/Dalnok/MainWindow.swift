@@ -62,6 +62,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         transport.onRewind = { [weak self] in self?.goToStart() }
         transport.onImport = { [weak self] in self?.importAudio() }
         timeline.onVerticalScroll = { [weak self] y in self?.headers.scrollY = y }
+        timeline.onClipSelected = { [weak self] clip in self?.headers.selectedTrack = clip.track }
+        headers.contextMenu = trackContextMenu()
         session.onChange = { [weak self] in self?.modelChanged() }
         session.onMessage = { [weak self] msg in self?.flash(msg) }
         modelChanged()
@@ -214,6 +216,117 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         palette.show(over: window)
     }
 
+    // MARK: Tracks
+
+    var selectedTrack: DalnokTrackId? { headers.selectedTrack }
+
+    private func trackContextMenu() -> NSMenu {
+        let m = NSMenu()
+        for (title, sel) in [("Rename", #selector(renameTrack(_:))), ("Move Up", #selector(moveTrackUp(_:))),
+                             ("Move Down", #selector(moveTrackDown(_:))), ("Delete Track", #selector(deleteTrack(_:)))] {
+            let it = NSMenuItem(title: title, action: sel, keyEquivalent: "")
+            it.target = self
+            m.addItem(it)
+        }
+        return m
+    }
+
+    @objc func newTrack(_ sender: Any?) {
+        let id = session.addTrack()
+        headers.selectedTrack = id
+    }
+
+    @objc func deleteTrack(_ sender: Any?) {
+        guard let t = selectedTrack else { return }
+        let index = session.tracks.firstIndex { $0.id == t } ?? 0
+        session.removeTrack(t)
+        // Keep a selection so repeated ⌘⌫ works like Logic.
+        headers.selectedTrack = session.tracks.isEmpty ? nil : session.tracks[min(index, session.tracks.count - 1)].id
+    }
+
+    @objc func moveTrackUp(_ sender: Any?) { moveSelectedTrack(by: -1) }
+    @objc func moveTrackDown(_ sender: Any?) { moveSelectedTrack(by: 1) }
+    private func moveSelectedTrack(by d: Int) {
+        guard let t = selectedTrack, let i = session.tracks.firstIndex(where: { $0.id == t }) else { return }
+        let to = i + d
+        guard to >= 0, to < session.tracks.count else { return }
+        session.moveTrack(t, to: to)
+    }
+
+    @objc func toggleMuteTrack(_ sender: Any?) {
+        guard let t = selectedTrack, let tv = session.track(t) else { return }
+        session.setMute(t, !tv.muted)
+    }
+
+    @objc func toggleSoloTrack(_ sender: Any?) {
+        guard let t = selectedTrack, let tv = session.track(t) else { return }
+        session.setSolo(t, !tv.solo)
+    }
+
+    @objc func renameTrack(_ sender: Any?) {
+        guard let t = selectedTrack else { return }
+        headers.row(t)?.beginRename()
+    }
+
+    // MARK: Clip fades
+
+    private var selectedClipView: ClipView? { timeline.selectedClip.flatMap { session.clip($0) } }
+
+    @objc func setFadeCurveLinear(_ sender: Any?) { setCurve(DALNOK_FADE_LINEAR) }
+    @objc func setFadeCurveEqualPower(_ sender: Any?) { setCurve(DALNOK_FADE_EQUAL_POWER) }
+    private func setCurve(_ curve: DalnokFadeCurve) {
+        guard let c = selectedClipView else { return }
+        session.setFades(c.id, fadeIn: c.fadeIn, fadeOut: c.fadeOut, curve: curve)
+    }
+
+    @objc func removeFades(_ sender: Any?) {
+        guard let c = selectedClipView else { return }
+        session.setFades(c.id, fadeIn: 0, fadeOut: 0, curve: DalnokFadeCurve(rawValue: UInt32(c.fadeCurve)))
+    }
+
+    /// Adds 10 ms fades at both edges of the selected clip (quick de-click).
+    @objc func addShortFades(_ sender: Any?) {
+        guard let c = selectedClipView else { return }
+        let f = Int64(session.engine.sampleRate * 0.01)
+        session.setFades(c.id, fadeIn: max(c.fadeIn, f), fadeOut: max(c.fadeOut, f), curve: DalnokFadeCurve(rawValue: UInt32(c.fadeCurve)))
+    }
+
+    // MARK: Media
+
+    static var copyAudioOnSave: Bool {
+        get { UserDefaults.standard.object(forKey: "copyAudioOnSave") as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: "copyAudioOnSave") }
+    }
+
+    @objc func toggleCopyAudioOnSave(_ sender: Any?) { Self.copyAudioOnSave.toggle() }
+
+    @objc func relinkMissingAudio(_ sender: Any?) {
+        let missing = session.offlineMedia
+        guard !missing.isEmpty else { return }
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = true
+        panel.allowsMultipleSelection = true
+        panel.message = "Choose the missing files, or a folder to search (\(missing.count) missing: "
+            + missing.prefix(3).map { ($0.path as NSString).lastPathComponent }.joined(separator: ", ")
+            + (missing.count > 3 ? ", …)" : ")")
+        panel.prompt = "Relink"
+        panel.beginSheetModal(for: window!) { [weak self] resp in
+            guard resp == .OK else { return }
+            MainActor.assumeIsolated { () -> Void in
+                let urls = panel.urls
+                Task { await self?.relink(searching: urls) }
+            }
+        }
+    }
+
+    @discardableResult
+    func relink(searching urls: [URL]) async -> (Int, Int) {
+        let (done, still) = await session.relink(searching: urls)
+        flash(still == 0 ? "Relinked \(done) file\(done == 1 ? "" : "s")" : "Relinked \(done); \(still) still missing")
+        return (done, still)
+    }
+
     // MARK: Edit
 
     @objc func undo(_ sender: Any?) { session.undo() }
@@ -291,9 +404,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.dalnokProject]
         panel.nameFieldStringValue = session.projectURL?.lastPathComponent ?? "Untitled.dalnok"
+        let copy = NSButton(checkboxWithTitle: "Copy audio files into an “Audio Files” folder next to the project",
+                            target: nil, action: nil)
+        copy.state = Self.copyAudioOnSave ? .on : .off
+        let box = NSView(frame: NSRect(x: 0, y: 0, width: 460, height: 36))
+        copy.frame = NSRect(x: 12, y: 8, width: 440, height: 20)
+        box.addSubview(copy)
+        panel.accessoryView = box
         panel.beginSheetModal(for: window!) { [weak self] resp in
             guard resp == .OK, let url = panel.url else { return }
             MainActor.assumeIsolated { () -> Void in
+                Self.copyAudioOnSave = copy.state == .on
                 if self?.saveProject(to: url) == true { then?() }
             }
         }
@@ -302,7 +423,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     @discardableResult
     func saveProject(to url: URL) -> Bool {
         do {
-            try session.save(to: url)
+            try session.save(to: url, copyAudio: Self.copyAudioOnSave)
             NSDocumentController.shared.noteNewRecentDocumentURL(url)
             updateTitle()
             return true
@@ -378,7 +499,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
     // MARK: Menu validation
 
+    /// True while a text field is being edited (track rename, palette search…).
+    /// Unmodified shortcuts (Space, ↩, ⌫) must then reach the text, not the menu.
+    static var isTyping: Bool {
+        if let key = NSApp.keyWindow { return key.firstResponder is NSText }
+        // App not active (e.g. driven by automation): any visible window editing text.
+        return NSApp.windows.contains { $0.isVisible && $0.firstResponder is NSText }
+    }
+
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        if item.keyEquivalentModifierMask.isEmpty, !item.keyEquivalent.isEmpty, Self.isTyping { return false }
         switch item.action {
         case #selector(undo(_:)):
             item.title = session.engine.canUndo ? "Undo \(session.engine.undoName)" : "Undo"
@@ -388,6 +518,31 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             return session.engine.canRedo
         case #selector(delete(_:)):
             return timeline.selectedClip != nil
+        case #selector(deleteTrack(_:)), #selector(renameTrack(_:)):
+            return selectedTrack != nil
+        case #selector(moveTrackUp(_:)):
+            return selectedTrack != nil && session.tracks.first?.id != selectedTrack
+        case #selector(moveTrackDown(_:)):
+            return selectedTrack != nil && session.tracks.last?.id != selectedTrack
+        case #selector(toggleMuteTrack(_:)):
+            item.state = selectedTrack.flatMap { session.track($0) }?.muted == true ? .on : .off
+            return selectedTrack != nil
+        case #selector(toggleSoloTrack(_:)):
+            item.state = selectedTrack.flatMap { session.track($0) }?.solo == true ? .on : .off
+            return selectedTrack != nil
+        case #selector(setFadeCurveLinear(_:)), #selector(setFadeCurveEqualPower(_:)):
+            let eq = item.action == #selector(setFadeCurveEqualPower(_:))
+            item.state = selectedClipView.map { ($0.fadeCurve == 1) == eq } == true ? .on : .off
+            return selectedClipView != nil
+        case #selector(removeFades(_:)):
+            return selectedClipView.map { $0.fadeIn > 0 || $0.fadeOut > 0 } ?? false
+        case #selector(addShortFades(_:)):
+            return selectedClipView != nil
+        case #selector(toggleCopyAudioOnSave(_:)):
+            item.state = Self.copyAudioOnSave ? .on : .off
+            return true
+        case #selector(relinkMissingAudio(_:)):
+            return !session.offlineMedia.isEmpty
         case #selector(exportMix(_:)):
             return session.length > 0
         default:

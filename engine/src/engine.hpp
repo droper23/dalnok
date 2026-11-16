@@ -25,6 +25,7 @@ struct TrackState {
     float gainDb = 0;
     float pan = 0;
     bool muted = false;
+    bool solo = false;
     std::shared_ptr<TrackRuntime> runtime; // shared across model copies
 };
 
@@ -33,6 +34,8 @@ struct ClipState {
     DalnokTrackId track = 0;
     DalnokMediaId media = 0;
     int64_t start = 0, offset = 0, length = 0;
+    int64_t fadeIn = 0, fadeOut = 0; // frames
+    int32_t fadeCurve = 0;           // FadeCurve
     std::string name;
 };
 
@@ -80,6 +83,8 @@ public:
     // Media pool
     DalnokMediaId poolAdd(std::shared_ptr<const Media> media, const std::string &path);
     const PoolEntry *poolEntry(DalnokMediaId id) const;
+    // Points an existing pool entry at new decoded media (e.g. relinking an offline file). Not undoable.
+    bool poolRelink(DalnokMediaId id, std::shared_ptr<const Media> media, const std::string &path, std::string &err);
 
     // Model (read)
     const Model &model() const { return model_; }
@@ -94,12 +99,15 @@ public:
     bool setGainDb(DalnokTrackId id, float db, std::string &err);
     bool setPan(DalnokTrackId id, float pan, std::string &err);
     bool setMute(DalnokTrackId id, bool muted, std::string &err);
+    bool setSolo(DalnokTrackId id, bool solo, std::string &err);
+    bool moveTrack(DalnokTrackId id, int32_t index, std::string &err);
     DalnokClipId addClip(DalnokTrackId track, DalnokMediaId media, int64_t start, int64_t offset, int64_t length,
                          std::string &err);
     bool removeClip(DalnokClipId id, std::string &err);
     bool moveClip(DalnokClipId id, DalnokTrackId track, int64_t start, std::string &err);
     bool setClipRegion(DalnokClipId id, int64_t start, int64_t offset, int64_t length, std::string &err);
     DalnokClipId splitClip(DalnokClipId id, int64_t at, std::string &err);
+    bool setClipFades(DalnokClipId id, int64_t fadeIn, int64_t fadeOut, int32_t curve, std::string &err);
 
     // Undo
     bool undo();
@@ -113,7 +121,9 @@ public:
 
     // Project
     void newProject();
-    bool saveProject(const std::string &path, std::string &err);
+    // copyMedia: copy referenced audio not already inside the project folder into
+    // "<project folder>/Audio Files/" and reference the copies.
+    bool saveProject(const std::string &path, std::string &err, bool copyMedia = false);
     bool loadProject(const std::string &path, int32_t &missing, std::string &err);
     // Two-phase load: prepare (parse + decode, any thread) then apply (control thread).
     struct PreparedProject;
@@ -186,6 +196,7 @@ private:
 
     // Shared atomics.
     std::atomic<bool> playing_{false};
+    std::atomic<int32_t> soloCount_{0};
     std::atomic<int64_t> seekRequest_{-1};
     std::atomic<int64_t> position_{0};
 

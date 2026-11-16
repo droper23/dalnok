@@ -20,8 +20,9 @@ float quarterSin(float x) DALNOK_NONBLOCKING { // x in [0, pi/2]
     return x * (1.0f - x2 / 6.0f * (1.0f - x2 / 20.0f * (1.0f - x2 / 42.0f * (1.0f - x2 / 72.0f))));
 }
 
-void panGains(const TrackRuntime &rt, bool mono, float &gl, float &gr) DALNOK_NONBLOCKING {
-    const float g = rt.muted.load(std::memory_order_relaxed) ? 0.0f : rt.gain.load(std::memory_order_relaxed);
+void panGains(const TrackRuntime &rt, bool mono, bool anySolo, float &gl, float &gr) DALNOK_NONBLOCKING {
+    const bool silent = rt.muted.load(std::memory_order_relaxed) || (anySolo && !rt.solo.load(std::memory_order_relaxed));
+    const float g = silent ? 0.0f : rt.gain.load(std::memory_order_relaxed);
     const float p = std::clamp(rt.pan.load(std::memory_order_relaxed), -1.0f, 1.0f);
     if (mono) {
         constexpr float kHalfPi = 1.57079632679f, kSqrt2 = 1.41421356237f;
@@ -34,6 +35,14 @@ void panGains(const TrackRuntime &rt, bool mono, float &gl, float &gr) DALNOK_NO
     }
 }
 
+float fadeShape(float x, int32_t curve) DALNOK_NONBLOCKING { // x in [0, 1]
+    return curve == kFadeEqualPower ? quarterSin(x * 1.57079632679f) : x;
+}
+
+// A clip covers whatever is beneath it on the same track with weight `env`
+// (its fade envelope). Inside the body env = 1: the top clip wins outright.
+// Where the top clip fades over a lower clip, the result is a crossfade:
+//   out = under * w + clip * env,  w = 1 - env (linear) or sqrt(1 - env^2) (equal power).
 void mixClip(const RenderClip &clip, int64_t pos, int frames, float *l, float *r) DALNOK_NONBLOCKING {
     const int64_t a = std::max(pos, clip.start);
     const int64_t e = std::min(pos + frames, clip.start + clip.length);
@@ -44,23 +53,39 @@ void mixClip(const RenderClip &clip, int64_t pos, int frames, float *l, float *r
     const int o = static_cast<int>(a - pos);
     const float *sl = m.channel(0) + src;
     const float *sr = m.channelCount() > 1 ? m.channel(1) + src : sl;
-    // Overwrite, not add: the top-most overlapping clip wins (z-order).
+    const int64_t t0 = a - clip.start, len = clip.length;
+    const bool faded = t0 < clip.fadeIn || t0 + n > len - clip.fadeOut;
+    if (!faded) {
+        for (int i = 0; i < n; ++i) {
+            l[o + i] = sl[i];
+            r[o + i] = sr[i];
+        }
+        return;
+    }
     for (int i = 0; i < n; ++i) {
-        l[o + i] = sl[i];
-        r[o + i] = sr[i];
+        const int64_t t = t0 + i;
+        float env = 1.0f;
+        if (t < clip.fadeIn)
+            env *= fadeShape((static_cast<float>(t) + 0.5f) / static_cast<float>(clip.fadeIn), clip.curve);
+        if (t >= len - clip.fadeOut)
+            env *= fadeShape((static_cast<float>(len - t) - 0.5f) / static_cast<float>(clip.fadeOut), clip.curve);
+        const float under = clip.curve == kFadeEqualPower ? __builtin_sqrtf(std::max(0.0f, 1.0f - env * env))
+                                                          : 1.0f - env;
+        l[o + i] = l[o + i] * under + sl[i] * env;
+        r[o + i] = r[o + i] * under + sr[i] * env;
     }
 }
 
 } // namespace
 
 void renderBlock(const RenderState &state, int64_t pos, int frames, float *left, float *right,
-                 Scratch &s, bool smooth) DALNOK_NONBLOCKING {
+                 Scratch &s, bool smooth, bool anySolo) DALNOK_NONBLOCKING {
     clear(left, frames);
     clear(right, frames);
     for (const RenderTrack &t : state.tracks) {
         TrackRuntime &rt = *t.runtime;
         float gl, gr;
-        panGains(rt, t.monoSource, gl, gr);
+        panGains(rt, t.monoSource, anySolo, gl, gr);
 
         bool any = false;
         for (const RenderClip &c : t.clips) {

@@ -28,7 +28,7 @@
 extern "C" {
 #endif
 
-#define DALNOK_API_VERSION 3
+#define DALNOK_API_VERSION 4
 
 typedef enum {
     DALNOK_OK = 0,
@@ -128,6 +128,10 @@ DalnokMediaId dalnok_pool_add(DalnokEngine *engine, DalnokMedia *media, const ch
 const DalnokMedia *dalnok_pool_media(const DalnokEngine *engine, DalnokMediaId id);
 /* Copies the source path into `buf`; returns the full length. */
 size_t dalnok_pool_path(const DalnokEngine *engine, DalnokMediaId id, char *buf, size_t len);
+/* Points a pool entry (typically an offline one) at new media; clips using it
+ * come back online. The engine takes its own reference. Not undoable. */
+DalnokStatus dalnok_pool_relink(DalnokEngine *engine, DalnokMediaId id, DalnokMedia *media, const char *path,
+                                char *err, size_t err_len);
 
 /* ---- Model queries --------------------------------------------------- */
 
@@ -142,6 +146,7 @@ typedef struct {
     float gain_db;       /* -INFINITY for silence */
     float pan;
     bool muted;
+    bool solo;
     int32_t clip_count;
 } DalnokTrackInfo;
 DalnokStatus dalnok_track_info(const DalnokEngine *engine, DalnokTrackId track, DalnokTrackInfo *out);
@@ -158,6 +163,9 @@ typedef struct {
     int64_t length;       /* frames */
     int64_t media_frames; /* total frames of the source media */
     bool offline;         /* source missing: renders silence */
+    int64_t fade_in;      /* frames */
+    int64_t fade_out;     /* frames */
+    int32_t fade_curve;   /* DalnokFadeCurve */
     char name[128];
 } DalnokClipInfo;
 DalnokStatus dalnok_clip_info(const DalnokEngine *engine, DalnokClipId clip, DalnokClipInfo *out);
@@ -176,6 +184,10 @@ DalnokStatus dalnok_track_set_gain_db(DalnokEngine *engine, DalnokTrackId track,
  * center). Stereo sources: balance. */
 DalnokStatus dalnok_track_set_pan(DalnokEngine *engine, DalnokTrackId track, float pan);
 DalnokStatus dalnok_track_set_mute(DalnokEngine *engine, DalnokTrackId track, bool muted);
+/* While any track is soloed, only soloed tracks are heard. */
+DalnokStatus dalnok_track_set_solo(DalnokEngine *engine, DalnokTrackId track, bool solo);
+/* Moves a track to `index` in display order. */
+DalnokStatus dalnok_track_move(DalnokEngine *engine, DalnokTrackId track, int32_t index);
 
 /* Places pool media on a track. length <= 0 means "to the end of the media".
  * Returns 0 on failure. */
@@ -191,6 +203,12 @@ DalnokStatus dalnok_clip_set_region(DalnokEngine *engine, DalnokClipId clip, int
 /* Splits at a timeline frame strictly inside the clip; the right part gets a new id. */
 DalnokStatus dalnok_clip_split(DalnokEngine *engine, DalnokClipId clip, int64_t at_frame,
                                DalnokClipId *right_out);
+
+typedef enum { DALNOK_FADE_LINEAR = 0, DALNOK_FADE_EQUAL_POWER = 1 } DalnokFadeCurve;
+/* Fade lengths in frames (scaled down if they exceed the clip). A clip that
+ * fades over a lower clip on the same track crossfades with it. */
+DalnokStatus dalnok_clip_set_fades(DalnokEngine *engine, DalnokClipId clip, int64_t fade_in, int64_t fade_out,
+                                   DalnokFadeCurve curve);
 
 /* ---- Undo ------------------------------------------------------------ */
 
@@ -213,6 +231,11 @@ void dalnok_project_new(DalnokEngine *engine);
 /* Writes a versioned JSON project atomically (temp file + rename). Media is
  * referenced by path (absolute and relative to the project file). */
 DalnokStatus dalnok_project_save(DalnokEngine *engine, const char *path, char *err, size_t err_len);
+/* As dalnok_project_save; with copy_media, audio outside the project folder is
+ * first copied into "<project folder>/Audio Files/" (identical files reused,
+ * name clashes numbered) and the project then references the copies. */
+DalnokStatus dalnok_project_save_copying(DalnokEngine *engine, const char *path, bool copy_media, char *err,
+                                         size_t err_len);
 /* Replaces the current project. Missing media files become offline clips
  * (count reported in `missing_out`, may be NULL). On error the current
  * project is left untouched. */

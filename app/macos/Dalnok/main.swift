@@ -79,11 +79,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
+/// Unmodified shortcuts (Space, ↩, ⌫) belong to the text being edited while a
+/// field has focus. AppKit consumes matching key equivalents even when the item
+/// is disabled, so they must not match at all.
+final class MainMenu: NSMenu {
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        let mods = event.modifierFlags.intersection([.command, .control, .option])
+        if mods.isEmpty, MainActor.assumeIsolated({ MainWindowController.isTyping }) { return false }
+        return super.performKeyEquivalent(with: event)
+    }
+}
+
 @MainActor
 /// Window commands target the (single) window controller directly, so they work
 /// and validate regardless of which window is key.
 func buildMenu(target: MainWindowController) -> NSMenu {
-    let bar = NSMenu()
+    let bar = MainMenu()
     func menu(_ title: String, _ items: [NSMenuItem]) {
         let top = NSMenuItem(title: title, action: nil, keyEquivalent: "")
         let m = NSMenu(title: title)
@@ -113,6 +124,9 @@ func buildMenu(target: MainWindowController) -> NSMenu {
         .separator(),
         item("Import Audio…", #selector(W.importAudio), "i"),
         item("Export Mix…", #selector(W.exportMix(_:)), "b"),
+        .separator(),
+        item("Relink Missing Audio…", #selector(W.relinkMissingAudio(_:)), ""),
+        item("Copy Audio into Project on Save", #selector(W.toggleCopyAudioOnSave(_:)), ""),
     ])
     menu("Edit", [
         item("Undo", #selector(W.undo(_:)), "z"),
@@ -120,6 +134,29 @@ func buildMenu(target: MainWindowController) -> NSMenu {
         .separator(),
         item("Delete", #selector(W.delete(_:)), "\u{8}", []),
         item("Split at Playhead", #selector(W.splitAtPlayhead), "t"),
+    ])
+    menu("Track", [
+        item("New Track", #selector(W.newTrack(_:)), "n", [.command, .option]),
+        item("Rename Track", #selector(W.renameTrack(_:)), ""),
+        item("Delete Track", #selector(W.deleteTrack(_:)), "\u{8}", [.command]),
+        .separator(),
+        item("Move Track Up", #selector(W.moveTrackUp(_:)), String(UnicodeScalar(NSUpArrowFunctionKey)!), [.command, .option]),
+        item("Move Track Down", #selector(W.moveTrackDown(_:)), String(UnicodeScalar(NSDownArrowFunctionKey)!), [.command, .option]),
+        .separator(),
+        item("Mute Track", #selector(W.toggleMuteTrack(_:)), "m", [.control]),
+        item("Solo Track", #selector(W.toggleSoloTrack(_:)), "s", [.control]),
+    ])
+    let curve = NSMenuItem(title: "Fade Curve", action: nil, keyEquivalent: "")
+    curve.submenu = NSMenu(title: "Fade Curve")
+    for (title, sel) in [("Linear", #selector(W.setFadeCurveLinear(_:))), ("Equal Power", #selector(W.setFadeCurveEqualPower(_:)))] {
+        let it = NSMenuItem(title: title, action: sel, keyEquivalent: "")
+        it.target = target
+        curve.submenu?.addItem(it)
+    }
+    menu("Clip", [
+        item("Add Short Fades", #selector(W.addShortFades(_:)), "f", [.control]),
+        item("Remove Fades", #selector(W.removeFades(_:)), ""),
+        curve,
     ])
     menu("Transport", [
         item("Play / Pause", #selector(W.togglePlay), " ", []),

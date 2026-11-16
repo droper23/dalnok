@@ -75,6 +75,26 @@ const CommandDef kCommands[] = {
          if (!needInt(a, "track", t, err)) return DALNOK_ERR_INVALID_ARG;
          return status(e.setMute(t, a.getBool("muted", true), err), err);
      }},
+    {"track.setSolo", "Solo or Unsolo Track", "{track, solo}", [](ARGS) {
+         DalnokTrackId t;
+         if (!needInt(a, "track", t, err)) return DALNOK_ERR_INVALID_ARG;
+         return status(e.setSolo(t, a.getBool("solo", true), err), err);
+     }},
+    {"track.move", "Move Track", "{track, index}", [](ARGS) {
+         DalnokTrackId t;
+         int32_t i;
+         if (!needInt(a, "track", t, err) || !needInt(a, "index", i, err)) return DALNOK_ERR_INVALID_ARG;
+         return status(e.moveTrack(t, i, err), err);
+     }},
+    {"clip.setFades", "Set Clip Fades", "{clip, fadeIn, fadeOut, curve?: linear|equalPower}", [](ARGS) {
+         DalnokClipId c;
+         int64_t fi, fo;
+         if (!needInt(a, "clip", c, err) || !needInt(a, "fadeIn", fi, err) || !needInt(a, "fadeOut", fo, err))
+             return DALNOK_ERR_INVALID_ARG;
+         const auto curve = a.getString("curve", "linear");
+         if (curve != "linear" && curve != "equalPower") return err = "curve must be linear or equalPower", DALNOK_ERR_INVALID_ARG;
+         return status(e.setClipFades(c, fi, fo, curve == "equalPower" ? kFadeEqualPower : kFadeLinear, err), err);
+     }},
     {"clip.add", "Add Clip", "{track, media, start?, offset?, length?}", [](ARGS) {
          DalnokTrackId t;
          DalnokMediaId m;

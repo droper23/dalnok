@@ -85,9 +85,11 @@ final class Engine {
     // Project
     var isDirty: Bool { dalnok_project_dirty(handle) }
     func newProject() { dalnok_project_new(handle) }
-    func save(to url: URL) throws {
+    func save(to url: URL, copyAudio: Bool = false) throws {
         var err = [CChar](repeating: 0, count: 512)
-        guard dalnok_project_save(handle, url.path, &err, 512) == DALNOK_OK else { throw EngineError(description: cString(err)) }
+        guard dalnok_project_save_copying(handle, url.path, copyAudio, &err, 512) == DALNOK_OK else {
+            throw EngineError(description: cString(err))
+        }
     }
     /// Returns the number of offline (missing) media files.
     func load(from url: URL) throws -> Int {

@@ -19,11 +19,15 @@ final class TimelineView: NSView {
     var onSelectionChange: (() -> Void)?
 
     var selectedClip: DalnokClipId? { didSet { needsDisplay = true; onSelectionChange?() } }
+    var onClipSelected: ((ClipView) -> Void)?
+    private var hoveredClip: DalnokClipId? { didSet { if hoveredClip != oldValue { needsDisplay = true } } }
 
     private let playheadLayer = CALayer()
     private var mins: [Float] = [], maxs: [Float] = []
 
-    private enum Zone { case body, leftEdge, rightEdge }
+    private enum Zone { case body, leftEdge, rightEdge, fadeIn, fadeOut }
+    private let titleH: CGFloat = 16
+    private let fadeHandleZone: CGFloat = 14
     private struct Drag {
         let clip: ClipView
         let zone: Zone
@@ -205,7 +209,6 @@ final class TimelineView: NSView {
         ctx.clip()
         ctx.setFillColor(base.withAlphaComponent(dim ? 0.08 : (selected ? 0.32 : 0.22)).cgColor)
         ctx.fill(rect)
-        let titleH: CGFloat = 16
         ctx.setFillColor(base.withAlphaComponent(dim ? 0.25 : (selected ? 0.95 : 0.75)).cgColor)
         ctx.fill(CGRect(x: rect.minX, y: rect.minY, width: rect.width, height: titleH))
         let attrs: [NSAttributedString.Key: Any] = [
@@ -218,12 +221,67 @@ final class TimelineView: NSView {
         if let media = session.engine.poolMedia(clip.media) {
             drawWaveform(ctx, media: media, clip: clip, rect: rect, top: rect.minY + titleH + 2, color: base, dim: dim, scale: scale)
         }
+        drawFades(ctx, clip, rect: rect)
         ctx.restoreGState()
+        if selected || clip.id == hoveredClip { drawFadeHandles(ctx, clip, rect: rect) }
 
         ctx.addPath(path)
         ctx.setStrokeColor((selected ? Theme.text : base.withAlphaComponent(0.9)).cgColor)
         ctx.setLineWidth(selected ? 1.5 : 1)
         ctx.strokePath()
+    }
+
+    private func fadeWidths(_ c: ClipView, _ rect: CGRect) -> (CGFloat, CGFloat) {
+        // Mirror the engine's clamping so what you see is what you hear.
+        var fi = min(c.fadeIn, c.length), fo = min(c.fadeOut, c.length)
+        if fi + fo > c.length && fi + fo > 0 {
+            let k = Double(c.length) / Double(fi + fo)
+            fi = Int64(Double(fi) * k); fo = c.length - fi
+        }
+        return (CGFloat(Double(fi) / framesPerPoint), CGFloat(Double(fo) / framesPerPoint))
+    }
+
+    /// Shades the faded-out area above the fade curve and strokes the curve.
+    private func drawFades(_ ctx: CGContext, _ c: ClipView, rect: CGRect) {
+        let (wi, wo) = fadeWidths(c, rect)
+        let top = rect.minY + titleH, bottom = rect.maxY
+        func curvePoints(from x0: CGFloat, width w: CGFloat, rising: Bool) -> [CGPoint] {
+            let n = max(2, Int(w / 3))
+            return (0...n).map { k in
+                let u = CGFloat(k) / CGFloat(n)
+                let x = rising ? u : 1 - u
+                let env = c.fadeCurve == Int32(DALNOK_FADE_EQUAL_POWER.rawValue) ? sin(x * .pi / 2) : x
+                return CGPoint(x: x0 + u * w, y: bottom - env * (bottom - top))
+            }
+        }
+        for (w, rising) in [(wi, true), (wo, false)] where w >= 1 {
+            let x0 = rising ? rect.minX : rect.maxX - w
+            let pts = curvePoints(from: x0, width: w, rising: rising)
+            let shade = CGMutablePath()
+            shade.move(to: CGPoint(x: x0, y: top))
+            shade.addLine(to: CGPoint(x: x0 + w, y: top))
+            for p in pts.reversed() { shade.addLine(to: p) }
+            shade.closeSubpath()
+            ctx.addPath(shade)
+            ctx.setFillColor(NSColor.black.withAlphaComponent(0.38).cgColor)
+            ctx.fillPath()
+            ctx.addLines(between: pts)
+            ctx.setStrokeColor(NSColor.white.withAlphaComponent(0.75).cgColor)
+            ctx.setLineWidth(1.25)
+            ctx.strokePath()
+        }
+    }
+
+    private func drawFadeHandles(_ ctx: CGContext, _ c: ClipView, rect: CGRect) {
+        let (wi, wo) = fadeWidths(c, rect)
+        for x in [rect.minX + max(wi, 4), rect.maxX - max(wo, 4)] {
+            let r = CGRect(x: x - 4, y: rect.minY + titleH - 4, width: 8, height: 8)
+            ctx.setFillColor(Theme.text.cgColor)
+            ctx.fillEllipse(in: r)
+            ctx.setStrokeColor(Theme.window.cgColor)
+            ctx.setLineWidth(1)
+            ctx.strokeEllipse(in: r)
+        }
     }
 
     /// One min/max column per device pixel across the visible span.
@@ -265,6 +323,12 @@ final class TimelineView: NSView {
             let r = clipRect(clip, laneY: laneY(ti))
             guard r.insetBy(dx: -2, dy: 0).contains(p) else { continue }
             let edge = min(edgeWidth, r.width / 3)
+            if p.y <= r.minY + titleH + 4 {
+                let (wi, wo) = fadeWidths(clip, r)
+                let zone = min(fadeHandleZone, r.width / 3)
+                if abs(p.x - (r.minX + max(wi, 4))) <= zone / 2 || p.x <= r.minX + zone { return (clip, .fadeIn) }
+                if abs(p.x - (r.maxX - max(wo, 4))) <= zone / 2 || p.x >= r.maxX - zone { return (clip, .fadeOut) }
+            }
             if p.x <= r.minX + edge { return (clip, .leftEdge) }
             if p.x >= r.maxX - edge { return (clip, .rightEdge) }
             return (clip, .body)
@@ -283,8 +347,11 @@ final class TimelineView: NSView {
 
     override func mouseMoved(with event: NSEvent) {
         let p = convert(event.locationInWindow, from: nil)
-        switch hit(p)?.1 {
+        let h = hit(p)
+        hoveredClip = h?.0.id
+        switch h?.1 {
         case .leftEdge?, .rightEdge?: NSCursor.resizeLeftRight.set()
+        case .fadeIn?, .fadeOut?: NSCursor.crosshair.set()
         case .body?: NSCursor.openHand.set()
         case nil: NSCursor.arrow.set()
         }
@@ -299,8 +366,9 @@ final class TimelineView: NSView {
             return
         }
         selectedClip = clip.id
+        onClipSelected?(clip)
         drag = Drag(clip: clip, zone: zone, startX: p.x)
-        session.engine.beginGroup(zone == .body ? "Move Clip" : "Trim Clip")
+        session.engine.beginGroup(zone == .body ? "Move Clip" : (zone == .fadeIn || zone == .fadeOut) ? "Fade" : "Trim Clip")
         if zone == .body { NSCursor.closedHand.set() }
     }
 
@@ -331,6 +399,24 @@ final class TimelineView: NSView {
             if start != current.start {
                 session.setRegion(c.id, start: start, offset: offset, length: c.end - start)
                 d.changed = true
+            }
+        case .fadeIn, .fadeOut:
+            // Fades are not snapped; they follow the mouse exactly.
+            let curve = DalnokFadeCurve(rawValue: UInt32(current.fadeCurve))
+            if d.zone == .fadeIn {
+                let len = Int64(max(0, frame(forX: p.x) - Double(current.start)))
+                let fi = min(len, current.length - current.fadeOut)
+                if fi != current.fadeIn {
+                    session.setFades(c.id, fadeIn: fi, fadeOut: current.fadeOut, curve: curve)
+                    d.changed = true
+                }
+            } else {
+                let len = Int64(max(0, Double(current.end) - frame(forX: p.x)))
+                let fo = min(len, current.length - current.fadeIn)
+                if fo != current.fadeOut {
+                    session.setFades(c.id, fadeIn: current.fadeIn, fadeOut: fo, curve: curve)
+                    d.changed = true
+                }
             }
         case .rightEdge:
             var end = snap(Double(c.end) + delta, bypass: bypass)
@@ -389,6 +475,8 @@ final class TimelineView: NSView {
         for (i, t) in session.tracks.enumerated() {
             guard let c = t.clips.first(where: { $0.id == id }) else { continue }
             let r = clipRect(c, laneY: laneY(i))
+            if zone == "fadeIn" { return convert(CGPoint(x: r.minX + 4, y: r.minY + titleH - 2), to: nil) }
+            if zone == "fadeOut" { return convert(CGPoint(x: r.maxX - 4, y: r.minY + titleH - 2), to: nil) }
             let x = zone == "left" ? r.minX + 2 : zone == "right" ? r.maxX - 2 : min(max(r.midX, 10), bounds.width - 10)
             return convert(CGPoint(x: x, y: r.midY), to: nil)
         }

@@ -70,6 +70,7 @@ final class SelfTest {
 
     func run() {
         Self.running = true
+        MainWindowController.copyAudioOnSave = true
         try? FileManager.default.createDirectory(at: workdir, withIntermediateDirectories: true)
         s.importFiles(files) { [self] in Task { await steps() } }
     }
@@ -167,6 +168,56 @@ final class SelfTest {
             check(false, "Audio > Output Device menu exists")
         }
 
+        // Fades: drag the fade-in handle, switch curve, remove.
+        w.timeline.selectedClip = first.id
+        dragClip(first.id, zone: "fadeIn", fraction: 0.2)
+        let faded = s.clip(first.id)!
+        check(faded.fadeIn > 0 && e.undoName == "Fade", "fade-in handle drag: \(faded.fadeIn) frames, one undo step")
+        check(perform("Equal Power"), "menu Clip > Fade Curve > Equal Power")
+        check(s.clip(first.id)?.fadeCurve == 1, "curve is equal power")
+        check(perform("Remove Fades"), "menu Clip > Remove Fades")
+        check(s.clip(first.id)?.fadeIn == 0, "fades removed")
+        check(perform("Add Short Fades"), "menu Clip > Add Short Fades")
+        check(s.clip(first.id)?.fadeIn == Int64(e.sampleRate * 0.01), "10 ms fades added")
+
+        // Tracks: select, solo, reorder (menu and drag), new, delete, rename.
+        let t0 = s.tracks[0].id
+        w.headers.select(t0)
+        check(perform("Solo Track"), "menu Track > Solo Track")
+        check(s.track(t0)?.solo == true, "track soloed")
+        _ = perform("Solo Track")
+        check(s.track(t0)?.solo == false, "track unsoloed")
+        check(perform("Move Track Down"), "menu Track > Move Track Down")
+        check(s.tracks[1].id == t0, "track moved down")
+        _ = perform("Undo")
+        if let row = w.headers.row(t0), s.tracks.count >= 2 {
+            let target = w.headers.convert(CGPoint(x: 20, y: Theme.rulerHeight + Theme.trackHeight * 2), to: nil)
+            w.headers.dragUpdate(row: row, windowPoint: target)
+            w.headers.dragEnd(row: row)
+            check(s.tracks[1].id == t0, "drag header reorders (now index \(s.tracks.firstIndex { $0.id == t0 } ?? -1))")
+            _ = perform("Undo")
+        }
+        let count = s.tracks.count
+        check(perform("New Track"), "menu Track > New Track")
+        check(s.tracks.count == count + 1, "track added")
+        check(perform("Delete Track"), "menu Track > Delete Track")
+        check(s.tracks.count == count, "track deleted")
+        w.headers.select(t0)
+        check(perform("Rename Track"), "menu Track > Rename Track")
+        let space = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+                                     windowNumber: w.window!.windowNumber, context: nil, characters: " ",
+                                     charactersIgnoringModifiers: " ", isARepeat: false, keyCode: 49)!
+        let typing = MainWindowController.isTyping
+        let consumed = NSApp.mainMenu?.performKeyEquivalent(with: space) ?? true
+        check(typing && !consumed && !e.isPlaying,
+              "Space types into the rename field instead of starting playback (typing=\(typing), menu consumed=\(consumed))")
+        w.headers.row(t0)?.nameLabel.stringValue = "Lead Vox"
+        w.window?.makeFirstResponder(nil)
+        check(!MainWindowController.isTyping && NSApp.mainMenu?.performKeyEquivalent(with: space) == true && e.isPlaying,
+              "Space starts playback when not typing")
+        e.pause()
+        check(s.track(t0)?.name == "Lead Vox", "renamed track (\(s.track(t0)?.name ?? "-"))")
+
         // Save, New (via menu), reopen.
         let project = workdir.appendingPathComponent("selftest.dalnok")
         check(w.saveProject(to: project), "save project")
@@ -178,6 +229,19 @@ final class SelfTest {
         check(s.tracks.count == files.count, "reopened \(s.tracks.count) tracks")
         check(s.clip(first.id)?.start == lt.start && s.clip(first.id)?.length == lt.length, "edits survived save/open")
         check(w.window?.title == "selftest", "window title is project name (\(w.window?.title ?? "-"))")
+        let audioDir = workdir.appendingPathComponent("Audio Files")
+        let copied = (try? FileManager.default.contentsOfDirectory(atPath: audioDir.path)) ?? []
+        check(copied.count == files.count, "save copied \(copied.count) audio files into Audio Files/")
+
+        // Relink: move the audio folder away, reopen, relink by searching the folder.
+        let movedAudio = workdir.appendingPathComponent("Moved Audio")
+        try? FileManager.default.moveItem(at: audioDir, to: movedAudio)
+        _ = await withCheckedContinuation { cont in w.openProject(project) { cont.resume(returning: $0) } }
+        check(s.offlineMedia.count == files.count, "\(s.offlineMedia.count) clips offline after moving audio")
+        check(menuItem("Relink Missing Audio")?.isEnabled == true, "File > Relink Missing Audio… enabled")
+        let (relinked, still) = await w.relink(searching: [movedAudio])
+        check(relinked == files.count && still == 0, "relinked \(relinked), \(still) still missing")
+        check(s.tracks.flatMap(\.clips).allSatisfy { !$0.offline }, "all clips back online")
 
         // Export.
         let wav = workdir.appendingPathComponent("selftest.wav")

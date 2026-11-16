@@ -5,16 +5,17 @@ Status: ✅ verified · 🔶 in progress · ⬜ planned
 ## Phase 0: Research and architecture ✅
 Foundation evaluated ([[Foundation Evaluation]]), license chosen (GPLv3+), architecture defined, repo and vault set up.
 
-## Phase 1: Minimum working DAW 🔶
+## Phase 1: Minimum working DAW ✅ ([[Phase 1 Exit Review]])
 - **M1 ✅** Native window, audio device, import, waveform, play/pause/seek, multiple tracks, gain/pan/mute,
   offline render and WAV export (engine/CLI).
 - **M2 ✅** Engine-owned model, command catalog, snapshot undo. Clip move, trim, split, and delete in the UI.
   Project save and open (JSON v1, atomic). Export Mix. Offline media.
 - **M3 ✅** Command palette (⌘K), output device picker with unplug fallback, track and master meters,
   background project loading, live-path click tests, public parity page.
-- **M4 ⬜** Fades and crossfades, track reorder, delete, and solo, relink offline media, copy-to-project option. Phase 1 exit review.
+- **M4 ✅** Fades and crossfades, solo, track reorder, rename, and delete, relink offline media,
+  copy-to-project option, typing-safe shortcuts, benchmark, Phase 1 exit review.
 
-## Phase 2: Recording and editing ⬜
+## Phase 2: Recording and editing 🔶 (next: ADR-0006 recording architecture)
 Input and recording (with a Scarlett test rig), monitoring, split, fades, crossfades, autosave and crash
 recovery, basic routing, disk streaming.
 

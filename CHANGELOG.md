@@ -1,6 +1,17 @@
 # Changelog
 
 ## [Unreleased]
+### Added (2026-11-16, Phase 1 M4, completing Phase 1)
+- Clip fades and crossfades (linear and equal power): drag handles at the top corners, Clip menu (curve,
+  remove, add short fades). Fades over a lower clip crossfade with it.
+- Solo (smoothed on the live path). Track menu: New (⌥⌘N), Rename, Delete (⌘⌫), Move Up/Down (⌥⌘↑/↓),
+  Mute (⌃M), Solo (⌃S). Drag track headers to reorder. Double-click a name to rename.
+- File ▸ Relink Missing Audio… (search a folder by file name). Copy audio into `Audio Files/` on save
+  (default on; identical files reused, name clashes numbered).
+- `dalnok-cli bench`. Phase 1 exit review.
+### Fixed
+- Unmodified shortcuts (Space, ↩, ⌫) captured keystrokes while typing in text fields. AppKit consumes
+  matching key equivalents even for disabled items, so the main menu now passes them through while a field is edited.
 ### Added (2026-11-16, Phase 1 M3)
 - Command palette (⌘K): fuzzy search over every menu command, showing its menu location and shortcut.
 - Audio ▸ Output Device menu. Switching devices is safe: a failed switch keeps the previous device, and an unplugged device falls back to System Default.

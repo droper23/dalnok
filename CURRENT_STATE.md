@@ -1,14 +1,15 @@
 ---
 updated: 2026-11-16
-phase: 1 (Minimum working DAW)
-milestone: M1–M3 done, M4 next
+phase: 2 (Recording and editing) — Phase 1 complete
+milestone: Phase 1 M1–M4 done; Phase 2 starting
 ---
 # Current State
 
 ## Latest verified build
 - `main`, 2026-11-16. macOS 27.3, Xcode 27.2, Swift 6.4.2, Apple clang 21, M3 Max.
-- `swift build`: 0 warnings. `swift test`: 35 tests pass, including the mutation-checked click tests.
-  `scripts/check.sh` passes, including the live audio smoke test and the app self-test (43 checks).
+- `swift build`: 0 warnings. `swift test`: 45 tests pass, including the mutation-checked click tests.
+  `scripts/check.sh` passes, including the live audio smoke test and the app self-test (69 checks).
+- Phase 1 exit review: [[Phase 1 Exit Review]].
 - **Public parity page:** https://droper23.github.io/dalnok-status/ (source in `site/`, published by `scripts/publish-site.sh`).
 - CI has two jobs: build + test, and real-time effect analysis with Homebrew LLVM.
 
@@ -44,10 +45,15 @@ slot, and retired ones come back through an SPSC queue. See [[System Overview]],
 | Output device selection (Audio ▸ Output Device), fallback when a device disappears | `Devices` tests + self-test (fallback: implemented, not automated) |
 | Track and master peak meters with hold and clip indicator | `metersReportPostFaderPeaksAndReset` + self-test during playback |
 | Background project open (prepare off-thread, apply on main) | `TwoPhaseLoad` test + self-test |
+| Fades and crossfades (linear and equal power, drag handles, Clip menu) | `Fades` tests (numeric weights) + self-test |
+| Solo (smoothed), track reorder (drag or menu), rename, delete, new | `TracksSoloOrder` tests + self-test |
+| Relink missing audio (search a folder by name) | `relinkBringsOfflineClipsBack` + self-test |
+| Copy audio into "Audio Files/" on save (identical files reused, clashes numbered) | `saveCopyingMediaMakesProjectSelfContained` + self-test |
+| Single-key shortcuts don't steal typed text | Self-test (rename field + Space) |
+| Engine scales linearly: 256 tracks = 3% of the real-time budget | `dalnok-cli bench` (see the exit review) |
 
 ## Not yet / incomplete
 - Relinking offline media from the UI. Autosave and crash recovery (Phase 2).
-- Fades and crossfades at clip edges. Edits are currently hard cuts.
 - Disk streaming. Media is fully decoded into RAM, about 23 MB per stereo minute at 48 kHz.
 - Device selection and handling sample-rate changes. The default output only; the engine rate is fixed at launch.
 
@@ -59,12 +65,13 @@ slot, and retired ones come back through an SPSC queue. See [[System Overview]],
 - Peak meters only. No LUFS or RMS yet.
 
 ## Active objective
-Phase 1, M4 (Phase 1 exit): relink offline media, copy-to-project option, track reorder and delete in the UI,
-solo, and fades and crossfades. Then the Phase 1 exit review, after which recording begins (Phase 2).
+Phase 2: recording. Recording integrity outranks everything else.
 
 ## Next recommended action
-Add clip fades and crossfades in the engine (render + tests), because hard cuts click at edits. Then
-track reorder, delete, and solo. At every milestone, update `site/parity.json`, regenerate screenshots
+Write ADR-0006 (recording architecture): input via AUHAL or an aggregate device, a lock-free capture
+ring from the audio thread, a disk-writer thread writing CAF or WAV with periodic header finalization,
+and recovery of partial takes after a crash. Then build input device selection and record-arm, with a
+long-duration capture test. At every milestone, update `site/parity.json`, regenerate screenshots
 (`Dalnok <files> --screenshots site/screenshots`), and run `scripts/publish-site.sh`.
 
 ## Links

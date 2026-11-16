@@ -151,6 +151,16 @@ const DalnokMedia *dalnok_pool_media(const DalnokEngine *e, DalnokMediaId id) {
     const PoolEntry *pe = e->impl.poolEntry(id);
     return pe && pe->handle->impl ? pe->handle.get() : nullptr;
 }
+DalnokStatus dalnok_pool_relink(DalnokEngine *e, DalnokMediaId id, DalnokMedia *m, const char *path, char *err,
+                                size_t err_len) {
+    if (!e || !m || !m->impl) return DALNOK_ERR_INVALID_ARG;
+    std::string msg;
+    if (!e->impl.poolRelink(id, m->impl, path ? path : "", msg)) {
+        copyOut(err, err_len, msg);
+        return DALNOK_ERR_NOT_FOUND;
+    }
+    return DALNOK_OK;
+}
 size_t dalnok_pool_path(const DalnokEngine *e, DalnokMediaId id, char *buf, size_t len) {
     const PoolEntry *pe = e ? e->impl.poolEntry(id) : nullptr;
     return copyOut(buf, len, pe ? pe->path : "");
@@ -178,6 +188,7 @@ DalnokStatus dalnok_track_info(const DalnokEngine *e, DalnokTrackId id, DalnokTr
     out->gain_db = t->gainDb;
     out->pan = t->pan;
     out->muted = t->muted;
+    out->solo = t->solo;
     for (const auto &c : e->impl.model().clips) out->clip_count += c.track == id;
     return DALNOK_OK;
 }
@@ -204,6 +215,9 @@ DalnokStatus dalnok_clip_info(const DalnokEngine *e, DalnokClipId id, DalnokClip
     out->length = c->length;
     out->media_frames = pe ? pe->frames : 0;
     out->offline = !pe || !pe->handle->impl;
+    out->fade_in = c->fadeIn;
+    out->fade_out = c->fadeOut;
+    out->fade_curve = c->fadeCurve;
     copyOut(out->name, sizeof out->name, c->name);
     return DALNOK_OK;
 }
@@ -235,6 +249,19 @@ DalnokStatus dalnok_track_set_pan(DalnokEngine *e, DalnokTrackId t, float pan) {
 DalnokStatus dalnok_track_set_mute(DalnokEngine *e, DalnokTrackId t, bool muted) {
     std::string err;
     return e ? statusFor(e->impl.setMute(t, muted, err), err) : DALNOK_ERR_INVALID_ARG;
+}
+
+DalnokStatus dalnok_track_set_solo(DalnokEngine *e, DalnokTrackId t, bool solo) {
+    std::string err;
+    return e ? statusFor(e->impl.setSolo(t, solo, err), err) : DALNOK_ERR_INVALID_ARG;
+}
+DalnokStatus dalnok_track_move(DalnokEngine *e, DalnokTrackId t, int32_t index) {
+    std::string err;
+    return e ? statusFor(e->impl.moveTrack(t, index, err), err) : DALNOK_ERR_INVALID_ARG;
+}
+DalnokStatus dalnok_clip_set_fades(DalnokEngine *e, DalnokClipId c, int64_t in, int64_t out, DalnokFadeCurve curve) {
+    std::string err;
+    return e ? statusFor(e->impl.setClipFades(c, in, out, static_cast<int32_t>(curve), err), err) : DALNOK_ERR_INVALID_ARG;
 }
 
 DalnokClipId dalnok_clip_add(DalnokEngine *e, DalnokTrackId t, DalnokMediaId m, int64_t start, int64_t offset,
@@ -283,6 +310,16 @@ void dalnok_undo_end_group(DalnokEngine *e) {
 
 // ---- Project ----------------------------------------------------------------
 
+DalnokStatus dalnok_project_save_copying(DalnokEngine *e, const char *path, bool copy_media, char *err,
+                                         size_t err_len) {
+    if (!e || !path) return DALNOK_ERR_INVALID_ARG;
+    std::string msg;
+    if (!e->impl.saveProject(path, msg, copy_media)) {
+        copyOut(err, err_len, msg);
+        return DALNOK_ERR_IO;
+    }
+    return DALNOK_OK;
+}
 void dalnok_project_new(DalnokEngine *e) {
     if (e) e->impl.newProject();
 }

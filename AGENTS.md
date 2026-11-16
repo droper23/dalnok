@@ -23,7 +23,8 @@ Swift/AppKit front end on macOS. GPL-3.0-or-later. This repo is also the project
 - `.build/debug/Dalnok <files…> --snapshot out.png [--play]` renders the UI to a PNG for visual checks.
 - `.build/debug/Dalnok <files…> --selftest <dir>` drives real menus and synthesized drags end to end.
   Extend `app/macos/Dalnok/SelfTest.swift` for every new UI interaction.
-- `.build/debug/dalnok-cli commands`, `command <proj> <name> '<json>' [--save]`, `render-project`.
+- `.build/debug/dalnok-cli commands`, `command <proj> <name> '<json>' [--save]`, `render-project`,
+  `bench --tracks N` (release build for meaningful numbers).
 - `scripts/ci/rt-effects.sh` runs the real-time effect analysis (uses Homebrew LLVM on CI).
 - `Dalnok <audio files> --screenshots site/screenshots` regenerates the parity-page screenshots from the real app.
 - `scripts/publish-site.sh` publishes `site/` (only) to the public repo `droper23/dalnok-status` (GitHub Pages).
@@ -37,6 +38,8 @@ Swift/AppKit front end on macOS. GPL-3.0-or-later. This repo is also the project
 - New engine features need a test with explicit numeric tolerances. Audio changes need an offline-render test.
 - Never report a feature as working without evidence: test output, CLI output, or a snapshot.
 - Dependencies must be permissive or system frameworks. Record each one in `04 - Research/Licensing.md`.
+- Menu shortcuts without a modifier key must never steal typed text. `MainMenu` passes them through while a
+  field is being edited. Keep the self-test check when adding shortcuts.
 - Don't copy code or assets from proprietary DAWs. Workflows can inspire us, but implementations can't be copied.
 - At session end, update `CURRENT_STATE.md`, `CHANGELOG.md`, and `10 - Development Journal/`, then commit.
 - **Parity page:** when a feature step changes state, update `site/parity.json`. Mark a step `verified`
