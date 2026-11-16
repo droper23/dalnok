@@ -7,6 +7,7 @@ milestone: M1 done, M2 next
 
 ## Latest verified build
 - `main`, 2026-11-16. macOS 27.3, Xcode 27.2, Swift 6.4.2, Apple clang 21, M3 Max.
+- CI: green on GitHub Actions (run 43959596606).
 - `swift build`: 0 warnings. `swift test`: 10 tests (21 cases) pass. The `atrium-cli play --churn` live smoke test passes.
 
 ## Architecture (now)
@@ -38,6 +39,7 @@ atomics. See [[System Overview]] and [[Real-Time Processing]].
 - Seeking while playing fades out and in (correct), but there's no automated test for click-free behavior.
 - Files with more than 2 channels keep only the first two.
 - When scrolled, track header rows can draw over the "TRACKS" label area.
+- CI (GitHub `macos-15`, Xcode 16.4, Apple clang 17) passes, but that clang lacks `[[clang::nonblocking]]`, so the real-time effect checks only run locally (Apple clang 21). Fix: a newer runner image or a Homebrew LLVM job.
 
 ## Active objective
 Phase 1, M2: a project model and command system in the engine, then clip move and trim, save and open
