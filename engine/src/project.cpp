@@ -132,29 +132,30 @@ bool Engine::saveProject(const std::string &path, std::string &err) {
     return true;
 }
 
-bool Engine::loadProject(const std::string &path, int32_t &missing, std::string &err) {
+std::unique_ptr<Engine::PreparedProject> Engine::prepareProject(const std::string &path, double sampleRate,
+                                                               int32_t &missing, std::string &err) {
     missing = 0;
     std::string text;
-    if (!readFile(path, text, err)) return false;
+    if (!readFile(path, text, err)) return nullptr;
     json::Value doc;
     if (!json::parse(text, doc, err)) {
         err = "invalid project file: " + err;
-        return false;
+        return nullptr;
     }
     if (!doc.isObject() || doc.getString("format", "") != "atrium-project") {
         err = "not an Atrium project";
-        return false;
+        return nullptr;
     }
     if (doc.getNumber("version", 0) > kFormatVersion) {
         err = "project was saved by a newer version of Atrium";
-        return false;
+        return nullptr;
     }
-    const double fileRate = doc.getNumber("sampleRate", sampleRate_);
+    const double fileRate = doc.getNumber("sampleRate", sampleRate);
     if (!(fileRate > 0)) {
         err = "invalid sampleRate";
-        return false;
+        return nullptr;
     }
-    const double ratio = sampleRate_ / fileRate;
+    const double ratio = sampleRate / fileRate;
     auto scale = [ratio](int64_t frames) { return static_cast<int64_t>(std::llround(static_cast<double>(frames) * ratio)); };
     const fs::path projectDir = fs::absolute(fs::path(path)).parent_path();
 
@@ -166,7 +167,7 @@ bool Engine::loadProject(const std::string &path, int32_t &missing, std::string 
             const auto id = static_cast<AtriumMediaId>(toInt(m, "id"));
             if (id <= 0 || pool.count(id)) {
                 err = "invalid media id";
-                return false;
+                return nullptr;
             }
             maxMedia = std::max(maxMedia, id);
             PoolEntry e;
@@ -180,8 +181,8 @@ bool Engine::loadProject(const std::string &path, int32_t &missing, std::string 
             std::vector<std::vector<float>> ch;
             std::string decodeErr;
             for (const auto &cand : candidates) {
-                if (fs::exists(cand) && decodeAudioFile(cand, sampleRate_, ch, decodeErr)) {
-                    auto decoded = std::make_shared<const Media>(std::move(ch), sampleRate_);
+                if (fs::exists(cand) && decodeAudioFile(cand, sampleRate, ch, decodeErr)) {
+                    auto decoded = std::make_shared<const Media>(std::move(ch), sampleRate);
                     e.path = cand;
                     e.frames = decoded->frames();
                     e.channels = decoded->channelCount();
@@ -208,7 +209,7 @@ bool Engine::loadProject(const std::string &path, int32_t &missing, std::string 
             t.id = static_cast<AtriumTrackId>(toInt(tv, "id"));
             if (t.id <= 0 || model.track(t.id)) {
                 err = "invalid track id";
-                return false;
+                return nullptr;
             }
             t.name = tv.getString("name", "Track");
             t.color = static_cast<int32_t>(toInt(tv, "color"));
@@ -234,7 +235,7 @@ bool Engine::loadProject(const std::string &path, int32_t &missing, std::string 
                     if (c.id <= 0 || !clipIds.insert(c.id).second || pe == pool.end() || c.start < 0 ||
                         c.offset < 0 || c.length <= 0) {
                         err = "invalid clip";
-                        return false;
+                        return nullptr;
                     }
                     // Rounding from rate conversion can overshoot by a frame.
                     c.length = std::min(c.length, std::max<int64_t>(1, pe->second.frames - c.offset));
@@ -246,17 +247,35 @@ bool Engine::loadProject(const std::string &path, int32_t &missing, std::string 
         }
     }
 
+    auto prepared = std::make_unique<PreparedProject>();
+    prepared->model = std::move(model);
+    prepared->pool = std::move(pool);
+    prepared->maxTrack = maxTrack;
+    prepared->maxClip = maxClip;
+    prepared->maxMedia = maxMedia;
+    prepared->maxColor = maxColor;
+    prepared->sampleRate = sampleRate;
+    return prepared;
+}
+
+void Engine::applyProject(std::unique_ptr<PreparedProject> p) {
     resetModel();
-    model_ = std::move(model);
-    pool_ = std::move(pool);
-    nextTrack_ = std::max(nextTrack_, maxTrack + 1);
-    nextClip_ = std::max(nextClip_, maxClip + 1);
-    nextMedia_ = std::max(nextMedia_, maxMedia + 1);
-    nextColor_ = maxColor + 1;
+    model_ = std::move(p->model);
+    pool_ = std::move(p->pool);
+    nextTrack_ = std::max(nextTrack_, p->maxTrack + 1);
+    nextClip_ = std::max(nextClip_, p->maxClip + 1);
+    nextMedia_ = std::max(nextMedia_, p->maxMedia + 1);
+    nextColor_ = p->maxColor + 1;
     syncRuntimes();
     ++revision_;
     savedRevision_ = revision_;
     commit();
+}
+
+bool Engine::loadProject(const std::string &path, int32_t &missing, std::string &err) {
+    auto p = prepareProject(path, sampleRate_, missing, err);
+    if (!p) return false;
+    applyProject(std::move(p));
     return true;
 }
 

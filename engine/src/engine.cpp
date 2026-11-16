@@ -59,10 +59,47 @@ Engine::~Engine() {
 
 bool Engine::startDevice(std::string &err) {
     if (device_) return true;
-    auto dev = createDefaultOutputDevice(sampleRate_);
-    if (!dev->start(&Engine::audioCallback, this, err)) return false;
+    auto dev = createOutputDevice(outputUid_, sampleRate_, err);
+    if (!dev || !dev->start(&Engine::audioCallback, this, err)) return false;
     device_ = std::move(dev);
     return true;
+}
+
+bool Engine::setOutputDevice(const std::string &uid, std::string &err) {
+    if (uid == outputUid_ && device_ && device_->alive()) return true;
+    const std::string previous = outputUid_;
+    const bool wasRunning = device_ != nullptr;
+    stopDevice();
+    outputUid_ = uid;
+    if (startDevice(err)) return true;
+    // Fall back to what was running before (or the default if that is gone).
+    outputUid_ = previous;
+    std::string ignored;
+    if (wasRunning && !startDevice(ignored)) {
+        outputUid_.clear();
+        startDevice(ignored);
+    }
+    return false;
+}
+
+bool Engine::pump(float *left, float *right, int frames) {
+    if (device_ || !left || !right || frames <= 0) return false;
+    process(left, right, frames);
+    collectGarbage();
+    return true;
+}
+
+bool Engine::readTrackMeter(AtriumTrackId id, float &l, float &r) {
+    const TrackState *t = model_.track(id);
+    if (!t) return false;
+    l = t->runtime->peakL.exchange(0.0f, std::memory_order_relaxed);
+    r = t->runtime->peakR.exchange(0.0f, std::memory_order_relaxed);
+    return true;
+}
+
+void Engine::readMasterMeter(float &l, float &r) {
+    l = masterPeakL_.exchange(0.0f, std::memory_order_relaxed);
+    r = masterPeakR_.exchange(0.0f, std::memory_order_relaxed);
 }
 
 void Engine::stopDevice() {
@@ -449,6 +486,13 @@ void Engine::process(float *left, float *right, int frames) ATRIUM_NONBLOCKING {
             }
             transportGain_ = g;
         }
+        float pl = 0, pr = 0;
+        for (int i = 0; i < n; ++i) {
+            pl = std::max(pl, std::fabs(l[i]));
+            pr = std::max(pr, std::fabs(r[i]));
+        }
+        raisePeak(masterPeakL_, pl);
+        raisePeak(masterPeakR_, pr);
         rtPosition_ += n;
     }
     position_.store(pendingSeek_ >= 0 ? pendingSeek_ : rtPosition_, std::memory_order_relaxed);

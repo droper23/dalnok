@@ -14,6 +14,10 @@ struct AtriumEngine {
     explicit AtriumEngine(double sr) : impl(sr) {}
 };
 
+struct AtriumProjectData {
+    std::unique_ptr<Engine::PreparedProject> impl;
+};
+
 namespace {
 size_t copyOut(char *buf, size_t len, const std::string &s) {
     if (buf && len > 0) {
@@ -52,6 +56,55 @@ bool atrium_engine_device_running(const AtriumEngine *e) { return e && e->impl.d
 double atrium_engine_sample_rate(const AtriumEngine *e) { return e ? e->impl.sampleRate() : 0; }
 void atrium_engine_collect_garbage(AtriumEngine *e) {
     if (e) e->impl.collectGarbage();
+}
+
+// ---- Devices, pump, meters ------------------------------------------------
+
+int32_t atrium_output_devices(AtriumDeviceInfo *out, int32_t capacity) {
+    const auto list = listOutputDevices();
+    for (int32_t i = 0; out && i < capacity && i < static_cast<int32_t>(list.size()); ++i) {
+        const auto &d = list[static_cast<size_t>(i)];
+        out[i] = AtriumDeviceInfo{};
+        copyOut(out[i].uid, sizeof out[i].uid, d.uid);
+        copyOut(out[i].name, sizeof out[i].name, d.name);
+        out[i].sample_rate = d.sampleRate;
+        out[i].output_channels = d.outputChannels;
+        out[i].is_default = d.isDefault;
+    }
+    return static_cast<int32_t>(list.size());
+}
+
+AtriumStatus atrium_engine_set_output_device(AtriumEngine *e, const char *uid, char *err, size_t err_len) {
+    if (!e) return ATRIUM_ERR_INVALID_ARG;
+    std::string msg;
+    if (!e->impl.setOutputDevice(uid ? uid : "", msg)) {
+        copyOut(err, err_len, msg);
+        return ATRIUM_ERR_DEVICE;
+    }
+    return ATRIUM_OK;
+}
+size_t atrium_engine_output_device(const AtriumEngine *e, char *buf, size_t len) {
+    return copyOut(buf, len, e ? e->impl.outputDeviceUid() : "");
+}
+bool atrium_engine_device_alive(const AtriumEngine *e) { return e && e->impl.deviceAlive(); }
+double atrium_engine_hardware_sample_rate(const AtriumEngine *e) { return e ? e->impl.hardwareSampleRate() : 0; }
+
+AtriumStatus atrium_engine_pump(AtriumEngine *e, float *l, float *r, int32_t frames) {
+    return e && e->impl.pump(l, r, frames) ? ATRIUM_OK : ATRIUM_ERR_INVALID_ARG;
+}
+
+AtriumStatus atrium_meter_track(AtriumEngine *e, AtriumTrackId t, float *l, float *r) {
+    float a = 0, b = 0;
+    if (!e || !e->impl.readTrackMeter(t, a, b)) return ATRIUM_ERR_NOT_FOUND;
+    if (l) *l = a;
+    if (r) *r = b;
+    return ATRIUM_OK;
+}
+void atrium_meter_master(AtriumEngine *e, float *l, float *r) {
+    float a = 0, b = 0;
+    if (e) e->impl.readMasterMeter(a, b);
+    if (l) *l = a;
+    if (r) *r = b;
 }
 
 // ---- Media ----------------------------------------------------------------
@@ -255,6 +308,30 @@ AtriumStatus atrium_project_load(AtriumEngine *e, const char *path, int32_t *mis
     return ATRIUM_OK;
 }
 bool atrium_project_dirty(const AtriumEngine *e) { return e && e->impl.dirty(); }
+
+AtriumStatus atrium_project_prepare(const char *path, double sr, AtriumProjectData **out, int32_t *missing_out,
+                                    char *err, size_t err_len) {
+    if (!path || !out || !(sr > 0)) return ATRIUM_ERR_INVALID_ARG;
+    *out = nullptr;
+    std::string msg;
+    int32_t missing = 0;
+    auto p = Engine::prepareProject(path, sr, missing, msg);
+    if (!p) {
+        copyOut(err, err_len, msg);
+        return msg.rfind("cannot open", 0) == 0 ? ATRIUM_ERR_IO : ATRIUM_ERR_FORMAT;
+    }
+    if (missing_out) *missing_out = missing;
+    *out = new AtriumProjectData{std::move(p)};
+    return ATRIUM_OK;
+}
+AtriumStatus atrium_project_apply(AtriumEngine *e, AtriumProjectData *data) {
+    std::unique_ptr<AtriumProjectData> owned(data);
+    if (!e || !data || !data->impl) return ATRIUM_ERR_INVALID_ARG;
+    if (data->impl->sampleRate != e->impl.sampleRate()) return ATRIUM_ERR_INVALID_ARG;
+    e->impl.applyProject(std::move(data->impl));
+    return ATRIUM_OK;
+}
+void atrium_project_data_release(AtriumProjectData *data) { delete data; }
 
 // ---- Command catalog --------------------------------------------------------
 

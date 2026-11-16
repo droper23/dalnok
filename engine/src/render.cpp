@@ -91,13 +91,18 @@ void renderBlock(const RenderState &state, int64_t pos, int frames, float *left,
         const float dl = (gl - rt.curL) / static_cast<float>(frames);
         const float dr = (gr - rt.curR) / static_cast<float>(frames);
         if (any) {
-            float cl = rt.curL, cr = rt.curR;
+            float cl = rt.curL, cr = rt.curR, pl = 0, pr = 0;
             for (int i = 0; i < frames; ++i) {
                 cl += dl;
                 cr += dr;
-                left[i] += s.trackL[i] * cl;
-                right[i] += s.trackR[i] * cr;
+                const float vl = s.trackL[i] * cl, vr = s.trackR[i] * cr;
+                left[i] += vl;
+                right[i] += vr;
+                pl = std::max(pl, std::fabs(vl));
+                pr = std::max(pr, std::fabs(vr));
             }
+            raisePeak(rt.peakL, pl);
+            raisePeak(rt.peakR, pr);
         }
         rt.curL = gl;
         rt.curR = gr;

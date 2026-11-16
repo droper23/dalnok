@@ -64,7 +64,18 @@ public:
     bool startDevice(std::string &err);
     void stopDevice();
     bool deviceRunning() const { return device_ != nullptr; }
+    // Switches output (empty uid = system default). On failure the previous device keeps running.
+    bool setOutputDevice(const std::string &uid, std::string &err);
+    const std::string &outputDeviceUid() const { return outputUid_; }
+    bool deviceAlive() const { return !device_ || device_->alive(); }
+    double hardwareSampleRate() const { return device_ ? device_->hardwareSampleRate() : 0; }
     void collectGarbage();
+    // Runs the live render path manually (no device may be running). For tests and simulation.
+    bool pump(float *left, float *right, int frames);
+
+    // Meters: peak since the last read, then reset (control thread).
+    bool readTrackMeter(AtriumTrackId id, float &l, float &r);
+    void readMasterMeter(float &l, float &r);
 
     // Media pool
     AtriumMediaId poolAdd(std::shared_ptr<const Media> media, const std::string &path);
@@ -104,6 +115,11 @@ public:
     void newProject();
     bool saveProject(const std::string &path, std::string &err);
     bool loadProject(const std::string &path, int32_t &missing, std::string &err);
+    // Two-phase load: prepare (parse + decode, any thread) then apply (control thread).
+    struct PreparedProject;
+    static std::unique_ptr<PreparedProject> prepareProject(const std::string &path, double sampleRate,
+                                                           int32_t &missing, std::string &err);
+    void applyProject(std::unique_ptr<PreparedProject> p);
     bool dirty() const { return revision_ != savedRevision_; }
     json::Value describe() const; // model as JSON (used by save and session.describe)
 
@@ -154,6 +170,7 @@ private:
     AtriumMediaId nextMedia_ = 1;
     int32_t nextColor_ = 0;
     std::unique_ptr<AudioDevice> device_;
+    std::string outputUid_;
 
     // Control -> audio handoff.
     std::atomic<RenderState *> pending_{nullptr};
@@ -165,6 +182,7 @@ private:
     float transportGain_ = 0.0f;
     int64_t pendingSeek_ = -1;
     int64_t rtPosition_ = 0;
+    std::atomic<float> masterPeakL_{0.0f}, masterPeakR_{0.0f};
 
     // Shared atomics.
     std::atomic<bool> playing_{false};
@@ -174,6 +192,16 @@ private:
     // Diagnostics (written by the audio thread).
     std::atomic<uint64_t> callbacks_{0}, framesRendered_{0}, maxCallbackNs_{0}, lastCallbackNs_{0};
     std::atomic<uint32_t> maxFrames_{0}, overloads_{0}, swaps_{0};
+};
+
+struct Engine::PreparedProject {
+    Model model;
+    std::map<AtriumMediaId, PoolEntry> pool;
+    AtriumTrackId maxTrack = 0;
+    AtriumClipId maxClip = 0;
+    AtriumMediaId maxMedia = 0;
+    int32_t maxColor = -1;
+    double sampleRate = 0;
 };
 
 float dbToGain(float db);

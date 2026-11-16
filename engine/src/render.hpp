@@ -22,9 +22,17 @@ struct TrackRuntime {
     std::atomic<float> gain{1.0f}; // linear
     std::atomic<float> pan{0.0f};
     std::atomic<bool> muted{false};
+    // Post-fader peak since the meter was last read (audio thread raises, UI resets).
+    std::atomic<float> peakL{0.0f}, peakR{0.0f};
     float curL = 0, curR = 0;
     bool primed = false;
 };
+
+// Raises a meter atomic to `v` if larger. A concurrent reset may be overwritten
+// by one stale value; harmless for metering.
+inline void raisePeak(std::atomic<float> &a, float v) ATRIUM_NONBLOCKING {
+    if (v > a.load(std::memory_order_relaxed)) a.store(v, std::memory_order_relaxed);
+}
 
 struct RenderClip {
     std::shared_ptr<const Media> media;

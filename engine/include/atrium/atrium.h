@@ -28,7 +28,7 @@
 extern "C" {
 #endif
 
-#define ATRIUM_API_VERSION 2
+#define ATRIUM_API_VERSION 3
 
 typedef enum {
     ATRIUM_OK = 0,
@@ -58,6 +58,38 @@ AtriumStatus atrium_engine_start_device(AtriumEngine *engine, char *err, size_t 
 void atrium_engine_stop_device(AtriumEngine *engine);
 bool atrium_engine_device_running(const AtriumEngine *engine);
 double atrium_engine_sample_rate(const AtriumEngine *engine);
+
+/* ---- Output devices -------------------------------------------------- */
+
+typedef struct {
+    char uid[256];          /* stable identifier; pass to atrium_engine_set_output_device */
+    char name[256];
+    double sample_rate;     /* the device's current hardware rate */
+    int32_t output_channels;
+    bool is_default;        /* current system default output */
+} AtriumDeviceInfo;
+
+/* Fills up to `capacity` entries; returns the total number of output devices. [any thread] */
+int32_t atrium_output_devices(AtriumDeviceInfo *out, int32_t capacity);
+/* Switches output. NULL or "" follows the system default. On failure the
+ * previous device keeps playing. Engine rate != hardware rate is converted. */
+AtriumStatus atrium_engine_set_output_device(AtriumEngine *engine, const char *uid, char *err, size_t err_len);
+/* Current selection ("" = system default); returns full length. */
+size_t atrium_engine_output_device(const AtriumEngine *engine, char *buf, size_t len);
+/* False once the selected device disappeared (e.g. unplugged); poll from the UI. */
+bool atrium_engine_device_alive(const AtriumEngine *engine);
+double atrium_engine_hardware_sample_rate(const AtriumEngine *engine);
+
+/* Runs the live render path (transport fades, smoothing, meters) for `frames`
+ * without a device. Fails if a device is running. For tests and simulation. */
+AtriumStatus atrium_engine_pump(AtriumEngine *engine, float *left, float *right, int32_t frames);
+
+/* ---- Meters ---------------------------------------------------------- */
+
+/* Linear post-fader peak since the previous read, per channel; reading resets.
+ * Only the live path (device or pump) feeds meters. */
+AtriumStatus atrium_meter_track(AtriumEngine *engine, AtriumTrackId track, float *left, float *right);
+void atrium_meter_master(AtriumEngine *engine, float *left, float *right);
 
 /* Frees snapshots retired by the audio thread. Call periodically (e.g. from a
  * UI timer). Cheap when there is nothing to do. */
@@ -186,6 +218,15 @@ AtriumStatus atrium_project_save(AtriumEngine *engine, const char *path, char *e
  * project is left untouched. */
 AtriumStatus atrium_project_load(AtriumEngine *engine, const char *path, int32_t *missing_out,
                                  char *err, size_t err_len);
+/* Two-phase load for responsive UIs: prepare parses and decodes on any
+ * thread; apply swaps it in on the control thread. `sample_rate` must equal
+ * the engine's rate. apply consumes `data` (also on failure). */
+typedef struct AtriumProjectData AtriumProjectData;
+AtriumStatus atrium_project_prepare(const char *path, double sample_rate, AtriumProjectData **out,
+                                    int32_t *missing_out, char *err, size_t err_len); /* [any thread] */
+AtriumStatus atrium_project_apply(AtriumEngine *engine, AtriumProjectData *data);
+void atrium_project_data_release(AtriumProjectData *data); /* [any thread] */
+
 /* True if the model changed since the last save/load/new. */
 bool atrium_project_dirty(const AtriumEngine *engine);
 
