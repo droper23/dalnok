@@ -10,6 +10,7 @@
   (default on; identical files reused, name clashes numbered).
 - `dalnok-cli bench`. Phase 1 exit review.
 ### Fixed
+- Test-only use-after-free in the relink test (caught by ASan after a CI segfault). Added an ASan/TSan CI job.
 - Unmodified shortcuts (Space, ↩, ⌫) captured keystrokes while typing in text fields. AppKit consumes
   matching key equivalents even for disabled items, so the main menu now passes them through while a field is edited.
 ### Added (2026-11-16, Phase 1 M3)

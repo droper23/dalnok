@@ -19,6 +19,7 @@ Swift/AppKit front end on macOS. GPL-3.0-or-later. This repo is also the project
 ## Commands
 - `swift build` and `swift test` for fast verification.
 - `scripts/check.sh` builds, tests, and runs a live audio smoke test (needs an output device).
+  `DALNOK_SANITIZE=1 scripts/check.sh` also runs the engine tests under ASan and TSan (CI always does).
 - `scripts/bundle.sh` creates `dist/Dalnok.app`.
 - `.build/debug/Dalnok <files…> --snapshot out.png [--play]` renders the UI to a PNG for visual checks.
 - `.build/debug/Dalnok <files…> --selftest <dir>` drives real menus and synthesized drags end to end.

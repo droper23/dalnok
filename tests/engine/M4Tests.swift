@@ -163,10 +163,10 @@ func dc(_ v: Float, _ n: Int) -> [Float] { [Float](repeating: v, count: n) }
         var fresh: OpaquePointer?
         dalnok_media_load(moved.path, sr, &fresh, nil, 0)
         #expect(dalnok_pool_relink(e2, clip.media, fresh, moved.path, nil, 0) == DALNOK_OK)
-        dalnok_media_release(fresh)
+        #expect(dalnok_pool_relink(e2, 999, fresh, "x", nil, 0) == DALNOK_ERR_NOT_FOUND)
+        dalnok_media_release(fresh) // the engine holds its own reference
         #expect(!clipInfo(e2, clip.id).offline)
         expectClose(render(e2, frames: 10_000).0, samples, tol: 2e-4, "relinked audio plays")
-        #expect(dalnok_pool_relink(e2, 999, fresh, "x", nil, 0) != DALNOK_OK)
     }
 
     @Test func saveCopyingMediaMakesProjectSelfContained() throws {

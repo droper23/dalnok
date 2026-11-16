@@ -9,6 +9,7 @@ milestone: Phase 1 M1–M4 done; Phase 2 starting
 - `main`, 2026-11-16. macOS 27.3, Xcode 27.2, Swift 6.4.2, Apple clang 21, M3 Max.
 - `swift build`: 0 warnings. `swift test`: 45 tests pass, including the mutation-checked click tests.
   `scripts/check.sh` passes, including the live audio smoke test and the app self-test (69 checks).
+- Engine tests are clean under AddressSanitizer and ThreadSanitizer (CI job `sanitizers`). The app self-test is clean under ASan.
 - Phase 1 exit review: [[Phase 1 Exit Review]].
 - **Public parity page:** https://droper23.github.io/dalnok-status/ (source in `site/`, published by `scripts/publish-site.sh`).
 - CI has two jobs: build + test, and real-time effect analysis with Homebrew LLVM.

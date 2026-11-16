@@ -110,6 +110,7 @@ import Testing
 @Suite struct Persistence {
     let dir = tempDir()
 
+    @discardableResult
     func makeProject(_ e: OpaquePointer, audio: URL) throws -> [Float] {
         let samples = try writeTestWav(audio, frames: 24_000)
         var m: OpaquePointer?

@@ -7,6 +7,10 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 swift build
 swift test
+if [[ "${DALNOK_SANITIZE:-0}" == "1" ]]; then
+  swift test --sanitize=address
+  swift test --sanitize=thread
+fi
 if [[ "${DALNOK_SKIP_LIVE:-0}" != "1" ]]; then
   swift build --product dalnok-cli
   .build/debug/dalnok-cli play /System/Library/Sounds/Submarine.aiff --seconds 2 --churn
