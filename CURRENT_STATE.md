@@ -1,7 +1,7 @@
 ---
 updated: 2026-11-16
 phase: 2 (Recording and editing) — Phase 1 complete
-milestone: Phase 1 + Migration (M5) + Time stretch (M6) done; Phase 2 recording next
+milestone: Phase 1 + Migration (M5) + Time stretch (M6) + UI pass 1 (M7) done; Phase 2 recording next
 ---
 # Current State
 
@@ -11,7 +11,7 @@ milestone: Phase 1 + Migration (M5) + Time stretch (M6) done; Phase 2 recording 
   `scripts/check.sh` passes, including the live audio smoke test and the app self-test (69 checks).
 - Engine tests are clean under AddressSanitizer and ThreadSanitizer (CI job `sanitizers`). The app self-test is clean under ASan.
 - Phase 1 exit review: [[Phase 1 Exit Review]].
-- `swift test`: 62 tests (ASan/TSan clean). Self-test passes, including migration, onboarding, and time stretch.
+- `swift test`: 64 tests (ASan/TSan clean). UI pass 1: [[UI Audit 2026-11-16]], [[Track Colors]]. Self-test passes, including migration, onboarding, and time stretch.
 - **Public parity page:** https://droper23.github.io/dalnok-status/ (source in `site/`, published by `scripts/publish-site.sh`).
 - CI has two jobs: build + test, and real-time effect analysis with Homebrew LLVM.
 

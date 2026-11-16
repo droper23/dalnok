@@ -23,6 +23,7 @@ final class TimelineView: NSView {
     private var hoveredClip: DalnokClipId? { didSet { if hoveredClip != oldValue { needsDisplay = true } } }
 
     private let playheadLayer = CALayer()
+    private let playheadCap = CAShapeLayer()
     private var mins: [Float] = [], maxs: [Float] = []
 
     private enum Zone { case body, leftEdge, rightEdge, fadeIn, fadeOut }
@@ -43,9 +44,19 @@ final class TimelineView: NSView {
         super.init(frame: .zero)
         wantsLayer = true
         layer?.backgroundColor = Theme.laneA.cgColor
-        playheadLayer.backgroundColor = Theme.playhead.cgColor
+        playheadLayer.backgroundColor = Theme.playhead.withAlphaComponent(0.9).cgColor
         playheadLayer.zPosition = 10
         layer?.addSublayer(playheadLayer)
+        let cap = CGMutablePath() // pentagon pointing down (view is flipped)
+        cap.move(to: CGPoint(x: -6, y: 0)); cap.addLine(to: CGPoint(x: 6, y: 0)); cap.addLine(to: CGPoint(x: 6, y: 6))
+        cap.addLine(to: CGPoint(x: 0, y: 12)); cap.addLine(to: CGPoint(x: -6, y: 6)); cap.closeSubpath()
+        playheadCap.path = cap
+        playheadCap.fillColor = Theme.playhead.cgColor
+        playheadCap.zPosition = 11
+        playheadCap.shadowOpacity = 0.5
+        playheadCap.shadowRadius = 2
+        playheadCap.shadowOffset = .zero
+        layer?.addSublayer(playheadCap)
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -74,8 +85,10 @@ final class TimelineView: NSView {
         let x = xPos(forFrame: Double(session.engine.position))
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        playheadLayer.frame = CGRect(x: x - 0.75, y: 0, width: 1.5, height: bounds.height)
+        playheadLayer.frame = CGRect(x: x - 0.5, y: Theme.rulerHeight - 12, width: 1, height: bounds.height)
         playheadLayer.isHidden = x < -2 || x > bounds.width + 2
+        playheadCap.position = CGPoint(x: x, y: Theme.rulerHeight - 15)
+        playheadCap.isHidden = playheadLayer.isHidden
         CATransaction.commit()
     }
 
@@ -118,7 +131,7 @@ final class TimelineView: NSView {
             for clip in track.clips { drawClip(ctx, clip, track: track, laneY: y, scale: scale) }
         }
         drawRuler(ctx, scale: scale)
-        if session.tracks.isEmpty { drawEmptyState() }
+
     }
 
     private func drawEmptyState() {
@@ -134,10 +147,14 @@ final class TimelineView: NSView {
             .draw(in: CGRect(x: 0, y: mid + 4, width: bounds.width, height: 18), withAttributes: sub)
     }
 
+    var highlightedTrack: DalnokTrackId? { didSet { if oldValue != highlightedTrack { needsDisplay = true } } }
+
     private func drawLanes(_ ctx: CGContext) {
-        for i in 0..<max(session.tracks.count, 1) {
+        ctx.setFillColor(Theme.laneA.cgColor)
+        ctx.fill(bounds)
+        for (i, t) in session.tracks.enumerated() {
             let y = laneY(i)
-            ctx.setFillColor((i % 2 == 0 ? Theme.laneA : Theme.laneB).cgColor)
+            ctx.setFillColor((t.id == highlightedTrack ? Theme.hex(0x1C1E22) : (i % 2 == 0 ? Theme.laneA : Theme.laneB)).cgColor)
             ctx.fill(CGRect(x: 0, y: y, width: bounds.width, height: Theme.trackHeight))
             ctx.setFillColor(Theme.separator.cgColor)
             ctx.fill(CGRect(x: 0, y: y + Theme.trackHeight - 1, width: bounds.width, height: 1))
@@ -169,16 +186,18 @@ final class TimelineView: NSView {
         let step = gridStep()
         var t = floor(frame(forX: 0) / sampleRate / step) * step
         let endT = frame(forX: bounds.width) / sampleRate
-        let attrs: [NSAttributedString.Key: Any] = [.font: Theme.mono(10.5), .foregroundColor: Theme.textDim]
+        let attrs: [NSAttributedString.Key: Any] = [.font: Theme.mono(10), .foregroundColor: Theme.textDim]
+        let px = 1 / scale
         while t <= endT + step {
-            let x = xPos(forFrame: t * sampleRate)
-            ctx.setFillColor(Theme.textDim.withAlphaComponent(0.6).cgColor)
-            ctx.fill(CGRect(x: (x * scale).rounded() / scale, y: Theme.rulerHeight - 9, width: 1 / scale, height: 8))
+            let x = (xPos(forFrame: t * sampleRate) * scale).rounded() / scale
+            ctx.setFillColor(Theme.textFaint.cgColor)
+            ctx.fill(CGRect(x: x, y: 4, width: px, height: Theme.rulerHeight - 5))
+            ctx.setFillColor(Theme.hex(0xFFFFFF, 0.12).cgColor)
             for k in 1..<4 {
-                let tx = xPos(forFrame: (t + step * Double(k) / 4) * sampleRate)
-                ctx.fill(CGRect(x: (tx * scale).rounded() / scale, y: Theme.rulerHeight - 5, width: 1 / scale, height: 4))
+                let tx = (xPos(forFrame: (t + step * Double(k) / 4) * sampleRate) * scale).rounded() / scale
+                ctx.fill(CGRect(x: tx, y: Theme.rulerHeight - (k == 2 ? 8 : 5), width: px, height: k == 2 ? 7 : 4))
             }
-            (Self.formatTime(t, step: step) as NSString).draw(at: CGPoint(x: x + 4, y: 6), withAttributes: attrs)
+            if t >= 0 { (Self.formatTime(t, step: step) as NSString).draw(at: CGPoint(x: x + 4, y: 5), withAttributes: attrs) }
             t += step
         }
     }
@@ -200,44 +219,62 @@ final class TimelineView: NSView {
     private func drawClip(_ ctx: CGContext, _ clip: ClipView, track: TrackView, laneY: CGFloat, scale: CGFloat) {
         let rect = clipRect(clip, laneY: laneY)
         guard rect.maxX > 0, rect.minX < bounds.width else { return }
-        let path = CGPath(roundedRect: rect, cornerWidth: 4, cornerHeight: 4, transform: nil)
-        let base = clip.offline ? Theme.textDim : track.color
+        let path = CGPath(roundedRect: rect, cornerWidth: 3, cornerHeight: 3, transform: nil)
+        let tint = TrackTint(base: clip.offline ? Theme.textFaint : (track.muted ? TrackTint(base: track.color).muted : track.color))
         let selected = clip.id == selectedClip
         let dim = track.muted || clip.offline
 
         ctx.saveGState()
         ctx.addPath(path)
         ctx.clip()
-        ctx.setFillColor(base.withAlphaComponent(dim ? 0.08 : (selected ? 0.32 : 0.22)).cgColor)
+        ctx.setFillColor((selected ? tint.bodySelected : tint.body).cgColor)
         ctx.fill(rect)
-        ctx.setFillColor(base.withAlphaComponent(dim ? 0.25 : (selected ? 0.95 : 0.75)).cgColor)
+        let titleBg = selected ? tint.titleSelected : tint.title
+        ctx.setFillColor(titleBg.cgColor)
         ctx.fill(CGRect(x: rect.minX, y: rect.minY, width: rect.width, height: titleH))
-        let attrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 10.5, weight: .semibold),
-            .foregroundColor: Theme.hex(0x101113, 0.9),
-        ]
-        var title = clip.offline ? "\(clip.name) — offline" : clip.name
-        if clip.isStretched {
-            var tags: [String] = []
-            if abs(clip.rate - 1) > 1e-9 { tags.append(String(format: "%.0f%% speed", clip.rate * 100)) }
-            if clip.pitch != 0 { tags.append(String(format: "%+.1f st", clip.pitch)) }
-            if !clip.preservePitch { tags.append("varispeed") }
-            title += "  " + tags.joined(separator: " ")
-        }
-        if clip.processing { title += "  · rendering…" }
-        (title as NSString).draw(at: CGPoint(x: max(rect.minX, 0) + 6, y: rect.minY + 1.5), withAttributes: attrs)
+        if dim { drawHatch(ctx, rect) }
 
         if let media = session.engine.poolMedia(clip.media) {
-            drawWaveform(ctx, media: media, clip: clip, rect: rect, top: rect.minY + titleH + 2, color: base, dim: dim, scale: scale)
+            drawWaveform(ctx, media: media, clip: clip, rect: rect, top: rect.minY + titleH + 2, color: tint.waveform,
+                         dim: dim || clip.processing, scale: scale)
         }
         drawFades(ctx, clip, rect: rect)
+
+        // Title: name in a contrast-picked color; tags (speed, pitch, gain, state) quieter.
+        let fg = TrackTint.textColor(on: titleBg)
+        let nameAttrs: [NSAttributedString.Key: Any] = [.font: Theme.ui(10.5, .semibold), .foregroundColor: fg]
+        let tagAttrs: [NSAttributedString.Key: Any] = [.font: Theme.ui(10, .regular), .foregroundColor: fg.withAlphaComponent(0.7)]
+        var tags: [String] = []
+        if clip.offline { tags.append("offline") }
+        if abs(clip.rate - 1) > 1e-9 { tags.append(String(format: "%.0f%% speed", clip.rate * 100)) }
+        if clip.pitch != 0 { tags.append(String(format: "%+g st", Double(clip.pitch))) }
+        if !clip.preservePitch && abs(clip.rate - 1) > 1e-9 { tags.append("varispeed") }
+        if clip.processing { tags.append("rendering…") }
+        if clip.gainDb != 0 { tags.append(clip.gainDb.isFinite ? String(format: "%+.1f dB", clip.gainDb) : "−∞ dB") }
+        let title = NSMutableAttributedString(string: clip.name, attributes: nameAttrs)
+        if !tags.isEmpty { title.append(NSAttributedString(string: "   " + tags.joined(separator: "   "), attributes: tagAttrs)) }
+        title.draw(at: CGPoint(x: max(rect.minX, 0) + 6, y: rect.minY + 1.5))
         ctx.restoreGState()
         if selected || clip.id == hoveredClip { drawFadeHandles(ctx, clip, rect: rect) }
 
         ctx.addPath(path)
-        ctx.setStrokeColor((selected ? Theme.text : base.withAlphaComponent(0.9)).cgColor)
+        ctx.setStrokeColor((selected ? Theme.selection : tint.border).cgColor)
         ctx.setLineWidth(selected ? 1.5 : 1)
         ctx.strokePath()
+    }
+
+    /// Diagonal hatch for muted/offline clips (state shown by form, not only color).
+    private func drawHatch(_ ctx: CGContext, _ rect: CGRect) {
+        ctx.saveGState()
+        ctx.setStrokeColor(NSColor.white.withAlphaComponent(0.05).cgColor)
+        ctx.setLineWidth(1)
+        var x = rect.minX - rect.height
+        while x < rect.maxX {
+            ctx.move(to: CGPoint(x: x, y: rect.maxY)); ctx.addLine(to: CGPoint(x: x + rect.height, y: rect.minY))
+            x += 6
+        }
+        ctx.strokePath()
+        ctx.restoreGState()
     }
 
     private func fadeWidths(_ c: ClipView, _ rect: CGRect) -> (CGFloat, CGFloat) {
@@ -306,7 +343,7 @@ final class TimelineView: NSView {
         let waveH = rect.maxY - top - 3
         let chans = min(Int(dalnok_media_channels(media)), 2)
         let laneH = waveH / CGFloat(chans)
-        ctx.setStrokeColor(color.blended(withFraction: 0.35, of: .white)!.withAlphaComponent(dim ? 0.3 : 0.95).cgColor)
+        ctx.setStrokeColor(color.withAlphaComponent(dim ? 0.35 : 0.95).cgColor)
         ctx.setLineWidth(1 / scale)
         for ch in 0..<chans {
             dalnok_media_peaks(media, Int32(ch), sourceStart, fpc, &mins, &maxs, Int64(columns))

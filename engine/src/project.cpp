@@ -93,6 +93,11 @@ json::Value Engine::describe() const {
         tv.set("id", t.id);
         tv.set("name", t.name);
         tv.set("color", t.color);
+        if (t.customColor >= 0) {
+            char hex[8];
+            std::snprintf(hex, sizeof hex, "#%06x", t.customColor);
+            tv.set("customColor", std::string(hex));
+        }
         tv.set("gainDb", std::isfinite(t.gainDb) ? Value(static_cast<double>(t.gainDb)) : Value());
         tv.set("pan", static_cast<double>(t.pan));
         tv.set("mute", t.muted);
@@ -288,6 +293,8 @@ std::unique_ptr<Engine::PreparedProject> Engine::prepareDocument(const json::Val
             }
             t.name = tv.getString("name", "Track");
             t.color = static_cast<int32_t>(toInt(tv, "color"));
+            if (const auto hex = tv.getString("customColor", ""); hex.size() == 7 && hex[0] == '#')
+                t.customColor = static_cast<int32_t>(std::strtol(hex.c_str() + 1, nullptr, 16));
             const json::Value *g = tv.get("gainDb");
             t.gainDb = g && g->isNumber() ? std::min(static_cast<float>(g->number), 12.0f) : -INFINITY;
             if (t.gainDb <= -96.0f) t.gainDb = -INFINITY;

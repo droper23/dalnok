@@ -142,7 +142,8 @@ DalnokTrackId dalnok_track_at(const DalnokEngine *engine, int32_t index);
 typedef struct {
     DalnokTrackId id;
     char name[128];
-    int32_t color;       /* palette index */
+    int32_t color;       /* gradient step (automatic color) */
+    int32_t custom_color;/* 0xRRGGBB pinned by the user, or -1 = automatic */
     float gain_db;       /* -INFINITY for silence */
     float pan;
     bool muted;
@@ -191,6 +192,10 @@ DalnokStatus dalnok_track_set_pan(DalnokEngine *engine, DalnokTrackId track, flo
 DalnokStatus dalnok_track_set_mute(DalnokEngine *engine, DalnokTrackId track, bool muted);
 /* While any track is soloed, only soloed tracks are heard. */
 DalnokStatus dalnok_track_set_solo(DalnokEngine *engine, DalnokTrackId track, bool solo);
+/* Pins a track color (0xRRGGBB) or returns it to automatic (-1). */
+DalnokStatus dalnok_track_set_color(DalnokEngine *engine, DalnokTrackId track, int32_t custom_rgb);
+/* Re-applies the gradient to all tracks in display order (one undo step). */
+DalnokStatus dalnok_tracks_recolor_gradient(DalnokEngine *engine);
 /* Moves a track to `index` in display order. */
 DalnokStatus dalnok_track_move(DalnokEngine *engine, DalnokTrackId track, int32_t index);
 

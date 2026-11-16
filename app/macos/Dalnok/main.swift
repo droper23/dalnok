@@ -142,6 +142,8 @@ func buildMenu(target: MainWindowController) -> NSMenu {
         item("Delete", #selector(W.delete(_:)), "\u{8}", []),
         item("Split at Playhead", #selector(W.splitAtPlayhead), "t"),
     ])
+    let colorItem = NSMenuItem(title: "Track Color", action: nil, keyEquivalent: "")
+    colorItem.submenu = target.colorMenu()
     menu("Track", [
         item("New Track", #selector(W.newTrack(_:)), "n", [.command, .option]),
         item("Rename Track", #selector(W.renameTrack(_:)), ""),
@@ -152,6 +154,9 @@ func buildMenu(target: MainWindowController) -> NSMenu {
         .separator(),
         item("Mute Track", #selector(W.toggleMuteTrack(_:)), "m", [.control]),
         item("Solo Track", #selector(W.toggleSoloTrack(_:)), "s", [.control]),
+        .separator(),
+        colorItem,
+        item("Recolor Tracks as Gradient", #selector(W.recolorTracksAsGradient(_:)), ""),
     ])
     let curve = NSMenuItem(title: "Fade Curve", action: nil, keyEquivalent: "")
     curve.submenu = NSMenu(title: "Fade Curve")

@@ -279,3 +279,41 @@ import Testing
         #expect(runCommand(e, "track.setVolume", "{\"track\": 1.5, \"db\": 0}").0 == DALNOK_ERR_INVALID_ARG)
     }
 }
+
+@Suite struct TrackColors {
+    func info(_ e: OpaquePointer, _ t: DalnokTrackId) -> DalnokTrackInfo { var i = DalnokTrackInfo(); dalnok_track_info(e, t, &i); return i }
+
+    @Test func newTracksContinueTheGradientFromTheTrackAbove() {
+        let e = dalnok_engine_create(sr)!; defer { dalnok_engine_destroy(e) }
+        let t = (0..<4).map { dalnok_track_add(e, "T\($0)") }
+        #expect(t.map { info(e, $0).color } == [0, 1, 2, 3])
+        dalnok_track_remove(e, t[3])
+        dalnok_track_remove(e, t[1])
+        let n = dalnok_track_add(e, "new")
+        #expect(info(e, n).color == 3, "continues after the last track (2), never duplicating a neighbor")
+        #expect(info(e, n).custom_color == -1)
+    }
+
+    @Test func customColorsPinAndRecolorRestoresTheSpectrum() throws {
+        let dir = tempDir()
+        let e = dalnok_engine_create(sr)!; defer { dalnok_engine_destroy(e) }
+        let t = (0..<3).map { dalnok_track_add(e, "T\($0)") }
+        #expect(dalnok_track_set_color(e, t[1], 0x112233) == DALNOK_OK)
+        #expect(dalnok_track_set_color(e, t[1], 0x1000000) == DALNOK_ERR_INVALID_ARG)
+        dalnok_track_move(e, t[2], 0)
+        #expect(info(e, t[2]).color == 2, "moving keeps a track's color (identity)")
+        #expect(dalnok_tracks_recolor_gradient(e) == DALNOK_OK)
+        #expect((0..<3).map { info(e, dalnok_track_at(e, Int32($0))).color } == [0, 1, 2], "gradient re-applied in display order")
+        #expect(info(e, t[1]).custom_color == 0x112233, "custom color survives recolor")
+        #expect(undoName(e) == "Recolor Tracks")
+        let p = dir.appendingPathComponent("c.dalnok").path
+        dalnok_project_save(e, p, nil, 0)
+        let e2 = dalnok_engine_create(sr)!; defer { dalnok_engine_destroy(e2) }
+        dalnok_project_load(e2, p, nil, nil, 0)
+        #expect(info(e2, dalnok_track_at(e2, 2)).custom_color == 0x112233 && info(e2, dalnok_track_at(e2, 0)).custom_color == -1)
+        #expect(runCommand(e, "track.setColor", "{\"track\": \(t[0]), \"color\": \"#ff8800\"}").0 == DALNOK_OK)
+        #expect(info(e, t[0]).custom_color == 0xff8800)
+        #expect(runCommand(e, "track.setColor", "{\"track\": \(t[0]), \"color\": \"auto\"}").0 == DALNOK_OK)
+        #expect(info(e, t[0]).custom_color == -1)
+    }
+}

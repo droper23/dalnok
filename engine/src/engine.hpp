@@ -24,7 +24,8 @@ namespace dalnok {
 struct TrackState {
     DalnokTrackId id = 0;
     std::string name;
-    int32_t color = 0;
+    int32_t color = 0;        // gradient step (see "06 - Design/Track Colors")
+    int32_t customColor = -1; // 0xRRGGBB pinned by the user, or -1 = automatic
     float gainDb = 0;
     float pan = 0;
     bool muted = false;
@@ -110,6 +111,8 @@ public:
     bool setMute(DalnokTrackId id, bool muted, std::string &err);
     bool setSolo(DalnokTrackId id, bool solo, std::string &err);
     bool moveTrack(DalnokTrackId id, int32_t index, std::string &err);
+    bool setTrackColor(DalnokTrackId id, int32_t customRgb, std::string &err); // -1 = automatic
+    bool recolorAsGradient(std::string &err); // automatic tracks get gradient steps in display order
     DalnokClipId addClip(DalnokTrackId track, DalnokMediaId media, int64_t start, int64_t offset, int64_t length,
                          std::string &err);
     bool removeClip(DalnokClipId id, std::string &err);

@@ -1,6 +1,18 @@
 # Changelog
 
 ## [Unreleased]
+### Changed (2026-11-16, UI pass 1, M7; see "06 - Design/UI Audit 2026-11-16")
+- Track colors: a rainbow gradient from green (12 steps in OKLCH, equal brightness, alternating
+  lightness for color-blind users). New tracks continue the gradient. Custom colors via Track ▸ Track
+  Color or the header's context menu. Track ▸ Recolor Tracks as Gradient. Everything derives from the
+  track color.
+- Track headers: number, color strip, custom fader (audio taper, value bubble, ⌥-click reset, ⇧ fine,
+  scroll, arrows), rotary pan knob, M/S chips (blue/yellow), vertical stereo meter, "+" to add a track.
+- Clips: tinted body and title, contrast-aware text, quieter tags (speed, pitch, gain, rendering…),
+  lighter waveform tint, hatching when muted or offline, crisper border and selection.
+- Control bar moved into the title bar: project name and output status, centered transport and
+  position display, output meter, palette and import buttons. The status sentence is gone.
+- Ruler with a playhead cap, highlighted lane for the selected track, and an empty-state drop zone with actions.
 ### Added (2026-11-16, Time stretch M6)
 - Clip time-stretch, pitch shift, and varispeed (Signalsmith Stretch, MIT), rendered off the audio thread.
   ⌥-drag a clip's right edge to stretch it. Clip menu: Double/Half Speed, Transpose Up/Down a Semitone,

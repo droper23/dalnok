@@ -1,117 +1,113 @@
-// Transport bar and track header column.
+// Control bar (in the title bar) and track headers.
 // SPDX-License-Identifier: GPL-3.0-or-later
 import AppKit
 import DalnokEngine
 
+// MARK: - Control bar
+
 @MainActor
 final class TransportBar: NSView {
-    let playButton = NSButton()
-    let importButton = NSButton()
-    let timeLabel = NSTextField(labelWithString: "0:00.000")
+    let titleLabel = NSTextField(labelWithString: "Untitled")
+    /// Secondary line under the title: audio status, or a transient message.
     let statusLabel = NSTextField(labelWithString: "")
+    let timeLabel = NSTextField(labelWithString: "0:00.000")
     let masterMeter = MeterView()
+    let playButton = IconButton("play.fill", help: "Play / Pause (Space)")
+    private let rewind = IconButton("backward.end.fill", help: "Go to Start (Return)")
+    private let paletteButton = IconButton("magnifyingglass", help: "Command Palette (⌘K)")
+    private let importButton = IconButton("plus.rectangle.on.rectangle", help: "Import Audio… (⌘I)")
     var onPlayPause: (() -> Void)?
     var onRewind: (() -> Void)?
     var onImport: (() -> Void)?
+    var onPalette: (() -> Void)?
 
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
         layer?.backgroundColor = Theme.panel.cgColor
 
-        let rewind = Self.iconButton("backward.end.fill", "Go to Start (Return)")
-        rewind.target = self
-        rewind.action = #selector(rewindTapped)
-        configure(playButton, symbol: "play.fill", tip: "Play / Pause (Space)")
-        playButton.action = #selector(playTapped)
-        configure(importButton, symbol: "square.and.arrow.down", tip: "Import Audio… (⌘I)")
-        importButton.action = #selector(importTapped)
-
-        timeLabel.font = Theme.mono(20, .medium)
-        timeLabel.textColor = Theme.accent
-        statusLabel.font = .systemFont(ofSize: 11)
+        titleLabel.font = Theme.ui(13, .semibold)
+        titleLabel.textColor = Theme.text
+        titleLabel.lineBreakMode = .byTruncatingTail
+        statusLabel.font = Theme.ui(11)
         statusLabel.textColor = Theme.textDim
         statusLabel.lineBreakMode = .byTruncatingTail
+        let titles = NSStackView(views: [titleLabel, statusLabel])
+        titles.orientation = .vertical
+        titles.alignment = .leading
+        titles.spacing = 1
 
+        // Transport cluster: buttons + position display, centered.
+        timeLabel.font = Theme.mono(20, .medium)
+        timeLabel.textColor = Theme.accent
+        timeLabel.alignment = .center
         let lcd = NSView()
         lcd.wantsLayer = true
-        lcd.layer?.backgroundColor = Theme.window.cgColor
+        lcd.layer?.backgroundColor = Theme.hex(0x0B0C0E).cgColor
         lcd.layer?.cornerRadius = 6
-        lcd.layer?.borderColor = Theme.separator.cgColor
         lcd.layer?.borderWidth = 1
+        lcd.layer?.borderColor = Theme.hairline.cgColor
         timeLabel.translatesAutoresizingMaskIntoConstraints = false
         lcd.addSubview(timeLabel)
+        lcd.setAccessibilityElement(true)
+        lcd.setAccessibilityLabel("Position")
 
-        let left = NSStackView(views: [rewind, playButton])
-        left.spacing = 6
-        masterMeter.toolTip = "Master output peak (click to reset clip)"
+        rewind.target = self; rewind.action = #selector(rewindTapped)
+        playButton.target = self; playButton.action = #selector(playTapped)
+        paletteButton.target = self; paletteButton.action = #selector(paletteTapped)
+        importButton.target = self; importButton.action = #selector(importTapped)
+        let transport = NSStackView(views: [rewind, playButton, lcd])
+        transport.spacing = 6
+
+        masterMeter.toolTip = "Output level (click to reset the clip indicator)"
         masterMeter.setAccessibilityLabel("Master level meter")
-        let stack = NSStackView(views: [left, lcd, statusLabel, NSView(), masterMeter, importButton])
-        stack.spacing = 14
-        stack.edgeInsets = NSEdgeInsets(top: 0, left: 14, bottom: 0, right: 14)
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(stack)
+        let tools = NSStackView(views: [masterMeter, paletteButton, importButton])
+        tools.spacing = 8
+
+        for v in [titles, transport, tools] as [NSView] {
+            v.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(v)
+        }
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
-            stack.centerYAnchor.constraint(equalTo: centerYAnchor),
-            lcd.widthAnchor.constraint(equalToConstant: 132),
-            masterMeter.widthAnchor.constraint(equalToConstant: 160),
-            masterMeter.heightAnchor.constraint(equalToConstant: 9),
-            lcd.heightAnchor.constraint(equalToConstant: 32),
+            titles.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Theme.trafficLightInset + 8),
+            titles.centerYAnchor.constraint(equalTo: centerYAnchor),
+            titles.trailingAnchor.constraint(lessThanOrEqualTo: transport.leadingAnchor, constant: -16),
+            transport.centerXAnchor.constraint(equalTo: centerXAnchor),
+            transport.centerYAnchor.constraint(equalTo: centerYAnchor),
+            lcd.widthAnchor.constraint(equalToConstant: 150),
+            lcd.heightAnchor.constraint(equalToConstant: 34),
             timeLabel.centerXAnchor.constraint(equalTo: lcd.centerXAnchor),
             timeLabel.centerYAnchor.constraint(equalTo: lcd.centerYAnchor),
+            tools.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            tools.centerYAnchor.constraint(equalTo: centerYAnchor),
+            masterMeter.widthAnchor.constraint(equalToConstant: 132),
+            masterMeter.heightAnchor.constraint(equalToConstant: 8),
         ])
+        titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         statusLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
-    static func iconButton(_ symbol: String, _ tip: String) -> NSButton {
-        let b = NSButton()
-        b.bezelStyle = .texturedRounded
-        b.image = NSImage(systemSymbolName: symbol, accessibilityDescription: tip)
-        b.toolTip = tip
-        b.setAccessibilityLabel(tip)
-        b.contentTintColor = Theme.text
-        b.widthAnchor.constraint(equalToConstant: 38).isActive = true
-        return b
+    override func draw(_ dirtyRect: NSRect) {
+        Theme.panel.setFill(); bounds.fill()
+        Theme.separator.setFill(); NSRect(x: 0, y: 0, width: bounds.width, height: 1).fill()
     }
 
-    private func configure(_ b: NSButton, symbol: String, tip: String) {
-        b.bezelStyle = .texturedRounded
-        b.image = NSImage(systemSymbolName: symbol, accessibilityDescription: tip)
-        b.toolTip = tip
-        b.setAccessibilityLabel(tip)
-        b.contentTintColor = Theme.text
-        b.target = self
-        b.widthAnchor.constraint(equalToConstant: 38).isActive = true
-    }
+    /// Lets the window be dragged by the bar's empty space.
+    override var mouseDownCanMoveWindow: Bool { true }
 
     func setPlaying(_ playing: Bool) {
-        playButton.image = NSImage(systemSymbolName: playing ? "pause.fill" : "play.fill", accessibilityDescription: nil)
-        playButton.contentTintColor = playing ? Theme.accent : Theme.text
+        playButton.setSymbol(playing ? "pause.fill" : "play.fill", tint: playing ? Theme.accent : Theme.text)
     }
 
     @objc private func playTapped() { onPlayPause?() }
     @objc private func rewindTapped() { onRewind?() }
     @objc private func importTapped() { onImport?() }
+    @objc private func paletteTapped() { onPalette?() }
 }
 
-/// Slider that brackets each mouse interaction in an undo group, so one drag = one undo step.
-@MainActor
-final class GroupedSlider: NSSlider {
-    var onBegin: (() -> Void)?
-    var onEnd: (() -> Void)?
-    private(set) var tracking = false
-    override func mouseDown(with event: NSEvent) {
-        tracking = true
-        onBegin?()
-        super.mouseDown(with: event) // runs the tracking loop until mouse-up
-        onEnd?()
-        tracking = false
-    }
-}
+// MARK: - Track header
 
 @MainActor
 final class TrackHeaderRow: NSView, NSTextFieldDelegate {
@@ -119,126 +115,108 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
     let session: Session
     weak var column: TrackHeaderColumn?
     var isSelected = false { didSet { needsDisplay = true } }
-    private let swatch = NSView()
+    private var color = Theme.gradientColor(step: 0)
+    private var muted = false
+    private let number = NSTextField(labelWithString: "")
     let nameLabel = NSTextField(labelWithString: "")
-    private let gainLabel = NSTextField(labelWithString: "0.0 dB")
-    private let mute = NSButton(title: "M", target: nil, action: nil)
-    private let solo = NSButton(title: "S", target: nil, action: nil)
-    private let gain = GroupedSlider(value: 0, minValue: -60, maxValue: 6, target: nil, action: nil)
-    private let pan = GroupedSlider(value: 0, minValue: -1, maxValue: 1, target: nil, action: nil)
+    private let mute = ToggleChip("M", on: Theme.muteOn, onText: .white, help: "Mute (⌃M)")
+    private let solo = ToggleChip("S", on: Theme.soloOn, onText: Theme.hex(0x1A1400), help: "Solo (⌃S)")
+    let fader = FaderControl()
+    let pan = PanKnob()
     let meter = MeterView()
     private var dragStartY: CGFloat?
 
-    init(track: TrackView, session: Session) {
+    init(track: TrackView, index: Int, session: Session) {
         self.trackId = track.id
         self.session = session
         super.init(frame: .zero)
         wantsLayer = true
 
-        swatch.wantsLayer = true
-        swatch.layer?.cornerRadius = 1.5
-        nameLabel.font = .systemFont(ofSize: 12, weight: .semibold)
+        number.font = Theme.mono(11)
+        number.textColor = Theme.textFaint
+        number.alignment = .right
+        nameLabel.font = Theme.ui(13, .semibold)
         nameLabel.textColor = Theme.text
         nameLabel.lineBreakMode = .byTruncatingTail
         nameLabel.delegate = self
         nameLabel.toolTip = "Double-click to rename"
 
-        for (b, title, tip) in [(mute, "M", "Mute (⌃M)"), (solo, "S", "Solo (⌃S)")] {
-            b.setButtonType(.pushOnPushOff)
-            b.bezelStyle = .texturedRounded
-            b.font = .systemFont(ofSize: 10, weight: .bold)
-            b.title = title
-            b.target = self
-            b.toolTip = tip
-        }
-        mute.action = #selector(toggleMute)
-        solo.action = #selector(toggleSolo)
+        mute.onToggle = { [weak self] on in guard let self else { return }; self.session.setMute(self.trackId, on) }
+        solo.onToggle = { [weak self] on in guard let self else { return }; self.session.setSolo(self.trackId, on) }
+        fader.onBegin = { [weak self] in self?.session.engine.beginGroup("Volume") }
+        fader.onChange = { [weak self] db in guard let self else { return }; self.session.setGain(self.trackId, db: db) }
+        fader.onEnd = { [weak self] in self?.session.engine.endGroup() }
+        pan.onBegin = { [weak self] in self?.session.engine.beginGroup("Pan") }
+        pan.onChange = { [weak self] p in guard let self else { return }; self.session.setPan(self.trackId, p) }
+        pan.onEnd = { [weak self] in self?.session.engine.endGroup() }
+        meter.vertical = true
+        meter.toolTip = "Post-fader level (click to reset the clip indicator)"
 
-        for (slider, name) in [(gain, "Volume"), (pan, "Pan")] {
-            slider.controlSize = .small
-            slider.target = self
-            slider.toolTip = name
-            slider.onBegin = { [weak self] in self?.session.engine.beginGroup(name) }
-            slider.onEnd = { [weak self] in self?.session.engine.endGroup() }
-        }
-        gain.action = #selector(gainChanged(_:))
-        pan.action = #selector(panChanged(_:))
-
-        gainLabel.font = Theme.mono(10)
-        gainLabel.textColor = Theme.textDim
-        gainLabel.alignment = .right
-        let panLabel = NSTextField(labelWithString: "Pan")
-        panLabel.font = .systemFont(ofSize: 10)
-        panLabel.textColor = Theme.textDim
-
-        meter.toolTip = "Post-fader peak (click to reset clip)"
-        meter.setAccessibilityLabel("Level meter \(track.name)")
-        for v in [swatch, nameLabel, mute, solo, gain, pan, gainLabel, panLabel, meter] {
+        for v in [number, nameLabel, mute, solo, fader, pan, meter] as [NSView] {
             v.translatesAutoresizingMaskIntoConstraints = false
             addSubview(v)
         }
         NSLayoutConstraint.activate([
-            swatch.leadingAnchor.constraint(equalTo: leadingAnchor),
-            swatch.topAnchor.constraint(equalTo: topAnchor, constant: 3),
-            swatch.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -4),
-            swatch.widthAnchor.constraint(equalToConstant: 3),
-            nameLabel.leadingAnchor.constraint(equalTo: swatch.trailingAnchor, constant: 10),
-            nameLabel.topAnchor.constraint(equalTo: topAnchor, constant: 10),
-            nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: mute.leadingAnchor, constant: -6),
-            solo.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+            number.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            number.widthAnchor.constraint(equalToConstant: 18),
+            number.firstBaselineAnchor.constraint(equalTo: nameLabel.firstBaselineAnchor),
+            nameLabel.leadingAnchor.constraint(equalTo: number.trailingAnchor, constant: 8),
+            nameLabel.topAnchor.constraint(equalTo: topAnchor, constant: 12),
+            nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: mute.leadingAnchor, constant: -8),
+            solo.trailingAnchor.constraint(equalTo: meter.leadingAnchor, constant: -10),
             solo.centerYAnchor.constraint(equalTo: nameLabel.centerYAnchor),
-            solo.widthAnchor.constraint(equalToConstant: 26),
             mute.trailingAnchor.constraint(equalTo: solo.leadingAnchor, constant: -4),
             mute.centerYAnchor.constraint(equalTo: nameLabel.centerYAnchor),
-            mute.widthAnchor.constraint(equalToConstant: 26),
-            gain.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor),
-            gain.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 12),
-            gain.trailingAnchor.constraint(equalTo: gainLabel.leadingAnchor, constant: -6),
-            gainLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
-            gainLabel.centerYAnchor.constraint(equalTo: gain.centerYAnchor),
-            gainLabel.widthAnchor.constraint(equalToConstant: 52),
-            pan.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor),
-            pan.topAnchor.constraint(equalTo: gain.bottomAnchor, constant: 8),
-            pan.trailingAnchor.constraint(equalTo: gain.trailingAnchor),
-            panLabel.leadingAnchor.constraint(equalTo: gainLabel.leadingAnchor),
-            panLabel.centerYAnchor.constraint(equalTo: pan.centerYAnchor),
-            meter.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor),
+            fader.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor, constant: -6),
+            fader.trailingAnchor.constraint(equalTo: pan.leadingAnchor, constant: -8),
+            fader.centerYAnchor.constraint(equalTo: pan.centerYAnchor),
+            fader.heightAnchor.constraint(equalToConstant: 18),
+            pan.trailingAnchor.constraint(equalTo: meter.leadingAnchor, constant: -10),
+            pan.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 14),
+            pan.widthAnchor.constraint(equalToConstant: 26),
+            pan.heightAnchor.constraint(equalToConstant: 26),
             meter.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
-            meter.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
-            meter.heightAnchor.constraint(equalToConstant: 5),
+            meter.topAnchor.constraint(equalTo: topAnchor, constant: 10),
+            meter.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
+            meter.widthAnchor.constraint(equalToConstant: 7),
         ])
-        update(track)
+        update(track, index: index)
     }
 
     required init?(coder: NSCoder) { fatalError() }
     override var isFlipped: Bool { true }
 
     /// Applies model values (after edits, undo, or scripts) without fighting an active drag.
-    func update(_ t: TrackView) {
-        swatch.layer?.backgroundColor = t.color.cgColor
+    func update(_ t: TrackView, index: Int) {
+        color = t.color
+        muted = t.muted
+        number.stringValue = "\(index + 1)"
         if !nameLabel.isEditable { nameLabel.stringValue = t.name }
-        mute.state = t.muted ? .on : .off
-        mute.contentTintColor = t.muted ? Theme.accent : nil
-        solo.state = t.solo ? .on : .off
-        solo.contentTintColor = t.solo ? Theme.hex(0xE8C35A) : nil
+        nameLabel.textColor = t.muted ? Theme.textDim : Theme.text
+        mute.isOn = t.muted
+        solo.isOn = t.solo
+        fader.tint = t.muted ? Theme.textFaint : t.color
+        pan.tint = t.color
+        if !fader.tracking { fader.db = t.gainDb.isFinite ? t.gainDb : -.infinity }
+        if !pan.tracking { pan.pan = t.pan }
+        fader.setAccessibilityLabel("Volume, \(t.name)")
+        pan.setAccessibilityLabel("Pan, \(t.name)")
         mute.setAccessibilityLabel("Mute \(t.name)")
         solo.setAccessibilityLabel("Solo \(t.name)")
-        gain.setAccessibilityLabel("Volume \(t.name)")
-        pan.setAccessibilityLabel("Pan \(t.name)")
-        if !gain.tracking { gain.doubleValue = t.gainDb.isFinite ? Double(t.gainDb) : -60 }
-        if !pan.tracking { pan.doubleValue = Double(t.pan) }
-        gainLabel.stringValue = t.gainDb.isFinite && t.gainDb > -59.9 ? String(format: "%+.1f dB", t.gainDb) : "-∞ dB"
+        meter.setAccessibilityLabel("Level, \(t.name)")
+        needsDisplay = true
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        (isSelected ? Theme.hex(0x2B2F36) : Theme.panelRaised).setFill()
+        (isSelected ? Theme.hex(0x262930) : Theme.panelRaised).setFill()
         bounds.fill()
-        if isSelected {
-            Theme.accent.withAlphaComponent(0.5).setFill()
-            NSRect(x: bounds.width - 2, y: 0, width: 2, height: bounds.height).fill()
-        }
+        // Color strip: the track's identity, full height; desaturated when muted.
+        (muted ? TrackTint(base: color).muted : color).setFill()
+        NSRect(x: 0, y: 0, width: isSelected ? 5 : 3, height: bounds.height - 1).fill()
         Theme.separator.setFill()
         NSRect(x: 0, y: bounds.height - 1, width: bounds.width, height: 1).fill()
+        Theme.hairline.setFill()
+        NSRect(x: 0, y: 0, width: bounds.width, height: 1).fill()
     }
 
     // MARK: Rename (double-click the name)
@@ -287,21 +265,6 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
         column?.select(trackId)
         return column?.contextMenu
     }
-
-    @objc private func gainChanged(_ s: NSSlider) {
-        var db = Float(s.doubleValue)
-        if abs(db) < 0.4 { db = 0; s.doubleValue = 0 } // detent at unity
-        session.setGain(trackId, db: db <= -59.9 ? -.infinity : db)
-    }
-
-    @objc private func panChanged(_ s: NSSlider) {
-        var p = Float(s.doubleValue)
-        if abs(p) < 0.04 { p = 0; s.doubleValue = 0 }
-        session.setPan(trackId, p)
-    }
-
-    @objc private func toggleMute() { session.setMute(trackId, mute.state == .on) }
-    @objc private func toggleSolo() { session.setSolo(trackId, solo.state == .on) }
 }
 
 /// Column of track headers; vertically synced with the timeline.
@@ -311,15 +274,38 @@ final class TrackHeaderColumn: NSView {
     private(set) var rows: [TrackHeaderRow] = []
     private let rowClip = FlippedView()
     private let insertLine = CALayer()
+    private let addButton = IconButton("plus", help: "New Track (⌥⌘N)", size: 12)
     private var dropIndex: Int?
     var scrollY: CGFloat = 0 { didSet { needsLayout = true } }
     var selectedTrack: DalnokTrackId? { didSet { rows.forEach { $0.isSelected = $0.trackId == selectedTrack }; onSelect?(selectedTrack) } }
     var onSelect: ((DalnokTrackId?) -> Void)?
+    var onAddTrack: (() -> Void)?
     var contextMenu: NSMenu?
 
     func select(_ id: DalnokTrackId) { selectedTrack = id }
-
     func row(_ id: DalnokTrackId) -> TrackHeaderRow? { rows.first { $0.trackId == id } }
+
+    init(session: Session) {
+        self.session = session
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.backgroundColor = Theme.panel.cgColor
+        rowClip.wantsLayer = true
+        rowClip.layer?.masksToBounds = true
+        addSubview(rowClip)
+        insertLine.backgroundColor = Theme.selection.cgColor
+        insertLine.isHidden = true
+        insertLine.zPosition = 5
+        rowClip.layer?.addSublayer(insertLine)
+        addButton.target = self
+        addButton.action = #selector(addTapped)
+        addSubview(addButton)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+    override var isFlipped: Bool { true }
+
+    @objc private func addTapped() { onAddTrack?() }
 
     /// Shows an insertion line between rows while dragging a header.
     func dragUpdate(row: TrackHeaderRow, windowPoint: CGPoint) {
@@ -341,53 +327,33 @@ final class TrackHeaderColumn: NSView {
         if to != from { session.moveTrack(row.trackId, to: to) }
     }
 
-    init(session: Session) {
-        self.session = session
-        super.init(frame: .zero)
-        wantsLayer = true
-        layer?.backgroundColor = Theme.panel.cgColor
-        rowClip.wantsLayer = true
-        rowClip.layer?.masksToBounds = true
-        addSubview(rowClip)
-        insertLine.backgroundColor = Theme.accent.cgColor
-        insertLine.isHidden = true
-        insertLine.zPosition = 5
-        rowClip.layer?.addSublayer(insertLine)
-    }
-
-    required init?(coder: NSCoder) { fatalError() }
-    override var isFlipped: Bool { true }
-
-    /// Reuses rows by track id so in-progress slider drags survive model updates.
+    /// Reuses rows by track id so in-progress drags survive model updates.
     func sync() {
         let tracks = session.tracks
         if rows.map(\.trackId) != tracks.map(\.id) {
             var byId = Dictionary(uniqueKeysWithValues: rows.map { ($0.trackId, $0) })
-            rows = tracks.map { t in byId.removeValue(forKey: t.id) ?? TrackHeaderRow(track: t, session: session) }
-            rows.forEach { $0.column = self; $0.isSelected = $0.trackId == selectedTrack }
-            if let sel = selectedTrack, !tracks.contains(where: { $0.id == sel }) { selectedTrack = nil }
+            rows = tracks.enumerated().map { i, t in byId.removeValue(forKey: t.id) ?? TrackHeaderRow(track: t, index: i, session: session) }
             byId.values.forEach { $0.removeFromSuperview() }
             rows.forEach { if $0.superview == nil { rowClip.addSubview($0) } }
+            rows.forEach { $0.column = self; $0.isSelected = $0.trackId == selectedTrack }
+            if let sel = selectedTrack, !tracks.contains(where: { $0.id == sel }) { selectedTrack = nil }
             needsLayout = true
         }
-        for (row, t) in zip(rows, tracks) { row.update(t) }
+        for (i, (row, t)) in zip(rows, tracks).enumerated() { row.update(t, index: i) }
     }
 
     override func layout() {
         super.layout()
         rowClip.frame = CGRect(x: 0, y: Theme.rulerHeight, width: bounds.width - 1, height: max(0, bounds.height - Theme.rulerHeight))
         for (i, row) in rows.enumerated() {
-            row.frame = CGRect(x: 0, y: CGFloat(i) * Theme.trackHeight - scrollY, width: rowClip.bounds.width,
-                               height: Theme.trackHeight)
+            row.frame = CGRect(x: 0, y: CGFloat(i) * Theme.trackHeight - scrollY, width: rowClip.bounds.width, height: Theme.trackHeight)
         }
+        addButton.frame = CGRect(x: bounds.width - 40, y: 0, width: 34, height: Theme.rulerHeight)
     }
 
     override func draw(_ dirtyRect: NSRect) {
         Theme.panel.setFill()
         bounds.fill()
-        let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 10, weight: .semibold),
-                                                     .foregroundColor: Theme.textDim, .kern: 1.2]
-        ("TRACKS" as NSString).draw(at: CGPoint(x: 13, y: 9), withAttributes: attrs)
         Theme.separator.setFill()
         NSRect(x: 0, y: Theme.rulerHeight - 1, width: bounds.width, height: 1).fill()
         NSRect(x: bounds.width - 1, y: 0, width: 1, height: bounds.height).fill()

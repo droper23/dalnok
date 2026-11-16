@@ -255,7 +255,8 @@ DalnokTrackId Engine::addTrack(const std::string &name, std::string &err) {
         TrackState t;
         t.id = id;
         t.name = name.empty() ? "Track " + std::to_string(m.tracks.size() + 1) : name;
-        t.color = nextColor_;
+        // Continue the gradient from the track above, so neighbors never share a color.
+        t.color = m.tracks.empty() ? 0 : m.tracks.back().color + 1;
         t.runtime = std::make_shared<TrackRuntime>();
         m.tracks.push_back(std::move(t));
         return true;
@@ -313,6 +314,26 @@ bool Engine::setMute(DalnokTrackId id, bool muted, std::string &err) {
         if (!t) return fail(err, "no such track");
         t->muted = muted;
         t->runtime->muted.store(muted, std::memory_order_relaxed);
+        return true;
+    });
+}
+
+bool Engine::setTrackColor(DalnokTrackId id, int32_t customRgb, std::string &err) {
+    return edit("Track Color", false, [&](Model &m) {
+        TrackState *t = m.track(id);
+        if (!t) return fail(err, "no such track");
+        if (customRgb > 0xFFFFFF || customRgb < -1) return fail(err, "color must be 0xRRGGBB or -1");
+        t->customColor = customRgb;
+        return true;
+    });
+}
+
+bool Engine::recolorAsGradient(std::string &err) {
+    return edit("Recolor Tracks", false, [&](Model &m) {
+        if (m.tracks.empty()) return fail(err, "no tracks");
+        int32_t step = 0;
+        for (auto &t : m.tracks) t.color = step++;
+        nextColor_ = step;
         return true;
     });
 }

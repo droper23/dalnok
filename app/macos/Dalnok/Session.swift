@@ -31,6 +31,7 @@ struct TrackView {
     let id: DalnokTrackId
     let name: String
     let color: NSColor
+    let customColor: Int32
     let gainDb: Float
     let pan: Float
     let muted: Bool
@@ -77,7 +78,8 @@ final class Session {
                                       gainDb: ci.gain_db, rate: ci.rate, pitch: ci.pitch, preservePitch: ci.preserve_pitch,
                                       processing: ci.processing, name: fixedString(ci.name)))
             }
-            out.append(TrackView(id: tid, name: fixedString(ti.name), color: Theme.trackColor(Int(ti.color)),
+            out.append(TrackView(id: tid, name: fixedString(ti.name), color: Theme.trackColor(step: Int(ti.color), custom: ti.custom_color),
+                                 customColor: ti.custom_color,
                                  gainDb: ti.gain_db, pan: ti.pan, muted: ti.muted, solo: ti.solo, clips: clips))
         }
         tracks = out
@@ -99,6 +101,8 @@ final class Session {
     func setSolo(_ t: DalnokTrackId, _ on: Bool) { dalnok_track_set_solo(h, t, on); refresh() }
     func moveTrack(_ t: DalnokTrackId, to index: Int) { dalnok_track_move(h, t, Int32(index)); refresh() }
     func renameTrack(_ t: DalnokTrackId, _ name: String) { dalnok_track_rename(h, t, name); refresh() }
+    func setTrackColor(_ t: DalnokTrackId, rgb: Int32) { dalnok_track_set_color(h, t, rgb); refresh() }
+    func recolorGradient() { dalnok_tracks_recolor_gradient(h); refresh() }
     @discardableResult
     func addTrack(_ name: String = "") -> DalnokTrackId { let id = dalnok_track_add(h, name); refresh(); return id }
     func removeTrack(_ t: DalnokTrackId) { dalnok_track_remove(h, t); refresh() }

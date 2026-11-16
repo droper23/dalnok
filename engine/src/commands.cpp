@@ -80,6 +80,20 @@ const CommandDef kCommands[] = {
          if (!needInt(a, "track", t, err)) return DALNOK_ERR_INVALID_ARG;
          return status(e.setSolo(t, a.getBool("solo", true), err), err);
      }},
+    {"track.setColor", "Set Track Color", "{track, color: \"#rrggbb\" | \"auto\"}", [](ARGS) {
+         DalnokTrackId t;
+         if (!needInt(a, "track", t, err)) return DALNOK_ERR_INVALID_ARG;
+         const std::string c = a.getString("color", "auto");
+         int32_t rgb = -1;
+         if (c != "auto") {
+             if (c.size() != 7 || c[0] != '#') return err = "color must be #rrggbb or auto", DALNOK_ERR_INVALID_ARG;
+             rgb = static_cast<int32_t>(std::strtol(c.c_str() + 1, nullptr, 16));
+         }
+         return status(e.setTrackColor(t, rgb, err), err);
+     }},
+    {"tracks.recolorGradient", "Recolor Tracks as Gradient", "{}", [](ARGS) {
+         return status(e.recolorAsGradient(err), err);
+     }},
     {"track.move", "Move Track", "{track, index}", [](ARGS) {
          DalnokTrackId t;
          int32_t i;

@@ -186,6 +186,7 @@ DalnokStatus dalnok_track_info(const DalnokEngine *e, DalnokTrackId id, DalnokTr
     out->id = t->id;
     copyOut(out->name, sizeof out->name, t->name);
     out->color = t->color;
+    out->custom_color = t->customColor;
     out->gain_db = t->gainDb;
     out->pan = t->pan;
     out->muted = t->muted;
@@ -257,6 +258,14 @@ DalnokStatus dalnok_track_set_mute(DalnokEngine *e, DalnokTrackId t, bool muted)
     return e ? statusFor(e->impl.setMute(t, muted, err), err) : DALNOK_ERR_INVALID_ARG;
 }
 
+DalnokStatus dalnok_track_set_color(DalnokEngine *e, DalnokTrackId t, int32_t rgb) {
+    std::string err;
+    return e ? statusFor(e->impl.setTrackColor(t, rgb, err), err) : DALNOK_ERR_INVALID_ARG;
+}
+DalnokStatus dalnok_tracks_recolor_gradient(DalnokEngine *e) {
+    std::string err;
+    return e ? statusFor(e->impl.recolorAsGradient(err), err) : DALNOK_ERR_INVALID_ARG;
+}
 DalnokStatus dalnok_track_set_solo(DalnokEngine *e, DalnokTrackId t, bool solo) {
     std::string err;
     return e ? statusFor(e->impl.setSolo(t, solo, err), err) : DALNOK_ERR_INVALID_ARG;

@@ -12,6 +12,7 @@ extension UTType {
 final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuItemValidation, NSMenuDelegate {
     let session: Session
     let palette = CommandPalette()
+    let emptyState = EmptyStateView()
     lazy var conceptGuide = ConceptGuideController()
     lazy var welcome = WelcomeController(main: self)
     private(set) var lastImportReport: ImportReport?
@@ -33,6 +34,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
                               styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                               backing: .buffered, defer: false)
         window.titlebarAppearsTransparent = true
+        window.titleVisibility = .hidden // the control bar shows the title
         window.appearance = NSAppearance(named: .darkAqua)
         window.backgroundColor = Theme.window
         window.minSize = NSSize(width: 720, height: 400)
@@ -50,12 +52,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             }
         }
         window.contentView = root
-        for v in [transport, headers, timeline] as [NSView] {
+        for v in [transport, headers, timeline, emptyState] as [NSView] {
             v.translatesAutoresizingMaskIntoConstraints = false
             root.addSubview(v)
         }
         NSLayoutConstraint.activate([
-            transport.topAnchor.constraint(equalTo: root.topAnchor, constant: 28),
+            transport.topAnchor.constraint(equalTo: root.topAnchor),
             transport.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             transport.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             transport.heightAnchor.constraint(equalToConstant: Theme.transportHeight),
@@ -67,14 +69,24 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             timeline.leadingAnchor.constraint(equalTo: headers.trailingAnchor),
             timeline.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             timeline.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            emptyState.topAnchor.constraint(equalTo: transport.bottomAnchor),
+            emptyState.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            emptyState.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            emptyState.bottomAnchor.constraint(equalTo: root.bottomAnchor),
         ])
+        emptyState.onImportAudio = { [weak self] in self?.importAudio() }
+        emptyState.onOpen = { [weak self] in self?.openDocument(nil) }
+        emptyState.onMigrate = { [weak self] in self?.showMigrationAssistant(nil) }
 
         transport.onPlayPause = { [weak self] in self?.togglePlay() }
         transport.onRewind = { [weak self] in self?.goToStart() }
         transport.onImport = { [weak self] in self?.importAudio() }
+        transport.onPalette = { [weak self] in self?.showCommandPalette(nil) }
+        headers.onAddTrack = { [weak self] in self?.newTrack(nil) }
         timeline.onVerticalScroll = { [weak self] y in self?.headers.scrollY = y }
         timeline.onClipSelected = { [weak self] clip in self?.headers.selectedTrack = clip.track }
         headers.contextMenu = trackContextMenu()
+        headers.onSelect = { [weak self] id in self?.timeline.highlightedTrack = id }
         palette.onOpenGuide = { [weak self] c in self?.conceptGuide.show(daw: c.daw, query: c.term) }
         session.onChange = { [weak self] in self?.modelChanged() }
         session.onMessage = { [weak self] msg in self?.flash(msg) }
@@ -92,6 +104,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
     private func modelChanged() {
         headers.sync()
+        emptyState.isHidden = !session.tracks.isEmpty
+        headers.isHidden = session.tracks.isEmpty
+        timeline.isHidden = session.tracks.isEmpty
         if let sel = timeline.selectedClip, session.clip(sel) == nil { timeline.selectedClip = nil }
         if fitOnNextChange && !session.tracks.isEmpty {
             timeline.zoomToFit()
@@ -104,6 +119,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
     func updateTitle() {
         window?.title = session.projectURL?.deletingPathExtension().lastPathComponent ?? "Untitled"
+        transport.titleLabel.stringValue = (window?.title ?? "Untitled") + (session.engine.isDirty ? " — Edited" : "")
         window?.representedURL = session.projectURL
         window?.isDocumentEdited = session.engine.isDirty
     }
@@ -118,11 +134,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         let e = session.engine
         let sr = e.sampleRate
         let n = session.tracks.count
-        var parts: [String] = []
-        if n > 0 { parts.append("\(n) track\(n == 1 ? "" : "s")  ·  \(TimelineView.formatTime(Double(session.length) / sr)) long") }
-        parts.append(outputDeviceDescription())
-        if n > 0 { parts.append("⌘K for all commands") }
-        transport.statusLabel.stringValue = parts.joined(separator: "  ·  ")
+        _ = (sr, n)
+        transport.statusLabel.stringValue = outputDeviceDescription()
     }
 
     private func outputDeviceDescription() -> String {
@@ -133,9 +146,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         var s = dev?.name ?? "No output"
         let hw = e.hardwareSampleRate
         if hw > 0 && abs(hw - e.sampleRate) > 0.5 {
-            s += String(format: " (%.1f kHz → %.1f kHz)", e.sampleRate / 1000, hw / 1000)
+            s += String(format: ", %g kHz (converted from %g kHz)", hw / 1000, e.sampleRate / 1000)
         } else {
-            s += String(format: " · %.1f kHz", e.sampleRate / 1000)
+            s += String(format: ", %g kHz", e.sampleRate / 1000)
         }
         return s
     }
@@ -236,13 +249,49 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     private func trackContextMenu() -> NSMenu {
         let m = NSMenu()
         for (title, sel) in [("Rename", #selector(renameTrack(_:))), ("Move Up", #selector(moveTrackUp(_:))),
-                             ("Move Down", #selector(moveTrackDown(_:))), ("Delete Track", #selector(deleteTrack(_:)))] {
+                             ("Move Down", #selector(moveTrackDown(_:)))] {
             let it = NSMenuItem(title: title, action: sel, keyEquivalent: "")
+            it.target = self
+            m.addItem(it)
+        }
+        let color = NSMenuItem(title: "Color", action: nil, keyEquivalent: "")
+        color.submenu = colorMenu()
+        m.addItem(color)
+        m.addItem(.separator())
+        let del = NSMenuItem(title: "Delete Track", action: #selector(deleteTrack(_:)), keyEquivalent: "")
+        del.target = self
+        m.addItem(del)
+        return m
+    }
+
+    /// "Automatic" plus the 16 gradient swatches.
+    func colorMenu() -> NSMenu {
+        let m = NSMenu(title: "Color")
+        let auto = NSMenuItem(title: "Automatic (Gradient)", action: #selector(setTrackColor(_:)), keyEquivalent: "")
+        auto.representedObject = Int32(-1)
+        auto.target = self
+        m.addItem(auto)
+        m.addItem(.separator())
+        let names = ["Green", "Teal", "Cyan", "Azure", "Blue", "Indigo", "Violet", "Magenta", "Rose", "Red", "Orange", "Yellow"]
+        for (i, c) in Theme.swatches.enumerated() {
+            let it = NSMenuItem(title: names[i % names.count], action: #selector(setTrackColor(_:)), keyEquivalent: "")
+            let rgb = c.usingColorSpace(.sRGB)!
+            it.representedObject = Int32(Int(rgb.redComponent * 255) << 16 | Int(rgb.greenComponent * 255) << 8 | Int(rgb.blueComponent * 255))
+            it.image = NSImage(size: NSSize(width: 14, height: 14), flipped: false) { r in
+                c.setFill(); NSBezierPath(roundedRect: r.insetBy(dx: 1, dy: 1), xRadius: 3, yRadius: 3).fill(); return true
+            }
             it.target = self
             m.addItem(it)
         }
         return m
     }
+
+    @objc func setTrackColor(_ sender: NSMenuItem) {
+        guard let t = selectedTrack, let rgb = sender.representedObject as? Int32 else { return }
+        session.setTrackColor(t, rgb: rgb)
+    }
+
+    @objc func recolorTracksAsGradient(_ sender: Any?) { session.recolorGradient() }
 
     @objc func newTrack(_ sender: Any?) {
         let id = session.addTrack()
@@ -621,6 +670,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             return selectedClipView != nil
         case #selector(resetSpeedAndPitch(_:)):
             return selectedClipView?.isStretched == true
+        case #selector(setTrackColor(_:)):
+            guard let t = selectedTrack.flatMap({ session.track($0) }), let rgb = item.representedObject as? Int32 else { return false }
+            item.state = t.customColor == rgb ? .on : .off
+            return true
+        case #selector(recolorTracksAsGradient(_:)):
+            return session.tracks.count > 1
         case #selector(toggleCopyAudioOnSave(_:)):
             item.state = Self.copyAudioOnSave ? .on : .off
             return true

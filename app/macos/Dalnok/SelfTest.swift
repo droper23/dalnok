@@ -197,6 +197,35 @@ final class SelfTest {
         check(perform("Reset Speed and Pitch"), "menu Clip > Reset Speed and Pitch")
         check(s.clip(first.id)?.rate == 1 && s.clip(first.id)?.pitch == 0 && s.clip(first.id)?.length == pre.sourceSpan, "back to original")
 
+        // Mixer controls: drag the fader cap, ⌥-click resets; pan knob; M/S chips; colors.
+        if let row = w.headers.rows.first {
+            let f = row.fader
+            func at(_ v: NSView, _ x: CGFloat, _ y: CGFloat) -> CGPoint { v.convert(CGPoint(x: x, y: y), to: nil) }
+            let capX = 6 + CGFloat(FaderControl.position(for: f.db)) * (f.bounds.width - 12)
+            f.mouseDown(with: mouse(.leftMouseDown, at(f, capX, f.bounds.midY)))
+            f.mouseDragged(with: mouse(.leftMouseDragged, at(f, capX - 40, f.bounds.midY)))
+            f.mouseUp(with: mouse(.leftMouseUp, at(f, capX - 40, f.bounds.midY)))
+            let g = s.track(row.trackId)!.gainDb
+            check(g < -2 && e.undoName == "Volume", String(format: "fader drag lowered volume to %.1f dB (one undo step)", g))
+            f.mouseDown(with: mouse(.leftMouseDown, at(f, 10, f.bounds.midY), .option))
+            f.mouseUp(with: mouse(.leftMouseUp, at(f, 10, f.bounds.midY)))
+            check(s.track(row.trackId)!.gainDb == 0, "⌥-click resets the fader to 0 dB")
+            let k = row.pan
+            k.mouseDown(with: mouse(.leftMouseDown, at(k, k.bounds.midX, k.bounds.midY)))
+            k.mouseDragged(with: mouse(.leftMouseDragged, CGPoint(x: at(k, k.bounds.midX, 0).x, y: at(k, k.bounds.midX, k.bounds.midY).y + 30)))
+            k.mouseUp(with: mouse(.leftMouseUp, at(k, k.bounds.midX, k.bounds.midY)))
+            check((s.track(row.trackId)?.pan ?? 0) > 0.2, "pan knob drag up pans right (\(s.track(row.trackId)?.pan ?? 0))")
+            _ = perform("Undo"); _ = perform("Undo"); _ = perform("Undo")
+            check(s.track(row.trackId)!.gainDb == 0 && s.track(row.trackId)!.pan == 0, "undo restores fader and pan")
+            let steps = s.tracks.map { OKLCH.fromSRGB($0.color).2 }
+            check(steps.count < 2 || zip(steps, steps.dropFirst()).allSatisfy { a, b in (b - a + 360).truncatingRemainder(dividingBy: 360) > 15 },
+                  "automatic colors advance around the hue wheel from green (\(steps.map { Int($0) }))")
+            w.headers.select(row.trackId)
+            check(perform("Rose"), "Track ▸ Track Color ▸ Rose")
+            check(s.track(row.trackId)!.customColor >= 0, "custom color pinned")
+            check(perform("Automatic (Gradient)") && s.track(row.trackId)!.customColor == -1, "back to automatic")
+        }
+
         // Tracks: select, solo, reorder (menu and drag), new, delete, rename.
         let t0 = s.tracks[0].id
         w.headers.select(t0)
@@ -241,6 +270,7 @@ final class SelfTest {
         check(!e.isDirty && w.window?.isDocumentEdited == false, "saved state is clean")
         check(perform("New"), "menu File > New")
         check(s.tracks.isEmpty, "new project is empty")
+        check(!w.emptyState.isHidden && w.timeline.isHidden, "empty state shown for an empty project")
         let opened = await withCheckedContinuation { cont in w.openProject(project) { cont.resume(returning: $0) } }
         check(opened, "background open completed")
         check(s.tracks.count == files.count, "reopened \(s.tracks.count) tracks")
