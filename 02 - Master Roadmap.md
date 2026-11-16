@@ -15,7 +15,12 @@ Foundation evaluated ([[Foundation Evaluation]]), license chosen (GPLv3+), archi
 - **M4 ✅** Fades and crossfades, solo, track reorder, rename, and delete, relink offline media,
   copy-to-project option, typing-safe shortcuts, benchmark, Phase 1 exit review.
 
-## Phase 2: Recording and editing 🔶 (next: ADR-0006 recording architecture)
+## Migration (M5) ✅ ([[ADR-0006 Migration and import]])
+Import from REAPER, Ableton, Final Cut Pro XML (Logic), stems, and Logic `.logicx` (experimental).
+Migration reports, "Coming from…" onboarding, shortcut presets, old-DAW vocabulary in ⌘K, and the
+Concept Guide. Grows with each phase: MIDI (P3), plugins, automation, and sends (P4), launcher (P5).
+
+## Phase 2: Recording and editing 🔶 (next: ADR-0007 recording architecture, then time-stretch)
 Input and recording (with a Scarlett test rig), monitoring, split, fades, crossfades, autosave and crash
 recovery, basic routing, disk streaming.
 

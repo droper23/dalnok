@@ -1,6 +1,18 @@
 # Changelog
 
 ## [Unreleased]
+### Added (2026-11-16, Migration M5)
+- Project import: REAPER `.rpp`, Ableton Live `.als`, Final Cut Pro XML (Logic's export), folders of
+  stems, and Logic `.logicx` (experimental). Each import comes with a migration report.
+  File ▸ Import Project from Another DAW… (⇧⌘O). Open… and drag-and-drop also accept these.
+- Onboarding: "Where are you coming from?" sets shortcut presets (Logic, Ableton, or REAPER). The
+  project finder searches your Mac and previews each import. Help ▸ Migration Assistant and Concept Guide.
+- ⌘K understands other DAWs' words ("bounce", "region", "item", "collect all and save"…) and lists
+  planned features with their status.
+- Clip gain. `dalnok-cli import`. Media relocation for moved archives.
+### Fixed
+- Clips using offline media collapsed to 1 frame on load.
+- Duplicate "Enter Full Screen" menu item; preset restore could give two items the same shortcut.
 ### Added (2026-11-16, Phase 1 M4, completing Phase 1)
 - Clip fades and crossfades (linear and equal power): drag handles at the top corners, Clip menu (curve,
   remove, add short fades). Fades over a lower clip crossfade with it.

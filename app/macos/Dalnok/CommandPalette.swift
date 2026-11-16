@@ -5,11 +5,13 @@
 import AppKit
 
 struct PaletteEntry {
-    let item: NSMenuItem
+    let item: NSMenuItem?   // nil for informational entries (planned features)
     let title: String
-    let path: String     // e.g. "Edit"
-    let shortcut: String // e.g. "⌘T"
-    var enabled: Bool { item.isEnabled }
+    let path: String        // e.g. "Edit"
+    let shortcut: String    // e.g. "⌘T"
+    var aliases: [String] = []          // other DAWs' words for this command
+    var run: (@MainActor () -> Void)? = nil
+    var enabled: Bool { item?.isEnabled ?? (run != nil) }
 }
 
 enum PaletteIndex {
@@ -25,8 +27,10 @@ enum PaletteIndex {
                 let name = sub.title.isEmpty ? it.title : sub.title
                 out += entries(in: sub, path: path + [name])
             } else if it.action != nil, it.action != #selector(MainWindowController.showCommandPalette(_:)) {
+                var aliases = Migration.aliases[it.title] ?? []
+                aliases += Migration.concepts.filter { $0.dalnok == it.title }.map { "\($0.daw.title): \($0.term)" }
                 out.append(PaletteEntry(item: it, title: it.title, path: path.joined(separator: " ▸ "),
-                                        shortcut: shortcutString(it)))
+                                        shortcut: shortcutString(it), aliases: aliases))
             }
         }
         return out
@@ -47,6 +51,35 @@ enum PaletteIndex {
         default: s += it.keyEquivalent.uppercased()
         }
         return s
+    }
+
+    /// Every menu command plus planned features from other DAWs (which open the Concept Guide).
+    @MainActor
+    static func allEntries(openGuide: @escaping @MainActor (Concept) -> Void) -> [PaletteEntry] {
+        var out = entries()
+        for c in Migration.concepts where c.status != .available {
+            out.append(PaletteEntry(item: nil, title: "\(c.term) (\(c.daw.title))", path: c.status.label, shortcut: "",
+                                    aliases: [c.dalnok], run: { openGuide(c) }))
+        }
+        return out
+    }
+
+    /// Rewrites other DAWs' nouns ("region", "item") to Dalnok's ("clip").
+    static func normalize(_ query: String) -> String {
+        query.lowercased().split(separator: " ").map { Migration.synonyms[String($0)] ?? String($0) }.joined(separator: " ")
+    }
+
+    /// Best score for an entry: its title, any alias, or its menu path.
+    static func score(_ query: String, entry e: PaletteEntry) -> (score: Int, via: String?) {
+        let q = normalize(query)
+        var best = (max(score(q, e.title), score(query, e.title)) * 3, nil as String?)
+        for a in e.aliases {
+            let sc = max(score(q, a), score(query, a)) * 2
+            if sc > best.0 { best = (sc, a) }
+        }
+        let p = score(q, e.path + " " + e.title)
+        if p > best.0 { best = (p, nil) }
+        return best
     }
 
     /// Subsequence match with bonuses for word starts and consecutive runs. 0 = no match.
@@ -146,8 +179,11 @@ final class CommandPalette: NSObject, NSTableViewDataSource, NSTableViewDelegate
         ])
     }
 
+    var onOpenGuide: (@MainActor (Concept) -> Void)?
+    private(set) var matchedVia: [String?] = []
+
     func show(over window: NSWindow) {
-        all = PaletteIndex.entries()
+        all = PaletteIndex.allEntries(openGuide: { [weak self] c in self?.onOpenGuide?(c) })
         field.stringValue = ""
         filter("")
         let f = window.frame
@@ -163,11 +199,21 @@ final class CommandPalette: NSObject, NSTableViewDataSource, NSTableViewDelegate
 
     func filter(_ query: String) {
         field.stringValue = query
-        results = all.enumerated()
-            .map { (i, e) in (e, PaletteIndex.score(query, e.title) * 2 + PaletteIndex.score(query, e.path + " " + e.title), i) }
-            .filter { $0.1 > 0 }
-            .sorted { ($0.0.enabled ? 1 : 0, $0.1, -$0.2) > ($1.0.enabled ? 1 : 0, $1.1, -$1.2) }
-            .map(\.0)
+        struct Hit { let entry: PaletteEntry; let score: Int; let order: Int; let via: String?
+            var rank: Int { entry.item != nil && entry.enabled ? 1 : 0 } }
+        var hits: [Hit] = []
+        for (i, e) in all.enumerated() {
+            let r = PaletteIndex.score(query, entry: e)
+            if r.score > 0 && (!query.isEmpty || e.item != nil) { hits.append(Hit(entry: e, score: r.score, order: i, via: r.via)) }
+        }
+        // Enabled menu commands first, then relevance, then menu order.
+        hits.sort { a, b in
+            if a.rank != b.rank { return a.rank > b.rank }
+            if a.score != b.score { return a.score > b.score }
+            return a.order < b.order
+        }
+        results = hits.map { $0.entry }
+        matchedVia = hits.map { $0.via }
         table.reloadData()
         if !results.isEmpty { table.selectRowIndexes([0], byExtendingSelection: false) }
     }
@@ -177,10 +223,11 @@ final class CommandPalette: NSObject, NSTableViewDataSource, NSTableViewDelegate
         guard row >= 0, row < results.count else { return }
         let entry = results[row]
         close()
-        guard let menu = entry.item.menu else { return }
+        if entry.item == nil { entry.run?(); return }
+        guard let menu = entry.item?.menu, let item = entry.item else { return }
         menu.update()
-        guard entry.item.isEnabled else { NSSound.beep(); return }
-        menu.performActionForItem(at: menu.index(of: entry.item))
+        guard item.isEnabled else { NSSound.beep(); return }
+        menu.performActionForItem(at: menu.index(of: item))
     }
 
     // MARK: Field
@@ -214,7 +261,8 @@ final class CommandPalette: NSObject, NSTableViewDataSource, NSTableViewDelegate
         let title = NSTextField(labelWithString: e.title)
         title.font = .systemFont(ofSize: 13, weight: .medium)
         title.textColor = e.enabled ? Theme.text : Theme.textDim.withAlphaComponent(0.5)
-        let path = NSTextField(labelWithString: e.path)
+        let via = row < matchedVia.count ? matchedVia[row] : nil
+        let path = NSTextField(labelWithString: via.map { "“\($0)” · " + e.path } ?? e.path)
         path.font = .systemFont(ofSize: 11)
         path.textColor = Theme.textDim
         let key = NSTextField(labelWithString: e.shortcut)

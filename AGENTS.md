@@ -25,7 +25,10 @@ Swift/AppKit front end on macOS. GPL-3.0-or-later. This repo is also the project
 - `.build/debug/Dalnok <files…> --selftest <dir>` drives real menus and synthesized drags end to end.
   Extend `app/macos/Dalnok/SelfTest.swift` for every new UI interaction.
 - `.build/debug/dalnok-cli commands`, `command <proj> <name> '<json>' [--save]`, `render-project`,
-  `bench --tracks N` (release build for meaningful numbers).
+  `bench --tracks N` (release build for meaningful numbers),
+  `import <.rpp|.als|.logicx|.fcpxml|stems-folder> [--report-only] [--save x.dalnok] [--render x.wav]`.
+- Importers live in `engine/src/import/`. They translate to a Dalnok document plus a report (ADR-0006).
+  Never commit or publish anything derived from the owner's projects. Tests use generated fixtures.
 - `scripts/ci/rt-effects.sh` runs the real-time effect analysis (uses Homebrew LLVM on CI).
 - `Dalnok <audio files> --screenshots site/screenshots` regenerates the parity-page screenshots from the real app.
 - `scripts/publish-site.sh` publishes `site/` (only) to the public repo `droper23/dalnok-status` (GitHub Pages).

@@ -1,7 +1,7 @@
 ---
 updated: 2026-11-16
 phase: 2 (Recording and editing) — Phase 1 complete
-milestone: Phase 1 M1–M4 done; Phase 2 starting
+milestone: Phase 1 done + Migration M5 done; Phase 2 next
 ---
 # Current State
 
@@ -11,6 +11,7 @@ milestone: Phase 1 M1–M4 done; Phase 2 starting
   `scripts/check.sh` passes, including the live audio smoke test and the app self-test (69 checks).
 - Engine tests are clean under AddressSanitizer and ThreadSanitizer (CI job `sanitizers`). The app self-test is clean under ASan.
 - Phase 1 exit review: [[Phase 1 Exit Review]].
+- `swift test`: 54 tests. Self-test: 90 checks, including migration and onboarding.
 - **Public parity page:** https://droper23.github.io/dalnok-status/ (source in `site/`, published by `scripts/publish-site.sh`).
 - CI has two jobs: build + test, and real-time effect analysis with Homebrew LLVM.
 
@@ -52,6 +53,12 @@ slot, and retired ones come back through an SPSC queue. See [[System Overview]],
 | Copy audio into "Audio Files/" on save (identical files reused, clashes numbered) | `saveCopyingMediaMakesProjectSelfContained` + self-test |
 | Single-key shortcuts don't steal typed text | Self-test (rename field + Space) |
 | Engine scales linearly: 256 tracks = 3% of the real-time budget | `dalnok-cli bench` (see the exit review) |
+| Import REAPER `.rpp` (tracks, items, fades, item gain, loops, Windows/moved paths) | `ReaperImport` tests; 6/6 of the owner's projects, all audio found |
+| Import Ableton `.als` (arrangement audio, beats→time, warp markers, loops, clip gain, Live path types) | `AbletonImport` tests; 493/495 real sets parse; 95% of 6,929 file references resolved |
+| Import Final Cut Pro XML (Logic's export) and stems folders | `FcpxmlImport`, `StemsImport` tests |
+| Import Logic `.logicx`: EXPERIMENTAL (metadata, files, region trims verified; placement unverified) | `LogicImport` test; 30/31 real projects parse |
+| Clip gain | `clip.setGain`, used by every importer |
+| Onboarding: "Coming from…", shortcut presets, project finder with preview, import report, Concept Guide, old-DAW words in ⌘K | Self-test |
 
 ## Not yet / incomplete
 - Relinking offline media from the UI. Autosave and crash recovery (Phase 2).
@@ -66,7 +73,13 @@ slot, and retired ones come back through an SPSC queue. See [[System Overview]],
 - Peak meters only. No LUFS or RMS yet.
 
 ## Active objective
-Phase 2: recording. Recording integrity outranks everything else.
+Phase 2: recording. Recording integrity outranks everything else. Time-stretch (Signalsmith, MIT) was
+pulled forward right after it: real imports need it (≈6,000 warped Ableton clips, REAPER playrate items).
+
+## Open migration items
+- Verify Logic `.logicx` placement against a real Logic **Final Cut Pro XML export** of the same project
+  (needs the owner to export one). Then decode track names and take folders.
+- Test the FCPXML importer on a real Logic export (only fixtures so far).
 
 ## Next recommended action
 Write ADR-0006 (recording architecture): input via AUHAL or an aggregate device, a lock-free capture

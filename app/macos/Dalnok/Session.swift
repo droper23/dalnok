@@ -202,6 +202,17 @@ final class Session {
                                 : "Opened \(url.lastPathComponent)")
     }
 
+    /// Imports a Logic/Ableton/REAPER/FCPXML project or stems folder as a new, unsaved project.
+    func importForeign(_ url: URL) async throws -> ImportReport? {
+        isOpening = true
+        defer { isOpening = false }
+        onMessage?("Importing \(url.lastPathComponent)…")
+        let json = try await engine.importForeign(from: url)
+        projectURL = nil
+        refresh()
+        return ImportReport(json: json)
+    }
+
     func save(to url: URL, copyAudio: Bool = false) throws {
         try engine.save(to: url, copyAudio: copyAudio)
         projectURL = url

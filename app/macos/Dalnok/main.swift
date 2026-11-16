@@ -15,6 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         main = MainWindowController(session: session)
         NSApp.mainMenu = buildMenu(target: main)
+        Migration.applyKeymap(SourceDAW.preferred, to: NSApp.mainMenu)
         main.showWindow(nil)
         main.window?.center()
         NSApp.activate()
@@ -38,8 +39,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         let projects = files.filter { $0.pathExtension == "dalnok" }
-        let audio = files.filter { $0.pathExtension != "dalnok" }
+        let foreign = files.filter { MainWindowController.foreignExtensions.contains($0.pathExtension.lowercased()) }
+        let audio = files.filter { $0.pathExtension != "dalnok" && !foreign.contains($0) }
         if let p = projects.first { main.openProject(p) }
+        if let f = foreign.first { main.importProject(f, confirm: false) }
+        if files.isEmpty && snapshot == nil && !args.contains("--no-welcome") && !WelcomeController.hasCompleted {
+            main.welcome.show()
+        }
         let finish = { [weak self] in
             guard let self else { return }
             if args.contains("--play") { engine.play() }
@@ -123,6 +129,7 @@ func buildMenu(target: MainWindowController) -> NSMenu {
         item("Save As…", #selector(W.saveDocumentAs(_:then:)), "s", [.command, .shift]),
         .separator(),
         item("Import Audio…", #selector(W.importAudio), "i"),
+        item("Import Project from Another DAW…", #selector(W.importProjectFromDAW(_:)), "o", [.command, .shift]),
         item("Export Mix…", #selector(W.exportMix(_:)), "b"),
         .separator(),
         item("Relink Missing Audio…", #selector(W.relinkMissingAudio(_:)), ""),
@@ -175,7 +182,11 @@ func buildMenu(target: MainWindowController) -> NSMenu {
     ])
     menu("Window", [
         item("Minimize", #selector(NSWindow.performMiniaturize(_:)), "m"),
-        item("Enter Full Screen", #selector(NSWindow.toggleFullScreen(_:)), "f", [.command, .control]),
+    ])
+    menu("Help", [
+        item("Migration Assistant…", #selector(W.showMigrationAssistant(_:)), ""),
+        item("Concept Guide", #selector(W.showConceptGuide(_:)), ""),
+        item("Command Palette…", #selector(W.showCommandPalette(_:)), ""),
     ])
     return bar
 }

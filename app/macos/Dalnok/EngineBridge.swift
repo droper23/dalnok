@@ -167,6 +167,21 @@ final class Engine {
         return prepared.missing
     }
 
+    /// Imports another DAW's project off the main thread, then swaps it in. Returns the report JSON.
+    func importForeign(from url: URL) async throws -> String {
+        struct Prepared: @unchecked Sendable { let data: OpaquePointer; let report: String }
+        let rate = sampleRate
+        let prepared = try await Task.detached(priority: .userInitiated) { () throws -> Prepared in
+            var data: OpaquePointer?
+            var report = [CChar](repeating: 0, count: 1 << 16), err = [CChar](repeating: 0, count: 1024)
+            guard dalnok_project_import(url.path, rate, &data, nil, &report, report.count, &err, err.count) == DALNOK_OK,
+                  let data else { throw EngineError(description: cString(err)) }
+            return Prepared(data: data, report: cString(report))
+        }.value
+        guard dalnok_project_apply(handle, prepared.data) == DALNOK_OK else { throw EngineError(description: "import could not be applied") }
+        return prepared.report
+    }
+
     func stats() -> DalnokStats {
         var s = DalnokStats()
         dalnok_engine_stats(handle, &s)

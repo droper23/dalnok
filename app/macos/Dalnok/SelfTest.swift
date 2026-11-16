@@ -253,7 +253,85 @@ final class SelfTest {
         if let media { dalnok_media_release(media) }
 
         try? w.snapshot(to: workdir.appendingPathComponent("selftest.png"))
+        await migrationSteps()
         finish()
+    }
+
+    // MARK: Migration & onboarding
+
+    private func migrationSteps() async {
+        let e = s.engine
+        let savedDAW = SourceDAW.preferred, savedDone = WelcomeController.hasCompleted
+        defer {
+            SourceDAW.preferred = savedDAW
+            WelcomeController.hasCompleted = savedDone
+            Migration.applyKeymap(savedDAW, to: NSApp.mainMenu)
+        }
+        // Palette speaks other DAWs' languages.
+        w.showCommandPalette(nil)
+        w.palette.filter("bounce")
+        check(w.palette.results.first?.title == "Export Mix…", "palette: 'bounce' → \(w.palette.results.first?.title ?? "-")")
+        w.palette.filter("split region")
+        check(w.palette.results.first?.title == "Split at Playhead", "palette: 'split region' → \(w.palette.results.first?.title ?? "-")")
+        w.palette.filter("collect all and save")
+        check(w.palette.results.first?.title == "Copy Audio into Project on Save", "palette: Ableton's 'collect all and save'")
+        w.palette.filter("flex time")
+        check(w.palette.results.contains { $0.title.hasPrefix("Flex Time") && $0.item == nil }, "palette lists planned 'Flex Time' with status")
+        w.palette.close()
+
+        // Shortcut presets: expected keys, and no collisions in any preset.
+        for daw in [SourceDAW.logic, .ableton, .reaper] {
+            Migration.applyKeymap(daw, to: NSApp.mainMenu)
+            let split = menuItem("Split at Playhead")
+            let expected = daw == .ableton ? ("e", NSEvent.ModifierFlags.command) : daw == .reaper ? ("s", []) : ("t", .command)
+            check(split?.keyEquivalent == expected.0 && split?.keyEquivalentModifierMask == expected.1,
+                  "\(daw.title) preset: Split = \(PaletteIndex.shortcutString(split!))")
+            let conflicts = Migration.shortcutConflicts(NSApp.mainMenu)
+            check(conflicts.isEmpty, "\(daw.title) preset has no shortcut collisions \(conflicts)")
+        }
+        Migration.applyKeymap(nil, to: NSApp.mainMenu)
+        check(menuItem("Split at Playhead")?.keyEquivalent == "t", "Dalnok defaults restored")
+
+        // Concept guide.
+        w.conceptGuide.show(daw: .ableton, query: "warp")
+        check(w.conceptGuide.rows.contains { $0.term == "Warping" }, "concept guide: Ableton 'Warping' → \(w.conceptGuide.rows.first?.dalnok ?? "-")")
+        w.conceptGuide.window.orderOut(nil)
+
+        // Import a REAPER project end to end (fixture built from this run's audio files).
+        let media = workdir.appendingPathComponent("Media")
+        try? FileManager.default.createDirectory(at: media, withIntermediateDirectories: true)
+        for f in files { try? FileManager.default.copyItem(at: f, to: media.appendingPathComponent(f.lastPathComponent)) }
+        var rpp = "<REAPER_PROJECT 0.1 \"7.0/macOS\"\n  SAMPLERATE 48000 0 0\n"
+        for (i, f) in files.enumerated() {
+            rpp += "  <TRACK\n    NAME \"Imported \(i + 1)\"\n    VOLPAN 1 0 -1 -1 1\n    <ITEM\n      POSITION \(i)\n      LENGTH 1\n"
+                + "      <SOURCE WAVE\n        FILE \"Media\\\(f.lastPathComponent)\"\n      >\n    >\n  >\n"
+        }
+        rpp += "  <TRACK\n    NAME Keys\n    <ITEM\n      POSITION 0\n      LENGTH 2\n      <SOURCE MIDI\n      >\n    >\n  >\n>\n"
+        let rppURL = workdir.appendingPathComponent("from-reaper.rpp")
+        try? rpp.write(to: rppURL, atomically: true, encoding: .utf8)
+        let ok = await withCheckedContinuation { cont in w.importProject(rppURL, confirm: false) { cont.resume(returning: $0) } }
+        check(ok && w.lastImportReport?.app == "REAPER", "imported REAPER project")
+        check(s.tracks.count == files.count + 1 && s.tracks.flatMap(\.clips).allSatisfy { !$0.offline }, "\(s.tracks.count) tracks, all audio found")
+        check(s.tracks.flatMap(\.clips).map(\.start).sorted() == (0..<files.count).map { Int64($0) * Int64(e.sampleRate) },
+              "clip positions from the RPP")
+        check(w.lastImportReport?.notImported.first?.contains("MIDI") == true, "report explains the skipped MIDI item")
+        check(e.isDirty && s.projectURL == nil && w.window?.title == "Untitled", "import is a new unsaved project")
+
+        // Stems folder.
+        let stems = workdir.appendingPathComponent("Stems")
+        try? FileManager.default.createDirectory(at: stems, withIntermediateDirectories: true)
+        for (i, f) in files.enumerated() { try? FileManager.default.copyItem(at: f, to: stems.appendingPathComponent("Mix#0\(i + 1) \(f.lastPathComponent)")) }
+        let ok2 = await withCheckedContinuation { cont in w.importProject(stems, confirm: false) { cont.resume(returning: $0) } }
+        check(ok2 && s.tracks.count == files.count && s.tracks.allSatisfy { $0.clips.first?.start == 0 }, "stems folder → \(s.tracks.count) aligned tracks")
+        check(s.tracks.first?.name.hasPrefix("01 ") == true, "common stem prefix stripped (\(s.tracks.first?.name ?? "-"))")
+
+        // Welcome flow: choosing a DAW applies its preset and starts the project finder.
+        w.welcome.show()
+        w.welcome.choose(.ableton)
+        check(SourceDAW.preferred == .ableton && menuItem("Split at Playhead")?.keyEquivalent == "e", "welcome: Ableton chosen, preset applied")
+        await w.welcome.rescan()
+        check(true, "project finder scanned (\(w.welcome.projects.count) projects found)")
+        w.welcome.window.orderOut(nil)
     }
 
     private func finish() {

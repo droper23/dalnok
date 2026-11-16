@@ -12,13 +12,17 @@ extension UTType {
 final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuItemValidation, NSMenuDelegate {
     let session: Session
     let palette = CommandPalette()
+    lazy var conceptGuide = ConceptGuideController()
+    lazy var welcome = WelcomeController(main: self)
+    private(set) var lastImportReport: ImportReport?
+    static let foreignExtensions: Set<String> = ["rpp", "als", "logicx", "fcpxml", "fcpxmld"]
     private var tickCount = 0
     let transport = TransportBar()
     let headers: TrackHeaderColumn
     let timeline: TimelineView
     private var timer: Timer?
     private var wasPlaying = false
-    private var fitOnNextChange = true
+    var fitOnNextChange = true
 
     init(session: Session) {
         self.session = session
@@ -37,7 +41,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         window.delegate = self
 
         let root = DropView()
-        root.onDrop = { [weak self] urls in self?.session.importFiles(urls) }
+        root.onDrop = { [weak self] urls in
+            guard let self else { return }
+            if let project = urls.first(where: { Self.foreignExtensions.contains($0.pathExtension.lowercased()) || $0.hasDirectoryPath }) {
+                self.importProject(project)
+            } else {
+                self.session.importFiles(urls)
+            }
+        }
         window.contentView = root
         for v in [transport, headers, timeline] as [NSView] {
             v.translatesAutoresizingMaskIntoConstraints = false
@@ -64,6 +75,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         timeline.onVerticalScroll = { [weak self] y in self?.headers.scrollY = y }
         timeline.onClipSelected = { [weak self] clip in self?.headers.selectedTrack = clip.track }
         headers.contextMenu = trackContextMenu()
+        palette.onOpenGuide = { [weak self] c in self?.conceptGuide.show(daw: c.daw, query: c.term) }
         session.onChange = { [weak self] in self?.modelChanged() }
         session.onMessage = { [weak self] msg in self?.flash(msg) }
         modelChanged()
@@ -90,7 +102,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         if transientMessageUntil < Date() { updateStatus() }
     }
 
-    private func updateTitle() {
+    func updateTitle() {
         window?.title = session.projectURL?.deletingPathExtension().lastPathComponent ?? "Untitled"
         window?.representedURL = session.projectURL
         window?.isDocumentEdited = session.engine.isDirty
@@ -373,13 +385,64 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         confirmDiscard { [weak self] in
             guard let self else { return }
             let panel = NSOpenPanel()
-            panel.allowedContentTypes = [.dalnokProject]
+            panel.allowedContentTypes = [.dalnokProject] + Self.foreignExtensions.compactMap { UTType(filenameExtension: $0) }
+            panel.treatsFilePackagesAsDirectories = false
+            panel.message = "Open a Dalnok project — or a Logic, Ableton or REAPER project to import."
             panel.beginSheetModal(for: window!) { resp in
                 guard resp == .OK, let url = panel.url else { return }
-                MainActor.assumeIsolated { self.openProject(url) }
+                MainActor.assumeIsolated {
+                    if Self.foreignExtensions.contains(url.pathExtension.lowercased()) { self.importProject(url, confirm: false) }
+                    else { self.openProject(url) }
+                }
             }
         }
     }
+
+    // MARK: Migration
+
+    @objc func importProjectFromDAW(_ sender: Any?) {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.allowedContentTypes = Self.foreignExtensions.compactMap { UTType(filenameExtension: $0) } + [.folder]
+        panel.message = "Choose a Logic (.logicx), Ableton (.als), REAPER (.rpp) or Final Cut Pro XML project — or a folder of stems."
+        panel.beginSheetModal(for: window!) { [weak self] resp in
+            guard resp == .OK, let url = panel.url else { return }
+            MainActor.assumeIsolated { self?.importProject(url) }
+        }
+    }
+
+    /// Imports into a new unsaved project (after resolving unsaved changes) and shows the report.
+    func importProject(_ url: URL, confirm: Bool = true, completion: ((Bool) -> Void)? = nil) {
+        let run = { [weak self] in
+            guard let self else { return }
+            Task {
+                do {
+                    self.fitOnNextChange = true
+                    let report = try await self.session.importForeign(url)
+                    self.lastImportReport = report
+                    self.updateTitle()
+                    if let report {
+                        self.flash("Imported from \(report.app): \(report.summary)")
+                        if !SelfTest.running, let w = self.window {
+                            let guide = self.conceptGuide
+                            ImportReportController.present(report, source: url, over: w) {
+                                guide.show(daw: SourceDAW.allCases.first { $0.title == report.app })
+                            }
+                        }
+                    }
+                    completion?(true)
+                } catch {
+                    self.fitOnNextChange = false
+                    self.presentError(title: "Couldn't import \(url.lastPathComponent)", error)
+                    completion?(false)
+                }
+            }
+        }
+        confirm ? confirmDiscard(run) : run()
+    }
+
+    @objc func showConceptGuide(_ sender: Any?) { conceptGuide.show(daw: SourceDAW.preferred) }
+    @objc func showMigrationAssistant(_ sender: Any?) { welcome.show() }
 
     func openProject(_ url: URL, completion: ((Bool) -> Void)? = nil) {
         Task {
@@ -483,7 +546,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         }
     }
 
-    private func presentError(title: String, _ error: Error) {
+    func presentError(title: String, _ error: Error) {
         let alert = NSAlert()
         alert.messageText = title
         alert.informativeText = "\(error)"
@@ -589,7 +652,10 @@ final class DropView: NSView {
 
     private func audioURLs(_ info: NSDraggingInfo) -> [URL] {
         let urls = info.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
-        return urls.filter { (UTType(filenameExtension: $0.pathExtension)?.conforms(to: .audio)) ?? false }
+        return urls.filter {
+            (UTType(filenameExtension: $0.pathExtension)?.conforms(to: .audio) ?? false)
+                || MainWindowController.foreignExtensions.contains($0.pathExtension.lowercased()) || $0.hasDirectoryPath
+        }
     }
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {

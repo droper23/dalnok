@@ -39,6 +39,21 @@ enum Screenshots {
             if let panel = NSApp.windows.first(where: { $0 is KeyPanel }), let v = panel.contentView {
                 png(v, dir.appendingPathComponent("command-palette.png"))
             }
+            w.palette.filter("bounce")
+            try? await Task.sleep(for: .seconds(0.2))
+            if let panel = NSApp.windows.first(where: { $0 is KeyPanel }), let v = panel.contentView {
+                png(v, dir.appendingPathComponent("palette-other-daw-words.png"))
+            }
+            w.palette.close()
+            // Onboarding screens without personal data (the project finder lists real files, so it's excluded).
+            w.welcome.show()
+            w.welcome.showChooseDAW()
+            try? await Task.sleep(for: .seconds(0.3))
+            if let v = w.welcome.window.contentView { png(v, dir.appendingPathComponent("welcome.png")) }
+            w.welcome.window.orderOut(nil)
+            w.conceptGuide.show(daw: .logic)
+            try? await Task.sleep(for: .seconds(0.3))
+            if let v = w.conceptGuide.window.contentView { png(v, dir.appendingPathComponent("concept-guide.png")) }
             exit(0)
         }
     }
