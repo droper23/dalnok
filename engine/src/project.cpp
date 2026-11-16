@@ -12,6 +12,7 @@
 // rate rescales them.
 #include "engine.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <filesystem>

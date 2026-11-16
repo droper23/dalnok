@@ -7,6 +7,7 @@
 #include "json.hpp"
 #include "render.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <map>
 #include <memory>

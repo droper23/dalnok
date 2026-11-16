@@ -4,6 +4,7 @@
 #include "commands.hpp"
 #include "engine.hpp"
 
+#include <algorithm>
 #include <cstring>
 
 using namespace atrium;
