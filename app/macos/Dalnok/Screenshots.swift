@@ -27,6 +27,10 @@ enum Screenshots {
                 let sr = Int64(app.engine.sampleRate)
                 app.session.setFades(pad.id, fadeIn: 3 * sr, fadeOut: 4 * sr, curve: DALNOK_FADE_EQUAL_POWER)
             }
+            // Show a time-stretched clip (Hats slowed by 10%).
+            if app.session.tracks.count > 1, let hats = app.session.tracks[1].clips.first {
+                app.session.setStretch(hats.id, length: Int64(Double(hats.length) * 1.1), rate: 1 / 1.1, pitch: 0, preservePitch: true)
+            }
             w.timeline.selectedClip = app.session.tracks.last?.clips.first?.id
             app.engine.seek(Int64(app.engine.sampleRate * 2))
             app.engine.play()

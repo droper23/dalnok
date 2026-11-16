@@ -33,6 +33,7 @@ final class TimelineView: NSView {
         let zone: Zone
         let startX: CGFloat
         var changed = false
+        var stretch = false // ⌥-drag on the right edge: time-stretch instead of trim
     }
     private var drag: Drag?
     private let edgeWidth: CGFloat = 7
@@ -215,7 +216,15 @@ final class TimelineView: NSView {
             .font: NSFont.systemFont(ofSize: 10.5, weight: .semibold),
             .foregroundColor: Theme.hex(0x101113, 0.9),
         ]
-        let title = clip.offline ? "\(clip.name) — offline" : clip.name
+        var title = clip.offline ? "\(clip.name) — offline" : clip.name
+        if clip.isStretched {
+            var tags: [String] = []
+            if abs(clip.rate - 1) > 1e-9 { tags.append(String(format: "%.0f%% speed", clip.rate * 100)) }
+            if clip.pitch != 0 { tags.append(String(format: "%+.1f st", clip.pitch)) }
+            if !clip.preservePitch { tags.append("varispeed") }
+            title += "  " + tags.joined(separator: " ")
+        }
+        if clip.processing { title += "  · rendering…" }
         (title as NSString).draw(at: CGPoint(x: max(rect.minX, 0) + 6, y: rect.minY + 1.5), withAttributes: attrs)
 
         if let media = session.engine.poolMedia(clip.media) {
@@ -291,8 +300,9 @@ final class TimelineView: NSView {
         let columns = Int(((visX1 - visX0) * scale).rounded(.up))
         guard columns > 0 else { return }
         if mins.count < columns { mins = [Float](repeating: 0, count: columns); maxs = mins }
-        let fpc = framesPerPoint / Double(scale)
-        let sourceStart = Int64(frame(forX: visX0)) - clip.start + clip.offset
+        // Stretched clips draw their source at `rate` source frames per timeline frame.
+        let fpc = framesPerPoint / Double(scale) * clip.rate
+        let sourceStart = Int64((frame(forX: visX0) - Double(clip.start)) * clip.rate) + clip.offset
         let waveH = rect.maxY - top - 3
         let chans = min(Int(dalnok_media_channels(media)), 2)
         let laneH = waveH / CGFloat(chans)
@@ -367,8 +377,10 @@ final class TimelineView: NSView {
         }
         selectedClip = clip.id
         onClipSelected?(clip)
-        drag = Drag(clip: clip, zone: zone, startX: p.x)
-        session.engine.beginGroup(zone == .body ? "Move Clip" : (zone == .fadeIn || zone == .fadeOut) ? "Fade" : "Trim Clip")
+        let stretch = zone == .rightEdge && event.modifierFlags.contains(.option)
+        drag = Drag(clip: clip, zone: zone, startX: p.x, stretch: stretch)
+        session.engine.beginGroup(stretch ? "Time Stretch" : zone == .body ? "Move Clip"
+                                  : (zone == .fadeIn || zone == .fadeOut) ? "Fade" : "Trim Clip")
         if zone == .body { NSCursor.closedHand.set() }
     }
 
@@ -417,6 +429,17 @@ final class TimelineView: NSView {
                     session.setFades(c.id, fadeIn: current.fadeIn, fadeOut: fo, curve: curve)
                     d.changed = true
                 }
+            }
+        case .rightEdge where d.stretch:
+            // Keep the same source audio, change its timeline length (rate = source span / length).
+            var end = snap(Double(c.end) + delta, bypass: bypass)
+            end = max(end, c.start + max(1, Int64(Double(c.sourceSpan) / 20)))
+            end = min(end, c.start + c.sourceSpan * 20)
+            let length = end - c.start
+            if length != current.length {
+                session.setStretch(c.id, length: length, rate: Double(c.sourceSpan) / Double(length), pitch: c.pitch,
+                                   preservePitch: c.preservePitch)
+                d.changed = true
             }
         case .rightEdge:
             var end = snap(Double(c.end) + delta, bypass: bypass)

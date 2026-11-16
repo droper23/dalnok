@@ -1,7 +1,7 @@
 ---
 updated: 2026-11-16
 phase: 2 (Recording and editing) — Phase 1 complete
-milestone: Phase 1 done + Migration M5 done; Phase 2 next
+milestone: Phase 1 + Migration (M5) + Time stretch (M6) done; Phase 2 recording next
 ---
 # Current State
 
@@ -11,7 +11,7 @@ milestone: Phase 1 done + Migration M5 done; Phase 2 next
   `scripts/check.sh` passes, including the live audio smoke test and the app self-test (69 checks).
 - Engine tests are clean under AddressSanitizer and ThreadSanitizer (CI job `sanitizers`). The app self-test is clean under ASan.
 - Phase 1 exit review: [[Phase 1 Exit Review]].
-- `swift test`: 54 tests. Self-test: 90 checks, including migration and onboarding.
+- `swift test`: 62 tests (ASan/TSan clean). Self-test passes, including migration, onboarding, and time stretch.
 - **Public parity page:** https://droper23.github.io/dalnok-status/ (source in `site/`, published by `scripts/publish-site.sh`).
 - CI has two jobs: build + test, and real-time effect analysis with Homebrew LLVM.
 
@@ -58,6 +58,8 @@ slot, and retired ones come back through an SPSC queue. See [[System Overview]],
 | Import Final Cut Pro XML (Logic's export) and stems folders | `FcpxmlImport`, `StemsImport` tests |
 | Import Logic `.logicx`: EXPERIMENTAL (metadata, files, region trims verified; placement unverified) | `LogicImport` test; 30/31 real projects parse |
 | Clip gain | `clip.setGain`, used by every importer |
+| Time stretch, pitch, and varispeed (Signalsmith; rendered in the background; ⌥-drag a clip's end; Clip menu) | `TimeStretch` tests measure pitch and level on output; mutation-checked; self-test |
+| Imports use stretch: REAPER playrate and pitch; Ableton warp markers (piecewise), Re-Pitch, transpose | `StretchImports` tests; a real set with 334 stretched clips imports in 1.7 s |
 | Onboarding: "Coming from…", shortcut presets, project finder with preview, import report, Concept Guide, old-DAW words in ⌘K | Self-test |
 
 ## Not yet / incomplete
@@ -73,20 +75,18 @@ slot, and retired ones come back through an SPSC queue. See [[System Overview]],
 - Peak meters only. No LUFS or RMS yet.
 
 ## Active objective
-Phase 2: recording. Recording integrity outranks everything else. Time-stretch (Signalsmith, MIT) was
-pulled forward right after it: real imports need it (≈6,000 warped Ableton clips, REAPER playrate items).
+Phase 2: recording. Recording integrity outranks everything else. Time-stretch landed first (M6,
+[[ADR-0007 Time stretch]]) because real imports needed it.
+
+## Next recommended action
+Write ADR-0008 (recording architecture): input via AUHAL or an aggregate device, a lock-free capture ring,
+a disk-writer thread, and crash-safe file finalization. Then input selection, record-arm, monitoring, and
+a long-duration capture test. Ask the owner to connect the Scarlett.
 
 ## Open migration items
 - Verify Logic `.logicx` placement against a real Logic **Final Cut Pro XML export** of the same project
   (needs the owner to export one). Then decode track names and take folders.
 - Test the FCPXML importer on a real Logic export (only fixtures so far).
-
-## Next recommended action
-Write ADR-0006 (recording architecture): input via AUHAL or an aggregate device, a lock-free capture
-ring from the audio thread, a disk-writer thread writing CAF or WAV with periodic header finalization,
-and recovery of partial takes after a crash. Then build input device selection and record-arm, with a
-long-duration capture test. At every milestone, update `site/parity.json`, regenerate screenshots
-(`Dalnok <files> --screenshots site/screenshots`), and run `scripts/publish-site.sh`.
 
 ## Links
 [[00 - Project Home]] · [[02 - Master Roadmap]] · [[Foundation Evaluation]] · [[Baseline 2026-11-16]] · [[2026-11-16]] · [[Project Format]]

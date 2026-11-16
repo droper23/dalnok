@@ -220,6 +220,10 @@ DalnokStatus dalnok_clip_info(const DalnokEngine *e, DalnokClipId id, DalnokClip
     out->fade_out = c->fadeOut;
     out->fade_curve = c->fadeCurve;
     out->gain_db = c->gainDb;
+    out->rate = c->rate;
+    out->pitch = c->pitch;
+    out->preserve_pitch = c->preservePitch;
+    out->processing = e->impl.clipProcessing(*c);
     copyOut(out->name, sizeof out->name, c->name);
     return DALNOK_OK;
 }
@@ -264,6 +268,16 @@ DalnokStatus dalnok_track_move(DalnokEngine *e, DalnokTrackId t, int32_t index) 
 DalnokStatus dalnok_clip_set_fades(DalnokEngine *e, DalnokClipId c, int64_t in, int64_t out, DalnokFadeCurve curve) {
     std::string err;
     return e ? statusFor(e->impl.setClipFades(c, in, out, static_cast<int32_t>(curve), err), err) : DALNOK_ERR_INVALID_ARG;
+}
+
+DalnokStatus dalnok_clip_set_stretch(DalnokEngine *e, DalnokClipId c, int64_t length, double rate, float semi, bool pp) {
+    std::string err;
+    return e ? statusFor(e->impl.setClipStretch(c, length, rate, semi, pp, err), err) : DALNOK_ERR_INVALID_ARG;
+}
+int32_t dalnok_engine_poll_jobs(DalnokEngine *e) {
+    if (!e) return 0;
+    e->impl.pollJobs();
+    return e->impl.pendingJobs();
 }
 
 DalnokStatus dalnok_clip_set_gain_db(DalnokEngine *e, DalnokClipId c, float db) {

@@ -1,8 +1,8 @@
 # Backlog (ordered)
 
 0. Logic: verify placement with a real FCPXML export (needs the owner); track names; take folders
-1. ADR-0007 recording architecture; input device selection; record-arm; monitoring
-1b. Time-stretch (Signalsmith Stretch, MIT): Ableton warping, REAPER playrate, later Flex-style editing
+1. ADR-0008 recording architecture; input device selection; record-arm; monitoring
+1b. Warp/flex markers editable inside clips (reuses the stretch cache per segment); transient detection
 2. Crash-safe capture + recovery of partial takes; long-duration recording test
 3. Disk streaming (needed for long recordings)
 4. Autosave and crash recovery of the project

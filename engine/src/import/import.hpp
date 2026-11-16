@@ -22,6 +22,9 @@ struct Report {
     json::Value toJson() const;
 };
 
+/// Time-stretch settings for an imported clip.
+struct ClipStretch { double rate = 1; float pitch = 0; bool preservePitch = true; };
+
 /// Accumulates tracks/clips/media in seconds and emits a Dalnok project document.
 class Builder {
 public:
@@ -32,17 +35,19 @@ public:
     double mediaSeconds(int32_t media) const;   // 0 if unknown
     int32_t addTrack(const std::string &name, float gainDb, float pan, bool mute, bool solo);
     // Times in seconds. offset = position within the source.
+    using Stretch = ClipStretch;
+    // `rate` = source seconds per timeline second (time-stretch when ≠ 1).
     void addClip(int32_t track, int32_t media, double start, double offset, double length, const std::string &name,
-                 float gainDb = 0, double fadeIn = 0, double fadeOut = 0, bool equalPower = false);
+                 float gainDb = 0, double fadeIn = 0, double fadeOut = 0, bool equalPower = false, Stretch st = {});
     // Repeats [loopStart, loopEnd) of the source to fill `length`, starting at `firstOffset`.
     void addLoopedClip(int32_t track, int32_t media, double start, double length, double firstOffset,
-                       double loopStart, double loopEnd, const std::string &name, float gainDb = 0);
+                       double loopStart, double loopEnd, const std::string &name, float gainDb = 0, Stretch st = {});
 
     json::Value document() const;
 
 private:
     struct Media { std::string path; double seconds = 0; int64_t frames = 0; int32_t channels = 0; bool exists = false; };
-    struct Clip { int32_t media; int64_t start, offset, length, fadeIn, fadeOut; bool equalPower; float gainDb; std::string name; };
+    struct Clip { int32_t media; int64_t start, offset, length, fadeIn, fadeOut; bool equalPower; float gainDb; std::string name; Stretch st; };
     struct Track { std::string name; float gainDb, pan; bool mute, solo; std::vector<Clip> clips; };
     int64_t frames(double seconds) const;
 

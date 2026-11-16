@@ -54,14 +54,14 @@ final class SelfTest {
     }
 
     /// Drags by a fraction of the clip's on-screen width (works for any clip length).
-    private func dragClip(_ id: DalnokClipId, zone: String, fraction: CGFloat) {
+    private func dragClip(_ id: DalnokClipId, zone: String, fraction: CGFloat, mods: NSEvent.ModifierFlags = []) {
         guard let c = s.clip(id) else { return check(false, "clip exists") }
-        dragClip(id, zone: zone, dx: CGFloat(Double(c.length) / w.timeline.framesPerPoint) * fraction)
+        dragClip(id, zone: zone, dx: CGFloat(Double(c.length) / w.timeline.framesPerPoint) * fraction, mods: mods)
     }
 
-    private func dragClip(_ id: DalnokClipId, zone: String, dx: CGFloat) {
+    private func dragClip(_ id: DalnokClipId, zone: String, dx: CGFloat, mods: NSEvent.ModifierFlags = []) {
         guard let p = w.timeline.windowPoint(ofClip: id, zone: zone) else { return check(false, "clip on screen") }
-        w.timeline.mouseDown(with: mouse(.leftMouseDown, p))
+        w.timeline.mouseDown(with: mouse(.leftMouseDown, p, mods))
         for k in 1...10 { w.timeline.mouseDragged(with: mouse(.leftMouseDragged, CGPoint(x: p.x + dx * CGFloat(k) / 10, y: p.y))) }
         w.timeline.mouseUp(with: mouse(.leftMouseUp, CGPoint(x: p.x + dx, y: p.y)))
     }
@@ -179,6 +179,23 @@ final class SelfTest {
         check(s.clip(first.id)?.fadeIn == 0, "fades removed")
         check(perform("Add Short Fades"), "menu Clip > Add Short Fades")
         check(s.clip(first.id)?.fadeIn == Int64(e.sampleRate * 0.01), "10 ms fades added")
+
+        // Time stretch: ⌥-drag the right edge keeps the source audio and changes its speed.
+        _ = perform("Remove Fades")
+        let pre = s.clip(first.id)!
+        dragClip(first.id, zone: "right", fraction: 0.25, mods: .option)
+        let st = s.clip(first.id)!
+        check(st.length > pre.length && abs(Double(st.sourceSpan) - Double(pre.sourceSpan)) <= 2 && st.rate < 1,
+              String(format: "⌥-drag stretched clip: length %lld→%lld, rate %.3f", pre.length, st.length, st.rate))
+        check(e.undoName == "Time Stretch", "stretch drag is one undo step")
+        var waited = 0
+        while (s.clip(first.id)?.processing ?? false) && waited < 300 { _ = s.pollJobs(); await wait(0.02); waited += 1 }
+        check(s.clip(first.id)?.processing == false, "stretched audio rendered in background (\(waited * 20) ms)")
+        check(perform("Double Speed"), "menu Clip > Double Speed")
+        check(abs((s.clip(first.id)?.rate ?? 0) - st.rate * 2) < 1e-6, "rate doubled")
+        check(perform("Transpose Up a Semitone") && s.clip(first.id)?.pitch == 1, "transpose up")
+        check(perform("Reset Speed and Pitch"), "menu Clip > Reset Speed and Pitch")
+        check(s.clip(first.id)?.rate == 1 && s.clip(first.id)?.pitch == 0 && s.clip(first.id)?.length == pre.sourceSpan, "back to original")
 
         // Tracks: select, solo, reorder (menu and drag), new, delete, rename.
         let t0 = s.tracks[0].id

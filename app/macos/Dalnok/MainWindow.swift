@@ -144,6 +144,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         let e = session.engine
         e.collectGarbage()
         session.refresh() // picks up changes from any source (e.g. scripts)
+        _ = session.pollJobs() // installs finished time-stretch renders
         let playing = e.isPlaying
         if playing != wasPlaying {
             transport.setPlaying(playing)
@@ -297,6 +298,19 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     }
 
     /// Adds 10 ms fades at both edges of the selected clip (quick de-click).
+    // MARK: Speed and pitch
+
+    private func restretch(_ f: (ClipView) -> (length: Int64, rate: Double, pitch: Float, preserve: Bool)?) {
+        guard let c = selectedClipView, let v = f(c) else { NSSound.beep(); return }
+        session.setStretch(c.id, length: max(1, v.length), rate: v.rate, pitch: v.pitch, preservePitch: v.preserve)
+    }
+    @objc func doubleSpeed(_ sender: Any?) { restretch { ($0.length / 2, $0.rate * 2, $0.pitch, $0.preservePitch) } }
+    @objc func halfSpeed(_ sender: Any?) { restretch { ($0.length * 2, $0.rate / 2, $0.pitch, $0.preservePitch) } }
+    @objc func transposeUp(_ sender: Any?) { restretch { ($0.length, $0.rate, min(48, $0.pitch + 1), true) } }
+    @objc func transposeDown(_ sender: Any?) { restretch { ($0.length, $0.rate, max(-48, $0.pitch - 1), true) } }
+    @objc func togglePreservePitch(_ sender: Any?) { restretch { ($0.length, $0.rate, $0.preservePitch ? 0 : $0.pitch, !$0.preservePitch) } }
+    @objc func resetSpeedAndPitch(_ sender: Any?) { restretch { ($0.sourceSpan, 1, 0, true) } }
+
     @objc func addShortFades(_ sender: Any?) {
         guard let c = selectedClipView else { return }
         let f = Int64(session.engine.sampleRate * 0.01)
@@ -599,8 +613,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             return selectedClipView != nil
         case #selector(removeFades(_:)):
             return selectedClipView.map { $0.fadeIn > 0 || $0.fadeOut > 0 } ?? false
-        case #selector(addShortFades(_:)):
+        case #selector(addShortFades(_:)), #selector(doubleSpeed(_:)), #selector(halfSpeed(_:)),
+             #selector(transposeUp(_:)), #selector(transposeDown(_:)):
             return selectedClipView != nil
+        case #selector(togglePreservePitch(_:)):
+            item.state = selectedClipView?.preservePitch == false ? .off : .on
+            return selectedClipView != nil
+        case #selector(resetSpeedAndPitch(_:)):
+            return selectedClipView?.isStretched == true
         case #selector(toggleCopyAudioOnSave(_:)):
             item.state = Self.copyAudioOnSave ? .on : .off
             return true

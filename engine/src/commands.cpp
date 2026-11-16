@@ -101,6 +101,16 @@ const CommandDef kCommands[] = {
          if (!needInt(a, "clip", c, err) || !needNumber(a, "db", db, err)) return DALNOK_ERR_INVALID_ARG;
          return status(e.setClipGain(c, static_cast<float>(db), err), err);
      }},
+    {"clip.setStretch", "Time Stretch Clip", "{clip, length?, rate?, pitch?, preservePitch?}", [](ARGS) {
+         DalnokClipId c;
+         if (!needInt(a, "clip", c, err)) return DALNOK_ERR_INVALID_ARG;
+         const ClipState *cs = e.model().clip(c);
+         if (!cs) return err = "no such clip", DALNOK_ERR_NOT_FOUND;
+         const double rate = a.getNumber("rate", cs->rate);
+         const auto length = static_cast<int64_t>(a.getNumber("length", static_cast<double>(cs->sourceLength()) / rate));
+         return status(e.setClipStretch(c, length, rate, static_cast<float>(a.getNumber("pitch", cs->pitch)),
+                                        a.getBool("preservePitch", cs->preservePitch), err), err);
+     }},
     {"clip.add", "Add Clip", "{track, media, start?, offset?, length?}", [](ARGS) {
          DalnokTrackId t;
          DalnokMediaId m;

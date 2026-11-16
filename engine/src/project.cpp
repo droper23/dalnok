@@ -107,6 +107,11 @@ json::Value Engine::describe() const {
             cv.set("offset", c.offset);
             cv.set("length", c.length);
             cv.set("name", c.name);
+            if (c.stretched()) {
+                cv.set("rate", c.rate);
+                if (c.pitch != 0) cv.set("pitch", static_cast<double>(c.pitch));
+                if (!c.preservePitch) cv.set("preservePitch", false);
+            }
             if (c.gainDb != 0) cv.set("gainDb", std::isfinite(c.gainDb) ? json::Value(static_cast<double>(c.gainDb)) : json::Value());
             if (c.fadeIn > 0) cv.set("fadeIn", c.fadeIn);
             if (c.fadeOut > 0) cv.set("fadeOut", c.fadeOut);
@@ -305,6 +310,9 @@ std::unique_ptr<Engine::PreparedProject> Engine::prepareDocument(const json::Val
                     if (const json::Value *g = cv.get("gainDb"))
                         c.gainDb = g->isNumber() ? std::min(static_cast<float>(g->number), 24.0f) : -INFINITY;
                     if (c.gainDb <= -96.0f) c.gainDb = -INFINITY;
+                    c.rate = std::clamp(cv.getNumber("rate", 1.0), 0.05, 20.0);
+                    c.pitch = static_cast<float>(std::clamp(cv.getNumber("pitch", 0.0), -48.0, 48.0));
+                    c.preservePitch = cv.getBool("preservePitch", true);
                     c.fadeIn = std::max<int64_t>(0, scale(toInt(cv, "fadeIn")));
                     c.fadeOut = std::max<int64_t>(0, scale(toInt(cv, "fadeOut")));
                     c.fadeCurve = cv.getString("fadeCurve", "linear") == "equalPower" ? kFadeEqualPower : kFadeLinear;
@@ -317,7 +325,8 @@ std::unique_ptr<Engine::PreparedProject> Engine::prepareDocument(const json::Val
                     // Rounding from rate conversion can overshoot by a frame. Offline media has no
                     // trustworthy length, so its clips keep the lengths stored in the project.
                     if (pe->second.handle->impl)
-                        c.length = std::min(c.length, std::max<int64_t>(1, pe->second.frames - c.offset));
+                        c.length = std::min(c.length, std::max<int64_t>(1, static_cast<int64_t>(
+                            static_cast<double>(pe->second.frames - c.offset) / c.rate)));
                     else
                         pe->second.frames = std::max(pe->second.frames, c.offset + c.length);
                     maxClip = std::max(maxClip, c.id);
@@ -329,6 +338,17 @@ std::unique_ptr<Engine::PreparedProject> Engine::prepareDocument(const json::Val
     }
 
     auto prepared = std::make_unique<PreparedProject>();
+    // Render stretched clips now (we're off the main thread) so playback is ready on apply.
+    for (const auto &c : model.clips) {
+        if (!c.stretched()) continue;
+        const auto pe = pool.find(c.media);
+        if (pe == pool.end() || !pe->second.handle->impl) continue;
+        const StretchKey key{c.media, c.offset, c.sourceLength(), c.length, static_cast<int32_t>(std::lround(c.pitch * 100)), c.preservePitch};
+        bool have = false;
+        for (const auto &s : prepared->stretched) have |= !(s.first < key) && !(key < s.first);
+        if (!have)
+            if (auto m = renderStretch({key, pe->second.handle->impl, 0})) prepared->stretched.emplace_back(key, std::move(m));
+    }
     prepared->model = std::move(model);
     prepared->pool = std::move(pool);
     prepared->maxTrack = maxTrack;
@@ -341,6 +361,7 @@ std::unique_ptr<Engine::PreparedProject> Engine::prepareDocument(const json::Val
 
 void Engine::applyProject(std::unique_ptr<PreparedProject> p) {
     resetModel();
+    for (auto &[k, m] : p->stretched) cache_.insert(k, std::move(m));
     model_ = std::move(p->model);
     pool_ = std::move(p->pool);
     nextTrack_ = std::max(nextTrack_, p->maxTrack + 1);

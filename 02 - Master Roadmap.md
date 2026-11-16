@@ -20,7 +20,11 @@ Import from REAPER, Ableton, Final Cut Pro XML (Logic), stems, and Logic `.logic
 Migration reports, "Coming from…" onboarding, shortcut presets, old-DAW vocabulary in ⌘K, and the
 Concept Guide. Grows with each phase: MIDI (P3), plugins, automation, and sends (P4), launcher (P5).
 
-## Phase 2: Recording and editing 🔶 (next: ADR-0007 recording architecture, then time-stretch)
+## Time stretch (M6) ✅ ([[ADR-0007 Time stretch]])
+Signalsmith-based stretch, pitch, and varispeed rendered in the background. ⌥-drag stretch and the Clip
+menu. Imported REAPER playrates and Ableton warp markers now play correctly.
+
+## Phase 2: Recording and editing 🔶 (next: ADR-0008 recording architecture)
 Input and recording (with a Scarlett test rig), monitoring, split, fades, crossfades, autosave and crash
 recovery, basic routing, disk streaming.
 

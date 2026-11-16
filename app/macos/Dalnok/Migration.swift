@@ -69,7 +69,9 @@ enum Migration {
         Concept(daw: .logic, term: "Consolidate Project", dalnok: "Copy Audio into Project on Save", status: .available),
         Concept(daw: .logic, term: "Project Audio Browser", dalnok: "Relink Missing Audio…", status: .partial("relink only")),
         Concept(daw: .logic, term: "Take Folders / Quick Swipe Comping", dalnok: "Comping", status: .planned("Phase 4")),
-        Concept(daw: .logic, term: "Flex Time", dalnok: "Time-stretch editing", status: .planned("prioritized after migration")),
+        Concept(daw: .logic, term: "Flex Time", dalnok: "Time stretch (⌥-drag a clip's end)", status: .partial("whole-clip; flex markers later")),
+        Concept(daw: .logic, term: "Time Stretch Region", dalnok: "⌥-drag a clip's end, or Clip ▸ Double/Half Speed", status: .available),
+        Concept(daw: .logic, term: "Region Transpose", dalnok: "Clip ▸ Transpose Up/Down a Semitone", status: .available),
         Concept(daw: .logic, term: "Flex Pitch", dalnok: "Pitch editing", status: .planned("Phase 5")),
         Concept(daw: .logic, term: "Track Stacks", dalnok: "Groups", status: .planned("Phase 4")),
         Concept(daw: .logic, term: "Smart Controls", dalnok: "Generic plugin panel + macros", status: .planned("Phase 4–5")),
@@ -84,7 +86,9 @@ enum Migration {
         Concept(daw: .ableton, term: "Track Activator", dalnok: "Mute Track", status: .available),
         Concept(daw: .ableton, term: "Collect All and Save", dalnok: "Copy Audio into Project on Save", status: .available),
         Concept(daw: .ableton, term: "Session View", dalnok: "Clip launcher on every track", status: .planned("Phase 5")),
-        Concept(daw: .ableton, term: "Warping", dalnok: "Time-stretch", status: .planned("prioritized after migration")),
+        Concept(daw: .ableton, term: "Warping", dalnok: "Time stretch", status: .partial("imported warp markers play correctly; warp-marker editing later")),
+        Concept(daw: .ableton, term: "Re-Pitch warp mode", dalnok: "Preserve Pitch off (varispeed)", status: .available),
+        Concept(daw: .ableton, term: "Clip Transpose", dalnok: "Clip ▸ Transpose Up/Down a Semitone", status: .available),
         Concept(daw: .ableton, term: "Racks", dalnok: "Racks", status: .planned("Phase 5")),
         Concept(daw: .ableton, term: "Take Lanes / Comping", dalnok: "Comping", status: .planned("Phase 4")),
         Concept(daw: .ableton, term: "Group Track", dalnok: "Groups", status: .planned("Phase 4")),
@@ -100,7 +104,8 @@ enum Migration {
         Concept(daw: .reaper, term: "ReaScript", dalnok: "Command catalog (JSON) + dalnok-cli", status: .partial("no embedded language yet")),
         Concept(daw: .reaper, term: "Folder tracks", dalnok: "Groups", status: .planned("Phase 4")),
         Concept(daw: .reaper, term: "Takes", dalnok: "Comping", status: .planned("Phase 4")),
-        Concept(daw: .reaper, term: "Item playrate", dalnok: "Time-stretch", status: .planned("prioritized after migration")),
+        Concept(daw: .reaper, term: "Item playrate / Alt-drag edge", dalnok: "⌥-drag a clip's end (time stretch)", status: .available),
+        Concept(daw: .reaper, term: "Preserve pitch when changing rate", dalnok: "Clip ▸ Preserve Pitch When Stretching", status: .available),
         Concept(daw: .reaper, term: "Routing matrix", dalnok: "Routing", status: .planned("Phase 4")),
     ]
 
@@ -118,6 +123,12 @@ enum Migration {
         "Relink Missing Audio…": ["locate", "missing files", "manage files", "find media"],
         "Copy Audio into Project on Save": ["collect all and save", "consolidate project", "save with media"],
         "Command Palette…": ["actions", "action list", "find command"],
+        "Double Speed": ["stretch", "time stretch", "playrate", "faster", "flex"],
+        "Half Speed": ["stretch", "time stretch", "playrate", "slower", "flex"],
+        "Transpose Up a Semitone": ["pitch", "transpose", "pitch shift"],
+        "Transpose Down a Semitone": ["pitch", "transpose", "pitch shift"],
+        "Preserve Pitch When Stretching": ["varispeed", "re-pitch", "tape speed"],
+        "Reset Speed and Pitch": ["unstretch", "original speed", "unwarp"],
         "Import Project from Another DAW…": ["open logic", "open ableton", "open reaper", "migrate", "convert"],
     ]
 
@@ -135,8 +146,7 @@ enum Migration {
         case "automationLanes": ("Automation", "Automation arrives in Phase 4.")
         case "sends", "returnTracks": ("Sends and return/bus tracks", "Buses and sends arrive in Phase 4.")
         case "groupTracks", "folderStructure": ("Groups and folders", "Tracks came over flat; groups arrive in Phase 4.")
-        case "warpedClipsNeedingStretch", "playrateChanges": ("Time-stretched audio", "These play at original speed until time-stretching lands — it's next in line.")
-        case "transposedClips": ("Transposed clips", "Pitch shifting isn't supported yet; these play untransposed.")
+        case "warpedClipsNeedingStretch", "playrateChanges": ("Time-stretched audio", "Older import reports only — stretching is now supported.")
         case "takeLaneClips", "extraTakes": ("Alternate takes", "Only the active take/comp result came over; comping arrives in Phase 4.")
         case "sessionClips": ("Session-view clips", "The clip launcher arrives in Phase 5.")
         case "tempoChanges": ("Tempo changes", "A single tempo was used for positions.")

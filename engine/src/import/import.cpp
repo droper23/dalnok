@@ -108,35 +108,37 @@ int32_t Builder::addTrack(const std::string &name, float gainDb, float pan, bool
 }
 
 void Builder::addClip(int32_t track, int32_t media, double start, double offset, double length, const std::string &name,
-                      float gainDb, double fadeIn, double fadeOut, bool equalPower) {
+                      float gainDb, double fadeIn, double fadeOut, bool equalPower, Stretch st) {
     if (track < 0 || track >= static_cast<int32_t>(tracks_.size()) || media <= 0) return;
     start = std::max(0.0, start);
     offset = std::max(0.0, offset);
+    if (!(st.rate > 0.05 && st.rate < 20)) st.rate = 1;
+    if (std::fabs(st.rate - 1) < 1e-4) st.rate = 1;
     const double avail = mediaSeconds(media);
-    if (avail > 0) length = std::min(length, avail - offset);
+    if (avail > 0) length = std::min(length, (avail - offset) / st.rate);
     if (length <= 0) {
         report_.skip("clipOutsideSource");
         return;
     }
     tracks_[static_cast<size_t>(track)].clips.push_back(
         {media, frames(start), frames(offset), std::max<int64_t>(1, frames(length)), frames(std::max(0.0, fadeIn)),
-         frames(std::max(0.0, fadeOut)), equalPower, gainDb, name});
+         frames(std::max(0.0, fadeOut)), equalPower, gainDb, name, st});
     ++report_.clips;
 }
 
 void Builder::addLoopedClip(int32_t track, int32_t media, double start, double length, double firstOffset,
-                            double loopStart, double loopEnd, const std::string &name, float gainDb) {
-    const double loopLen = loopEnd - loopStart;
+                            double loopStart, double loopEnd, const std::string &name, float gainDb, Stretch st) {
+    const double loopLen = loopEnd - loopStart, r = st.rate > 0 ? st.rate : 1;
     if (loopLen <= 1e-6) {
-        addClip(track, media, start, firstOffset, length, name, gainDb);
+        addClip(track, media, start, firstOffset, length, name, gainDb, 0, 0, false, st);
         return;
     }
     double t = 0, offset = firstOffset;
     int guard = 0;
     while (t < length - 1e-9 && guard++ < 100000) {
-        const double seg = std::min(loopEnd - offset, length - t);
+        const double seg = std::min((loopEnd - offset) / r, length - t); // timeline seconds
         if (seg <= 1e-9) { offset = loopStart; continue; }
-        addClip(track, media, start + t, offset, seg, name, gainDb);
+        addClip(track, media, start + t, offset, seg, name, gainDb, 0, 0, false, st);
         t += seg;
         offset = loopStart;
     }
@@ -183,6 +185,11 @@ json::Value Builder::document() const {
             if (c.fadeIn > 0) cv.set("fadeIn", c.fadeIn);
             if (c.fadeOut > 0) cv.set("fadeOut", c.fadeOut);
             if (c.equalPower) cv.set("fadeCurve", "equalPower");
+            if (c.st.rate != 1 || c.st.pitch != 0) {
+                cv.set("rate", c.st.rate);
+                if (c.st.pitch != 0) cv.set("pitch", static_cast<double>(c.st.pitch));
+                if (!c.st.preservePitch) cv.set("preservePitch", false);
+            }
             clips.push(std::move(cv));
         }
         tv.set("clips", std::move(clips));

@@ -162,7 +162,7 @@ bool importAbleton(const std::string &path, Result &out, std::string &err) {
     rep.skip("masterDevices", countChildren(main.first_element_by_path("DeviceChain/DeviceChain/Devices")));
 
     Builder b(rep, 48000);
-    int warpedNeedsStretch = 0;
+    int stretched = 0, segmented = 0;
     for (const auto &t : set.child("Tracks").children()) {
         const std::string kind = t.name();
         if (kind == "ReturnTrack") {
@@ -217,48 +217,64 @@ bool importAbleton(const std::string &path, Result &out, std::string &err) {
             const double beatEnd = val(clip, "CurrentEnd", beatStart);
             const double start = beatStart * spb, length = (beatEnd - beatStart) * spb;
             const float clipGain = linearToDb(val(clip, "SampleVolume", 1));
-            if (val(clip, "PitchCoarse") != 0 || val(clip, "PitchFine") != 0) rep.skip("transposedClips");
+            const float transpose = static_cast<float>(val(clip, "PitchCoarse") + val(clip, "PitchFine") / 100.0);
             const auto loop = clip.child("Loop");
             const double loopStart = val(loop, "LoopStart"), loopEnd = val(loop, "LoopEnd");
             const double startRel = val(loop, "StartRelative");
             const bool loopOn = bval(loop, "LoopOn");
             const bool warped = bval(clip, "IsWarped");
 
-            double offsetSec, srcLoopStart, srcLoopEnd, fadeScale = 1;
-            if (!warped) {
-                // Unwarped: loop/start markers are already in source seconds.
-                offsetSec = loopStart + startRel;
-                srcLoopStart = loopStart;
-                srcLoopEnd = loopEnd;
-            } else {
-                std::vector<WarpMarker> markers;
-                for (const auto &m : clip.child("WarpMarkers").children("WarpMarker"))
-                    markers.push_back({m.attribute("SecTime").as_double(), m.attribute("BeatTime").as_double()});
-                std::sort(markers.begin(), markers.end(), [](auto &x, auto &y) { return x.beat < y.beat; });
-                offsetSec = secAtBeat(markers, loopStart + startRel);
-                srcLoopStart = secAtBeat(markers, loopStart);
-                srcLoopEnd = secAtBeat(markers, loopEnd);
-                // Stretch ratio over the played region: source seconds per timeline second.
-                const double played = secAtBeat(markers, loopStart + startRel + (beatEnd - beatStart)) - offsetSec;
-                if (length > 0 && std::fabs(played / length - 1) > 0.002) ++warpedNeedsStretch;
-                fadeScale = spb; // fades on warped clips are in beats
-            }
             const auto fades = clip.child("Fades");
             const bool fadesOn = bval(clip, "Fade", true);
-            const double fin = fadesOn ? val(fades, "FadeInLength") * fadeScale : 0;
-            const double fout = fadesOn ? val(fades, "FadeOutLength") * fadeScale : 0;
-            if (loopOn) {
-                b.addLoopedClip(track, media, start, length, offsetSec, srcLoopStart, srcLoopEnd, name, clipGain);
-            } else {
-                b.addClip(track, media, start, offsetSec, length, name, clipGain, fin, fout, false);
+            if (!warped) {
+                // Unwarped: markers are in source seconds; transposing an unwarped clip is varispeed.
+                Builder::Stretch st;
+                if (transpose != 0) { st.rate = std::pow(2.0, transpose / 12.0); st.preservePitch = false; ++stretched; }
+                const double fin = fadesOn ? val(fades, "FadeInLength") : 0, fout = fadesOn ? val(fades, "FadeOutLength") : 0;
+                if (loopOn) b.addLoopedClip(track, media, start, length, loopStart + startRel, loopStart, loopEnd, name, clipGain, st);
+                else b.addClip(track, media, start, loopStart + startRel, length, name, clipGain, fin, fout, false, st);
+                continue;
             }
+            std::vector<WarpMarker> markers;
+            for (const auto &m : clip.child("WarpMarkers").children("WarpMarker"))
+                markers.push_back({m.attribute("SecTime").as_double(), m.attribute("BeatTime").as_double()});
+            std::sort(markers.begin(), markers.end(), [](auto &x, auto &y) { return x.beat < y.beat; });
+            // Warp modes: 3 = Re-Pitch (varispeed); all others preserve pitch.
+            const bool rePitch = static_cast<int>(val(clip, "WarpMode")) == 3;
+            const double fin = fadesOn ? val(fades, "FadeInLength") * spb : 0, fout = fadesOn ? val(fades, "FadeOutLength") * spb : 0;
+            if (loopOn) {
+                // Looped warped clip: one average rate over the loop region.
+                const double s0 = secAtBeat(markers, loopStart), s1 = secAtBeat(markers, loopEnd);
+                const double beats = loopEnd - loopStart;
+                Builder::Stretch st{beats > 0 ? (s1 - s0) / (beats * spb) : 1, rePitch ? 0.0f : transpose, !rePitch};
+                if (std::fabs(st.rate - 1) > 1e-4 || transpose != 0) ++stretched;
+                b.addLoopedClip(track, media, start, length, secAtBeat(markers, loopStart + startRel), s0, s1, name, clipGain, st);
+                continue;
+            }
+            // Piecewise-linear warp: one clip per warp-marker segment, each with its own rate.
+            const double b0 = loopStart + startRel, b1 = b0 + (beatEnd - beatStart);
+            std::vector<double> cuts{b0};
+            for (const auto &m : markers)
+                if (m.beat > b0 + 1e-9 && m.beat < b1 - 1e-9) cuts.push_back(m.beat);
+            cuts.push_back(b1);
+            bool any = false;
+            for (size_t i = 0; i + 1 < cuts.size(); ++i) {
+                const double segBeats = cuts[i + 1] - cuts[i];
+                const double srcA = secAtBeat(markers, cuts[i]), srcB = secAtBeat(markers, cuts[i + 1]);
+                const double tl = segBeats * spb;
+                if (tl <= 1e-9) continue;
+                Builder::Stretch st{(srcB - srcA) / tl, rePitch ? 0.0f : transpose, !rePitch};
+                any |= std::fabs(st.rate - 1) > 1e-4 || transpose != 0;
+                const bool first = i == 0, last = i + 2 == cuts.size();
+                b.addClip(track, media, start + (cuts[i] - b0) * spb, srcA, tl, name, clipGain, first ? fin : 0, last ? fout : 0, false, st);
+            }
+            stretched += any;
+            if (cuts.size() > 2) segmented += static_cast<int>(cuts.size() - 2);
         }
     }
-    if (warpedNeedsStretch) {
-        rep.skip("warpedClipsNeedingStretch", warpedNeedsStretch);
-        rep.notes.push_back(std::to_string(warpedNeedsStretch) +
-                            " warped clip(s) need time-stretching to match the song tempo; they play at original speed until time-stretch support arrives.");
-    }
+    if (stretched)
+        rep.notes.push_back(std::to_string(stretched) + " warped or transposed clip(s) were time-stretched to match" +
+                            (segmented ? " (" + std::to_string(segmented) + " extra cuts at warp markers)." : "."));
     out.document = b.document();
     if (rep.missingMedia) rep.notes.push_back(std::to_string(rep.missingMedia) + " audio file(s) not found; clips are offline until relinked.");
     return true;

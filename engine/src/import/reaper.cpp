@@ -162,6 +162,7 @@ bool importReaper(const std::string &path, Result &out, std::string &err) {
         for (const auto &ch : mfx->children)
             if (!ch->head.empty() && ch->head[0] != "FXCHAIN") rep.skip("masterFx");
 
+    int stretchedItems = 0;
     for (const Node *t : proj.blocks("TRACK")) {
         const double vol = t->num("VOLPAN", 1, 1), pan = t->num("VOLPAN", 2, 0);
         const bool mute = t->num("MUTESOLO", 1, 0) != 0, solo = t->num("MUTESOLO", 2, 0) != 0;
@@ -207,8 +208,10 @@ bool importReaper(const std::string &path, Result &out, std::string &err) {
 
             const double position = item->num("POSITION", 1, 0), length = item->num("LENGTH", 1, 0);
             const double soffs = item->num("SOFFS", 1, 0);
-            const double rateMul = item->num("PLAYRATE", 1, 1);
-            if (std::fabs(rateMul - 1) > 1e-6) rep.skip("playrateChanges");
+            // PLAYRATE rate preservePitch pitchSemitones ...
+            Builder::Stretch st{item->num("PLAYRATE", 1, 1), static_cast<float>(item->num("PLAYRATE", 3, 0)),
+                                item->num("PLAYRATE", 2, 1) != 0};
+            if (std::fabs(st.rate - 1) > 1e-6 || st.pitch != 0) ++stretchedItems;
             const float itemGain = linearToDb(item->num("VOLPAN", 1, 1));
             const auto fade = [&](const char *key) {
                 const double len = item->num(key, 2, 0), autoLen = item->num(key, 3, 0);
@@ -218,14 +221,15 @@ bool importReaper(const std::string &path, Result &out, std::string &err) {
             const bool equalPower = item->num("FADEIN", 1, 0) != 0 || item->num("FADEOUT", 1, 0) != 0;
             const std::string name = item->str("NAME");
             const double srcLen = b.mediaSeconds(media);
-            if (item->num("LOOP", 1, 0) != 0 && srcLen > 0 && soffs + length > srcLen + 1e-6) {
-                b.addLoopedClip(track, media, position, length, std::fmod(soffs, srcLen), 0, srcLen, name, itemGain);
+            if (item->num("LOOP", 1, 0) != 0 && srcLen > 0 && soffs + length * st.rate > srcLen + 1e-6) {
+                b.addLoopedClip(track, media, position, length, std::fmod(soffs, srcLen), 0, srcLen, name, itemGain, st);
                 if (fin > 0 || fout > 0) rep.skip("fadesOnLoopedItems");
             } else {
-                b.addClip(track, media, position, soffs, length, name, itemGain, fin, fout, equalPower);
+                b.addClip(track, media, position, soffs, length, name, itemGain, fin, fout, equalPower, st);
             }
         }
     }
+    if (stretchedItems) rep.notes.push_back(std::to_string(stretchedItems) + " item(s) with a changed playback rate or pitch were time-stretched to match.");
     out.document = b.document();
     if (rep.missingMedia) rep.notes.push_back(std::to_string(rep.missingMedia) + " audio file(s) not found; clips are offline until relinked.");
     return true;

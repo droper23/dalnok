@@ -6,9 +6,11 @@
 #include "device.hpp"
 #include "json.hpp"
 #include "render.hpp"
+#include "stretch_cache.hpp"
 
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <filesystem>
 #include <map>
 #include <memory>
@@ -38,6 +40,11 @@ struct ClipState {
     int64_t fadeIn = 0, fadeOut = 0; // frames
     int32_t fadeCurve = 0;           // FadeCurve
     float gainDb = 0;                // clip (region/item) gain
+    double rate = 1.0;               // source frames per timeline frame (≠1: time-stretched)
+    float pitch = 0;                 // transposition in semitones (preservePitch only)
+    bool preservePitch = true;       // false: varispeed (pitch follows rate)
+    bool stretched() const { return std::fabs(rate - 1.0) > 1e-9 || pitch != 0; }
+    int64_t sourceLength() const { return static_cast<int64_t>(std::llround(static_cast<double>(length) * rate)); }
     std::string name;
 };
 
@@ -111,6 +118,12 @@ public:
     DalnokClipId splitClip(DalnokClipId id, int64_t at, std::string &err);
     bool setClipFades(DalnokClipId id, int64_t fadeIn, int64_t fadeOut, int32_t curve, std::string &err);
     bool setClipGain(DalnokClipId id, float gainDb, std::string &err);
+    // Time-stretch: new timeline length and speed (source span = length × rate), pitch, mode.
+    bool setClipStretch(DalnokClipId id, int64_t length, double rate, float pitch, bool preservePitch, std::string &err);
+    // Stretch rendering status (background). True if finished renders were installed.
+    bool pollJobs();
+    int pendingJobs() const { return cache_.pending(); }
+    bool clipProcessing(const ClipState &c) const;
 
     // Undo
     bool undo();
@@ -166,7 +179,9 @@ private:
     bool edit(const char *name, bool structural, F &&fn);
     void restore(Model m);
     void syncRuntimes();
-    std::unique_ptr<RenderState> compile() const;
+    std::unique_ptr<RenderState> compile(std::vector<StretchJob> *needed = nullptr) const;
+    StretchKey stretchKey(const ClipState &c) const;
+    void renderPendingStretchesNow();
     void commit();
     void resetModel();
 
@@ -189,6 +204,7 @@ private:
     int32_t nextColor_ = 0;
     std::unique_ptr<AudioDevice> device_;
     std::string outputUid_;
+    mutable StretchCache cache_;
 
     // Control -> audio handoff.
     std::atomic<RenderState *> pending_{nullptr};
@@ -222,6 +238,7 @@ struct Engine::PreparedProject {
     int32_t maxColor = -1;
     double sampleRate = 0;
     bool imported = false; // came from another DAW: starts dirty, untitled
+    std::vector<std::pair<StretchKey, std::shared_ptr<const Media>>> stretched; // precomputed for playback
 };
 
 float dbToGain(float db);

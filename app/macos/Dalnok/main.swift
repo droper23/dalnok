@@ -164,6 +164,13 @@ func buildMenu(target: MainWindowController) -> NSMenu {
         item("Add Short Fades", #selector(W.addShortFades(_:)), "f", [.control]),
         item("Remove Fades", #selector(W.removeFades(_:)), ""),
         curve,
+        .separator(),
+        item("Double Speed", #selector(W.doubleSpeed(_:)), ""),
+        item("Half Speed", #selector(W.halfSpeed(_:)), ""),
+        item("Transpose Up a Semitone", #selector(W.transposeUp(_:)), ""),
+        item("Transpose Down a Semitone", #selector(W.transposeDown(_:)), ""),
+        item("Preserve Pitch When Stretching", #selector(W.togglePreservePitch(_:)), ""),
+        item("Reset Speed and Pitch", #selector(W.resetSpeedAndPitch(_:)), ""),
     ])
     menu("Transport", [
         item("Play / Pause", #selector(W.togglePlay), " ", []),

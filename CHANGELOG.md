@@ -1,6 +1,13 @@
 # Changelog
 
 ## [Unreleased]
+### Added (2026-11-16, Time stretch M6)
+- Clip time-stretch, pitch shift, and varispeed (Signalsmith Stretch, MIT), rendered off the audio thread.
+  ⌥-drag a clip's right edge to stretch it. Clip menu: Double/Half Speed, Transpose Up/Down a Semitone,
+  Preserve Pitch When Stretching, Reset Speed and Pitch. Clip titles show speed and pitch while rendering.
+- Imports: REAPER playback rate and pitch, Ableton warp markers (one clip per warp segment), Re-Pitch, and
+  transposition now play correctly.
+- C API: `dalnok_clip_set_stretch`, `dalnok_engine_poll_jobs`, clip info rate/pitch/processing. Command `clip.setStretch`.
 ### Added (2026-11-16, Migration M5)
 - Project import: REAPER `.rpp`, Ableton Live `.als`, Final Cut Pro XML (Logic's export), folders of
   stems, and Logic `.logicx` (experimental). Each import comes with a migration report.

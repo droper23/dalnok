@@ -27,6 +27,8 @@ Swift/AppKit front end on macOS. GPL-3.0-or-later. This repo is also the project
 - `.build/debug/dalnok-cli commands`, `command <proj> <name> '<json>' [--save]`, `render-project`,
   `bench --tracks N` (release build for meaningful numbers),
   `import <.rpp|.als|.logicx|.fcpxml|stems-folder> [--report-only] [--save x.dalnok] [--render x.wav]`.
+- Time-stretch is rendered off the audio thread (`stretch_cache.*`, `engine/dsp`, ADR-0007). The audio
+  thread must only ever copy finished Media.
 - Importers live in `engine/src/import/`. They translate to a Dalnok document plus a report (ADR-0006).
   Never commit or publish anything derived from the owner's projects. Tests use generated fixtures.
 - `scripts/ci/rt-effects.sh` runs the real-time effect analysis (uses Homebrew LLVM on CI).

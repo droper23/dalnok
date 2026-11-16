@@ -16,8 +16,15 @@ struct ClipView {
     let fadeIn: Int64
     let fadeOut: Int64
     let fadeCurve: Int32
+    let gainDb: Float
+    let rate: Double
+    let pitch: Float
+    let preservePitch: Bool
+    let processing: Bool
     let name: String
     var end: Int64 { start + length }
+    var isStretched: Bool { abs(rate - 1) > 1e-9 || pitch != 0 }
+    var sourceSpan: Int64 { Int64((Double(length) * rate).rounded()) }
 }
 
 struct TrackView {
@@ -35,7 +42,7 @@ struct TrackView {
 final class Session {
     let engine: Engine
     private(set) var tracks: [TrackView] = []
-    private var revision: UInt64 = 0
+    private var revision: UInt64 = 0 // reset to force a rebuild
     var projectURL: URL?
     /// Called after the model changed (any source: UI, undo, scripts).
     var onChange: (() -> Void)?
@@ -67,7 +74,8 @@ final class Session {
                 clips.append(ClipView(id: ci.id, track: ci.track, media: ci.media, start: ci.start, offset: ci.offset,
                                       length: ci.length, mediaFrames: ci.media_frames, offline: ci.offline,
                                       fadeIn: ci.fade_in, fadeOut: ci.fade_out, fadeCurve: ci.fade_curve,
-                                      name: fixedString(ci.name)))
+                                      gainDb: ci.gain_db, rate: ci.rate, pitch: ci.pitch, preservePitch: ci.preserve_pitch,
+                                      processing: ci.processing, name: fixedString(ci.name)))
             }
             out.append(TrackView(id: tid, name: fixedString(ti.name), color: Theme.trackColor(Int(ti.color)),
                                  gainDb: ti.gain_db, pan: ti.pan, muted: ti.muted, solo: ti.solo, clips: clips))
@@ -94,6 +102,19 @@ final class Session {
     @discardableResult
     func addTrack(_ name: String = "") -> DalnokTrackId { let id = dalnok_track_add(h, name); refresh(); return id }
     func removeTrack(_ t: DalnokTrackId) { dalnok_track_remove(h, t); refresh() }
+    func setStretch(_ c: DalnokClipId, length: Int64, rate: Double, pitch: Float, preservePitch: Bool) {
+        dalnok_clip_set_stretch(h, c, length, rate, pitch, preservePitch); refresh()
+    }
+
+    /// Polls background stretch rendering; returns pending count. Forces a refresh when renders land.
+    private var lastPending: Int32 = 0
+    func pollJobs() -> Int32 {
+        let n = dalnok_engine_poll_jobs(h)
+        if n != lastPending { lastPending = n; forceRefresh() }
+        return n
+    }
+    func forceRefresh() { revision = 0; refresh() }
+
     func setFades(_ c: DalnokClipId, fadeIn: Int64, fadeOut: Int64, curve: DalnokFadeCurve) {
         dalnok_clip_set_fades(h, c, fadeIn, fadeOut, curve); refresh()
     }

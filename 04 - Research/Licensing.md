@@ -13,6 +13,8 @@ Band are allowed only as optional, clearly isolated components after an ADR.
 | Apple AudioToolbox, CoreAudio, CoreFoundation, AppKit | System | Device I/O, decoding, plists, UI |
 | pugixml 1.14 (vendored in `engine/third_party/pugixml`) | MIT | XML parsing for Ableton and FCPXML import |
 | zlib (system `libz`) | zlib | Decompressing Ableton `.als` |
+| Signalsmith Stretch 1.4.0 + Signalsmith Linear 0.6.6 (vendored in `engine/third_party/signalsmith`) | MIT | Time-stretch and pitch shift |
+| Apple Accelerate | System | FFTs for Signalsmith |
 
 ## Planned
 | Dependency | License | Use |

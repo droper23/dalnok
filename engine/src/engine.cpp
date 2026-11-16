@@ -220,6 +220,7 @@ void Engine::endGroup() {
 void Engine::resetModel() {
     model_ = Model{};
     pool_.clear();
+    cache_.clear();
     undo_.clear();
     redo_.clear();
     groupDepth_ = 0;
@@ -350,6 +351,24 @@ bool Engine::setClipFades(DalnokClipId id, int64_t fadeIn, int64_t fadeOut, int3
     });
 }
 
+bool Engine::setClipStretch(DalnokClipId id, int64_t length, double rate, float pitch, bool preservePitch,
+                            std::string &err) {
+    return edit("Time Stretch", true, [&](Model &m) {
+        ClipState *c = m.clip(id);
+        if (!c) return fail(err, "no such clip");
+        if (!(rate >= 0.05 && rate <= 20) || !(pitch >= -48 && pitch <= 48) || length <= 0)
+            return fail(err, "rate must be 0.05–20, pitch −48…48 semitones, length > 0");
+        const PoolEntry *pe = poolEntry(c->media);
+        const auto span = static_cast<int64_t>(std::llround(static_cast<double>(length) * rate));
+        if (!pe || c->offset + span > pe->frames + 1) return fail(err, "stretch reads past the end of the source");
+        c->length = length;
+        c->rate = rate;
+        c->pitch = preservePitch ? pitch : 0;
+        c->preservePitch = preservePitch;
+        return true;
+    });
+}
+
 bool Engine::setClipGain(DalnokClipId id, float gainDb, std::string &err) {
     return edit("Clip Gain", true, [&](Model &m) {
         ClipState *c = m.clip(id);
@@ -369,6 +388,7 @@ bool Engine::poolRelink(DalnokMediaId id, std::shared_ptr<const Media> media, co
     it->second.frames = media->frames();
     it->second.channels = media->channelCount();
     it->second.handle = std::make_unique<DalnokMedia>(DalnokMedia{std::move(media)});
+    cache_.clear();
     ++revision_;
     commit();
     return true;
@@ -428,7 +448,8 @@ bool Engine::setClipRegion(DalnokClipId id, int64_t start, int64_t offset, int64
         if (!c) return fail(err, "no such clip");
         const PoolEntry *pe = poolEntry(c->media);
         const int64_t frames = pe ? pe->frames : 0;
-        if (start < 0 || offset < 0 || length <= 0 || offset + length > frames)
+        const auto span = static_cast<int64_t>(std::llround(static_cast<double>(length) * c->rate));
+        if (start < 0 || offset < 0 || length <= 0 || offset + span > frames)
             return fail(err, "region out of range");
         c->start = start;
         c->offset = offset;
@@ -448,7 +469,7 @@ DalnokClipId Engine::splitClip(DalnokClipId id, int64_t at, std::string &err) {
         it->length = leftLen;
         right.id = rightId;
         right.start = at;
-        right.offset += leftLen;
+        right.offset += static_cast<int64_t>(std::llround(static_cast<double>(leftLen) * it->rate));
         right.length -= leftLen;
         right.fadeIn = 0;      // the right part keeps the original fade-out
         it->fadeOut = 0;       // the left part keeps the original fade-in
@@ -462,7 +483,17 @@ DalnokClipId Engine::splitClip(DalnokClipId id, int64_t at, std::string &err) {
 
 // ---- Snapshot compilation -------------------------------------------------
 
-std::unique_ptr<RenderState> Engine::compile() const {
+StretchKey Engine::stretchKey(const ClipState &c) const {
+    return {c.media, c.offset, c.sourceLength(), c.length, static_cast<int32_t>(std::lround(c.pitch * 100)), c.preservePitch};
+}
+
+bool Engine::clipProcessing(const ClipState &c) const {
+    if (!c.stretched()) return false;
+    const PoolEntry *pe = poolEntry(c.media);
+    return pe && pe->handle->impl && !cache_.find(stretchKey(c));
+}
+
+std::unique_ptr<RenderState> Engine::compile(std::vector<StretchJob> *needed) const {
     auto s = std::make_unique<RenderState>();
     for (const auto &t : model_.tracks) {
         RenderTrack rt;
@@ -471,9 +502,20 @@ std::unique_ptr<RenderState> Engine::compile() const {
             if (c.track != t.id) continue;
             const PoolEntry *pe = poolEntry(c.media);
             if (!pe || !pe->handle->impl) continue; // offline media renders silence
-            const auto &media = pe->handle->impl;
-            // Defensive clamp: never read past the decoded media.
-            const int64_t len = std::min(c.length, media->frames() - c.offset);
+            std::shared_ptr<const Media> media = pe->handle->impl;
+            int64_t offset = c.offset, len = std::min(c.length, media->frames() - c.offset);
+            if (c.stretched()) {
+                // Stretched audio is rendered off the audio thread; until it's ready the clip is silent.
+                const StretchKey key = stretchKey(c);
+                auto derived = cache_.find(key);
+                if (!derived) {
+                    if (needed) needed->push_back({key, media});
+                    continue;
+                }
+                media = derived;
+                offset = 0;
+                len = std::min(c.length, media->frames());
+            }
             if (len <= 0) continue;
             // Fades longer than the clip are scaled down proportionally.
             int64_t fi = std::min(c.fadeIn, len), fo = std::min(c.fadeOut, len);
@@ -482,7 +524,7 @@ std::unique_ptr<RenderState> Engine::compile() const {
                 fi = static_cast<int64_t>(static_cast<double>(fi) * k);
                 fo = len - fi;
             }
-            rt.clips.push_back({media, c.start, c.offset, len, fi, fo, c.fadeCurve, dbToGain(c.gainDb)});
+            rt.clips.push_back({media, c.start, offset, len, fi, fo, c.fadeCurve, dbToGain(c.gainDb)});
             if (media->channelCount() > 1) rt.monoSource = false;
         }
         s->tracks.push_back(std::move(rt));
@@ -491,10 +533,27 @@ std::unique_ptr<RenderState> Engine::compile() const {
 }
 
 void Engine::commit() {
+    std::vector<StretchJob> needed;
+    auto state = compile(&needed);
+    cache_.setNeeded(std::move(needed));
     // A snapshot replaced here was never observed by the audio thread, so it
     // is safe to delete immediately.
-    delete pending_.exchange(compile().release(), std::memory_order_acq_rel);
+    delete pending_.exchange(state.release(), std::memory_order_acq_rel);
     collectGarbage();
+}
+
+bool Engine::pollJobs() {
+    if (!cache_.poll()) return false;
+    commit();
+    return true;
+}
+
+void Engine::renderPendingStretchesNow() {
+    std::vector<StretchJob> needed;
+    compile(&needed);
+    if (needed.empty()) return;
+    cache_.computeNow(needed);
+    commit();
 }
 
 // ---- Audio thread -------------------------------------------------------
@@ -574,6 +633,7 @@ void Engine::process(float *left, float *right, int frames) DALNOK_NONBLOCKING {
 
 bool Engine::renderOffline(int64_t start, int64_t frames, float *left, float *right) {
     if (start < 0 || frames < 0 || !left || !right) return false;
+    renderPendingStretchesNow();
     const auto state = compile();
     const bool anySolo = soloCount_.load() > 0;
     Scratch scratch{};
@@ -592,6 +652,7 @@ bool Engine::renderToWav(const std::string &path, int64_t start, int64_t frames,
     }
     std::unique_ptr<WavWriter> w(openWavWriter(path, sampleRate_, bits, err));
     if (!w) return false;
+    renderPendingStretchesNow();
     const auto state = compile();
     Scratch scratch{};
     std::vector<float> l(kMaxBlock * 64), r(kMaxBlock * 64);

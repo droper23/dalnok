@@ -167,6 +167,10 @@ typedef struct {
     int64_t fade_out;     /* frames */
     int32_t fade_curve;   /* DalnokFadeCurve */
     float gain_db;        /* clip gain; -INFINITY = silent */
+    double rate;          /* source frames per timeline frame (1 = normal speed) */
+    float pitch;          /* semitones (time-stretch mode only) */
+    bool preserve_pitch;  /* false = varispeed */
+    bool processing;      /* stretched audio still rendering in the background (silent until ready) */
     char name[128];
 } DalnokClipInfo;
 DalnokStatus dalnok_clip_info(const DalnokEngine *engine, DalnokClipId clip, DalnokClipInfo *out);
@@ -210,6 +214,15 @@ typedef enum { DALNOK_FADE_LINEAR = 0, DALNOK_FADE_EQUAL_POWER = 1 } DalnokFadeC
  * fades over a lower clip on the same track crossfades with it. */
 DalnokStatus dalnok_clip_set_fades(DalnokEngine *engine, DalnokClipId clip, int64_t fade_in, int64_t fade_out,
                                    DalnokFadeCurve curve);
+
+/* Time-stretch: sets the clip's timeline length and speed (it plays source
+ * frames [offset, offset + length × rate)); `semitones` transposes (only when
+ * preserve_pitch). preserve_pitch = false is varispeed. Rendered in the
+ * background; see dalnok_engine_poll_jobs. */
+DalnokStatus dalnok_clip_set_stretch(DalnokEngine *engine, DalnokClipId clip, int64_t length, double rate,
+                                     float semitones, bool preserve_pitch);
+/* Installs finished background renders (call from a UI timer). Returns the number still pending. */
+int32_t dalnok_engine_poll_jobs(DalnokEngine *engine);
 
 /* Clip (region) gain in dB, applied before the track fader. Clamped to +24. */
 DalnokStatus dalnok_clip_set_gain_db(DalnokEngine *engine, DalnokClipId clip, float gain_db);
