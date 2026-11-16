@@ -9,6 +9,7 @@ final class TransportBar: NSView {
     let importButton = NSButton()
     let timeLabel = NSTextField(labelWithString: "0:00.000")
     let statusLabel = NSTextField(labelWithString: "")
+    let masterMeter = MeterView()
     var onPlayPause: (() -> Void)?
     var onRewind: (() -> Void)?
     var onImport: (() -> Void)?
@@ -43,7 +44,9 @@ final class TransportBar: NSView {
 
         let left = NSStackView(views: [rewind, playButton])
         left.spacing = 6
-        let stack = NSStackView(views: [left, lcd, statusLabel, NSView(), importButton])
+        masterMeter.toolTip = "Master output peak (click to reset clip)"
+        masterMeter.setAccessibilityLabel("Master level meter")
+        let stack = NSStackView(views: [left, lcd, statusLabel, NSView(), masterMeter, importButton])
         stack.spacing = 14
         stack.edgeInsets = NSEdgeInsets(top: 0, left: 14, bottom: 0, right: 14)
         stack.translatesAutoresizingMaskIntoConstraints = false
@@ -53,6 +56,8 @@ final class TransportBar: NSView {
             stack.trailingAnchor.constraint(equalTo: trailingAnchor),
             stack.centerYAnchor.constraint(equalTo: centerYAnchor),
             lcd.widthAnchor.constraint(equalToConstant: 132),
+            masterMeter.widthAnchor.constraint(equalToConstant: 160),
+            masterMeter.heightAnchor.constraint(equalToConstant: 9),
             lcd.heightAnchor.constraint(equalToConstant: 32),
             timeLabel.centerXAnchor.constraint(equalTo: lcd.centerXAnchor),
             timeLabel.centerYAnchor.constraint(equalTo: lcd.centerYAnchor),
@@ -118,6 +123,7 @@ final class TrackHeaderRow: NSView {
     private let mute = NSButton(title: "M", target: nil, action: nil)
     private let gain = GroupedSlider(value: 0, minValue: -60, maxValue: 6, target: nil, action: nil)
     private let pan = GroupedSlider(value: 0, minValue: -1, maxValue: 1, target: nil, action: nil)
+    let meter = MeterView()
 
     init(track: TrackView, session: Session) {
         self.trackId = track.id
@@ -156,7 +162,9 @@ final class TrackHeaderRow: NSView {
         panLabel.font = .systemFont(ofSize: 10)
         panLabel.textColor = Theme.textDim
 
-        for v in [swatch, nameLabel, mute, gain, pan, gainLabel, panLabel] {
+        meter.toolTip = "Post-fader peak (click to reset clip)"
+        meter.setAccessibilityLabel("Level meter \(track.name)")
+        for v in [swatch, nameLabel, mute, gain, pan, gainLabel, panLabel, meter] {
             v.translatesAutoresizingMaskIntoConstraints = false
             addSubview(v)
         }
@@ -182,6 +190,10 @@ final class TrackHeaderRow: NSView {
             pan.trailingAnchor.constraint(equalTo: gain.trailingAnchor),
             panLabel.leadingAnchor.constraint(equalTo: gainLabel.leadingAnchor),
             panLabel.centerYAnchor.constraint(equalTo: pan.centerYAnchor),
+            meter.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor),
+            meter.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+            meter.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
+            meter.heightAnchor.constraint(equalToConstant: 5),
         ])
         update(track)
     }
@@ -229,7 +241,7 @@ final class TrackHeaderRow: NSView {
 @MainActor
 final class TrackHeaderColumn: NSView {
     let session: Session
-    private var rows: [TrackHeaderRow] = []
+    private(set) var rows: [TrackHeaderRow] = []
     private let rowClip = FlippedView()
     var scrollY: CGFloat = 0 { didSet { needsLayout = true } }
 

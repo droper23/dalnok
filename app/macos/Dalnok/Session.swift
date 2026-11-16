@@ -129,8 +129,14 @@ final class Session {
 
     func newProject() { engine.newProject(); projectURL = nil; refresh() }
 
-    func open(_ url: URL) throws {
-        let missing = try engine.load(from: url)
+    private(set) var isOpening = false
+
+    /// Loads in the background; the current project stays usable until the new one is swapped in.
+    func open(_ url: URL) async throws {
+        isOpening = true
+        defer { isOpening = false }
+        onMessage?("Opening \(url.lastPathComponent)…")
+        let missing = try await engine.loadInBackground(from: url)
         projectURL = url
         refresh()
         onMessage?(missing > 0 ? "\(missing) audio file\(missing == 1 ? "" : "s") missing — clips shown offline"

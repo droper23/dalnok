@@ -107,6 +107,64 @@ final class Engine {
         }
     }
 
+    // Devices
+    struct OutputDevice: Equatable {
+        let uid: String
+        let name: String
+        let sampleRate: Double
+        let channels: Int
+        let isDefault: Bool
+    }
+    static func outputDevices() -> [OutputDevice] {
+        var list = [DalnokDeviceInfo](repeating: DalnokDeviceInfo(), count: 64)
+        let n = Int(dalnok_output_devices(&list, 64))
+        return list.prefix(min(n, 64)).map {
+            OutputDevice(uid: fixedString($0.uid), name: fixedString($0.name), sampleRate: $0.sample_rate,
+                         channels: Int($0.output_channels), isDefault: $0.is_default)
+        }
+    }
+    /// nil / "" = follow the system default.
+    func setOutputDevice(_ uid: String?) throws {
+        var err = [CChar](repeating: 0, count: 512)
+        guard dalnok_engine_set_output_device(handle, uid, &err, 512) == DALNOK_OK else {
+            throw EngineError(description: cString(err))
+        }
+    }
+    var outputDeviceUid: String { var b = [CChar](repeating: 0, count: 256); dalnok_engine_output_device(handle, &b, 256); return cString(b) }
+    var deviceAlive: Bool { dalnok_engine_device_alive(handle) }
+    var hardwareSampleRate: Double { dalnok_engine_hardware_sample_rate(handle) }
+
+    // Meters (linear peaks since last read)
+    func trackMeter(_ t: DalnokTrackId) -> (Float, Float) {
+        var l: Float = 0, r: Float = 0
+        dalnok_meter_track(handle, t, &l, &r)
+        return (l, r)
+    }
+    func masterMeter() -> (Float, Float) {
+        var l: Float = 0, r: Float = 0
+        dalnok_meter_master(handle, &l, &r)
+        return (l, r)
+    }
+
+    /// Opens a project without blocking the UI: parse + decode off the main thread, then swap in.
+    func loadInBackground(from url: URL) async throws -> Int {
+        struct Prepared: @unchecked Sendable { let data: OpaquePointer; let missing: Int }
+        let rate = sampleRate
+        let prepared = try await Task.detached(priority: .userInitiated) { () throws -> Prepared in
+            var data: OpaquePointer?
+            var missing: Int32 = 0
+            var err = [CChar](repeating: 0, count: 512)
+            guard dalnok_project_prepare(url.path, rate, &data, &missing, &err, 512) == DALNOK_OK, let data else {
+                throw EngineError(description: cString(err))
+            }
+            return Prepared(data: data, missing: Int(missing))
+        }.value
+        guard dalnok_project_apply(handle, prepared.data) == DALNOK_OK else {
+            throw EngineError(description: "project could not be applied")
+        }
+        return prepared.missing
+    }
+
     func stats() -> DalnokStats {
         var s = DalnokStats()
         dalnok_engine_stats(handle, &s)

@@ -3,6 +3,8 @@
 An open-source digital audio workstation for macOS (and later Windows and Linux). The goal is pro-grade
 recording, editing, and mixing in a fast, focused native app.
 
+> **Feature parity tracker:** https://droper23.github.io/dalnok-status/
+>
 > **Status: pre-alpha, Phase 1.** It imports audio files, shows their waveforms, plays them back with
 > per-track gain, pan, and mute, and renders to WAV from the CLI. See [CURRENT_STATE.md](CURRENT_STATE.md).
 

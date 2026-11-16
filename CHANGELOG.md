@@ -1,6 +1,17 @@
 # Changelog
 
 ## [Unreleased]
+### Added (2026-11-16, Phase 1 M3)
+- Command palette (⌘K): fuzzy search over every menu command, showing its menu location and shortcut.
+- Audio ▸ Output Device menu. Switching devices is safe: a failed switch keeps the previous device, and an unplugged device falls back to System Default.
+- Track and master peak meters (instant attack, 24 dB/s fall, 1.5 s hold, clip indicator).
+- Background project opening (`dalnok_project_prepare` / `dalnok_project_apply`).
+- `dalnok_engine_pump` drives the live render path without a device. Click tests cover play, pause,
+  seek, and gain changes, and a mutation check confirms they catch regressions.
+- Public feature-parity page (https://droper23.github.io/dalnok-status/), published from `site/`.
+  Screenshots come from the app's `--screenshots` mode.
+### Fixed
+- Top-level menus had the default title "NSMenuItem", which leaked into the palette's paths.
 ### Changed (2026-11-16)
 - **Renamed from the placeholder "Atrium" to Dalnok.** C API prefix `dalnok_`, header `dalnok/dalnok.h`,
   targets `Dalnok`, `DalnokEngine`, and `dalnok-cli`, project extension `.dalnok` (format `dalnok-project`),

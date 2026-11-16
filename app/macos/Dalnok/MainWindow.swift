@@ -9,8 +9,10 @@ extension UTType {
 }
 
 @MainActor
-final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuItemValidation {
+final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuItemValidation, NSMenuDelegate {
     let session: Session
+    let palette = CommandPalette()
+    private var tickCount = 0
     let transport = TransportBar()
     let headers: TrackHeaderColumn
     let timeline: TimelineView
@@ -99,11 +101,29 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     }
 
     private func updateStatus() {
-        let sr = session.engine.sampleRate
+        let e = session.engine
+        let sr = e.sampleRate
         let n = session.tracks.count
-        transport.statusLabel.stringValue = n == 0
-            ? "\(Int(sr)) Hz"
-            : "\(n) track\(n == 1 ? "" : "s")  ·  \(TimelineView.formatTime(Double(session.length) / sr)) long  ·  \(Int(sr)) Hz  ·  hold ⌃ while dragging to bypass snap"
+        var parts: [String] = []
+        if n > 0 { parts.append("\(n) track\(n == 1 ? "" : "s")  ·  \(TimelineView.formatTime(Double(session.length) / sr)) long") }
+        parts.append(outputDeviceDescription())
+        if n > 0 { parts.append("⌘K for all commands") }
+        transport.statusLabel.stringValue = parts.joined(separator: "  ·  ")
+    }
+
+    private func outputDeviceDescription() -> String {
+        let e = session.engine
+        let uid = e.outputDeviceUid
+        let devices = Engine.outputDevices()
+        let dev = uid.isEmpty ? devices.first(where: \.isDefault) : devices.first(where: { $0.uid == uid })
+        var s = dev?.name ?? "No output"
+        let hw = e.hardwareSampleRate
+        if hw > 0 && abs(hw - e.sampleRate) > 0.5 {
+            s += String(format: " (%.1f kHz → %.1f kHz)", e.sampleRate / 1000, hw / 1000)
+        } else {
+            s += String(format: " · %.1f kHz", e.sampleRate / 1000)
+        }
+        return s
     }
 
     private func tick() {
@@ -118,6 +138,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         transport.timeLabel.stringValue = TimelineView.formatTime(Double(e.position) / e.sampleRate)
         timeline.followPlayhead()
         timeline.updatePlayhead()
+        for row in headers.rows {
+            let (l, r) = e.trackMeter(row.trackId)
+            row.meter.push(l, r)
+        }
+        let (ml, mr) = e.masterMeter()
+        transport.masterMeter.push(ml, mr)
+        tickCount += 1
+        if tickCount % 30 == 0 && !e.deviceAlive { deviceLost() }
         if transientMessageUntil < Date(), transientMessageUntil != .distantPast {
             transientMessageUntil = .distantPast
             updateStatus()
@@ -134,6 +162,56 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     @objc func goToStart() {
         session.engine.seek(0)
         timeline.scrollFrame = 0
+    }
+
+    // MARK: Audio devices
+
+    private func deviceLost() {
+        let lostName = Engine.outputDevices().first { $0.uid == session.engine.outputDeviceUid }?.name ?? "Output device"
+        do {
+            try session.engine.setOutputDevice(nil)
+            flash("\(lostName) disconnected — switched to System Default")
+        } catch {
+            flash("\(lostName) disconnected and no fallback device is available: \(error)")
+        }
+    }
+
+    @objc func selectOutputDevice(_ sender: NSMenuItem) {
+        let uid = sender.representedObject as? String ?? ""
+        do {
+            try session.engine.setOutputDevice(uid)
+            flash("Output: \(outputDeviceDescription())")
+        } catch {
+            presentError(title: "Couldn't switch output device", error)
+        }
+    }
+
+    /// Rebuilds the Output Device submenu each time it opens (devices come and go).
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        menu.removeAllItems()
+        let current = session.engine.outputDeviceUid
+        let devices = Engine.outputDevices()
+        let def = devices.first(where: \.isDefault)?.name
+        let sys = NSMenuItem(title: "System Default" + (def.map { " (\($0))" } ?? ""),
+                             action: #selector(selectOutputDevice(_:)), keyEquivalent: "")
+        sys.representedObject = ""
+        sys.state = current.isEmpty ? .on : .off
+        sys.target = self
+        menu.addItem(sys)
+        menu.addItem(.separator())
+        for d in devices {
+            let it = NSMenuItem(title: d.name, action: #selector(selectOutputDevice(_:)), keyEquivalent: "")
+            it.representedObject = d.uid
+            it.state = d.uid == current ? .on : .off
+            it.toolTip = String(format: "%.1f kHz · %d output channels", d.sampleRate / 1000, d.channels)
+            it.target = self
+            menu.addItem(it)
+        }
+    }
+
+    @objc func showCommandPalette(_ sender: Any?) {
+        guard let window else { return }
+        palette.show(over: window)
     }
 
     // MARK: Edit
@@ -190,13 +268,18 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         }
     }
 
-    func openProject(_ url: URL) {
-        do {
-            fitOnNextChange = true
-            try session.open(url)
-            NSDocumentController.shared.noteNewRecentDocumentURL(url)
-        } catch {
-            presentError(title: "Couldn't open \(url.lastPathComponent)", error)
+    func openProject(_ url: URL, completion: ((Bool) -> Void)? = nil) {
+        Task {
+            do {
+                fitOnNextChange = true
+                try await session.open(url)
+                NSDocumentController.shared.noteNewRecentDocumentURL(url)
+                completion?(true)
+            } catch {
+                fitOnNextChange = false
+                presentError(title: "Couldn't open \(url.lastPathComponent)", error)
+                completion?(false)
+            }
         }
     }
 

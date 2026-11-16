@@ -25,10 +25,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let args = Array(CommandLine.arguments.dropFirst())
         func value(_ flag: String) -> String? { args.firstIndex(of: flag).flatMap { $0 + 1 < args.count ? args[$0 + 1] : nil } }
-        let flagValues = Set(["--snapshot", "--selftest"].compactMap(value))
+        let flagValues = Set(["--snapshot", "--selftest", "--screenshots"].compactMap(value))
         let files = args.filter { !$0.hasPrefix("-") && !flagValues.contains($0) }.map { URL(fileURLWithPath: $0) }
         let snapshot = value("--snapshot").map { URL(fileURLWithPath: $0) }
 
+        if let dir = value("--screenshots") {
+            Screenshots.run(app: self, files: files, dir: URL(fileURLWithPath: dir))
+            return
+        }
         if let dir = value("--selftest") {
             SelfTest(app: self, files: files, workdir: URL(fileURLWithPath: dir)).run()
             return
@@ -81,7 +85,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 func buildMenu(target: MainWindowController) -> NSMenu {
     let bar = NSMenu()
     func menu(_ title: String, _ items: [NSMenuItem]) {
-        let top = NSMenuItem()
+        let top = NSMenuItem(title: title, action: nil, keyEquivalent: "")
         let m = NSMenu(title: title)
         items.forEach { m.addItem($0) }
         top.submenu = m
@@ -121,7 +125,13 @@ func buildMenu(target: MainWindowController) -> NSMenu {
         item("Play / Pause", #selector(W.togglePlay), " ", []),
         item("Go to Start", #selector(W.goToStart), "\r", []),
     ])
+    let outputMenu = NSMenuItem(title: "Output Device", action: nil, keyEquivalent: "")
+    outputMenu.submenu = NSMenu(title: "Output Device")
+    outputMenu.submenu?.delegate = target
+    menu("Audio", [outputMenu])
     menu("View", [
+        item("Command Palette…", #selector(W.showCommandPalette(_:)), "k"),
+        .separator(),
         item("Zoom In", #selector(W.zoomIn), "="),
         item("Zoom Out", #selector(W.zoomOut), "-"),
         item("Zoom to Fit", #selector(W.zoomToFit), "0"),

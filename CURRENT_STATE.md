@@ -1,14 +1,15 @@
 ---
 updated: 2026-11-16
 phase: 1 (Minimum working DAW)
-milestone: M1 + M2 done, M3 next
+milestone: M1–M3 done, M4 next
 ---
 # Current State
 
 ## Latest verified build
 - `main`, 2026-11-16. macOS 27.3, Xcode 27.2, Swift 6.4.2, Apple clang 21, M3 Max.
-- `swift build`: 0 warnings. `swift test`: 26 tests pass. `scripts/check.sh` passes, including the live
-  audio smoke test and the app self-test (28 checks).
+- `swift build`: 0 warnings. `swift test`: 35 tests pass, including the mutation-checked click tests.
+  `scripts/check.sh` passes, including the live audio smoke test and the app self-test (43 checks).
+- **Public parity page:** https://droper23.github.io/dalnok-status/ (source in `site/`, published by `scripts/publish-site.sh`).
 - CI has two jobs: build + test, and real-time effect analysis with Homebrew LLVM.
 
 ## Architecture (now)
@@ -38,9 +39,13 @@ slot, and retired ones come back through an SPSC queue. See [[System Overview]],
 | New/Open/Save/Save As with unsaved-changes prompt; window title and edited dot | Self-test (prompt path: manual only) |
 | Export Mix (⌘B, 24-bit WAV) | Self-test: export decodes to the session length |
 | Command catalog (18 commands, JSON in and out), also from `dalnok-cli command` | `CommandCatalog` tests; CLI run |
+| Click-free play, pause, seek, and gain changes on the live path | `LivePath` tests via `dalnok_engine_pump`; a mutation check proves they catch regressions |
+| Command palette (⌘K): fuzzy search over every menu command with location and shortcut | Self-test |
+| Output device selection (Audio ▸ Output Device), fallback when a device disappears | `Devices` tests + self-test (fallback: implemented, not automated) |
+| Track and master peak meters with hold and clip indicator | `metersReportPostFaderPeaksAndReset` + self-test during playback |
+| Background project open (prepare off-thread, apply on main) | `TwoPhaseLoad` test + self-test |
 
 ## Not yet / incomplete
-- A command palette UI over the catalog. The engine side is done.
 - Relinking offline media from the UI. Autosave and crash recovery (Phase 2).
 - Fades and crossfades at clip edges. Edits are currently hard cuts.
 - Disk streaming. Media is fully decoded into RAM, about 23 MB per stereo minute at 48 kHz.
@@ -50,15 +55,17 @@ slot, and retired ones come back through an SPSC queue. See [[System Overview]],
 - Seeking while playing fades out and in (correct), but there's no automated test for click-free behavior.
 - Files with more than 2 channels keep only the first two.
 - The unsaved-changes sheet (Save / Don't Save / Cancel) is exercised manually only. The self-test avoids modal sheets.
-- Project load decodes all media synchronously on the main thread. Large projects will stall the UI until background loading lands.
+- Device-unplug fallback is polled every 0.5 s and untested with real hardware (no Scarlett connected during development).
+- Peak meters only. No LUFS or RMS yet.
 
 ## Active objective
-Phase 1, M3: a command palette (⌘K) over the catalog, an output device picker with sample-rate change
-handling, peak meters, and background project loading.
+Phase 1, M4 (Phase 1 exit): relink offline media, copy-to-project option, track reorder and delete in the UI,
+solo, and fades and crossfades. Then the Phase 1 exit review, after which recording begins (Phase 2).
 
 ## Next recommended action
-Build the command palette. It's small, it's the user's top discoverability request, and the catalog
-already exists. Then the device picker, which needs `AudioDevice` enumeration in `platform/macos`.
+Add clip fades and crossfades in the engine (render + tests), because hard cuts click at edits. Then
+track reorder, delete, and solo. At every milestone, update `site/parity.json`, regenerate screenshots
+(`Dalnok <files> --screenshots site/screenshots`), and run `scripts/publish-site.sh`.
 
 ## Links
 [[00 - Project Home]] · [[02 - Master Roadmap]] · [[Foundation Evaluation]] · [[Baseline 2026-11-16]] · [[2026-11-16]] · [[Project Format]]

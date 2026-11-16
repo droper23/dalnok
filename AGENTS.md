@@ -25,6 +25,8 @@ Swift/AppKit front end on macOS. GPL-3.0-or-later. This repo is also the project
   Extend `app/macos/Dalnok/SelfTest.swift` for every new UI interaction.
 - `.build/debug/dalnok-cli commands`, `command <proj> <name> '<json>' [--save]`, `render-project`.
 - `scripts/ci/rt-effects.sh` runs the real-time effect analysis (uses Homebrew LLVM on CI).
+- `Dalnok <audio files> --screenshots site/screenshots` regenerates the parity-page screenshots from the real app.
+- `scripts/publish-site.sh` publishes `site/` (only) to the public repo `droper23/dalnok-status` (GitHub Pages).
 
 ## Hard rules
 - **Audio thread:** anything reachable from the device callback is marked `DALNOK_NONBLOCKING`. Clang
@@ -37,3 +39,6 @@ Swift/AppKit front end on macOS. GPL-3.0-or-later. This repo is also the project
 - Dependencies must be permissive or system frameworks. Record each one in `04 - Research/Licensing.md`.
 - Don't copy code or assets from proprietary DAWs. Workflows can inspire us, but implementations can't be copied.
 - At session end, update `CURRENT_STATE.md`, `CHANGELOG.md`, and `10 - Development Journal/`, then commit.
+- **Parity page:** when a feature step changes state, update `site/parity.json`. Mark a step `verified`
+  only with a test, self-test, or benchmark behind it, and `implemented` if it's built but unproven.
+  Publish at each milestone. Never publish anything outside `site/`.

@@ -25,12 +25,13 @@ final class SelfTest {
         if !ok { failures += 1 }
     }
 
-    private func menuItem(_ title: String, in menu: NSMenu? = NSApp.mainMenu) -> NSMenuItem? {
+    private func menuItem(_ title: String, in menu: NSMenu? = NSApp.mainMenu, submenuOnly: Bool = false) -> NSMenuItem? {
         for it in menu?.items ?? [] {
             if let sub = it.submenu {
+                if submenuOnly && it.title == title { return it }
                 sub.update() // runs validateMenuItem, which sets dynamic titles
-                if let found = menuItem(title, in: sub) { return found }
-            } else if it.title.hasPrefix(title) {
+                if let found = menuItem(title, in: sub, submenuOnly: submenuOnly) { return found }
+            } else if !submenuOnly && it.title.hasPrefix(title) {
                 return it
             }
         }
@@ -121,13 +122,59 @@ final class SelfTest {
         _ = perform("Undo")
         check(s.clip(first.id) != nil, "undo restored deleted clip")
 
+        // Command palette: open via its menu item, fuzzy-find, execute.
+        check(perform("Command Palette"), "menu View > Command Palette…")
+        check(w.palette.isVisible, "palette is visible")
+        w.palette.filter("splt plhd")
+        check(w.palette.results.first?.title == "Split at Playhead", "fuzzy 'splt plhd' → \(w.palette.results.first?.title ?? "-")")
+        check(w.palette.results.first?.shortcut == "⌘T", "palette shows shortcut \(w.palette.results.first?.shortcut ?? "-")")
+        w.timeline.selectedClip = first.id
+        e.seek(s.clip(first.id)!.start + s.clip(first.id)!.length / 2)
+        await wait(0.3)
+        let before = s.tracks[0].clips.count
+        w.palette.runSelected()
+        check(!w.palette.isVisible, "palette closes after running")
+        check(s.tracks[0].clips.count == before + 1, "palette ran Split at Playhead")
+        _ = perform("Undo")
+        let entries = PaletteIndex.entries()
+        check(entries.count >= 20, "palette indexes \(entries.count) commands")
+        check(entries.filter { $0.path.hasSuffix("Output Device") }.count >= 2, "palette includes output devices")
+
+        // Meters move during playback.
+        e.seek(0)
+        e.play()
+        await wait(0.6)
+        let master = w.transport.masterMeter.levelDb
+        let trackLevels = w.headers.rows.map(\.meter.levelDb.0)
+        e.pause()
+        check(master.0 > -60, String(format: "master meter live (%.1f dBFS)", master.0))
+        check(trackLevels.contains { $0 > -60 }, "track meters live (\(trackLevels.map { Int($0) }) dBFS)")
+
+        // Output device menu: pick a specific device, then back to System Default.
+        if let sub = menuItem("Output Device", submenuOnly: true)?.submenu {
+            w.menuNeedsUpdate(sub)
+            let concrete = sub.items.filter { ($0.representedObject as? String)?.isEmpty == false }
+            check(!concrete.isEmpty, "device menu lists \(concrete.count) device(s)")
+            if let d = concrete.first {
+                sub.performActionForItem(at: sub.index(of: d))
+                check(e.outputDeviceUid == d.representedObject as? String, "selected \(d.title)")
+                check(e.deviceAlive, "device alive after switch")
+                w.menuNeedsUpdate(sub)
+                sub.performActionForItem(at: 0)
+                check(e.outputDeviceUid.isEmpty, "back to System Default")
+            }
+        } else {
+            check(false, "Audio > Output Device menu exists")
+        }
+
         // Save, New (via menu), reopen.
         let project = workdir.appendingPathComponent("selftest.dalnok")
         check(w.saveProject(to: project), "save project")
         check(!e.isDirty && w.window?.isDocumentEdited == false, "saved state is clean")
         check(perform("New"), "menu File > New")
         check(s.tracks.isEmpty, "new project is empty")
-        w.openProject(project)
+        let opened = await withCheckedContinuation { cont in w.openProject(project) { cont.resume(returning: $0) } }
+        check(opened, "background open completed")
         check(s.tracks.count == files.count, "reopened \(s.tracks.count) tracks")
         check(s.clip(first.id)?.start == lt.start && s.clip(first.id)?.length == lt.length, "edits survived save/open")
         check(w.window?.title == "selftest", "window title is project name (\(w.window?.title ?? "-"))")
