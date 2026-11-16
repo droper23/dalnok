@@ -4,23 +4,23 @@
 #include <algorithm>
 #include <cmath>
 
-namespace atrium {
+namespace dalnok {
 
 namespace {
 
-void clear(float *p, int n) ATRIUM_NONBLOCKING {
+void clear(float *p, int n) DALNOK_NONBLOCKING {
     for (int i = 0; i < n; ++i) p[i] = 0.0f;
 }
 
 // Constant-power law compensated to unity at center (+3 dB at the extremes),
 // approximated with a quarter-sine polynomial so it stays provably
 // non-blocking (libm calls are not annotated). Max error ~1e-4.
-float quarterSin(float x) ATRIUM_NONBLOCKING { // x in [0, pi/2]
+float quarterSin(float x) DALNOK_NONBLOCKING { // x in [0, pi/2]
     const float x2 = x * x;
     return x * (1.0f - x2 / 6.0f * (1.0f - x2 / 20.0f * (1.0f - x2 / 42.0f * (1.0f - x2 / 72.0f))));
 }
 
-void panGains(const TrackRuntime &rt, bool mono, float &gl, float &gr) ATRIUM_NONBLOCKING {
+void panGains(const TrackRuntime &rt, bool mono, float &gl, float &gr) DALNOK_NONBLOCKING {
     const float g = rt.muted.load(std::memory_order_relaxed) ? 0.0f : rt.gain.load(std::memory_order_relaxed);
     const float p = std::clamp(rt.pan.load(std::memory_order_relaxed), -1.0f, 1.0f);
     if (mono) {
@@ -34,7 +34,7 @@ void panGains(const TrackRuntime &rt, bool mono, float &gl, float &gr) ATRIUM_NO
     }
 }
 
-void mixClip(const RenderClip &clip, int64_t pos, int frames, float *l, float *r) ATRIUM_NONBLOCKING {
+void mixClip(const RenderClip &clip, int64_t pos, int frames, float *l, float *r) DALNOK_NONBLOCKING {
     const int64_t a = std::max(pos, clip.start);
     const int64_t e = std::min(pos + frames, clip.start + clip.length);
     if (a >= e) return;
@@ -54,7 +54,7 @@ void mixClip(const RenderClip &clip, int64_t pos, int frames, float *l, float *r
 } // namespace
 
 void renderBlock(const RenderState &state, int64_t pos, int frames, float *left, float *right,
-                 Scratch &s, bool smooth) ATRIUM_NONBLOCKING {
+                 Scratch &s, bool smooth) DALNOK_NONBLOCKING {
     clear(left, frames);
     clear(right, frames);
     for (const RenderTrack &t : state.tracks) {
@@ -109,4 +109,4 @@ void renderBlock(const RenderState &state, int64_t pos, int frames, float *left,
     }
 }
 
-} // namespace atrium
+} // namespace dalnok

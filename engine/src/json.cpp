@@ -9,7 +9,7 @@
 #include <xlocale.h>
 #endif
 
-namespace atrium::json {
+namespace dalnok::json {
 
 const Value *Value::get(std::string_view key) const {
     if (type != Type::Object) return nullptr;
@@ -317,4 +317,4 @@ std::string serialize(const Value &v, bool pretty) {
     return o;
 }
 
-} // namespace atrium::json
+} // namespace dalnok::json

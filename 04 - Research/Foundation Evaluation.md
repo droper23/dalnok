@@ -7,7 +7,7 @@ tags: [research, architecture, licensing]
 
 # Foundation Evaluation
 
-Working name: **Atrium** (placeholder). Related: [[Licensing]], [[Technology Decisions]].
+Name: **Dalnok** (renamed from the placeholder "Atrium" on 2026-11-16). Related: [[Licensing]], [[Technology Decisions]].
 
 ## Requirements that drive the choice
 

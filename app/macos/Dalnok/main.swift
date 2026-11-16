@@ -1,7 +1,7 @@
-// Atrium — application entry point.
+// Dalnok — application entry point.
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
-// Usage: Atrium [audio files... | project.atrium] [--play] [--snapshot out.png] [--selftest workdir]
+// Usage: Dalnok [audio files... | project.dalnok] [--play] [--snapshot out.png] [--selftest workdir]
 //   --snapshot  render the window to a PNG after loading, then quit (UI checks)
 //   --selftest  drive menus and mouse gestures end-to-end, print PASS/FAIL, then quit
 import AppKit
@@ -33,8 +33,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             SelfTest(app: self, files: files, workdir: URL(fileURLWithPath: dir)).run()
             return
         }
-        let projects = files.filter { $0.pathExtension == "atrium" }
-        let audio = files.filter { $0.pathExtension != "atrium" }
+        let projects = files.filter { $0.pathExtension == "dalnok" }
+        let audio = files.filter { $0.pathExtension != "dalnok" }
         if let p = projects.first { main.openProject(p) }
         let finish = { [weak self] in
             guard let self else { return }
@@ -94,11 +94,11 @@ func buildMenu(target: MainWindowController) -> NSMenu {
         return it
     }
     typealias W = MainWindowController
-    menu("Atrium", [
-        item("About Atrium", #selector(NSApplication.orderFrontStandardAboutPanel(_:)), ""),
+    menu("Dalnok", [
+        item("About Dalnok", #selector(NSApplication.orderFrontStandardAboutPanel(_:)), ""),
         .separator(),
-        item("Hide Atrium", #selector(NSApplication.hide(_:)), "h"),
-        item("Quit Atrium", #selector(NSApplication.terminate(_:)), "q"),
+        item("Hide Dalnok", #selector(NSApplication.hide(_:)), "h"),
+        item("Quit Dalnok", #selector(NSApplication.terminate(_:)), "q"),
     ])
     menu("File", [
         item("New", #selector(W.newDocument(_:)), "n"),

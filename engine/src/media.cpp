@@ -4,7 +4,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace atrium {
+namespace dalnok {
 
 namespace {
 constexpr int64_t kBaseBlock = 64;
@@ -98,4 +98,4 @@ int64_t Media::peaks(int32_t channel, int64_t startFrame, double fpc, float *min
     return count;
 }
 
-} // namespace atrium
+} // namespace dalnok

@@ -12,10 +12,10 @@ milestone: M1 + M2 done, M3 next
 - CI has two jobs: build + test, and real-time effect analysis with Homebrew LLVM.
 
 ## Architecture (now)
-C++20 engine (`engine/`) → C API (`atrium.h`, v2) → AppKit UI (`app/macos/`). The **engine owns the
+C++20 engine (`engine/`) → C API (`dalnok.h`, v2) → AppKit UI (`app/macos/`). The **engine owns the
 project model**: tracks, clips in z-order, and a media pool. Every edit is a named, undoable command with
 whole-model snapshot undo, also reachable as JSON through the command catalog. The UI is a read-only view
-that refreshes on `atrium_model_revision`. Render snapshots reach the audio thread through an atomic
+that refreshes on `dalnok_model_revision`. Render snapshots reach the audio thread through an atomic
 slot, and retired ones come back through an SPSC queue. See [[System Overview]],
 [[Real-Time Processing]], [[ADR-0005 Project model and commands]], and [[Project Format]].
 
@@ -37,7 +37,7 @@ slot, and retired ones come back through an SPSC queue. See [[System Overview]],
 | Project save/open (JSON v1, atomic), relocation via relative paths, offline missing media, rejection of bad files, sample-rate rescaling | `Persistence` tests |
 | New/Open/Save/Save As with unsaved-changes prompt; window title and edited dot | Self-test (prompt path: manual only) |
 | Export Mix (⌘B, 24-bit WAV) | Self-test: export decodes to the session length |
-| Command catalog (18 commands, JSON in and out), also from `atrium-cli command` | `CommandCatalog` tests; CLI run |
+| Command catalog (18 commands, JSON in and out), also from `dalnok-cli command` | `CommandCatalog` tests; CLI run |
 
 ## Not yet / incomplete
 - A command palette UI over the catalog. The engine side is done.

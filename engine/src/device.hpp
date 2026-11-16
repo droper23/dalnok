@@ -8,12 +8,12 @@
 #include <string>
 #include <vector>
 
-namespace atrium {
+namespace dalnok {
 
 class AudioDevice {
 public:
     // Called on the device's real-time thread with planar stereo output buffers.
-    using Callback = void (*)(void *ctx, float *left, float *right, int frames) ATRIUM_NONBLOCKING;
+    using Callback = void (*)(void *ctx, float *left, float *right, int frames) DALNOK_NONBLOCKING;
 
     virtual ~AudioDevice() = default;
     virtual bool start(Callback cb, void *ctx, std::string &err) = 0;
@@ -38,4 +38,4 @@ std::vector<DeviceInfo> listOutputDevices();
 std::unique_ptr<AudioDevice> createOutputDevice(const std::string &uid, double sampleRate, std::string &err);
 double defaultOutputSampleRate(); // 0 if unknown
 
-} // namespace atrium
+} // namespace dalnok

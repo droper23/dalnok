@@ -14,7 +14,7 @@
 #include <memory>
 #include <vector>
 
-namespace atrium {
+namespace dalnok {
 
 // Per-track parameters shared between threads. Targets are written by the
 // control thread; `cur*` smoothing state is owned by the audio thread.
@@ -30,7 +30,7 @@ struct TrackRuntime {
 
 // Raises a meter atomic to `v` if larger. A concurrent reset may be overwritten
 // by one stale value; harmless for metering.
-inline void raisePeak(std::atomic<float> &a, float v) ATRIUM_NONBLOCKING {
+inline void raisePeak(std::atomic<float> &a, float v) DALNOK_NONBLOCKING {
     if (v > a.load(std::memory_order_relaxed)) a.store(v, std::memory_order_relaxed);
 }
 
@@ -62,6 +62,6 @@ struct Scratch {
 // left/right (overwritten). If `smooth`, gain changes ramp across the block
 // using each TrackRuntime's audio-thread state (live playback only).
 void renderBlock(const RenderState &state, int64_t pos, int frames, float *left, float *right,
-                 Scratch &scratch, bool smooth) ATRIUM_NONBLOCKING;
+                 Scratch &scratch, bool smooth) DALNOK_NONBLOCKING;
 
-} // namespace atrium
+} // namespace dalnok

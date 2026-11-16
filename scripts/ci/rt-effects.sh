@@ -14,9 +14,9 @@ for f in engine/src/*.cpp engine/src/platform/macos/*.cpp; do
 done
 echo "engine sources: effect-clean"
 neg=$(mktemp -d)/neg.cpp
-printf '#include "rt.hpp"\n#include <vector>\nvoid f(std::vector<float>& v) ATRIUM_NONBLOCKING { v.push_back(1.f); }\n' > "$neg"
+printf '#include "rt.hpp"\n#include <vector>\nvoid f(std::vector<float>& v) DALNOK_NONBLOCKING { v.push_back(1.f); }\n' > "$neg"
 if "$CXX" "${flags[@]}" "$neg" 2>/dev/null; then
-  echo "ERROR: allocation inside ATRIUM_NONBLOCKING compiled — effect analysis is not active" >&2
+  echo "ERROR: allocation inside DALNOK_NONBLOCKING compiled — effect analysis is not active" >&2
   exit 1
 fi
 echo "negative check: violation correctly rejected"

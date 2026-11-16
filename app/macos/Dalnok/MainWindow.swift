@@ -1,11 +1,11 @@
 // Main window composition, commands, menus validation, project lifecycle.
 // SPDX-License-Identifier: GPL-3.0-or-later
 import AppKit
-import AtriumEngine
+import DalnokEngine
 import UniformTypeIdentifiers
 
 extension UTType {
-    static let atriumProject = UTType(filenameExtension: "atrium", conformingTo: .json) ?? .json
+    static let dalnokProject = UTType(filenameExtension: "dalnok", conformingTo: .json) ?? .json
 }
 
 @MainActor
@@ -30,7 +30,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         window.appearance = NSAppearance(named: .darkAqua)
         window.backgroundColor = Theme.window
         window.minSize = NSSize(width: 720, height: 400)
-        window.setFrameAutosaveName("AtriumMain")
+        window.setFrameAutosaveName("DalnokMain")
         super.init(window: window)
         window.delegate = self
 
@@ -182,7 +182,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         confirmDiscard { [weak self] in
             guard let self else { return }
             let panel = NSOpenPanel()
-            panel.allowedContentTypes = [.atriumProject]
+            panel.allowedContentTypes = [.dalnokProject]
             panel.beginSheetModal(for: window!) { resp in
                 guard resp == .OK, let url = panel.url else { return }
                 MainActor.assumeIsolated { self.openProject(url) }
@@ -206,8 +206,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
     @objc func saveDocumentAs(_ sender: Any?, then: (() -> Void)? = nil) {
         let panel = NSSavePanel()
-        panel.allowedContentTypes = [.atriumProject]
-        panel.nameFieldStringValue = session.projectURL?.lastPathComponent ?? "Untitled.atrium"
+        panel.allowedContentTypes = [.dalnokProject]
+        panel.nameFieldStringValue = session.projectURL?.lastPathComponent ?? "Untitled.dalnok"
         panel.beginSheetModal(for: window!) { [weak self] resp in
             guard resp == .OK, let url = panel.url else { return }
             MainActor.assumeIsolated { () -> Void in
@@ -335,7 +335,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     }
 }
 
-/// Accepts dropped audio files and Atrium projects.
+/// Accepts dropped audio files and Dalnok projects.
 @MainActor
 final class DropView: NSView {
     var onDrop: (([URL]) -> Void)?

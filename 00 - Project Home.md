@@ -1,7 +1,7 @@
 ---
 tags: [home]
 ---
-# Atrium: Project Home
+# Dalnok: Project Home
 
 An open-source DAW for pros who want Logic-level polish, REAPER-level openness, and Ableton-level flexibility.
 

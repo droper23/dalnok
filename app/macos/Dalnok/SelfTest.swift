@@ -2,7 +2,7 @@
 // chain) and synthesized mouse gestures, then verifies the engine model.
 // SPDX-License-Identifier: GPL-3.0-or-later
 import AppKit
-import AtriumEngine
+import DalnokEngine
 
 @MainActor
 final class SelfTest {
@@ -53,12 +53,12 @@ final class SelfTest {
     }
 
     /// Drags by a fraction of the clip's on-screen width (works for any clip length).
-    private func dragClip(_ id: AtriumClipId, zone: String, fraction: CGFloat) {
+    private func dragClip(_ id: DalnokClipId, zone: String, fraction: CGFloat) {
         guard let c = s.clip(id) else { return check(false, "clip exists") }
         dragClip(id, zone: zone, dx: CGFloat(Double(c.length) / w.timeline.framesPerPoint) * fraction)
     }
 
-    private func dragClip(_ id: AtriumClipId, zone: String, dx: CGFloat) {
+    private func dragClip(_ id: DalnokClipId, zone: String, dx: CGFloat) {
         guard let p = w.timeline.windowPoint(ofClip: id, zone: zone) else { return check(false, "clip on screen") }
         w.timeline.mouseDown(with: mouse(.leftMouseDown, p))
         for k in 1...10 { w.timeline.mouseDragged(with: mouse(.leftMouseDragged, CGPoint(x: p.x + dx * CGFloat(k) / 10, y: p.y))) }
@@ -122,7 +122,7 @@ final class SelfTest {
         check(s.clip(first.id) != nil, "undo restored deleted clip")
 
         // Save, New (via menu), reopen.
-        let project = workdir.appendingPathComponent("selftest.atrium")
+        let project = workdir.appendingPathComponent("selftest.dalnok")
         check(w.saveProject(to: project), "save project")
         check(!e.isDirty && w.window?.isDocumentEdited == false, "saved state is clean")
         check(perform("New"), "menu File > New")
@@ -136,10 +136,10 @@ final class SelfTest {
         let wav = workdir.appendingPathComponent("selftest.wav")
         check(w.exportMix(to: wav), "export mix")
         var media: OpaquePointer?
-        let loaded = atrium_media_load(wav.path, e.sampleRate, &media, nil, 0) == ATRIUM_OK
-        check(loaded && atrium_media_frames(media) == s.length && atrium_media_channels(media) == 2,
-              "exported WAV decodes to \(atrium_media_frames(media)) frames (session \(s.length)), stereo")
-        if let media { atrium_media_release(media) }
+        let loaded = dalnok_media_load(wav.path, e.sampleRate, &media, nil, 0) == DALNOK_OK
+        check(loaded && dalnok_media_frames(media) == s.length && dalnok_media_channels(media) == 2,
+              "exported WAV decodes to \(dalnok_media_frames(media)) frames (session \(s.length)), stereo")
+        if let media { dalnok_media_release(media) }
 
         try? w.snapshot(to: workdir.appendingPathComponent("selftest.png"))
         finish()

@@ -7,7 +7,7 @@ status: living
 ┌─────────────────────────── macOS app (Swift/AppKit) ─────────────────────────┐
 │ MainWindow · TimelineView · TrackHeaders · Transport · Session (read-only view)│
 └───────────────────────────────┬──────────────────────────────────────────────┘
-                                │  plain C API  engine/include/atrium/atrium.h
+                                │  plain C API  engine/include/dalnok/dalnok.h
 ┌───────────────────────────────┴──────────── engine (C++20) ──────────────────┐
 │ Control thread: commands ─▶ Model (+undo) ──compile()──▶ RenderState snapshot  │
 │                 command catalog (JSON) · media pool · project load/save        │
@@ -17,7 +17,7 @@ status: living
 │ platform/macos: Core Audio output, audio file I/O                              │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
-The engine owns the model. The UI re-queries it whenever `atrium_model_revision` changes. See [[ADR-0005 Project model and commands]].
+The engine owns the model. The UI re-queries it whenever `dalnok_model_revision` changes. See [[ADR-0005 Project model and commands]].
 
 ## Subsystem boundaries (target)
 | # | Responsibility | Where | Status |
@@ -29,7 +29,7 @@ The engine owns the model. The UI re-queries it whenever `atrium_model_revision`
 | 5 | Plugin hosting | `engine/src/plugins/` (out-of-process later) | planned |
 | 6 | Disk streaming and media | `media.*`, `platform/*/audio_file_*` | in-memory only |
 | 7 | UI rendering | `app/macos/` | implemented (CoreGraphics; Metal later) |
-| 8 | Commands, scripting, automation | `commands.cpp` catalog + `atrium_command_run` | implemented (no scripting host yet) |
+| 8 | Commands, scripting, automation | `commands.cpp` catalog + `dalnok_command_run` | implemented (no scripting host yet) |
 | 9 | Persistence, recovery, history | `project.cpp`, snapshot undo | save/load/undo done; autosave planned |
 | 10 | Intelligent assistance | separate non-RT service | future |
 

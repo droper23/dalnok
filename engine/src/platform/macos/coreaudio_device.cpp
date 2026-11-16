@@ -6,7 +6,7 @@
 #include <AudioToolbox/AudioToolbox.h>
 #include <CoreAudio/CoreAudio.h>
 
-namespace atrium {
+namespace dalnok {
 
 namespace {
 
@@ -157,7 +157,7 @@ private:
     }
 
     static OSStatus render(void *ref, AudioUnitRenderActionFlags *, const AudioTimeStamp *, UInt32, UInt32 frames,
-                           AudioBufferList *io) ATRIUM_NONBLOCKING {
+                           AudioBufferList *io) DALNOK_NONBLOCKING {
         auto *self = static_cast<CoreAudioOutput *>(ref);
         if (io->mNumberBuffers < 2) return noErr;
         self->cb_(self->ctx_, static_cast<float *>(io->mBuffers[0].mData),
@@ -205,4 +205,4 @@ std::unique_ptr<AudioDevice> createOutputDevice(const std::string &uid, double s
 
 double defaultOutputSampleRate() { return nominalRate(defaultOutputID()); }
 
-} // namespace atrium
+} // namespace dalnok

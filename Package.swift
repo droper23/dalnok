@@ -1,19 +1,19 @@
 // swift-tools-version: 6.0
-// Atrium (working name) — open-source DAW.
+// Dalnok — open-source DAW.
 // SPDX-License-Identifier: GPL-3.0-or-later
 import PackageDescription
 
 let package = Package(
-    name: "Atrium",
+    name: "Dalnok",
     platforms: [.macOS(.v14)],
     products: [
-        .executable(name: "Atrium", targets: ["Atrium"]),
-        .executable(name: "atrium-cli", targets: ["atrium-cli"]),
+        .executable(name: "Dalnok", targets: ["Dalnok"]),
+        .executable(name: "dalnok-cli", targets: ["dalnok-cli"]),
     ],
     targets: [
-        // Portable C++20 engine. Public surface is the C API in engine/include/atrium/atrium.h.
+        // Portable C++20 engine. Public surface is the C API in engine/include/dalnok/dalnok.h.
         .target(
-            name: "AtriumEngine",
+            name: "DalnokEngine",
             path: "engine",
             sources: ["src"],
             publicHeadersPath: "include",
@@ -29,19 +29,19 @@ let package = Package(
         ),
         // Native macOS front end (AppKit).
         .executableTarget(
-            name: "Atrium",
-            dependencies: ["AtriumEngine"],
-            path: "app/macos/Atrium"
+            name: "Dalnok",
+            dependencies: ["DalnokEngine"],
+            path: "app/macos/Dalnok"
         ),
         // Headless driver for smoke tests and benchmarks.
         .executableTarget(
-            name: "atrium-cli",
-            dependencies: ["AtriumEngine"],
-            path: "tools/atrium-cli"
+            name: "dalnok-cli",
+            dependencies: ["DalnokEngine"],
+            path: "tools/dalnok-cli"
         ),
         .testTarget(
-            name: "AtriumEngineTests",
-            dependencies: ["AtriumEngine"],
+            name: "DalnokEngineTests",
+            dependencies: ["DalnokEngine"],
             path: "tests/engine"
         ),
     ],

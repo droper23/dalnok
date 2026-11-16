@@ -1,7 +1,7 @@
 // Transport bar and track header column.
 // SPDX-License-Identifier: GPL-3.0-or-later
 import AppKit
-import AtriumEngine
+import DalnokEngine
 
 @MainActor
 final class TransportBar: NSView {
@@ -110,7 +110,7 @@ final class GroupedSlider: NSSlider {
 
 @MainActor
 final class TrackHeaderRow: NSView {
-    let trackId: AtriumTrackId
+    let trackId: DalnokTrackId
     let session: Session
     private let swatch = NSView()
     private let nameLabel = NSTextField(labelWithString: "")

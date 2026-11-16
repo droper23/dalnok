@@ -2,7 +2,7 @@
 // selection, and clip move/trim with snapping.
 // SPDX-License-Identifier: GPL-3.0-or-later
 import AppKit
-import AtriumEngine
+import DalnokEngine
 import QuartzCore
 
 @MainActor
@@ -18,7 +18,7 @@ final class TimelineView: NSView {
     var onSeek: (() -> Void)?
     var onSelectionChange: (() -> Void)?
 
-    var selectedClip: AtriumClipId? { didSet { needsDisplay = true; onSelectionChange?() } }
+    var selectedClip: DalnokClipId? { didSet { needsDisplay = true; onSelectionChange?() } }
 
     private let playheadLayer = CALayer()
     private var mins: [Float] = [], maxs: [Float] = []
@@ -236,12 +236,12 @@ final class TimelineView: NSView {
         let fpc = framesPerPoint / Double(scale)
         let sourceStart = Int64(frame(forX: visX0)) - clip.start + clip.offset
         let waveH = rect.maxY - top - 3
-        let chans = min(Int(atrium_media_channels(media)), 2)
+        let chans = min(Int(dalnok_media_channels(media)), 2)
         let laneH = waveH / CGFloat(chans)
         ctx.setStrokeColor(color.blended(withFraction: 0.35, of: .white)!.withAlphaComponent(dim ? 0.3 : 0.95).cgColor)
         ctx.setLineWidth(1 / scale)
         for ch in 0..<chans {
-            atrium_media_peaks(media, Int32(ch), sourceStart, fpc, &mins, &maxs, Int64(columns))
+            dalnok_media_peaks(media, Int32(ch), sourceStart, fpc, &mins, &maxs, Int64(columns))
             let mid = top + laneH * (CGFloat(ch) + 0.5)
             let half = laneH * 0.48
             for i in 0..<columns {
@@ -385,7 +385,7 @@ final class TimelineView: NSView {
     }
 
     /// Window-coordinate center of a clip (used by the self-test to synthesize drags).
-    func windowPoint(ofClip id: AtriumClipId, zone: String = "body") -> CGPoint? {
+    func windowPoint(ofClip id: DalnokClipId, zone: String = "body") -> CGPoint? {
         for (i, t) in session.tracks.enumerated() {
             guard let c = t.clips.first(where: { $0.id == id }) else { continue }
             let r = clipRect(c, laneY: laneY(i))

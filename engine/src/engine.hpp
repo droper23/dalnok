@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
-#include "atrium/atrium.h"
+#include "dalnok/dalnok.h"
 #include "device.hpp"
 #include "json.hpp"
 #include "render.hpp"
@@ -14,12 +14,12 @@
 #include <string>
 #include <vector>
 
-namespace atrium {
+namespace dalnok {
 
 // ---- Project model (value type; copied wholesale for undo) ----------------
 
 struct TrackState {
-    AtriumTrackId id = 0;
+    DalnokTrackId id = 0;
     std::string name;
     int32_t color = 0;
     float gainDb = 0;
@@ -29,9 +29,9 @@ struct TrackState {
 };
 
 struct ClipState {
-    AtriumClipId id = 0;
-    AtriumTrackId track = 0;
-    AtriumMediaId media = 0;
+    DalnokClipId id = 0;
+    DalnokTrackId track = 0;
+    DalnokMediaId media = 0;
     int64_t start = 0, offset = 0, length = 0;
     std::string name;
 };
@@ -40,15 +40,15 @@ struct Model {
     std::vector<TrackState> tracks; // display order
     std::vector<ClipState> clips;   // z-order: later = on top
 
-    TrackState *track(AtriumTrackId id);
-    const TrackState *track(AtriumTrackId id) const;
-    ClipState *clip(AtriumClipId id);
-    const ClipState *clip(AtriumClipId id) const;
+    TrackState *track(DalnokTrackId id);
+    const TrackState *track(DalnokTrackId id) const;
+    ClipState *clip(DalnokClipId id);
+    const ClipState *clip(DalnokClipId id) const;
 };
 
 struct PoolEntry {
     std::string path;                     // absolute source path ("" if generated)
-    std::unique_ptr<AtriumMedia> handle;  // impl == nullptr when offline
+    std::unique_ptr<DalnokMedia> handle;  // impl == nullptr when offline
     int64_t frames = 0;
     int32_t channels = 0;
 };
@@ -74,12 +74,12 @@ public:
     bool pump(float *left, float *right, int frames);
 
     // Meters: peak since the last read, then reset (control thread).
-    bool readTrackMeter(AtriumTrackId id, float &l, float &r);
+    bool readTrackMeter(DalnokTrackId id, float &l, float &r);
     void readMasterMeter(float &l, float &r);
 
     // Media pool
-    AtriumMediaId poolAdd(std::shared_ptr<const Media> media, const std::string &path);
-    const PoolEntry *poolEntry(AtriumMediaId id) const;
+    DalnokMediaId poolAdd(std::shared_ptr<const Media> media, const std::string &path);
+    const PoolEntry *poolEntry(DalnokMediaId id) const;
 
     // Model (read)
     const Model &model() const { return model_; }
@@ -88,18 +88,18 @@ public:
 
     // Commands (each is an undo step unless inside a group). Return false and
     // set `err` on invalid input, leaving the model untouched.
-    AtriumTrackId addTrack(const std::string &name, std::string &err);
-    bool removeTrack(AtriumTrackId id, std::string &err);
-    bool renameTrack(AtriumTrackId id, const std::string &name, std::string &err);
-    bool setGainDb(AtriumTrackId id, float db, std::string &err);
-    bool setPan(AtriumTrackId id, float pan, std::string &err);
-    bool setMute(AtriumTrackId id, bool muted, std::string &err);
-    AtriumClipId addClip(AtriumTrackId track, AtriumMediaId media, int64_t start, int64_t offset, int64_t length,
+    DalnokTrackId addTrack(const std::string &name, std::string &err);
+    bool removeTrack(DalnokTrackId id, std::string &err);
+    bool renameTrack(DalnokTrackId id, const std::string &name, std::string &err);
+    bool setGainDb(DalnokTrackId id, float db, std::string &err);
+    bool setPan(DalnokTrackId id, float pan, std::string &err);
+    bool setMute(DalnokTrackId id, bool muted, std::string &err);
+    DalnokClipId addClip(DalnokTrackId track, DalnokMediaId media, int64_t start, int64_t offset, int64_t length,
                          std::string &err);
-    bool removeClip(AtriumClipId id, std::string &err);
-    bool moveClip(AtriumClipId id, AtriumTrackId track, int64_t start, std::string &err);
-    bool setClipRegion(AtriumClipId id, int64_t start, int64_t offset, int64_t length, std::string &err);
-    AtriumClipId splitClip(AtriumClipId id, int64_t at, std::string &err);
+    bool removeClip(DalnokClipId id, std::string &err);
+    bool moveClip(DalnokClipId id, DalnokTrackId track, int64_t start, std::string &err);
+    bool setClipRegion(DalnokClipId id, int64_t start, int64_t offset, int64_t length, std::string &err);
+    DalnokClipId splitClip(DalnokClipId id, int64_t at, std::string &err);
 
     // Undo
     bool undo();
@@ -134,7 +134,7 @@ public:
     bool renderOffline(int64_t start, int64_t frames, float *left, float *right);
     bool renderToWav(const std::string &path, int64_t start, int64_t frames, int32_t bits, std::string &err);
 
-    void stats(AtriumStats &out) const;
+    void stats(DalnokStats &out) const;
     void resetStats();
 
 private:
@@ -152,22 +152,22 @@ private:
     void commit();
     void resetModel();
 
-    static void audioCallback(void *ctx, float *left, float *right, int frames) ATRIUM_NONBLOCKING;
-    void process(float *left, float *right, int frames) ATRIUM_NONBLOCKING;
+    static void audioCallback(void *ctx, float *left, float *right, int frames) DALNOK_NONBLOCKING;
+    void process(float *left, float *right, int frames) DALNOK_NONBLOCKING;
 
     double sampleRate_;
 
     // Control-thread state.
     Model model_;
-    std::map<AtriumMediaId, PoolEntry> pool_;
+    std::map<DalnokMediaId, PoolEntry> pool_;
     std::vector<UndoStep> undo_, redo_;
     int groupDepth_ = 0;
     bool groupRecorded_ = false;
     std::string groupName_;
     uint64_t revision_ = 1, savedRevision_ = 1;
-    AtriumTrackId nextTrack_ = 1;
-    AtriumClipId nextClip_ = 1;
-    AtriumMediaId nextMedia_ = 1;
+    DalnokTrackId nextTrack_ = 1;
+    DalnokClipId nextClip_ = 1;
+    DalnokMediaId nextMedia_ = 1;
     int32_t nextColor_ = 0;
     std::unique_ptr<AudioDevice> device_;
     std::string outputUid_;
@@ -196,14 +196,14 @@ private:
 
 struct Engine::PreparedProject {
     Model model;
-    std::map<AtriumMediaId, PoolEntry> pool;
-    AtriumTrackId maxTrack = 0;
-    AtriumClipId maxClip = 0;
-    AtriumMediaId maxMedia = 0;
+    std::map<DalnokMediaId, PoolEntry> pool;
+    DalnokTrackId maxTrack = 0;
+    DalnokClipId maxClip = 0;
+    DalnokMediaId maxMedia = 0;
     int32_t maxColor = -1;
     double sampleRate = 0;
 };
 
 float dbToGain(float db);
 
-} // namespace atrium
+} // namespace dalnok

@@ -9,7 +9,7 @@
 #include <utility>
 #include <vector>
 
-namespace atrium::json {
+namespace dalnok::json {
 
 struct Value {
     enum class Type { Null, Bool, Number, String, Array, Object };
@@ -51,4 +51,4 @@ struct Value {
 bool parse(std::string_view text, Value &out, std::string &err);
 std::string serialize(const Value &v, bool pretty = false);
 
-} // namespace atrium::json
+} // namespace dalnok::json

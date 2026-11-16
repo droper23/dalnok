@@ -1,5 +1,5 @@
 /*
- * Atrium engine — stable C API.
+ * Dalnok engine — stable C API.
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
  * This header is the only boundary between the engine and any front end
@@ -13,12 +13,12 @@
  *
  * Model contract:
  *   - The engine owns the project model (tracks, clips, media pool). Every
- *     mutation is an undoable command and bumps atrium_model_revision().
+ *     mutation is an undoable command and bumps dalnok_model_revision().
  *   - Front ends re-query the model when the revision changes; they never
  *     keep their own copy.
  */
-#ifndef ATRIUM_H
-#define ATRIUM_H
+#ifndef DALNOK_H
+#define DALNOK_H
 
 #include <stddef.h>
 #include <stdint.h>
@@ -28,91 +28,91 @@
 extern "C" {
 #endif
 
-#define ATRIUM_API_VERSION 3
+#define DALNOK_API_VERSION 3
 
 typedef enum {
-    ATRIUM_OK = 0,
-    ATRIUM_ERR_INVALID_ARG = 1,
-    ATRIUM_ERR_IO = 2,
-    ATRIUM_ERR_DEVICE = 3,
-    ATRIUM_ERR_NOT_FOUND = 4,
-    ATRIUM_ERR_UNSUPPORTED = 5,
-    ATRIUM_ERR_FORMAT = 6,
-} AtriumStatus;
+    DALNOK_OK = 0,
+    DALNOK_ERR_INVALID_ARG = 1,
+    DALNOK_ERR_IO = 2,
+    DALNOK_ERR_DEVICE = 3,
+    DALNOK_ERR_NOT_FOUND = 4,
+    DALNOK_ERR_UNSUPPORTED = 5,
+    DALNOK_ERR_FORMAT = 6,
+} DalnokStatus;
 
-typedef struct AtriumEngine AtriumEngine;
-typedef struct AtriumMedia AtriumMedia;
-typedef int32_t AtriumTrackId;
-typedef int32_t AtriumClipId;
-typedef int32_t AtriumMediaId;
+typedef struct DalnokEngine DalnokEngine;
+typedef struct DalnokMedia DalnokMedia;
+typedef int32_t DalnokTrackId;
+typedef int32_t DalnokClipId;
+typedef int32_t DalnokMediaId;
 
 /* ---- Engine lifecycle ------------------------------------------------ */
 
 /* Creates an engine running at `sample_rate`. Pass 0 to adopt the default
  * output device's rate. */
-AtriumEngine *atrium_engine_create(double sample_rate);
-void atrium_engine_destroy(AtriumEngine *engine);
+DalnokEngine *dalnok_engine_create(double sample_rate);
+void dalnok_engine_destroy(DalnokEngine *engine);
 
 /* Opens the system default output device and starts the audio callback. */
-AtriumStatus atrium_engine_start_device(AtriumEngine *engine, char *err, size_t err_len);
-void atrium_engine_stop_device(AtriumEngine *engine);
-bool atrium_engine_device_running(const AtriumEngine *engine);
-double atrium_engine_sample_rate(const AtriumEngine *engine);
+DalnokStatus dalnok_engine_start_device(DalnokEngine *engine, char *err, size_t err_len);
+void dalnok_engine_stop_device(DalnokEngine *engine);
+bool dalnok_engine_device_running(const DalnokEngine *engine);
+double dalnok_engine_sample_rate(const DalnokEngine *engine);
 
 /* ---- Output devices -------------------------------------------------- */
 
 typedef struct {
-    char uid[256];          /* stable identifier; pass to atrium_engine_set_output_device */
+    char uid[256];          /* stable identifier; pass to dalnok_engine_set_output_device */
     char name[256];
     double sample_rate;     /* the device's current hardware rate */
     int32_t output_channels;
     bool is_default;        /* current system default output */
-} AtriumDeviceInfo;
+} DalnokDeviceInfo;
 
 /* Fills up to `capacity` entries; returns the total number of output devices. [any thread] */
-int32_t atrium_output_devices(AtriumDeviceInfo *out, int32_t capacity);
+int32_t dalnok_output_devices(DalnokDeviceInfo *out, int32_t capacity);
 /* Switches output. NULL or "" follows the system default. On failure the
  * previous device keeps playing. Engine rate != hardware rate is converted. */
-AtriumStatus atrium_engine_set_output_device(AtriumEngine *engine, const char *uid, char *err, size_t err_len);
+DalnokStatus dalnok_engine_set_output_device(DalnokEngine *engine, const char *uid, char *err, size_t err_len);
 /* Current selection ("" = system default); returns full length. */
-size_t atrium_engine_output_device(const AtriumEngine *engine, char *buf, size_t len);
+size_t dalnok_engine_output_device(const DalnokEngine *engine, char *buf, size_t len);
 /* False once the selected device disappeared (e.g. unplugged); poll from the UI. */
-bool atrium_engine_device_alive(const AtriumEngine *engine);
-double atrium_engine_hardware_sample_rate(const AtriumEngine *engine);
+bool dalnok_engine_device_alive(const DalnokEngine *engine);
+double dalnok_engine_hardware_sample_rate(const DalnokEngine *engine);
 
 /* Runs the live render path (transport fades, smoothing, meters) for `frames`
  * without a device. Fails if a device is running. For tests and simulation. */
-AtriumStatus atrium_engine_pump(AtriumEngine *engine, float *left, float *right, int32_t frames);
+DalnokStatus dalnok_engine_pump(DalnokEngine *engine, float *left, float *right, int32_t frames);
 
 /* ---- Meters ---------------------------------------------------------- */
 
 /* Linear post-fader peak since the previous read, per channel; reading resets.
  * Only the live path (device or pump) feeds meters. */
-AtriumStatus atrium_meter_track(AtriumEngine *engine, AtriumTrackId track, float *left, float *right);
-void atrium_meter_master(AtriumEngine *engine, float *left, float *right);
+DalnokStatus dalnok_meter_track(DalnokEngine *engine, DalnokTrackId track, float *left, float *right);
+void dalnok_meter_master(DalnokEngine *engine, float *left, float *right);
 
 /* Frees snapshots retired by the audio thread. Call periodically (e.g. from a
  * UI timer). Cheap when there is nothing to do. */
-void atrium_engine_collect_garbage(AtriumEngine *engine);
+void dalnok_engine_collect_garbage(DalnokEngine *engine);
 
 /* ---- Media (decoded audio, independent of any engine) ---------------- */
 
 /* Decodes an audio file into memory, converting to `sample_rate`.
  * [any thread] — safe to call from a background thread. */
-AtriumStatus atrium_media_load(const char *path, double sample_rate,
-                               AtriumMedia **out, char *err, size_t err_len);
+DalnokStatus dalnok_media_load(const char *path, double sample_rate,
+                               DalnokMedia **out, char *err, size_t err_len);
 /* Wraps caller-provided planar float samples (copied). 1 or 2 channels. [any thread] */
-AtriumMedia *atrium_media_from_samples(const float *const *channels, int32_t channel_count,
+DalnokMedia *dalnok_media_from_samples(const float *const *channels, int32_t channel_count,
                                        int64_t frames, double sample_rate);
-void atrium_media_release(AtriumMedia *media);   /* [any thread] */
-int64_t atrium_media_frames(const AtriumMedia *media);
-int32_t atrium_media_channels(const AtriumMedia *media);
-double atrium_media_sample_rate(const AtriumMedia *media);
+void dalnok_media_release(DalnokMedia *media);   /* [any thread] */
+int64_t dalnok_media_frames(const DalnokMedia *media);
+int32_t dalnok_media_channels(const DalnokMedia *media);
+double dalnok_media_sample_rate(const DalnokMedia *media);
 
 /* Fills `count` columns of min/max peaks for `channel`, starting at
  * `start_frame`, each column covering `frames_per_column` frames.
  * Columns outside the media are 0. Returns columns written. [any thread] */
-int64_t atrium_media_peaks(const AtriumMedia *media, int32_t channel, int64_t start_frame,
+int64_t dalnok_media_peaks(const DalnokMedia *media, int32_t channel, int64_t start_frame,
                            double frames_per_column, float *min_out, float *max_out,
                            int64_t count);
 
@@ -122,141 +122,141 @@ int64_t atrium_media_peaks(const AtriumMedia *media, int32_t channel, int64_t st
  * reference (the caller still releases `media`). `source_path` is recorded
  * for saving (may be NULL for generated audio). Adding the same path twice
  * returns the existing id. Not undoable; entries live until project new/load. */
-AtriumMediaId atrium_pool_add(AtriumEngine *engine, AtriumMedia *media, const char *source_path);
-/* Borrowed pointer, valid until atrium_project_new/load. NULL if the media is
+DalnokMediaId dalnok_pool_add(DalnokEngine *engine, DalnokMedia *media, const char *source_path);
+/* Borrowed pointer, valid until dalnok_project_new/load. NULL if the media is
  * offline (file missing when the project was loaded). */
-const AtriumMedia *atrium_pool_media(const AtriumEngine *engine, AtriumMediaId id);
+const DalnokMedia *dalnok_pool_media(const DalnokEngine *engine, DalnokMediaId id);
 /* Copies the source path into `buf`; returns the full length. */
-size_t atrium_pool_path(const AtriumEngine *engine, AtriumMediaId id, char *buf, size_t len);
+size_t dalnok_pool_path(const DalnokEngine *engine, DalnokMediaId id, char *buf, size_t len);
 
 /* ---- Model queries --------------------------------------------------- */
 
-uint64_t atrium_model_revision(const AtriumEngine *engine);
-int32_t atrium_track_count(const AtriumEngine *engine);
-AtriumTrackId atrium_track_at(const AtriumEngine *engine, int32_t index);
+uint64_t dalnok_model_revision(const DalnokEngine *engine);
+int32_t dalnok_track_count(const DalnokEngine *engine);
+DalnokTrackId dalnok_track_at(const DalnokEngine *engine, int32_t index);
 
 typedef struct {
-    AtriumTrackId id;
+    DalnokTrackId id;
     char name[128];
     int32_t color;       /* palette index */
     float gain_db;       /* -INFINITY for silence */
     float pan;
     bool muted;
     int32_t clip_count;
-} AtriumTrackInfo;
-AtriumStatus atrium_track_info(const AtriumEngine *engine, AtriumTrackId track, AtriumTrackInfo *out);
+} DalnokTrackInfo;
+DalnokStatus dalnok_track_info(const DalnokEngine *engine, DalnokTrackId track, DalnokTrackInfo *out);
 
 /* Clips of a track in z-order (later = on top; overlapping clips: top wins). */
-AtriumClipId atrium_track_clip_at(const AtriumEngine *engine, AtriumTrackId track, int32_t index);
+DalnokClipId dalnok_track_clip_at(const DalnokEngine *engine, DalnokTrackId track, int32_t index);
 
 typedef struct {
-    AtriumClipId id;
-    AtriumTrackId track;
-    AtriumMediaId media;
+    DalnokClipId id;
+    DalnokTrackId track;
+    DalnokMediaId media;
     int64_t start;        /* timeline frame */
     int64_t offset;       /* frame within media */
     int64_t length;       /* frames */
     int64_t media_frames; /* total frames of the source media */
     bool offline;         /* source missing: renders silence */
     char name[128];
-} AtriumClipInfo;
-AtriumStatus atrium_clip_info(const AtriumEngine *engine, AtriumClipId clip, AtriumClipInfo *out);
+} DalnokClipInfo;
+DalnokStatus dalnok_clip_info(const DalnokEngine *engine, DalnokClipId clip, DalnokClipInfo *out);
 
 /* Timeline length in frames (end of the last clip). */
-int64_t atrium_session_length(const AtriumEngine *engine);
+int64_t dalnok_session_length(const DalnokEngine *engine);
 
 /* ---- Edit commands (each is one undo step unless grouped) ------------ */
 
-AtriumTrackId atrium_track_add(AtriumEngine *engine, const char *name);
-AtriumStatus atrium_track_remove(AtriumEngine *engine, AtriumTrackId track);
-AtriumStatus atrium_track_rename(AtriumEngine *engine, AtriumTrackId track, const char *name);
+DalnokTrackId dalnok_track_add(DalnokEngine *engine, const char *name);
+DalnokStatus dalnok_track_remove(DalnokEngine *engine, DalnokTrackId track);
+DalnokStatus dalnok_track_rename(DalnokEngine *engine, DalnokTrackId track, const char *name);
 /* Gain in dB, clamped to +12; <= -96 means silence. Smoothed on the audio thread. */
-AtriumStatus atrium_track_set_gain_db(AtriumEngine *engine, AtriumTrackId track, float gain_db);
+DalnokStatus dalnok_track_set_gain_db(DalnokEngine *engine, DalnokTrackId track, float gain_db);
 /* Pan in [-1, 1]. Mono sources: -3 dB-compensated constant power (unity at
  * center). Stereo sources: balance. */
-AtriumStatus atrium_track_set_pan(AtriumEngine *engine, AtriumTrackId track, float pan);
-AtriumStatus atrium_track_set_mute(AtriumEngine *engine, AtriumTrackId track, bool muted);
+DalnokStatus dalnok_track_set_pan(DalnokEngine *engine, DalnokTrackId track, float pan);
+DalnokStatus dalnok_track_set_mute(DalnokEngine *engine, DalnokTrackId track, bool muted);
 
 /* Places pool media on a track. length <= 0 means "to the end of the media".
  * Returns 0 on failure. */
-AtriumClipId atrium_clip_add(AtriumEngine *engine, AtriumTrackId track, AtriumMediaId media,
+DalnokClipId dalnok_clip_add(DalnokEngine *engine, DalnokTrackId track, DalnokMediaId media,
                              int64_t timeline_start, int64_t source_offset, int64_t length);
-AtriumStatus atrium_clip_remove(AtriumEngine *engine, AtriumClipId clip);
+DalnokStatus dalnok_clip_remove(DalnokEngine *engine, DalnokClipId clip);
 /* Moves a clip (optionally to another track) and brings it to the top. */
-AtriumStatus atrium_clip_move(AtriumEngine *engine, AtriumClipId clip, AtriumTrackId track,
+DalnokStatus dalnok_clip_move(DalnokEngine *engine, DalnokClipId clip, DalnokTrackId track,
                               int64_t timeline_start);
 /* Sets the clip's timeline start and source region (trim). */
-AtriumStatus atrium_clip_set_region(AtriumEngine *engine, AtriumClipId clip, int64_t timeline_start,
+DalnokStatus dalnok_clip_set_region(DalnokEngine *engine, DalnokClipId clip, int64_t timeline_start,
                                     int64_t source_offset, int64_t length);
 /* Splits at a timeline frame strictly inside the clip; the right part gets a new id. */
-AtriumStatus atrium_clip_split(AtriumEngine *engine, AtriumClipId clip, int64_t at_frame,
-                               AtriumClipId *right_out);
+DalnokStatus dalnok_clip_split(DalnokEngine *engine, DalnokClipId clip, int64_t at_frame,
+                               DalnokClipId *right_out);
 
 /* ---- Undo ------------------------------------------------------------ */
 
-bool atrium_undo(AtriumEngine *engine);
-bool atrium_redo(AtriumEngine *engine);
-bool atrium_can_undo(const AtriumEngine *engine);
-bool atrium_can_redo(const AtriumEngine *engine);
+bool dalnok_undo(DalnokEngine *engine);
+bool dalnok_redo(DalnokEngine *engine);
+bool dalnok_can_undo(const DalnokEngine *engine);
+bool dalnok_can_redo(const DalnokEngine *engine);
 /* Name of the step undo/redo would apply (e.g. "Move Clip"); returns full length. */
-size_t atrium_undo_name(const AtriumEngine *engine, char *buf, size_t len);
-size_t atrium_redo_name(const AtriumEngine *engine, char *buf, size_t len);
+size_t dalnok_undo_name(const DalnokEngine *engine, char *buf, size_t len);
+size_t dalnok_redo_name(const DalnokEngine *engine, char *buf, size_t len);
 /* Everything between begin and end becomes one undo step named `name`
  * (e.g. a mouse drag). Groups nest; only the outermost name is used. */
-void atrium_undo_begin_group(AtriumEngine *engine, const char *name);
-void atrium_undo_end_group(AtriumEngine *engine);
+void dalnok_undo_begin_group(DalnokEngine *engine, const char *name);
+void dalnok_undo_end_group(DalnokEngine *engine);
 
 /* ---- Project --------------------------------------------------------- */
 
 /* Clears the model, pool and undo history. */
-void atrium_project_new(AtriumEngine *engine);
+void dalnok_project_new(DalnokEngine *engine);
 /* Writes a versioned JSON project atomically (temp file + rename). Media is
  * referenced by path (absolute and relative to the project file). */
-AtriumStatus atrium_project_save(AtriumEngine *engine, const char *path, char *err, size_t err_len);
+DalnokStatus dalnok_project_save(DalnokEngine *engine, const char *path, char *err, size_t err_len);
 /* Replaces the current project. Missing media files become offline clips
  * (count reported in `missing_out`, may be NULL). On error the current
  * project is left untouched. */
-AtriumStatus atrium_project_load(AtriumEngine *engine, const char *path, int32_t *missing_out,
+DalnokStatus dalnok_project_load(DalnokEngine *engine, const char *path, int32_t *missing_out,
                                  char *err, size_t err_len);
 /* Two-phase load for responsive UIs: prepare parses and decodes on any
  * thread; apply swaps it in on the control thread. `sample_rate` must equal
  * the engine's rate. apply consumes `data` (also on failure). */
-typedef struct AtriumProjectData AtriumProjectData;
-AtriumStatus atrium_project_prepare(const char *path, double sample_rate, AtriumProjectData **out,
+typedef struct DalnokProjectData DalnokProjectData;
+DalnokStatus dalnok_project_prepare(const char *path, double sample_rate, DalnokProjectData **out,
                                     int32_t *missing_out, char *err, size_t err_len); /* [any thread] */
-AtriumStatus atrium_project_apply(AtriumEngine *engine, AtriumProjectData *data);
-void atrium_project_data_release(AtriumProjectData *data); /* [any thread] */
+DalnokStatus dalnok_project_apply(DalnokEngine *engine, DalnokProjectData *data);
+void dalnok_project_data_release(DalnokProjectData *data); /* [any thread] */
 
 /* True if the model changed since the last save/load/new. */
-bool atrium_project_dirty(const AtriumEngine *engine);
+bool dalnok_project_dirty(const DalnokEngine *engine);
 
 /* ---- Command catalog (scripting / command palette) ------------------- */
 
 /* Runs a named command with JSON arguments (NULL or "" = {}). Writes a JSON
  * result (or {"error": "..."}) to `result`. Returns the command's status. */
-AtriumStatus atrium_command_run(AtriumEngine *engine, const char *name, const char *args_json,
+DalnokStatus dalnok_command_run(DalnokEngine *engine, const char *name, const char *args_json,
                                 char *result, size_t result_len);
-int32_t atrium_command_count(void);
+int32_t dalnok_command_count(void);
 /* Static strings; valid for the process lifetime. */
-bool atrium_command_info(int32_t index, const char **name, const char **title, const char **args_help);
+bool dalnok_command_info(int32_t index, const char **name, const char **title, const char **args_help);
 
 /* ---- Transport ------------------------------------------------------- */
 
-void atrium_transport_play(AtriumEngine *engine);
-void atrium_transport_pause(AtriumEngine *engine);
-void atrium_transport_seek(AtriumEngine *engine, int64_t frame);
-bool atrium_transport_is_playing(const AtriumEngine *engine);   /* [any thread] */
-int64_t atrium_transport_position(const AtriumEngine *engine);  /* [any thread] */
+void dalnok_transport_play(DalnokEngine *engine);
+void dalnok_transport_pause(DalnokEngine *engine);
+void dalnok_transport_seek(DalnokEngine *engine, int64_t frame);
+bool dalnok_transport_is_playing(const DalnokEngine *engine);   /* [any thread] */
+int64_t dalnok_transport_position(const DalnokEngine *engine);  /* [any thread] */
 
 /* ---- Offline rendering ----------------------------------------------- */
 
 /* Renders the current model (ignoring the live transport) into caller-provided
  * planar stereo buffers. Deterministic. */
-AtriumStatus atrium_render_offline(AtriumEngine *engine, int64_t start_frame, int64_t frames,
+DalnokStatus dalnok_render_offline(DalnokEngine *engine, int64_t start_frame, int64_t frames,
                                    float *left, float *right);
 /* Renders [start_frame, start_frame+frames) to a WAV file.
  * bits: 16, 24 (integer PCM) or 32 (float). */
-AtriumStatus atrium_render_to_wav(AtriumEngine *engine, const char *path, int64_t start_frame,
+DalnokStatus dalnok_render_to_wav(DalnokEngine *engine, const char *path, int64_t start_frame,
                                   int64_t frames, int32_t bits, char *err, size_t err_len);
 
 /* ---- Diagnostics ----------------------------------------------------- */
@@ -269,12 +269,12 @@ typedef struct {
     uint32_t max_frames_per_callback;
     uint32_t overloads;          /* callbacks that exceeded their time budget */
     uint32_t snapshot_swaps;
-} AtriumStats;
+} DalnokStats;
 
-void atrium_engine_stats(const AtriumEngine *engine, AtriumStats *out); /* [any thread] */
-void atrium_engine_reset_stats(AtriumEngine *engine);
+void dalnok_engine_stats(const DalnokEngine *engine, DalnokStats *out); /* [any thread] */
+void dalnok_engine_reset_stats(DalnokEngine *engine);
 
 #ifdef __cplusplus
 }
 #endif
-#endif /* ATRIUM_H */
+#endif /* DALNOK_H */

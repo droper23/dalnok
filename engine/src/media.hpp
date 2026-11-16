@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 
-namespace atrium {
+namespace dalnok {
 
 class Media {
 public:
@@ -46,9 +46,9 @@ public:
 };
 WavWriter *openWavWriter(const std::string &path, double sampleRate, int32_t bits, std::string &err);
 
-} // namespace atrium
+} // namespace dalnok
 
 // The C API's opaque media handle: one reference to shared, immutable media.
-struct AtriumMedia {
-    std::shared_ptr<const atrium::Media> impl;
+struct DalnokMedia {
+    std::shared_ptr<const dalnok::Media> impl;
 };

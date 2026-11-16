@@ -7,7 +7,7 @@
 
 #include <algorithm>
 
-namespace atrium {
+namespace dalnok {
 
 namespace {
 
@@ -191,4 +191,4 @@ WavWriter *openWavWriter(const std::string &path, double sampleRate, int32_t bit
     return new ExtWavWriter(file);
 }
 
-} // namespace atrium
+} // namespace dalnok

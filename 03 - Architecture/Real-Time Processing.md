@@ -20,7 +20,7 @@ snapshot shares. The audio thread ramps linearly per 512-frame block to avoid zi
 while audible fades to zero first, then jumps. `position_` is published once per callback.
 
 ## Enforcement
-- `ATRIUM_NONBLOCKING` = `noexcept [[clang::nonblocking]]` on every function reachable from the callback,
+- `DALNOK_NONBLOCKING` = `noexcept [[clang::nonblocking]]` on every function reachable from the callback,
   with `-Werror=function-effects`. The macOS SDK already marks `AURenderCallback` as real-time, so this
   chain is checked from the OS entry point down.
 - The one suppression is `clock_gettime_nsec_np` (a commpage read) for callback timing stats.
@@ -28,4 +28,4 @@ while audible fades to zero first, then jumps. `position_` is published once per
 
 ## Budgets
 Internal block size is 512 frames. Overload means a render took longer than the callback period
-(counted in `AtriumStats.overloads`).
+(counted in `DalnokStats.overloads`).

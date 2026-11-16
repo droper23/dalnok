@@ -3,7 +3,7 @@
 //
 // Format (version 1):
 // {
-//   "format": "atrium-project", "version": 1, "sampleRate": 48000,
+//   "format": "dalnok-project", "version": 1, "sampleRate": 48000,
 //   "media":  [{"id", "path", "relativePath", "frames", "channels"}],
 //   "tracks": [{"id", "name", "color", "gainDb" (null = -inf), "pan", "mute",
 //               "clips": [{"id", "media", "start", "offset", "length", "name"}]}]
@@ -23,7 +23,7 @@
 
 namespace fs = std::filesystem;
 
-namespace atrium {
+namespace dalnok {
 
 namespace {
 constexpr int kFormatVersion = 1;
@@ -69,7 +69,7 @@ json::Value Engine::describe() const {
     Value root = Value::makeObject();
     root.set("sampleRate", sampleRate_);
 
-    std::set<AtriumMediaId> used;
+    std::set<DalnokMediaId> used;
     for (const auto &c : model_.clips) used.insert(c.media);
     Value media = Value::makeArray();
     for (const auto id : used) {
@@ -115,7 +115,7 @@ json::Value Engine::describe() const {
 
 bool Engine::saveProject(const std::string &path, std::string &err) {
     json::Value doc = json::Value::makeObject();
-    doc.set("format", "atrium-project");
+    doc.set("format", "dalnok-project");
     doc.set("version", kFormatVersion);
     json::Value body = describe();
     const fs::path projectDir = fs::absolute(fs::path(path)).parent_path();
@@ -142,12 +142,12 @@ std::unique_ptr<Engine::PreparedProject> Engine::prepareProject(const std::strin
         err = "invalid project file: " + err;
         return nullptr;
     }
-    if (!doc.isObject() || doc.getString("format", "") != "atrium-project") {
-        err = "not an Atrium project";
+    if (!doc.isObject() || doc.getString("format", "") != "dalnok-project") {
+        err = "not an Dalnok project";
         return nullptr;
     }
     if (doc.getNumber("version", 0) > kFormatVersion) {
-        err = "project was saved by a newer version of Atrium";
+        err = "project was saved by a newer version of Dalnok";
         return nullptr;
     }
     const double fileRate = doc.getNumber("sampleRate", sampleRate);
@@ -160,11 +160,11 @@ std::unique_ptr<Engine::PreparedProject> Engine::prepareProject(const std::strin
     const fs::path projectDir = fs::absolute(fs::path(path)).parent_path();
 
     // Build everything into temporaries; swap in only on success.
-    std::map<AtriumMediaId, PoolEntry> pool;
-    AtriumMediaId maxMedia = 0;
+    std::map<DalnokMediaId, PoolEntry> pool;
+    DalnokMediaId maxMedia = 0;
     if (const json::Value *media = doc.get("media"); media && media->isArray()) {
         for (const auto &m : media->array) {
-            const auto id = static_cast<AtriumMediaId>(toInt(m, "id"));
+            const auto id = static_cast<DalnokMediaId>(toInt(m, "id"));
             if (id <= 0 || pool.count(id)) {
                 err = "invalid media id";
                 return nullptr;
@@ -186,12 +186,12 @@ std::unique_ptr<Engine::PreparedProject> Engine::prepareProject(const std::strin
                     e.path = cand;
                     e.frames = decoded->frames();
                     e.channels = decoded->channelCount();
-                    e.handle = std::make_unique<AtriumMedia>(AtriumMedia{std::move(decoded)});
+                    e.handle = std::make_unique<DalnokMedia>(DalnokMedia{std::move(decoded)});
                     break;
                 }
             }
             if (!e.handle) {
-                e.handle = std::make_unique<AtriumMedia>(); // offline
+                e.handle = std::make_unique<DalnokMedia>(); // offline
                 ++missing;
             }
             pool.emplace(id, std::move(e));
@@ -199,14 +199,14 @@ std::unique_ptr<Engine::PreparedProject> Engine::prepareProject(const std::strin
     }
 
     Model model;
-    AtriumTrackId maxTrack = 0;
-    AtriumClipId maxClip = 0;
+    DalnokTrackId maxTrack = 0;
+    DalnokClipId maxClip = 0;
     int32_t maxColor = -1;
-    std::set<AtriumClipId> clipIds;
+    std::set<DalnokClipId> clipIds;
     if (const json::Value *tracks = doc.get("tracks"); tracks && tracks->isArray()) {
         for (const auto &tv : tracks->array) {
             TrackState t;
-            t.id = static_cast<AtriumTrackId>(toInt(tv, "id"));
+            t.id = static_cast<DalnokTrackId>(toInt(tv, "id"));
             if (t.id <= 0 || model.track(t.id)) {
                 err = "invalid track id";
                 return nullptr;
@@ -224,9 +224,9 @@ std::unique_ptr<Engine::PreparedProject> Engine::prepareProject(const std::strin
             if (const json::Value *clips = tv.get("clips"); clips && clips->isArray()) {
                 for (const auto &cv : clips->array) {
                     ClipState c;
-                    c.id = static_cast<AtriumClipId>(toInt(cv, "id"));
+                    c.id = static_cast<DalnokClipId>(toInt(cv, "id"));
                     c.track = t.id;
-                    c.media = static_cast<AtriumMediaId>(toInt(cv, "media"));
+                    c.media = static_cast<DalnokMediaId>(toInt(cv, "media"));
                     c.start = scale(toInt(cv, "start"));
                     c.offset = scale(toInt(cv, "offset"));
                     c.length = scale(toInt(cv, "length"));
@@ -279,4 +279,4 @@ bool Engine::loadProject(const std::string &path, int32_t &missing, std::string 
     return true;
 }
 
-} // namespace atrium
+} // namespace dalnok

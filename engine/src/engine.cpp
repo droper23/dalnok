@@ -5,21 +5,21 @@
 #include <cmath>
 #include <ctime>
 
-namespace atrium {
+namespace dalnok {
 
 namespace {
 constexpr double kTransportFadeSeconds = 0.005; // de-click ramp for play/pause/seek
 
 // clock_gettime_nsec_np reads the commpage (no syscall, no locks) but is not
 // annotated by the SDK, so the effect check is suppressed for this call only.
-uint64_t nowNs() ATRIUM_NONBLOCKING {
+uint64_t nowNs() DALNOK_NONBLOCKING {
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wfunction-effects"
     return clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
 #pragma clang diagnostic pop
 }
 
-void atomicMax(std::atomic<uint64_t> &a, uint64_t v) ATRIUM_NONBLOCKING {
+void atomicMax(std::atomic<uint64_t> &a, uint64_t v) DALNOK_NONBLOCKING {
     auto cur = a.load(std::memory_order_relaxed);
     while (v > cur && !a.compare_exchange_weak(cur, v, std::memory_order_relaxed)) {}
 }
@@ -29,16 +29,16 @@ float dbToGain(float db) { return db <= -96.0f ? 0.0f : std::pow(10.0f, std::min
 
 // ---- Model lookups --------------------------------------------------------
 
-TrackState *Model::track(AtriumTrackId id) {
+TrackState *Model::track(DalnokTrackId id) {
     for (auto &t : tracks) if (t.id == id) return &t;
     return nullptr;
 }
-const TrackState *Model::track(AtriumTrackId id) const { return const_cast<Model *>(this)->track(id); }
-ClipState *Model::clip(AtriumClipId id) {
+const TrackState *Model::track(DalnokTrackId id) const { return const_cast<Model *>(this)->track(id); }
+ClipState *Model::clip(DalnokClipId id) {
     for (auto &c : clips) if (c.id == id) return &c;
     return nullptr;
 }
-const ClipState *Model::clip(AtriumClipId id) const { return const_cast<Model *>(this)->clip(id); }
+const ClipState *Model::clip(DalnokClipId id) const { return const_cast<Model *>(this)->clip(id); }
 
 // ---- Lifecycle ------------------------------------------------------------
 
@@ -89,7 +89,7 @@ bool Engine::pump(float *left, float *right, int frames) {
     return true;
 }
 
-bool Engine::readTrackMeter(AtriumTrackId id, float &l, float &r) {
+bool Engine::readTrackMeter(DalnokTrackId id, float &l, float &r) {
     const TrackState *t = model_.track(id);
     if (!t) return false;
     l = t->runtime->peakL.exchange(0.0f, std::memory_order_relaxed);
@@ -115,7 +115,7 @@ void Engine::collectGarbage() {
 
 // ---- Media pool -----------------------------------------------------------
 
-AtriumMediaId Engine::poolAdd(std::shared_ptr<const Media> media, const std::string &path) {
+DalnokMediaId Engine::poolAdd(std::shared_ptr<const Media> media, const std::string &path) {
     if (!media) return 0;
     if (!path.empty())
         for (const auto &[id, e] : pool_)
@@ -125,11 +125,11 @@ AtriumMediaId Engine::poolAdd(std::shared_ptr<const Media> media, const std::str
     e.path = path;
     e.frames = media->frames();
     e.channels = media->channelCount();
-    e.handle = std::make_unique<AtriumMedia>(AtriumMedia{std::move(media)});
+    e.handle = std::make_unique<DalnokMedia>(DalnokMedia{std::move(media)});
     return id;
 }
 
-const PoolEntry *Engine::poolEntry(AtriumMediaId id) const {
+const PoolEntry *Engine::poolEntry(DalnokMediaId id) const {
     auto it = pool_.find(id);
     return it == pool_.end() ? nullptr : &it->second;
 }
@@ -243,7 +243,7 @@ std::string stem(const std::string &path) {
 }
 } // namespace
 
-AtriumTrackId Engine::addTrack(const std::string &name, std::string &err) {
+DalnokTrackId Engine::addTrack(const std::string &name, std::string &err) {
     const auto id = nextTrack_;
     const bool ok = edit("New Track", true, [&](Model &m) {
         TrackState t;
@@ -260,7 +260,7 @@ AtriumTrackId Engine::addTrack(const std::string &name, std::string &err) {
     return id;
 }
 
-bool Engine::removeTrack(AtriumTrackId id, std::string &err) {
+bool Engine::removeTrack(DalnokTrackId id, std::string &err) {
     return edit("Delete Track", true, [&](Model &m) {
         if (!m.track(id)) return fail(err, "no such track");
         std::erase_if(m.tracks, [id](const TrackState &t) { return t.id == id; });
@@ -269,7 +269,7 @@ bool Engine::removeTrack(AtriumTrackId id, std::string &err) {
     });
 }
 
-bool Engine::renameTrack(AtriumTrackId id, const std::string &name, std::string &err) {
+bool Engine::renameTrack(DalnokTrackId id, const std::string &name, std::string &err) {
     return edit("Rename Track", false, [&](Model &m) {
         TrackState *t = m.track(id);
         if (!t) return fail(err, "no such track");
@@ -279,7 +279,7 @@ bool Engine::renameTrack(AtriumTrackId id, const std::string &name, std::string 
     });
 }
 
-bool Engine::setGainDb(AtriumTrackId id, float db, std::string &err) {
+bool Engine::setGainDb(DalnokTrackId id, float db, std::string &err) {
     return edit("Volume", false, [&](Model &m) {
         TrackState *t = m.track(id);
         if (!t) return fail(err, "no such track");
@@ -290,7 +290,7 @@ bool Engine::setGainDb(AtriumTrackId id, float db, std::string &err) {
     });
 }
 
-bool Engine::setPan(AtriumTrackId id, float pan, std::string &err) {
+bool Engine::setPan(DalnokTrackId id, float pan, std::string &err) {
     return edit("Pan", false, [&](Model &m) {
         TrackState *t = m.track(id);
         if (!t) return fail(err, "no such track");
@@ -301,7 +301,7 @@ bool Engine::setPan(AtriumTrackId id, float pan, std::string &err) {
     });
 }
 
-bool Engine::setMute(AtriumTrackId id, bool muted, std::string &err) {
+bool Engine::setMute(DalnokTrackId id, bool muted, std::string &err) {
     return edit(muted ? "Mute" : "Unmute", false, [&](Model &m) {
         TrackState *t = m.track(id);
         if (!t) return fail(err, "no such track");
@@ -311,7 +311,7 @@ bool Engine::setMute(AtriumTrackId id, bool muted, std::string &err) {
     });
 }
 
-AtriumClipId Engine::addClip(AtriumTrackId track, AtriumMediaId media, int64_t start, int64_t offset, int64_t length,
+DalnokClipId Engine::addClip(DalnokTrackId track, DalnokMediaId media, int64_t start, int64_t offset, int64_t length,
                              std::string &err) {
     const PoolEntry *pe = poolEntry(media);
     const auto id = nextClip_;
@@ -336,7 +336,7 @@ AtriumClipId Engine::addClip(AtriumTrackId track, AtriumMediaId media, int64_t s
     return id;
 }
 
-bool Engine::removeClip(AtriumClipId id, std::string &err) {
+bool Engine::removeClip(DalnokClipId id, std::string &err) {
     return edit("Delete Clip", true, [&](Model &m) {
         if (!m.clip(id)) return fail(err, "no such clip");
         std::erase_if(m.clips, [id](const ClipState &c) { return c.id == id; });
@@ -344,7 +344,7 @@ bool Engine::removeClip(AtriumClipId id, std::string &err) {
     });
 }
 
-bool Engine::moveClip(AtriumClipId id, AtriumTrackId track, int64_t start, std::string &err) {
+bool Engine::moveClip(DalnokClipId id, DalnokTrackId track, int64_t start, std::string &err) {
     return edit("Move Clip", true, [&](Model &m) {
         auto it = std::find_if(m.clips.begin(), m.clips.end(), [id](const ClipState &c) { return c.id == id; });
         if (it == m.clips.end()) return fail(err, "no such clip");
@@ -359,7 +359,7 @@ bool Engine::moveClip(AtriumClipId id, AtriumTrackId track, int64_t start, std::
     });
 }
 
-bool Engine::setClipRegion(AtriumClipId id, int64_t start, int64_t offset, int64_t length, std::string &err) {
+bool Engine::setClipRegion(DalnokClipId id, int64_t start, int64_t offset, int64_t length, std::string &err) {
     return edit("Trim Clip", true, [&](Model &m) {
         ClipState *c = m.clip(id);
         if (!c) return fail(err, "no such clip");
@@ -374,7 +374,7 @@ bool Engine::setClipRegion(AtriumClipId id, int64_t start, int64_t offset, int64
     });
 }
 
-AtriumClipId Engine::splitClip(AtriumClipId id, int64_t at, std::string &err) {
+DalnokClipId Engine::splitClip(DalnokClipId id, int64_t at, std::string &err) {
     const auto rightId = nextClip_;
     const bool ok = edit("Split Clip", true, [&](Model &m) {
         auto it = std::find_if(m.clips.begin(), m.clips.end(), [id](const ClipState &c) { return c.id == id; });
@@ -427,7 +427,7 @@ void Engine::commit() {
 
 // ---- Audio thread -------------------------------------------------------
 
-void Engine::audioCallback(void *ctx, float *left, float *right, int frames) ATRIUM_NONBLOCKING {
+void Engine::audioCallback(void *ctx, float *left, float *right, int frames) DALNOK_NONBLOCKING {
     auto *self = static_cast<Engine *>(ctx);
     const uint64_t t0 = nowNs();
     self->process(left, right, frames);
@@ -443,7 +443,7 @@ void Engine::audioCallback(void *ctx, float *left, float *right, int frames) ATR
         self->overloads_.fetch_add(1, std::memory_order_relaxed);
 }
 
-void Engine::process(float *left, float *right, int frames) ATRIUM_NONBLOCKING {
+void Engine::process(float *left, float *right, int frames) DALNOK_NONBLOCKING {
     // Adopt the newest snapshot only if the previous one can be retired.
     if (!retired_.full()) {
         if (RenderState *s = pending_.exchange(nullptr, std::memory_order_acq_rel)) {
@@ -537,7 +537,7 @@ bool Engine::renderToWav(const std::string &path, int64_t start, int64_t frames,
 
 // ---- Diagnostics --------------------------------------------------------
 
-void Engine::stats(AtriumStats &o) const {
+void Engine::stats(DalnokStats &o) const {
     o.callbacks = callbacks_.load(std::memory_order_relaxed);
     o.frames_rendered = framesRendered_.load(std::memory_order_relaxed);
     o.max_callback_ns = maxCallbackNs_.load(std::memory_order_relaxed);
@@ -557,4 +557,4 @@ void Engine::resetStats() {
     swaps_ = 0;
 }
 
-} // namespace atrium
+} // namespace dalnok
