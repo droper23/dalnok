@@ -1,4 +1,20 @@
-# Handoff: Dalnok after M8 (recording and MIDI integration)
+# Handoff: Dalnok (latest: 2026-11-17, Phases 2–4 session)
+
+## 2026-11-17 session (read first)
+Phase 3 closed (tempo/meter maps). Phase 2 recording workflow: cycle, punch/count-in, multi-input takes, crash
+recovery prompt. Phase 4: buses/outputs/sends + mixer (X), volume/pan automation (A), plug-in delay compensation,
+cycle recording into take folders + swipe comping (Takes window). UI review tooling: `--uiwalk`,
+`DALNOK_WINDOW_DUMP`, `scripts/dev/drive.swift`. Warm Analog track names are lit scribble strips (owner request).
+- Verify with `scripts/check.sh` (prints failing self-test checks), `DALNOK_HOST_SANITIZE=thread scripts/ci/plugin-host.sh`,
+  `CXX=$(xcrun -f clang++) scripts/ci/rt-effects.sh` if Homebrew LLVM is missing. Self-test: 292 checks (296 with the test VST3).
+- Project format 7 (written only as high as a project needs: 3 constant tempo, 4 maps, 5 routing, 6 automation, 7 take folders).
+- Test VST3 effects now really delay by the latency they report (gain 7, delay 300); keep that true.
+- Not verified on hardware: multi-input on the Scarlett's two inputs, count-in by ear, comp crossfades by ear.
+- Open next: track stacks; plug-in parameter automation and write modes; mixer master strip and insert slots;
+  take lanes inside the arrangement; CLAP hosting; sidechains; disk streaming; separate input/output devices;
+  cycle wrap with compensation > 0 overshoots by the compensation; live MIDI while stopped ignores routing.
+
+# Earlier handoff: Dalnok after M8 (recording and MIDI integration)
 
 Continue `/Users/derek/Projects/Code/DAW`. Read `AGENTS.md`, `CURRENT_STATE.md`, the architecture notes and the
 ADRs (especially ADR-0008 recording and ADR-0009 plugin hosting) before engine work.
