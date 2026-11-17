@@ -241,6 +241,11 @@ void renderBlock(const RenderState &state, int64_t pos, int frames, float *left,
         // plugin instruments and buses are stereo sources (balance).
         panGains(rt, t.monoSource && !t.instrumentPlugin, anySolo && !linkedSolo, gl, gr);
 
+        // Plug-in parameter automation for this block (before the plug-ins run).
+        for (const auto &lane : t.pluginAuto) {
+            const float v = autoAt(lane.pts, pos);
+            lane.plugin->automate(lane.param, lane.lo + static_cast<double>(v) * (lane.hi - lane.lo));
+        }
         bool any = false;
         if (t.bus) {
             const float *inL = busL + static_cast<size_t>(t.busSlot) * kMaxBlock, *inR = busR + static_cast<size_t>(t.busSlot) * kMaxBlock;

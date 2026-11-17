@@ -51,10 +51,17 @@ struct AutoPoint {
     float value = 0;
 };
 enum AutoTarget : int32_t { kAutoVolume = 0, kAutoPan = 1 };
+// A plug-in parameter lane: values are normalized 0-1 (the plug-in's own range is applied at render).
+struct PluginAuto {
+    int32_t slot = 0;
+    uint32_t param = 0;
+    std::vector<AutoPoint> points;
+};
 
 struct TrackState {
     DalnokTrackId id = 0;
     std::vector<AutoPoint> volumeAuto, panAuto; // empty = not automated (the fader and knob apply)
+    std::vector<PluginAuto> pluginAuto;         // plug-in parameter lanes
     int32_t kind = kTrackAudio;
     DalnokTrackId output = 0;  // 0 = master; otherwise a bus track
     DalnokTrackId stack = 0;   // member of this summing stack (a bus track), 0 = none
@@ -266,6 +273,8 @@ public:
     bool setComp(int32_t folder, std::vector<CompSegment> comp, std::string &err);
     int32_t makeTakeFolder(Model &m, DalnokTrackId track, std::vector<DalnokClipId> takes, std::string &err); // inside an edit
     int32_t addTakeFolder(DalnokTrackId track, std::vector<DalnokClipId> takes, std::string &err); // its own edit ("Take Folder")
+    // Replaces a plug-in parameter's lane on a track (normalized 0-1; empty removes it). One undo step.
+    bool setPluginAutomation(DalnokTrackId track, int32_t slot, uint32_t param, std::vector<AutoPoint> points, std::string &err);
     // Replaces a track's automation lane (sorted by frame; an empty list removes it). One undo step.
     bool setAutomation(DalnokTrackId track, int32_t target, std::vector<AutoPoint> points, std::string &err);
     bool setArmed(DalnokTrackId id, bool armed, std::string &err);

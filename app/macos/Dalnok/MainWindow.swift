@@ -25,6 +25,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         guard let t = session.track(track), let p = t.plugins.first(where: { $0.id == slot }) else { return }
         guard p.loaded else { return flash("\(p.name) is not loaded: \(p.error)") }
         let w = PluginWindowController(engine: session.engine, slot: slot, title: "\(p.name) — \(t.name)")
+        w.onAutomate = { [weak self] slot, param, name in
+            guard let self else { return }
+            self.timeline.pluginLanes[track] = .plugin(slot: slot, param: param, name: "\(p.name): \(name)")
+            if !self.timeline.showAutomation { self.toggleAutomation(nil) }
+            self.flash("\(name) automation on \(t.name): click the lane to add points")
+        }
         w.onClose = { [weak self] in self?.pluginWindows[slot] = nil }
         pluginWindows[slot] = w
         w.show()
@@ -1099,8 +1105,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         timeline.showAutomation.toggle()
         flash(timeline.showAutomation ? "Automation: click a lane to add a point, drag to move, ⌥-click to delete (A to hide)" : "Automation hidden")
     }
-    @objc func automateVolume(_ sender: Any?) { TimelineView.automationTarget = 0; if !timeline.showAutomation { toggleAutomation(nil) }; timeline.needsDisplay = true }
-    @objc func automatePan(_ sender: Any?) { TimelineView.automationTarget = 1; if !timeline.showAutomation { toggleAutomation(nil) }; timeline.needsDisplay = true }
+    @objc func automateVolume(_ sender: Any?) { timeline.pluginLanes = [:]; TimelineView.automationTarget = 0; if !timeline.showAutomation { toggleAutomation(nil) }; timeline.needsDisplay = true }
+    @objc func automatePan(_ sender: Any?) { timeline.pluginLanes = [:]; TimelineView.automationTarget = 1; if !timeline.showAutomation { toggleAutomation(nil) }; timeline.needsDisplay = true }
     /// Track ▸ Clear Automation: removes the shown parameter's automation from the selected track.
     @objc func clearAutomation(_ sender: Any?) {
         guard let id = selectedTrack else { return }

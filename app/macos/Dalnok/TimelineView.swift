@@ -67,21 +67,71 @@ final class TimelineView: NSView {
     // MARK: Automation view (A): curves over each lane; clips are not editable while it's on.
     var showAutomation = false { didSet { needsDisplay = true } }
     static var automationTarget: Int32 = 0 // 0 volume, 1 pan
-    private struct AutoDrag { let track: DalnokTrackId; var points: [DalnokAutoPoint]; var index: Int }
+    private struct AutoDrag { let track: DalnokTrackId; var points: [DalnokAutoPoint]; var index: Int; let lane: AutoLane }
     private var autoDrag: AutoDrag?
     private let autoMargin: CGFloat = 8
 
-    /// Lane y for an automation value (volume: fader taper, top = +6 dB; pan: top = left, bottom = right).
-    func autoY(_ value: Float, laneY: CGFloat) -> CGFloat {
-        let f = Self.automationTarget == 1 ? Double(value + 1) / 2 : FaderControl.position(for: value)
-        let top = laneY + autoMargin, h = Theme.trackHeight - 2 * autoMargin
-        return top + CGFloat(Self.automationTarget == 1 ? f : 1 - f) * h
+    /// What a track's automation lane shows: the global volume/pan choice, or a plug-in parameter picked
+    /// for that track (plug-in window ▸ Automate).
+    enum AutoLane: Equatable {
+        case volume, pan
+        case plugin(slot: Int32, param: UInt32, name: String)
     }
-    func autoValue(atY y: CGFloat, laneY: CGFloat) -> Float {
+    var pluginLanes: [DalnokTrackId: AutoLane] = [:] { didSet { needsDisplay = true } }
+    func lane(for t: TrackView) -> AutoLane { pluginLanes[t.id] ?? (Self.automationTarget == 1 ? .pan : .volume) }
+    private var globalLane: AutoLane { Self.automationTarget == 1 ? .pan : .volume }
+    func lanePoints(_ t: TrackView, _ lane: AutoLane) -> [DalnokAutoPoint] {
+        switch lane {
+        case .volume: return t.volumeAuto
+        case .pan: return t.panAuto
+        case let .plugin(slot, param, _): return session.pluginAutomation(t.id, slot, param)
+        }
+    }
+    private func setLanePoints(_ id: DalnokTrackId, _ lane: AutoLane, _ pts: [DalnokAutoPoint]) {
+        switch lane {
+        case .volume: session.setAutomation(id, 0, pts)
+        case .pan: session.setAutomation(id, 1, pts)
+        case let .plugin(slot, param, _): session.setPluginAutomation(id, slot, param, pts)
+        }
+    }
+    private func staticValue(_ t: TrackView, _ lane: AutoLane) -> Float {
+        switch lane {
+        case .volume: return t.gainDb
+        case .pan: return t.pan
+        case let .plugin(slot, param, _): return session.pluginParameterValue(slot, param) ?? 0.5
+        }
+    }
+    private func format(_ v: Float, _ lane: AutoLane) -> String {
+        switch lane {
+        case .volume: return FaderControl.format(v)
+        case .pan: return PanKnob.format(Double(v))
+        case let .plugin(_, _, name): return "\(name) \(Int((v * 100).rounded()))%"
+        }
+    }
+    private func undoName(_ lane: AutoLane) -> String {
+        switch lane { case .volume: "Volume Automation"; case .pan: "Pan Automation"; case .plugin: "Plug-in Automation" }
+    }
+
+    /// Lane y for an automation value (volume: fader taper, top = +6 dB; pan: top = left; plug-in: top = 100%).
+    func autoY(_ value: Float, laneY: CGFloat, lane: AutoLane? = nil) -> CGFloat {
+        let l = lane ?? globalLane
+        let f: Double
+        switch l {
+        case .volume: f = 1 - FaderControl.position(for: value)
+        case .pan: f = Double(value + 1) / 2
+        case .plugin: f = 1 - Double(value)
+        }
+        let top = laneY + autoMargin, h = Theme.trackHeight - 2 * autoMargin
+        return top + CGFloat(f) * h
+    }
+    func autoValue(atY y: CGFloat, laneY: CGFloat, lane: AutoLane? = nil) -> Float {
         let top = laneY + autoMargin, h = Theme.trackHeight - 2 * autoMargin
         let f = Double(min(max((y - top) / h, 0), 1))
-        if Self.automationTarget == 1 { return Float(f * 2 - 1) }
-        return max(-200, FaderControl.db(for: 1 - f))
+        switch lane ?? globalLane {
+        case .volume: return max(-200, FaderControl.db(for: 1 - f))
+        case .pan: return Float(f * 2 - 1)
+        case .plugin: return Float(1 - f)
+        }
     }
 
     private func drawAutomation(_ ctx: CGContext) {
@@ -91,11 +141,15 @@ final class TimelineView: NSView {
             guard y + Theme.trackHeight > Theme.rulerHeight, y < bounds.height else { continue }
             ctx.setFillColor(Theme.laneA.withAlphaComponent(0.55).cgColor) // clips recede
             ctx.fill(CGRect(x: 0, y: y, width: bounds.width, height: Theme.trackHeight - 1))
-            let pts = track.automation(Self.automationTarget)
+            let lane = lane(for: track)
+            let pts = lanePoints(track, lane)
             let color = TrackTint(base: track.color).waveform
-            if pts.isEmpty { // the static fader or knob value, dashed
-                let v = Self.automationTarget == 1 ? track.pan : track.gainDb
-                let ly = autoY(v, laneY: y)
+            if case let .plugin(_, _, name) = lane { // which parameter this lane shows
+                (name.uppercased() as NSString).draw(at: CGPoint(x: 8, y: y + 4), withAttributes: [.font: Theme.mono(9, .semibold), .foregroundColor: Theme.accent])
+            }
+            if pts.isEmpty { // the static value, dashed
+                let v = staticValue(track, lane)
+                let ly = autoY(v, laneY: y, lane: lane)
                 ctx.setStrokeColor(color.withAlphaComponent(0.6).cgColor)
                 ctx.setLineWidth(1.5); ctx.setLineDash(phase: 0, lengths: [5, 4])
                 ctx.move(to: CGPoint(x: 0, y: ly)); ctx.addLine(to: CGPoint(x: bounds.width, y: ly)); ctx.strokePath()
@@ -104,12 +158,12 @@ final class TimelineView: NSView {
             }
             ctx.setStrokeColor(color.cgColor)
             ctx.setLineWidth(2)
-            ctx.move(to: CGPoint(x: 0, y: autoY(pts[0].value, laneY: y)))
-            for p in pts { ctx.addLine(to: CGPoint(x: xPos(forFrame: Double(p.frame)), y: autoY(p.value, laneY: y))) }
-            ctx.addLine(to: CGPoint(x: bounds.width, y: autoY(pts[pts.count - 1].value, laneY: y)))
+            ctx.move(to: CGPoint(x: 0, y: autoY(pts[0].value, laneY: y, lane: lane)))
+            for p in pts { ctx.addLine(to: CGPoint(x: xPos(forFrame: Double(p.frame)), y: autoY(p.value, laneY: y, lane: lane))) }
+            ctx.addLine(to: CGPoint(x: bounds.width, y: autoY(pts[pts.count - 1].value, laneY: y, lane: lane)))
             ctx.strokePath()
             for p in pts {
-                let c = CGPoint(x: xPos(forFrame: Double(p.frame)), y: autoY(p.value, laneY: y))
+                let c = CGPoint(x: xPos(forFrame: Double(p.frame)), y: autoY(p.value, laneY: y, lane: lane))
                 guard c.x > -6, c.x < bounds.width + 6 else { continue }
                 let r = CGRect(x: c.x - 4, y: c.y - 4, width: 8, height: 8)
                 ctx.setFillColor(Theme.panel.cgColor); ctx.fillEllipse(in: r)
@@ -125,13 +179,13 @@ final class TimelineView: NSView {
     /// ⌥-click a point to delete it. Each gesture is one undo step.
     private func autoMouseDown(_ p: CGPoint, _ event: NSEvent) -> Bool {
         guard showAutomation, let i = trackIndex(atY: p.y), i < session.tracks.count else { return false }
-        let track = session.tracks[i], y = laneY(i)
-        var pts = track.automation(Self.automationTarget)
-        let hit = pts.firstIndex { abs(xPos(forFrame: Double($0.frame)) - p.x) <= 6 && abs(autoY($0.value, laneY: y) - p.y) <= 6 }
-        session.engine.beginGroup(Self.automationTarget == 1 ? "Pan Automation" : "Volume Automation")
+        let track = session.tracks[i], y = laneY(i), lane = lane(for: track)
+        var pts = lanePoints(track, lane)
+        let hit = pts.firstIndex { abs(xPos(forFrame: Double($0.frame)) - p.x) <= 6 && abs(autoY($0.value, laneY: y, lane: lane) - p.y) <= 6 }
+        session.engine.beginGroup(undoName(lane))
         if let h = hit, event.modifierFlags.contains(.option) {
             pts.remove(at: h)
-            session.setAutomation(track.id, Self.automationTarget, pts)
+            setLanePoints(track.id, lane, pts)
             session.engine.endGroup()
             return true
         }
@@ -139,15 +193,14 @@ final class TimelineView: NSView {
         if let h = hit { index = h } else {
             let frame = snap(frame(forX: p.x), bypass: event.modifierFlags.contains(.control))
             if pts.isEmpty { // start from the current static value so the rest of the song doesn't jump
-                let v = Self.automationTarget == 1 ? track.pan : track.gainDb
-                if frame > 0 { pts.append(DalnokAutoPoint(frame: 0, value: v)) }
+                if frame > 0 { pts.append(DalnokAutoPoint(frame: 0, value: staticValue(track, lane))) }
             }
-            pts.append(DalnokAutoPoint(frame: frame, value: autoValue(atY: p.y, laneY: y)))
+            pts.append(DalnokAutoPoint(frame: frame, value: autoValue(atY: p.y, laneY: y, lane: lane)))
             pts.sort { $0.frame < $1.frame }
             index = pts.lastIndex { $0.frame == frame } ?? pts.count - 1
-            session.setAutomation(track.id, Self.automationTarget, pts)
+            setLanePoints(track.id, lane, pts)
         }
-        autoDrag = AutoDrag(track: track.id, points: pts, index: index)
+        autoDrag = AutoDrag(track: track.id, points: pts, index: index, lane: lane)
         return true
     }
     private func autoMouseDragged(_ p: CGPoint, _ event: NSEvent) -> Bool {
@@ -157,11 +210,10 @@ final class TimelineView: NSView {
         // A point stays between its neighbors.
         if d.index > 0 { f = max(f, d.points[d.index - 1].frame + 1) }
         if d.index + 1 < d.points.count { f = min(f, d.points[d.index + 1].frame - 1) }
-        d.points[d.index] = DalnokAutoPoint(frame: max(0, f), value: autoValue(atY: p.y, laneY: y))
-        session.setAutomation(d.track, Self.automationTarget, d.points)
+        d.points[d.index] = DalnokAutoPoint(frame: max(0, f), value: autoValue(atY: p.y, laneY: y, lane: d.lane))
+        setLanePoints(d.track, d.lane, d.points)
         autoDrag = d
-        let v = d.points[d.index].value
-        ValueBubble.show(Self.automationTarget == 1 ? PanKnob.format(Double(v)) : FaderControl.format(v), above: self, at: p.x)
+        ValueBubble.show(format(d.points[d.index].value, d.lane), above: self, at: p.x)
         return true
     }
     /// Autopunch range (red, lower ruler); drawn while `showPunch`.

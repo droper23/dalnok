@@ -396,6 +396,8 @@ public:
         paramChanges_.count = 0;
         ParamChange c;
         while (paramChanges_.count < static_cast<int32>(paramChanges_.queues.size()) && changes_.pop(c)) paramChanges_.set(c.id, c.value);
+        for (int i = 0; i < autoCount_; ++i) paramChanges_.set(autoQueue_[i].id, autoQueue_[i].value); // automation wins this block
+        autoCount_ = 0;
         float *inPtr[2] = {scratchL_.data(), scratchR_.data()};
         float *outPtr[2] = {left, right};
         AudioBusBuffers in, out;

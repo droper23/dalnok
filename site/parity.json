@@ -988,15 +988,19 @@
           "todo"
         ],
         [
-          "Summing groups",
-          "todo"
+          "Summing stacks (stack bus, members routed in, fader and plug-ins act on all)",
+          "verified"
         ],
         [
-          "Collapse and expand",
+          "Collapse and expand (saved)",
+          "verified"
+        ],
+        [
+          "Nested stacks",
           "todo"
         ]
       ],
-      "evidence": "Planned for Phase 4."
+      "evidence": "TrackStacks engine test: the stack sums its members, its fader scales only them, order and routing, collapse flag, ungroup and undo. App self-test: Track > Create Track Stack from the selected track and a selected clip, the disclosure arrow hides and shows members, Ungroup, undo."
     },
     {
       "id": "automation",
@@ -1013,6 +1017,10 @@
       "steps": [
         [
           "Volume and pan automation drawn over each lane (View > Show Automation, A): add, move, delete points",
+          "verified"
+        ],
+        [
+          "Plug-in parameter automation (block-rate; plug-in window > Automate in Arrangement)",
           "verified"
         ],
         [

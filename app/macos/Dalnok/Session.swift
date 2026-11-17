@@ -193,6 +193,26 @@ final class Session {
         _ = dalnok_track_automation(h, t, target, &out, n)
         return out
     }
+    func pluginAutomation(_ t: DalnokTrackId, _ slot: Int32, _ param: UInt32) -> [DalnokAutoPoint] {
+        let n = dalnok_plugin_automation(h, t, slot, param, nil, 0)
+        guard n > 0 else { return [] }
+        var out = [DalnokAutoPoint](repeating: DalnokAutoPoint(), count: Int(n))
+        _ = dalnok_plugin_automation(h, t, slot, param, &out, n); return out
+    }
+    @discardableResult
+    func setPluginAutomation(_ t: DalnokTrackId, _ slot: Int32, _ param: UInt32, _ points: [DalnokAutoPoint]) -> Bool {
+        let ok = dalnok_plugin_set_automation(h, t, slot, param, points, Int32(points.count)) == DALNOK_OK
+        refresh(); return ok
+    }
+    /// A plug-in parameter's current normalized value.
+    func pluginParameterValue(_ slot: Int32, _ param: UInt32) -> Float? {
+        let n = dalnok_plugin_parameter_count(h, slot)
+        for i in 0..<max(0, n) {
+            var p = DalnokPluginParameter()
+            if dalnok_plugin_parameter(h, slot, i, &p) == DALNOK_OK, p.id == param { return Float(p.value) }
+        }
+        return nil
+    }
     @discardableResult
     func setAutomation(_ t: DalnokTrackId, _ target: Int32, _ points: [DalnokAutoPoint]) -> Bool {
         let ok = dalnok_track_set_automation(h, t, target, points, Int32(points.count)) == DALNOK_OK

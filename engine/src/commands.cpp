@@ -167,6 +167,15 @@ const CommandDef kCommands[] = {
          if (!needInt(a, "track", t, err)) return DALNOK_ERR_INVALID_ARG;
          return status(e.ungroupStack(t, err), err);
      }},
+    {"plugin.setAutomation", "Plug-in Automation", "{track, slot, param, points: [[frame, value 0-1], ...]}", [](ARGS) {
+         DalnokTrackId t; int32_t slot; double param;
+         if (!needInt(a, "track", t, err) || !needInt(a, "slot", slot, err) || !needNumber(a, "param", param, err)) return DALNOK_ERR_INVALID_ARG;
+         std::vector<AutoPoint> points;
+         if (const json::Value *pl = a.get("points"); pl && pl->isArray())
+             for (const auto &p : pl->array)
+                 if (p.isArray() && p.array.size() == 2) points.push_back({static_cast<int64_t>(p.array[0].number), static_cast<float>(p.array[1].number)});
+         return status(e.setPluginAutomation(t, slot, static_cast<uint32_t>(param), std::move(points), err), err);
+     }},
     {"master.setGain", "Master Volume", "{db}", [](ARGS) {
          double db;
          if (!needNumber(a, "db", db, err)) return DALNOK_ERR_INVALID_ARG;

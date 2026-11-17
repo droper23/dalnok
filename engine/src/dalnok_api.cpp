@@ -392,6 +392,25 @@ DalnokStatus dalnok_master_set_gain_db(DalnokEngine *e, float db) {
     return e ? statusFor(e->impl.setMasterGainDb(db, err), err) : DALNOK_ERR_INVALID_ARG;
 }
 float dalnok_master_gain_db(const DalnokEngine *e) { return e ? e->impl.model().masterGainDb : 0; }
+DalnokStatus dalnok_plugin_set_automation(DalnokEngine *e, DalnokTrackId t, int32_t slot, uint32_t param,
+                                          const DalnokAutoPoint *pts, int32_t count) {
+    if (!e || count < 0 || (count > 0 && !pts)) return DALNOK_ERR_INVALID_ARG;
+    std::vector<dalnok::AutoPoint> points;
+    for (int32_t i = 0; i < count; ++i) points.push_back({pts[i].frame, pts[i].value});
+    std::string err;
+    return statusFor(e->impl.setPluginAutomation(t, slot, param, std::move(points), err), err);
+}
+int32_t dalnok_plugin_automation(const DalnokEngine *e, DalnokTrackId t, int32_t slot, uint32_t param, DalnokAutoPoint *out, int32_t cap) {
+    const auto *tr = e ? e->impl.model().track(t) : nullptr;
+    if (!tr) return 0;
+    for (const auto &l : tr->pluginAuto)
+        if (l.slot == slot && l.param == param) {
+            for (int32_t i = 0; out && i < cap && i < static_cast<int32_t>(l.points.size()); ++i)
+                out[i] = {l.points[static_cast<size_t>(i)].frame, l.points[static_cast<size_t>(i)].value};
+            return static_cast<int32_t>(l.points.size());
+        }
+    return 0;
+}
 DalnokTrackId dalnok_track_stack_create(DalnokEngine *e, const DalnokTrackId *members, int32_t count, const char *name) {
     if (!e || !members || count < 1) return 0;
     std::string err;

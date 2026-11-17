@@ -20,6 +20,9 @@ final class PluginWindowController: NSWindowController, NSWindowDelegate, NSTabl
     private var pluginIndex: [UInt32: Int32] = [:] // parameter id -> the plugin's own index (hidden ones are skipped)
     private var refreshTimer: Timer?
     var onClose: (() -> Void)?
+    /// Shows the selected parameter's automation lane in the arrangement (slot, parameter id, name).
+    var onAutomate: ((Int32, UInt32, String) -> Void)?
+    let automateButton = NSButton(title: "Automate in Arrangement", target: nil, action: nil)
 
     init(engine: Engine, slot: Int32, title: String) {
         self.engine = engine
@@ -53,12 +56,19 @@ final class PluginWindowController: NSWindowController, NSWindowDelegate, NSTabl
         search.delegate = self
         note.font = Theme.ui(11)
         note.textColor = Theme.textDim
-        let stack = NSStackView(views: [search, scroll, note])
+        automateButton.bezelStyle = .rounded
+        automateButton.controlSize = .small
+        automateButton.target = self
+        automateButton.action = #selector(automateSelected)
+        automateButton.toolTip = "Draw this parameter's automation over the track (View ▸ Show Automation)"
+        let top = NSStackView(views: [search, automateButton])
+        top.spacing = 8
+        let stack = NSStackView(views: [top, scroll, note])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 8
         stack.edgeInsets = NSEdgeInsets(top: 10, left: 12, bottom: 10, right: 12)
-        for v in [search, scroll] { v.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -24).isActive = true }
+        for v in [top, scroll] { v.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -24).isActive = true }
         stack.translatesAutoresizingMaskIntoConstraints = false
         panel.addSubview(stack)
         NSLayoutConstraint.activate([
@@ -175,6 +185,11 @@ final class PluginWindowController: NSWindowController, NSWindowDelegate, NSTabl
             " · Values go to the audio engine on the next block."
     }
     func filter(_ text: String) { search.stringValue = text; applyFilter() }
+    @objc func automateSelected() {
+        let i = table.selectedRow >= 0 ? table.selectedRow : (rows.count == 1 ? 0 : -1)
+        guard rows.indices.contains(i) else { NSSound.beep(); note.stringValue = "Select a parameter to automate."; return }
+        onAutomate?(slot, rows[i].id, fixedString(rows[i].title))
+    }
     func controlTextDidChange(_ obj: Notification) { applyFilter() }
 
     func current(_ id: UInt32) -> DalnokPluginParameter? {

@@ -57,3 +57,28 @@ struct DelayCompensation {
         #expect(peaks(l).first?.0 == 2_000 && abs((peaks(l).first?.1 ?? 0) - 2) < 1e-6, "heard at the playhead's 2,000: \(peaks(l))")
     }
 }
+
+@Suite(.enabled(if: !testVst3.isEmpty, "set DALNOK_TEST_VST3 (scripts/ci/plugin-host.sh)"))
+struct PluginAutomation {
+    @Test func aParameterFollowsItsLanePerBlockAndSaves() throws {
+        let (e, t) = audioSession(); defer { dalnok_engine_destroy(e) }
+        let dry = renderStereo(e, 48_000).0
+        let slot = dalnok_plugin_add(e, t, testVst3, gainClass, nil, 0)
+        var p = DalnokPluginParameter()
+        #expect(dalnok_plugin_parameter(e, slot, 0, &p) == DALNOK_OK)
+        let pts = [DalnokAutoPoint(frame: 0, value: 0.25), DalnokAutoPoint(frame: 48_000, value: 0.75)]
+        #expect(dalnok_plugin_set_automation(e, t, slot, p.id, pts, 2) == DALNOK_OK && undoName(e) == "Plug-in Automation")
+        let wet = renderStereo(e, 48_000).0
+        // Gain follows the lane at block rate: within half a block's change of the exact ramp.
+        for f in [2_000, 12_000, 24_000, 40_000] where abs(dry[f]) > 0.05 {
+            let gain = wet[f] / dry[f], want = Float(0.25 + 0.5 * Double(f) / 48_000)
+            #expect(abs(gain - want) < 0.006, "gain \(gain) at \(f), lane \(want)")
+        }
+        var got = [DalnokAutoPoint](repeating: DalnokAutoPoint(), count: 4)
+        #expect(dalnok_plugin_automation(e, t, slot, p.id, &got, 4) == 2)
+        #expect(dalnok_plugin_set_automation(e, t, slot, p.id, [DalnokAutoPoint(frame: 0, value: 1.5)], 1) != DALNOK_OK)
+        // Removing the plug-in removes its lanes; undo brings both back.
+        #expect(dalnok_plugin_remove(e, t, slot) == DALNOK_OK && dalnok_plugin_automation(e, t, slot, p.id, nil, 0) == 0)
+        #expect(dalnok_undo(e) && dalnok_plugin_automation(e, t, slot, p.id, nil, 0) == 2)
+    }
+}

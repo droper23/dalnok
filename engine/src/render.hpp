@@ -96,6 +96,9 @@ struct RenderTrack {
     std::vector<TrackRuntime *> soloLinks; // tracks upstream and downstream in the routing (solo follows them)
     // Automation (empty = none): volume as fader taper (amplitude^(1/4)), pan -1..1, linear between points.
     std::vector<std::pair<int64_t, float>> volumeAuto, panAuto;
+    // Plug-in parameter automation, applied once per block (block-rate) before the plug-in runs.
+    struct PluginLane { PluginProcessor *plugin = nullptr; uint32_t param = 0; double lo = 0, hi = 1; std::vector<std::pair<int64_t, float>> pts; };
+    std::vector<PluginLane> pluginAuto;
     std::vector<RenderClip> clips; // z-order: later clips overwrite earlier ones
     bool monoSource = true;        // every clip is mono -> constant-power pan law
     bool instrument = false;       // MIDI track (built-in synth unless instrumentPlugin is set)

@@ -28,7 +28,7 @@
 extern "C" {
 #endif
 
-#define DALNOK_API_VERSION 18
+#define DALNOK_API_VERSION 19
 
 typedef enum {
     DALNOK_OK = 0,
@@ -322,6 +322,12 @@ DalnokStatus dalnok_track_set_automation(DalnokEngine *engine, DalnokTrackId tra
                                          const DalnokAutoPoint *points, int32_t count);
 int32_t dalnok_track_automation(const DalnokEngine *engine, DalnokTrackId track, int32_t target,
                                 DalnokAutoPoint *out, int32_t capacity); /* total count */
+/* Plug-in parameter automation: values are normalized 0-1; applied once per processing block (up to 512
+ * frames) just before the plug-in runs. Removing the plug-in removes its lanes. */
+DalnokStatus dalnok_plugin_set_automation(DalnokEngine *engine, DalnokTrackId track, int32_t slot, uint32_t param,
+                                          const DalnokAutoPoint *points, int32_t count);
+int32_t dalnok_plugin_automation(const DalnokEngine *engine, DalnokTrackId track, int32_t slot, uint32_t param,
+                                 DalnokAutoPoint *out, int32_t capacity);
 DalnokStatus dalnok_track_info(const DalnokEngine *engine, DalnokTrackId track, DalnokTrackInfo *out);
 
 /* Clips of a track in z-order (later = on top; overlapping clips: top wins). */

@@ -51,6 +51,18 @@ public:
     virtual void touchedParameters(std::vector<std::pair<uint32_t, double>> &out) = 0;
     // Incremented whenever the plugin's own editor changes a parameter (any thread).
     virtual uint64_t editCount() const = 0;
+    // Automation. `automationRange` (control thread) maps a normalized 0-1 value to the value `automate`
+    // takes; `automate` (audio thread, between blocks) queues it for the start of the next process call.
+    virtual bool automationRange(uint32_t id, double &lo, double &hi) { (void)id; lo = 0; hi = 1; return true; }
+    void automate(uint32_t id, double value) DALNOK_NONBLOCKING {
+        if (autoCount_ < kMaxAuto) autoQueue_[autoCount_++] = {id, value};
+    }
+protected:
+    static constexpr int kMaxAuto = 64;
+    struct AutoChange { uint32_t id; double value; };
+    AutoChange autoQueue_[kMaxAuto]{};
+    int autoCount_ = 0;
+public:
 
     // The plugin's own editor (main thread). `parent` is an NSView on macOS. `onResize` is called
     // when the editor asks for a new size.

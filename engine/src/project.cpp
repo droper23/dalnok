@@ -30,7 +30,7 @@ namespace fs = std::filesystem;
 namespace dalnok {
 
 namespace {
-constexpr int kFormatVersion = 7; // 6: volume and pan automation; 7: take folders // 3: shared MIDI sources preserve notes crossing split clips; 4: tempo and meter maps;
+constexpr int kFormatVersion = 8; // 6: volume and pan automation; 7: take folders; 8: plug-in automation // 3: shared MIDI sources preserve notes crossing split clips; 4: tempo and meter maps;
                                    // 5: bus tracks, track outputs and sends
 constexpr int kConstantTempoVersion = 3; // written when there are no tempo or meter changes, so older builds still open it
 
@@ -170,6 +170,19 @@ json::Value Engine::describe() const {
         tv.set("name", t.name);
         if (t.kind == kTrackInstrument) { tv.set("kind", "instrument"); tv.set("instrument", "dalnok.poly"); }
         if (t.kind == kTrackBus) tv.set("kind", "bus");
+        if (!t.pluginAuto.empty()) {
+            json::Value lanes = json::Value::makeArray();
+            for (const auto &l : t.pluginAuto) {
+                json::Value lv = json::Value::makeObject();
+                lv.set("slot", l.slot);
+                lv.set("param", static_cast<double>(l.param));
+                json::Value pts = json::Value::makeArray();
+                for (const auto &p : l.points) { json::Value v = json::Value::makeArray(); v.push(static_cast<double>(p.frame)); v.push(static_cast<double>(p.value)); pts.push(std::move(v)); }
+                lv.set("points", std::move(pts));
+                lanes.push(std::move(lv));
+            }
+            tv.set("pluginAutomation", std::move(lanes));
+        }
         for (const auto &[key, pts] : {std::pair<const char *, const std::vector<AutoPoint> *>{"volumeAutomation", &t.volumeAuto},
                                        {"panAutomation", &t.panAuto}}) {
             if (pts->empty()) continue;
@@ -361,8 +374,10 @@ bool Engine::saveProject(const std::string &path, std::string &err, bool copyMed
         doc.set("takeFolders", std::move(folders));
     }
     bool automation = false;
-    for (const auto &t : model_.tracks) automation = automation || !t.volumeAuto.empty() || !t.panAuto.empty();
-    doc.set("version", !model_.folders.empty() ? 7 : automation ? 6 : routing ? 5 : model_.tempo.size() > 1 || model_.meters.size() > 1 ? 4 : kConstantTempoVersion);
+    for (const auto &t : model_.tracks) automation = automation || !t.volumeAuto.empty() || !t.panAuto.empty() || !t.pluginAuto.empty();
+    bool pluginAutomation = false;
+    for (const auto &t : model_.tracks) pluginAutomation = pluginAutomation || !t.pluginAuto.empty();
+    doc.set("version", pluginAutomation ? 8 : !model_.folders.empty() ? 7 : automation ? 6 : routing ? 5 : model_.tempo.size() > 1 || model_.meters.size() > 1 ? 4 : kConstantTempoVersion);
     json::Value body = describe();
     for (auto &[key, value] : body.object) {
         if (key != "media") continue;
@@ -467,6 +482,17 @@ std::unique_ptr<Engine::PreparedProject> Engine::prepareDocument(const json::Val
             t.kind = kind == "instrument" ? kTrackInstrument : kind == "bus" ? kTrackBus : kTrackAudio;
             t.output = static_cast<DalnokTrackId>(std::max<int64_t>(0, toInt(tv, "output")));
             t.stack = static_cast<DalnokTrackId>(std::max<int64_t>(0, toInt(tv, "stack")));
+            if (const json::Value *lanes = tv.get("pluginAutomation"); lanes && lanes->isArray())
+                for (const auto &lv : lanes->array) {
+                    PluginAuto l;
+                    l.slot = static_cast<int32_t>(toInt(lv, "slot"));
+                    l.param = static_cast<uint32_t>(lv.getNumber("param", 0));
+                    if (const json::Value *pts = lv.get("points"); pts && pts->isArray())
+                        for (const auto &pv : pts->array)
+                            if (pv.isArray() && pv.array.size() == 2 && pv.array[0].isNumber() && pv.array[1].isNumber())
+                                l.points.push_back({scale(static_cast<int64_t>(pv.array[0].number)), std::clamp(static_cast<float>(pv.array[1].number), 0.0f, 1.0f)});
+                    if (!l.points.empty()) t.pluginAuto.push_back(std::move(l));
+                }
             t.isStack = tv.getBool("isStack", false) && t.kind == kTrackBus;
             t.collapsed = t.isStack && tv.getBool("collapsed", false);
             for (const auto &[key, pts] : {std::pair<const char *, std::vector<AutoPoint> *>{"volumeAutomation", &t.volumeAuto},

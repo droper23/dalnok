@@ -115,6 +115,9 @@ public:
         // Plugin code (ADR-0009): parameters and note events first, then render.
         ParamChange c;
         while (changes_.pop(c)) AudioUnitSetParameter(unit_, c.id, kAudioUnitScope_Global, 0, static_cast<AudioUnitParameterValue>(c.value), 0);
+        for (int i = 0; i < autoCount_; ++i) // automation (plain values; see automationRange)
+            AudioUnitSetParameter(unit_, autoQueue_[i].id, kAudioUnitScope_Global, 0, static_cast<AudioUnitParameterValue>(autoQueue_[i].value), 0);
+        autoCount_ = 0;
         for (int i = 0; i < noteCount; ++i)
             MusicDeviceMIDIEvent(unit_, notes[i].on ? 0x90u : 0x80u, notes[i].pitch, notes[i].on ? notes[i].velocity : 0u,
                                  static_cast<UInt32>(notes[i].offset));
@@ -190,6 +193,12 @@ public:
             {kAudioUnitParameterUnit_Milliseconds, "ms"}, {kAudioUnitParameterUnit_Percent, "%"}, {kAudioUnitParameterUnit_EqualPowerCrossfade, "%"},
             {kAudioUnitParameterUnit_Cents, "cents"}, {kAudioUnitParameterUnit_RelativeSemiTones, "st"}};
         if (auto it = units.find(pi.unit); it != units.end()) out.units = it->second;
+        return true;
+    }
+    bool automationRange(uint32_t id, double &lo, double &hi) override {
+        AudioUnitParameterInfo pi{};
+        if (!info(id, pi)) return false;
+        lo = pi.minValue; hi = pi.maxValue;
         return true;
     }
     bool setParameter(uint32_t id, double normalized) override {

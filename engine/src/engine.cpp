@@ -702,6 +702,7 @@ bool Engine::removePlugin(DalnokTrackId track, int32_t id, std::string &err) {
         const auto before = t->plugins.size();
         std::erase_if(t->plugins, [id](const PluginSlot &p) { return p.id == id; });
         if (t->plugins.size() == before) return fail(err, "no such plug-in");
+        std::erase_if(t->pluginAuto, [id](const PluginAuto &l) { return l.slot == id; });
         return true; // the instance stays loaded for undo
     });
 }
@@ -852,6 +853,23 @@ bool Engine::setSend(DalnokTrackId track, DalnokTrackId bus, float db, bool pre,
             it->db = db;
             it->pre = pre;
         }
+        return true;
+    });
+}
+
+bool Engine::setPluginAutomation(DalnokTrackId track, int32_t slot, uint32_t param, std::vector<AutoPoint> points, std::string &err) {
+    for (const auto &p : points)
+        if (p.frame < 0 || !(p.value >= 0 && p.value <= 1)) return fail(err, "plug-in automation points need frame >= 0 and a value 0-1");
+    std::stable_sort(points.begin(), points.end(), [](const AutoPoint &a, const AutoPoint &b) { return a.frame < b.frame; });
+    return edit("Plug-in Automation", true, [&](Model &m) {
+        TrackState *t = m.track(track);
+        if (!t) return fail(err, "no such track");
+        if (std::none_of(t->plugins.begin(), t->plugins.end(), [slot](const PluginSlot &p) { return p.id == slot; }))
+            return fail(err, "that plug-in isn't on this track");
+        auto it = std::find_if(t->pluginAuto.begin(), t->pluginAuto.end(), [&](const PluginAuto &l) { return l.slot == slot && l.param == param; });
+        if (points.empty()) { if (it != t->pluginAuto.end()) t->pluginAuto.erase(it); return true; }
+        if (it == t->pluginAuto.end()) t->pluginAuto.push_back({slot, param, std::move(points)});
+        else it->points = std::move(points);
         return true;
     });
 }
@@ -1350,6 +1368,16 @@ std::unique_ptr<RenderState> Engine::compile(std::vector<StretchJob> *needed, co
         for (const auto &p : t.volumeAuto) // fader taper: amplitude^(1/4); -inf at the bottom
             rt.volumeAuto.push_back({p.frame, p.value <= -95 ? 0.0f : std::pow(dbToGain(p.value), 0.25f)});
         for (const auto &p : t.panAuto) rt.panAuto.push_back({p.frame, p.value});
+        for (const auto &lane : t.pluginAuto) {
+            auto it = instances.find(lane.slot);
+            if (it == instances.end() || !it->second || lane.points.empty()) continue;
+            RenderTrack::PluginLane pl;
+            pl.plugin = it->second.get();
+            pl.param = lane.param;
+            if (!pl.plugin->automationRange(lane.param, pl.lo, pl.hi)) continue;
+            for (const auto &p : lane.points) pl.pts.push_back({p.frame, p.value});
+            rt.pluginAuto.push_back(std::move(pl));
+        }
         rt.instrument = t.kind == kTrackInstrument;
         if (rt.instrument && t.armed) s->liveTrack = static_cast<int32_t>(s->tracks.size());
         for (const auto &slot : t.plugins) {

@@ -963,6 +963,25 @@ final class SelfTest {
             panel.layoutCables()
             check(panel.cableCount == 3, "Warm Analog patches IN → AUDelay → AUPeakLimiter → OUT with \(panel.cableCount) cables")
         }
+        // Plug-in parameter automation: the plug-in window's Automate shows the lane; a click adds points.
+        w.openPluginWindow(track: track, slot: slot)
+        if let pw = w.pluginWindows[slot], let i = s.tracks.firstIndex(where: { $0.id == track }) {
+            pw.tabs.selectedSegment = 1; pw.tabChanged(nil)
+            pw.table.selectRowIndexes([0], byExtendingSelection: false)
+            let param = pw.rows.first?.id ?? 0
+            pw.automateSelected()
+            check(w.timeline.showAutomation && w.timeline.pluginLanes[track] != nil, "Automate in Arrangement shows the parameter's lane")
+            let tl = w.timeline, y = tl.laneY(i)
+            let lane = tl.pluginLanes[track]!
+            let at = tl.convert(CGPoint(x: tl.xPos(forFrame: s.beatToFrame(s.barToBeat(1))), y: tl.autoY(0.8, laneY: y, lane: lane)), to: nil)
+            tl.mouseDown(with: mouse(.leftMouseDown, at)); tl.mouseUp(with: mouse(.leftMouseUp, at))
+            let pts = s.pluginAutomation(track, slot, param)
+            check(pts.count == 2 && abs((pts.last?.value ?? 0) - 0.8) < 0.05 && s.engine.undoName == "Plug-in Automation",
+                  "clicking the lane adds a plug-in automation point (\(pts.map { ($0.frame, $0.value) }))")
+            check(perform("Undo") && s.pluginAutomation(track, slot, param).isEmpty, "undo removes it")
+            _ = perform("Show Automation"); tl.pluginLanes = [:]
+            pw.window?.close()
+        } else { check(false, "AUDelay's window opens") }
         guard let delay = panel.devices.first else { return }
         let names = delay.knobs.map { $0.label.stringValue }
         check(delay.knobs.count == 4 && names.contains("Dry/Wet Mix"), "controller shows AUDelay's parameters (\(names))")
