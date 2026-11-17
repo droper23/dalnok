@@ -295,12 +295,12 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
         inputButton.contentTintColor = Theme.textDim
         inputButton.target = self
         inputButton.action = #selector(inputTapped)
-        gain.onBegin = { [weak self] in self?.session.engine.beginGroup("Volume") }
+        gain.onBegin = { [weak self] in guard let self else { return }; self.session.engine.beginGroup("Volume"); AutomationWriter.shared?.touch(self.trackId, 0, true) }
         gain.onGainChange = { [weak self] db in guard let self else { return }; self.session.setGain(self.trackId, db: db) }
-        gain.onEnd = { [weak self] in self?.session.engine.endGroup() }
-        pan.onBegin = { [weak self] in self?.session.engine.beginGroup("Pan") }
+        gain.onEnd = { [weak self] in guard let self else { return }; self.session.engine.endGroup(); AutomationWriter.shared?.touch(self.trackId, 0, false) }
+        pan.onBegin = { [weak self] in guard let self else { return }; self.session.engine.beginGroup("Pan"); AutomationWriter.shared?.touch(self.trackId, 1, true) }
         pan.onPanChange = { [weak self] p in guard let self else { return }; self.session.setPan(self.trackId, p) }
-        pan.onEnd = { [weak self] in self?.session.engine.endGroup() }
+        pan.onEnd = { [weak self] in guard let self else { return }; self.session.engine.endGroup(); AutomationWriter.shared?.touch(self.trackId, 1, false) }
         for label in [gainLabel, panLabel] {
             label.font = Theme.mono(10, .medium)
             label.textColor = Theme.textDim

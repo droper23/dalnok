@@ -206,9 +206,10 @@ void autoGains(const RenderTrack &t, const TrackRuntime &rt, bool mono, bool any
                float &gl, float &gr) DALNOK_NONBLOCKING {
     const bool silent = rt.muted.load(std::memory_order_relaxed) || (anySolo && !rt.solo.load(std::memory_order_relaxed));
     float g = rt.gain.load(std::memory_order_relaxed);
-    if (!t.volumeAuto.empty()) { const float v = autoAt(t.volumeAuto, frame); g = v * v * v * v; }
+    if (!t.volumeAuto.empty() && !rt.holdVolume.load(std::memory_order_relaxed)) { const float v = autoAt(t.volumeAuto, frame); g = v * v * v * v; }
     if (silent) g = 0;
-    const float p = std::clamp(t.panAuto.empty() ? rt.pan.load(std::memory_order_relaxed) : autoAt(t.panAuto, frame), -1.0f, 1.0f);
+    const bool panHeld = rt.holdPan.load(std::memory_order_relaxed);
+    const float p = std::clamp(t.panAuto.empty() || panHeld ? rt.pan.load(std::memory_order_relaxed) : autoAt(t.panAuto, frame), -1.0f, 1.0f);
     if (mono) {
         constexpr float kHalfPi = 1.57079632679f, kSqrt2 = 1.41421356237f;
         const float theta = (p + 1.0f) * 0.5f * kHalfPi;

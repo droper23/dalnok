@@ -13,7 +13,7 @@ final class SelfTest {
     let workdir: URL
     private var failures = 0
     /// Preferences the test changes; all are restored at the end so a run never alters the owner's settings.
-    private static let restoredKeys = ["copyAudioOnSave", "comingFrom", "onboardingDone", "recordingInputUID", "rulerBarsAndBeats", "metronome", "showDevicePanel", "countIn", "showMixer", "showLauncher"]
+    private static let restoredKeys = ["copyAudioOnSave", "comingFrom", "onboardingDone", "recordingInputUID", "rulerBarsAndBeats", "metronome", "showDevicePanel", "countIn", "showMixer", "showLauncher", "automationMode"]
     private let previousPreferences: [String: Any]
     private var w: MainWindowController { app.main }
     private var s: Session { app.session }
@@ -1156,6 +1156,26 @@ final class SelfTest {
             }
             w.headers.select(src)
             check(perform("Clear Automation") && s.track(src)?.volumeAuto.isEmpty == true, "Track > Clear Automation removes the lane")
+        }
+        // Touch writing: hold the header gain knob while playing; the moves become the lane.
+        if let row = w.headers.row(src) {
+            check(perform("Automation: Touch") && AutomationWriter.mode == .touch, "Track > Automation: Touch")
+            s.engine.seek(0); await wait(0.1)
+            s.engine.play(); await wait(0.25)
+            let g = row.gain
+            let a = g.convert(CGPoint(x: g.bounds.midX, y: g.bounds.midY), to: nil)
+            g.mouseDown(with: mouse(.leftMouseDown, a))
+            for k in 1...8 {
+                g.mouseDragged(with: mouse(.leftMouseDragged, CGPoint(x: a.x, y: a.y - CGFloat(k) * 6)))
+                await wait(0.06)
+            }
+            g.mouseUp(with: mouse(.leftMouseUp, CGPoint(x: a.x, y: a.y - 48)))
+            await wait(0.05)
+            s.engine.pause()
+            let lane = s.track(src)?.volumeAuto ?? []
+            check(lane.count >= 3 && s.engine.undoName == "Write Automation", "Touch writes the knob's moves into the volume lane (\(lane.count) points)")
+            check(perform("Undo") && (s.track(src)?.volumeAuto.isEmpty ?? false), "undo removes the written automation")
+            _ = perform("Automation: Read")
         }
         check(perform("Automate Pan") && TimelineView.automationTarget == 1, "View > Automate Pan switches the shown parameter")
         TimelineView.automationTarget = 0

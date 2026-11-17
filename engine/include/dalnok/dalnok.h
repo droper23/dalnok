@@ -342,6 +342,9 @@ DalnokStatus dalnok_track_set_automation(DalnokEngine *engine, DalnokTrackId tra
                                          const DalnokAutoPoint *points, int32_t count);
 int32_t dalnok_track_automation(const DalnokEngine *engine, DalnokTrackId track, int32_t target,
                                 DalnokAutoPoint *out, int32_t capacity); /* total count */
+/* Automation writing: while held, a track's fader (target 0) or pan (1) value plays instead of its lane
+ * (the app records the moves and replaces the lane's points afterwards). Live only. */
+void dalnok_track_automation_hold(DalnokEngine *engine, DalnokTrackId track, int32_t target, bool hold);
 /* Plug-in parameter automation: values are normalized 0-1; applied once per processing block (up to 512
  * frames) just before the plug-in runs. Removing the plug-in removes its lanes. */
 DalnokStatus dalnok_plugin_set_automation(DalnokEngine *engine, DalnokTrackId track, int32_t slot, uint32_t param,

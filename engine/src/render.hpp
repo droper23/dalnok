@@ -36,7 +36,9 @@ struct TrackRuntime {
     // to take effect at `launchAt`; the audio thread switches exactly there and keeps the playing state.
     std::atomic<int64_t> launchAt{-1};
     std::atomic<int32_t> launchTarget{-1};
-    std::atomic<int32_t> playingSlot{-1}; // what the audio thread plays (-1 = the arrangement); readable by the UI
+    std::atomic<int32_t> playingSlot{-1};
+    // Automation write (Touch/Latch): while held, the fader/knob value plays instead of the lane.
+    std::atomic<bool> holdVolume{false}, holdPan{false}; // what the audio thread plays (-1 = the arrangement); readable by the UI
     std::atomic<int64_t> slotStart{0};    // timeline frame where the playing slot's first loop began (audio thread writes)
     int32_t slotLoops = 0;                // completed loops of the playing slot (audio thread)
 };

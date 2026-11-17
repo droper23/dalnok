@@ -16,6 +16,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     lazy var settings = SettingsController()
     lazy var pianoRoll = PianoRollController(session: session)
     lazy var compEditor = CompEditorController(session: session)
+    lazy var automationWriter: AutomationWriter = {
+        let w = AutomationWriter(session: session)
+        w.onWritten = { [weak self] m in self?.flash(m) }
+        return w
+    }()
     lazy var pluginManager = PluginManagerController()
     var pluginWindows: [Int32: PluginWindowController] = [:]
 
@@ -465,6 +470,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         session.refresh() // picks up changes from any source (e.g. scripts)
         _ = session.pollJobs() // installs finished time-stretch renders
         followTempoSegment()
+        automationWriter.tick()
         if !launcher.isHidden && (e.isPlaying || tickCount % 15 == 0) && tickCount % 4 == 0 { launcher.tick() }
         let playing = e.isPlaying, recording = e.isRecording
         if playing != wasPlaying || recording != wasRecording {
@@ -1156,6 +1162,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     }
     @objc func automateVolume(_ sender: Any?) { timeline.pluginLanes = [:]; TimelineView.automationTarget = 0; if !timeline.showAutomation { toggleAutomation(nil) }; timeline.needsDisplay = true }
     @objc func automatePan(_ sender: Any?) { timeline.pluginLanes = [:]; TimelineView.automationTarget = 1; if !timeline.showAutomation { toggleAutomation(nil) }; timeline.needsDisplay = true }
+    /// Track ▸ Automation Mode: Read plays lanes; Touch and Latch write volume and pan moves while playing.
+    @objc func automationRead(_ sender: Any?) { setAutomationMode(.read) }
+    @objc func automationTouch(_ sender: Any?) { setAutomationMode(.touch) }
+    @objc func automationLatch(_ sender: Any?) { setAutomationMode(.latch) }
+    private func setAutomationMode(_ m: AutomationWriter.Mode) {
+        automationWriter.commitAll()
+        AutomationWriter.mode = m
+        flash(m == .read ? "Automation: Read" : m == .touch ? "Automation: Touch: moves write while you hold a control during playback"
+                                                         : "Automation: Latch: moves write until the transport stops")
+    }
+
     /// Track ▸ Clear Automation: removes the shown parameter's automation from the selected track.
     @objc func clearAutomation(_ sender: Any?) {
         guard let id = selectedTrack else { return }
@@ -1381,6 +1398,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         case #selector(automatePan(_:)):
             item.state = timeline.showAutomation && TimelineView.automationTarget == 1 ? .on : .off
             return true
+        case #selector(automationRead(_:)): item.state = AutomationWriter.mode == .read ? .on : .off; return true
+        case #selector(automationTouch(_:)): item.state = AutomationWriter.mode == .touch ? .on : .off; return true
+        case #selector(automationLatch(_:)): item.state = AutomationWriter.mode == .latch ? .on : .off; return true
         case #selector(clearAutomation(_:)):
             return selectedTrack.flatMap { session.track($0) }.map { !$0.automation(TimelineView.automationTarget).isEmpty } ?? false
         case #selector(toggleLauncherRecording(_:)):

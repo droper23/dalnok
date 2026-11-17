@@ -392,6 +392,11 @@ DalnokStatus dalnok_master_set_gain_db(DalnokEngine *e, float db) {
     return e ? statusFor(e->impl.setMasterGainDb(db, err), err) : DALNOK_ERR_INVALID_ARG;
 }
 float dalnok_master_gain_db(const DalnokEngine *e) { return e ? e->impl.model().masterGainDb : 0; }
+void dalnok_track_automation_hold(DalnokEngine *e, DalnokTrackId t, int32_t target, bool hold) {
+    const auto *tr = e ? e->impl.model().track(t) : nullptr;
+    if (!tr) return;
+    (target == 1 ? tr->runtime->holdPan : tr->runtime->holdVolume).store(hold, std::memory_order_relaxed);
+}
 int32_t dalnok_launcher_scenes(const DalnokEngine *e) { return e ? e->impl.model().scenes : 0; }
 DalnokClipId dalnok_launcher_copy_clip(DalnokEngine *e, DalnokClipId clip, int32_t slot) {
     std::string err;

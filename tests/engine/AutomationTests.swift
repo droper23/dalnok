@@ -96,3 +96,22 @@ private func setAuto(_ e: OpaquePointer, _ t: DalnokTrackId, _ target: DalnokAut
         #expect(dalnok_track_automation(e, t, 1, nil, 0) == 2)
     }
 }
+
+@Suite struct AutomationHold {
+    @Test func holdingPlaysTheFaderInsteadOfTheLane() {
+        let e = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(e) }
+        let m = makeMedia([[Float](repeating: 0.5, count: 96_000)]); defer { dalnok_media_release(m) }
+        let t = dalnok_track_add(e, "A")
+        DalnokEngine.dalnok_clip_add(e, t, dalnok_pool_add(e, m, ""), 0, 0, 0)
+        let pts = [DalnokAutoPoint(frame: 0, value: -200)] // the lane says silence
+        #expect(dalnok_track_set_automation(e, t, 0, pts, 1) == DALNOK_OK)
+        dalnok_transport_play(e)
+        #expect(pump(e, 2_000).0[1_500] == 0)
+        dalnok_track_automation_hold(e, t, 0, true)
+        let (l, _) = pump(e, 2_000)
+        #expect(abs(l[1_500] - 0.5) < 1e-3, "held: the fader (0 dB) plays")
+        dalnok_track_automation_hold(e, t, 0, false)
+        let (l2, _) = pump(e, 2_000)
+        #expect(abs(l2[1_500]) < 1e-6, "released: the lane again")
+    }
+}

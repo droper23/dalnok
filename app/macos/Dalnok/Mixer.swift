@@ -139,12 +139,12 @@ final class ChannelStrip: NSView {
         sendsStack.spacing = 2
         fader.vertical = true
         fader.colorCap = true
-        fader.onBegin = { [weak self] in self?.session.engine.beginGroup("Volume") }
+        fader.onBegin = { [weak self] in guard let self else { return }; self.session.engine.beginGroup("Volume"); AutomationWriter.shared?.touch(self.trackId, 0, true) }
         fader.onChange = { [weak self] db in guard let self else { return }; self.session.setGain(self.trackId, db: db); self.dbLabel.stringValue = FaderControl.format(db) }
-        fader.onEnd = { [weak self] in self?.session.engine.endGroup() }
-        pan.onBegin = { [weak self] in self?.session.engine.beginGroup("Pan") }
+        fader.onEnd = { [weak self] in guard let self else { return }; self.session.engine.endGroup(); AutomationWriter.shared?.touch(self.trackId, 0, false) }
+        pan.onBegin = { [weak self] in guard let self else { return }; self.session.engine.beginGroup("Pan"); AutomationWriter.shared?.touch(self.trackId, 1, true) }
         pan.onPanChange = { [weak self] p in guard let self else { return }; self.session.setPan(self.trackId, p) }
-        pan.onEnd = { [weak self] in self?.session.engine.endGroup() }
+        pan.onEnd = { [weak self] in guard let self else { return }; self.session.engine.endGroup(); AutomationWriter.shared?.touch(self.trackId, 1, false) }
         mute.onToggle = { [weak self] on in guard let self else { return }; self.session.setMute(self.trackId, on) }
         solo.onToggle = { [weak self] on in guard let self else { return }; self.session.setSolo(self.trackId, on) }
         arm.onToggle = { [weak self] on in guard let self else { return }; self.session.setArmed(self.trackId, on) }

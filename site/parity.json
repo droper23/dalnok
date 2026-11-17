@@ -1036,8 +1036,8 @@
           "verified"
         ],
         [
-          "Write modes (read, touch, latch)",
-          "todo"
+          "Write modes (read, touch, latch) for volume and pan from header knobs and mixer faders",
+          "verified"
         ],
         [
           "Smooth playback on a fixed 32-frame ramp grid; live playback equals the export",
