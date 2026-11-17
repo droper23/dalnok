@@ -40,6 +40,8 @@ final class TimelineView: NSView {
     private let selectionGlow = CAShapeLayer()
     private var animateSelection = false
     var onClipSelected: ((ClipView) -> Void)?
+    /// A clip body dragged left out of the timeline (window point): the launcher puts a copy in a slot.
+    var onDropToLauncher: ((DalnokClipId, CGPoint) -> Bool)?
     private var hoveredClip: DalnokClipId? { didSet { if hoveredClip != oldValue { needsDisplay = true } } }
 
     private let playheadLayer = CALayer()
@@ -1058,9 +1060,15 @@ final class TimelineView: NSView {
             else if let id = selectedClip, let clip = session.clip(id) { onClipSelected?(clip) }
             return
         }
-        guard drag != nil else { return }
+        guard let d = drag else { return }
         session.engine.endGroup()
         drag = nil
+        if d.zone == .body, convert(event.locationInWindow, from: nil).x < 0, let drop = onDropToLauncher {
+            if d.changed { session.undo() } // the clip stays where it was; the slot gets a copy
+            _ = drop(d.clip.id, event.locationInWindow)
+            needsDisplay = true
+            return
+        }
         mouseMoved(with: event)
         onSelectionChange?()
     }

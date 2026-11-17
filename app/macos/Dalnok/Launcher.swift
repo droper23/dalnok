@@ -37,6 +37,15 @@ final class LauncherView: NSView {
     }
     func sceneRect(_ slot: Int) -> CGRect { CGRect(x: 4 + CGFloat(slot) * Self.slotWidth, y: 4, width: Self.slotWidth - 6, height: Theme.rulerHeight - 8) }
 
+    /// The (track row, slot) under a window point, if any.
+    func slot(atWindow point: CGPoint) -> (row: Int, slot: Int)? {
+        let p = convert(point, from: nil)
+        guard bounds.contains(p), p.y >= Theme.rulerHeight else { return nil }
+        let row = Int(((p.y + scrollY - Theme.rulerHeight) / Theme.trackHeight).rounded(.down))
+        let k = Int(((p.x - 4) / Self.slotWidth).rounded(.down))
+        return row >= 0 && row < session.tracks.count && k >= 0 && k < Int(session.scenes) ? (row, k) : nil
+    }
+
     /// Called from the window's tick: progress and queued blinking.
     func tick() {
         blink.toggle()

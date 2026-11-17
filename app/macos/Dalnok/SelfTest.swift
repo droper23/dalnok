@@ -1094,6 +1094,19 @@ final class SelfTest {
             check(s.track(track.id)?.clips.count == before + 1 && e.undoName == "Place Copy", "dragging a slot onto the timeline places a copy (\(before)→\(s.track(track.id)?.clips.count ?? -1), \(e.undoName), \(w.lastFlashText))")
             _ = perform("Undo"); _ = perform("Undo")
         }
+        // Drag an arrangement clip left into an empty slot on its own row: the slot gets a copy, the clip stays.
+        if let from = w.timeline.windowPoint(ofClip: clip.id), let start = s.clip(clip.id)?.start {
+            let r = lv.slotRect(row: row, slot: 1)
+            let to = lv.convert(CGPoint(x: r.midX, y: r.midY), to: nil)
+            let before = s.track(track.id)?.clips.count ?? 0
+            w.timeline.mouseDown(with: mouse(.leftMouseDown, from))
+            w.timeline.mouseDragged(with: mouse(.leftMouseDragged, to))
+            w.timeline.mouseUp(with: mouse(.leftMouseUp, to))
+            check(s.slotClip(track.id, 1) != nil && s.track(track.id)?.clips.count == before && s.clip(clip.id)?.start == start,
+                  "dragging a timeline clip into a slot copies it there and leaves the clip in place (\(w.lastFlashText))")
+            _ = perform("Undo")
+            check(s.slotClip(track.id, 1) == nil, "undo removes the dragged slot copy")
+        }
         check(perform("Record Launcher to Arrangement") && dalnok_launcher_recording(e.handle), "Transport > Record Launcher to Arrangement")
         _ = perform("Record Launcher to Arrangement")
         check(perform("Undo") && s.slotClip(track.id, 0) == nil, "undo removes the slot copy")

@@ -212,6 +212,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             if id != 0 { self.timeline.selectedClip = id; self.flash("Placed a copy on \(track.name)") } else { self.flash("That clip can't go on \(track.name)") }
             return true
         }
+        timeline.onDropToLauncher = { [weak self] clip, windowPoint in
+            guard let self, !self.launcher.isHidden, let (row, k) = self.launcher.slot(atWindow: windowPoint) else { return false }
+            let track = self.session.tracks[row]
+            guard self.session.clip(clip)?.track == track.id else { self.flash("Drop it on a slot in its own track's row"); return true }
+            if self.session.slotClip(track.id, Int32(k)) != nil { self.flash("Slot \(k + 1) is taken: remove its clip first"); return true }
+            if self.session.copyToSlot(clip, Int32(k)) { self.flash("Copied to slot \(k + 1): click it to launch") } else { self.flash("That clip can't go in a slot") }
+            self.launcher.needsDisplay = true
+            return true
+        }
         mixerHeight = mixer.heightAnchor.constraint(equalToConstant: Self.showMixer ? MixerPanel.height : 0)
         mixerHeight.isActive = true
         mixer.isHidden = !Self.showMixer
