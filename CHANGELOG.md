@@ -1,6 +1,9 @@
 # Changelog
 
 ## [Unreleased]
+### Changed (2026-11-16, knob rings)
+- When playback stops, every gain knob's level ring falls to empty over the same 0.8 s, each at its own rate, so they all go dark together (self-test checks the timing to 0.01 dB).
+
 ### Changed (2026-11-16, Warm Analog overhaul)
 - Warm Analog is now a hardware-style interface with the same layout: LED-lens buttons, knurled metal knobs with LED-dot rings, segmented LED meters, a vacuum-fluorescent position display, grained faceplates with screws, masking-tape scribble strips for track names, and plug-ins as rack units joined by patch cables that plug in when added. See `06 - Design/Warm Analog.md`.
 ### Added (2026-11-16, Audio Units, device panel)

@@ -343,7 +343,33 @@ class RotaryKnob: NSControl {
         setRevealed(interacting || meterVisible, animated: !meterVisible)
     }
 
-    func updateMeter(_ db: Float) { meterDb = db; updateReveal() }
+    /// When playback stops, every ring falls to empty over the same time (each at its own rate) instead
+    /// of at the meter's fixed dB/s, so all rings go dark together.
+    static let meterReleaseSeconds: Double = 0.8
+    private(set) var release: (startDb: Float, start: CFTimeInterval)?
+    private var lastInputDb: Float = -120
+
+    func transportChanged(playing: Bool) {
+        release = !playing && showsMeter && meterDb > -60 ? (meterDb, CACurrentMediaTime()) : nil
+    }
+
+    func updateMeter(_ db: Float, now: CFTimeInterval = CACurrentMediaTime()) {
+        defer { lastInputDb = db }
+        if let r = release {
+            let t = (now - r.start) / Self.meterReleaseSeconds
+            // After the fall, a rising input is new signal (e.g. monitoring); a still-falling one is the old tail.
+            if t >= 1 && (db <= -60 || db > lastInputDb) {
+                release = nil
+            } else {
+                let curve = r.startDb - (r.startDb + 60) * Float(min(1, t))
+                meterDb = t >= 1 ? -120 : curve
+                updateReveal()
+                return
+            }
+        }
+        meterDb = db
+        updateReveal()
+    }
 
     // MARK: Animated external changes (undo, redo, scripts, automation)
 

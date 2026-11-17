@@ -343,7 +343,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             transport.setPlaying(playing)
             transport.setRecording(recording)
             timeline.setTransportState(playing: playing, recording: recording)
-            for row in headers.rows { row.setRecording(recording) }
+            for row in headers.rows { row.setRecording(recording); if playing != wasPlaying { row.gain.transportChanged(playing: playing) } }
             wasPlaying = playing
             wasRecording = recording
         }

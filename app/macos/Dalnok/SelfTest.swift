@@ -158,6 +158,24 @@ final class SelfTest {
         e.pause()
         check(master.0 > -60, String(format: "master meter live (%.1f dBFS)", master.0))
         check(trackLevels.contains { $0 > -60 }, "track meters live (\(trackLevels.map { Int($0) }) dBFS)")
+        await wait(0.05) // one UI tick sees the stop
+        let litAtStop = w.headers.rows.filter { $0.gain.release != nil }.count
+        await wait(RotaryKnob.meterReleaseSeconds + 0.1)
+        let after = w.headers.rows.map(\.gain.meterDb)
+        check(litAtStop > 0 && after.allSatisfy { $0 <= -60 },
+              "gain rings all go dark together after stop (\(litAtStop) lit at stop; \(after.map { Int($0) }) dB after \(RotaryKnob.meterReleaseSeconds) s)")
+        do { // Exact timing: a loud and a quiet ring are each halfway at half the release time, and both empty at the end.
+            let loud = RotaryKnob(frame: NSRect(x: 0, y: 0, width: 30, height: 30)), quiet = RotaryKnob(frame: NSRect(x: 0, y: 0, width: 30, height: 30))
+            for (k, db) in [(loud, Float(-3)), (quiet, Float(-45))] { k.showsMeter = true; k.updateMeter(db); k.transportChanged(playing: false) }
+            let t0 = loud.release?.start ?? -1, q0 = quiet.release?.start ?? -1
+            check(t0 >= 0 && q0 >= 0, "ring release starts on stop")
+            let half = RotaryKnob.meterReleaseSeconds / 2
+            loud.updateMeter(-15, now: t0 + half); quiet.updateMeter(-57, now: q0 + half) // the meter's own 24 dB/s fall is ignored
+            let mid = (loud.meterDb, quiet.meterDb)
+            loud.updateMeter(-22, now: t0 + 2 * half); quiet.updateMeter(-120, now: q0 + 2 * half)
+            check(abs(mid.0 - -31.5) < 0.01 && abs(mid.1 - -52.5) < 0.01 && loud.meterDb <= -60 && quiet.meterDb <= -60,
+                  String(format: "rings fall at their own rates and empty together (half-way %.2f / %.2f dB, end %.0f / %.0f)", mid.0, mid.1, loud.meterDb, quiet.meterDb))
+        }
 
         // Output device menu: pick a specific device, then back to System Default.
         if let sub = menuItem("Output Device", submenuOnly: true)?.submenu {
