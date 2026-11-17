@@ -146,3 +146,33 @@ private func close(_ a: (Float, Float), _ b: Float) -> Bool { abs(a.0 - b) < 1e-
         #expect(runCommand(e, "master.setGain", #"{"db":-200}"#).0 == DALNOK_OK && render(e, 0, 2_000).allSatisfy { $0 == 0 })
     }
 }
+
+@Suite struct TrackStacks {
+    @Test func aStackSumsItsMembersAndUngroups() {
+        let e = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(e) }
+        let m = makeMedia([[Float](repeating: 0.25, count: 4_800)]); defer { dalnok_media_release(m) }
+        let id = dalnok_pool_add(e, m, "")
+        let a = dalnok_track_add(e, "A"), x = dalnok_track_add(e, "X"), b = dalnok_track_add(e, "B")
+        for t in [a, x, b] { DalnokEngine.dalnok_clip_add(e, t, id, 0, 0, 0) }
+        let stack = dalnok_track_stack_create(e, [a, b], 2, "Drums")
+        #expect(stack != 0 && undoName(e) == "Create Track Stack")
+        // Order: Stack, A, B (the members follow the stack), then X.
+        #expect((0..<4).map { dalnok_track_at(e, $0) } == [stack, a, b, x])
+        var info = DalnokTrackInfo()
+        _ = dalnok_track_info(e, a, &info)
+        #expect(info.stack == stack && dalnok_track_output(e, a) == stack)
+        _ = dalnok_track_info(e, stack, &info)
+        #expect(info.is_stack && info.kind == Int32(DALNOK_TRACK_BUS.rawValue))
+        #expect(abs(render(e, 0, 2_000)[1_000] - 0.75) < 1e-4)
+        #expect(dalnok_track_set_gain_db(e, stack, -6.020_6) == DALNOK_OK)
+        #expect(abs(render(e, 0, 2_000)[1_000] - 0.5) < 1e-4, "the stack's fader scales A and B only")
+        #expect(dalnok_track_stack_set_collapsed(e, stack, true) == DALNOK_OK)
+        _ = dalnok_track_info(e, stack, &info)
+        #expect(info.collapsed)
+        #expect(dalnok_track_stack_create(e, [a], 1, nil) == 0, "no nesting yet")
+        #expect(dalnok_track_stack_ungroup(e, stack) == DALNOK_OK)
+        #expect(dalnok_track_output(e, a) == 0 && abs(render(e, 0, 2_000)[1_000] - 0.75) < 1e-4)
+        #expect(dalnok_undo(e) && dalnok_track_output(e, a) == stack)
+        #expect(runCommand(e, "track.ungroupStack", "{\"track\":\(stack)}").0 == DALNOK_OK)
+    }
+}

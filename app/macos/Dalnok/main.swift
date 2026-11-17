@@ -221,6 +221,8 @@ func buildMenu(target: MainWindowController) -> NSMenu {
         item("New Track", #selector(W.newTrack(_:)), "n", [.command, .option]),
         item("New Instrument Track", #selector(W.newInstrumentTrack(_:)), "n", [.command, .option, .shift]),
         item("New Bus", #selector(W.newBus(_:)), "n", [.command, .option, .control]),
+        item("Create Track Stack", #selector(W.createTrackStack(_:)), "d", [.command, .shift]),
+        item("Ungroup Track Stack", #selector(W.ungroupTrackStack(_:)), ""),
         item("Clear Automation", #selector(W.clearAutomation(_:)), ""),
         item("Rename Track", #selector(W.renameTrack(_:)), ""),
         item("Delete Track", #selector(W.deleteTrack(_:)), "\u{8}", [.command]),

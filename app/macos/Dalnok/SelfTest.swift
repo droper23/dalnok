@@ -1100,6 +1100,30 @@ final class SelfTest {
         // Removing the bus clears the send.
         w.headers.select(bus)
         check(perform("Delete Track") && s.track(src)?.sends.isEmpty == true, "deleting the bus removes sends to it")
+        // Track stacks: Track ▸ Create Track Stack, close and open with the disclosure arrow, ungroup.
+        let plain = s.tracks.filter { !$0.isBus && !$0.isStack && $0.stack == 0 }
+        if plain.count >= 2 {
+            w.headers.select(plain[0].id)
+            w.timeline.selectedClip = plain[1].clips.first?.id
+            let before = s.tracks.count
+            check(perform("Create Track Stack"), "Track > Create Track Stack")
+            let stack = s.tracks.first { $0.isStack }
+            check(stack != nil && s.tracks.count == before + 1 && s.members(of: stack!.id).count == (plain[1].clips.isEmpty ? 1 : 2),
+                  "the stack holds the selected track and the selected clip's track")
+            if let stack, let row = w.headers.row(stack.id) {
+                check(s.track(plain[0].id)?.output == stack.id, "members are routed into the stack")
+                let arrow = row.subviewsDeep.compactMap { $0 as? NSButton }.first { $0.action == NSSelectorFromString("toggleStack") }
+                arrow?.performClick(nil)
+                check(s.track(stack.id)?.collapsed == true && !s.tracks.contains { $0.id == plain[0].id } && w.headers.row(plain[0].id) == nil,
+                      "the disclosure arrow closes the stack and hides its tracks")
+                w.headers.row(stack.id)?.subviewsDeep.compactMap { $0 as? NSButton }.first { $0.action == NSSelectorFromString("toggleStack") }?.performClick(nil)
+                check(s.tracks.contains { $0.id == plain[0].id }, "opening the stack shows its tracks again")
+                w.headers.select(stack.id)
+                check(perform("Ungroup Track Stack") && !s.tracks.contains { $0.isStack } && s.track(plain[0].id)?.output == 0, "Track > Ungroup Track Stack")
+                check(perform("Undo") && s.tracks.contains { $0.isStack }, "undo brings the stack back")
+                _ = perform("Undo") // remove the stack again
+            } else { check(false, "the stack has a header") }
+        }
         if !wasShown { _ = perform("Mixer", exact: true) }
     }
 

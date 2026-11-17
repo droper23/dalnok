@@ -392,6 +392,19 @@ DalnokStatus dalnok_master_set_gain_db(DalnokEngine *e, float db) {
     return e ? statusFor(e->impl.setMasterGainDb(db, err), err) : DALNOK_ERR_INVALID_ARG;
 }
 float dalnok_master_gain_db(const DalnokEngine *e) { return e ? e->impl.model().masterGainDb : 0; }
+DalnokTrackId dalnok_track_stack_create(DalnokEngine *e, const DalnokTrackId *members, int32_t count, const char *name) {
+    if (!e || !members || count < 1) return 0;
+    std::string err;
+    return e->impl.makeStack(std::vector<DalnokTrackId>(members, members + count), name ? name : "", err);
+}
+DalnokStatus dalnok_track_stack_set_collapsed(DalnokEngine *e, DalnokTrackId stack, bool collapsed) {
+    std::string err;
+    return e ? statusFor(e->impl.setStackCollapsed(stack, collapsed, err), err) : DALNOK_ERR_INVALID_ARG;
+}
+DalnokStatus dalnok_track_stack_ungroup(DalnokEngine *e, DalnokTrackId stack) {
+    std::string err;
+    return e ? statusFor(e->impl.ungroupStack(stack, err), err) : DALNOK_ERR_INVALID_ARG;
+}
 int32_t dalnok_take_folder_create(DalnokEngine *e, DalnokTrackId t, const DalnokClipId *takes, int32_t count) {
     if (!e || !takes || count < 1) return 0;
     std::string err;
@@ -659,6 +672,9 @@ DalnokStatus dalnok_track_info(const DalnokEngine *e, DalnokTrackId id, DalnokTr
     out->kind = t->kind;
     out->armed = t->armed;
     out->input_channel = t->inputChannel;
+    out->stack = t->stack;
+    out->is_stack = t->isStack;
+    out->collapsed = t->collapsed;
     for (const auto &c : e->impl.model().clips) out->clip_count += c.track == id;
     return DALNOK_OK;
 }

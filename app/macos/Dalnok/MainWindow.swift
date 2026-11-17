@@ -198,6 +198,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         transport.meterPopup.target = self
         transport.meterPopup.action = #selector(meterChosen(_:))
         headers.onInputMenu = { [weak self] row in self?.showInputMenu(for: row) }
+        headers.onToggleStack = { [weak self] id, closed in self?.session.setStackCollapsed(id, closed) }
         transport.onRewind = { [weak self] in self?.goToStart() }
         transport.onImport = { [weak self] in self?.importAudio() }
         transport.onPalette = { [weak self] in self?.showCommandPalette(nil) }
@@ -1106,6 +1107,21 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         session.setAutomation(id, TimelineView.automationTarget, [])
     }
 
+    /// Track ▸ Create Track Stack (⇧⌘D): a summing stack of the selected track and the tracks of selected clips.
+    @objc func createTrackStack(_ sender: Any?) {
+        var members = Set(timeline.selectedClips.compactMap { session.clip($0)?.track })
+        if let t = selectedTrack { members.insert(t) }
+        let ordered = session.tracks.map(\.id).filter { members.contains($0) }
+        guard !ordered.isEmpty else { return flash("Select a track (or clips on several tracks) to stack") }
+        let id = session.makeStack(ordered)
+        if id != 0 { headers.select(id); flash("Track stack of \(ordered.count) track\(ordered.count == 1 ? "" : "s"): its fader and plug-ins act on all of them") }
+        else { flash("Those tracks can't be stacked (stacks don't nest yet)") }
+    }
+    @objc func ungroupTrackStack(_ sender: Any?) {
+        guard let id = selectedTrack, session.track(id)?.isStack == true else { return }
+        session.ungroupStack(id)
+    }
+
     /// Track ▸ New Bus: an aux track; route outputs or sends to it from the mixer or the track menu.
     @objc func newBus(_ sender: Any?) {
         let id = session.addBus()
@@ -1297,6 +1313,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         case #selector(toggleMetronome(_:)):
             item.state = Self.metronomeOn ? .on : .off
             return true
+        case #selector(createTrackStack(_:)):
+            return selectedTrack != nil || !timeline.selectedClips.isEmpty
+        case #selector(ungroupTrackStack(_:)):
+            return selectedTrack.flatMap { session.track($0) }?.isStack == true
         case #selector(toggleAutomation(_:)):
             item.state = timeline.showAutomation ? .on : .off
             return true

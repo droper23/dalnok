@@ -28,7 +28,7 @@
 extern "C" {
 #endif
 
-#define DALNOK_API_VERSION 17
+#define DALNOK_API_VERSION 18
 
 typedef enum {
     DALNOK_OK = 0,
@@ -269,6 +269,9 @@ typedef struct {
     int32_t kind;          /* DalnokTrackKind */
     bool armed;            /* record-enabled */
     int32_t input_channel; /* zero-based audio input (audio tracks) */
+    DalnokTrackId stack;   /* the summing stack this track belongs to (0 = none) */
+    bool is_stack;         /* a bus that is a summing stack */
+    bool collapsed;        /* stack shown closed */
 } DalnokTrackInfo;
 typedef enum { DALNOK_TRACK_AUDIO = 0, DALNOK_TRACK_INSTRUMENT = 1, DALNOK_TRACK_BUS = 2 } DalnokTrackKind;
 
@@ -300,6 +303,13 @@ int32_t dalnok_take_folders(const DalnokEngine *engine, DalnokTrackId track, int
 int32_t dalnok_take_folder_takes(const DalnokEngine *engine, int32_t folder, DalnokClipId *out, int32_t capacity);
 int32_t dalnok_take_folder_comp(const DalnokEngine *engine, int32_t folder, DalnokCompSegment *out, int32_t capacity);
 DalnokStatus dalnok_take_folder_set_comp(DalnokEngine *engine, int32_t folder, const DalnokCompSegment *segments, int32_t count);
+
+/* ---- Track stacks -----------------------------------------------------
+ * A summing stack is a bus placed above its members (which move to follow it and are routed into it).
+ * Closing a stack is a display state, saved with the project. Stacks don't nest yet. */
+DalnokTrackId dalnok_track_stack_create(DalnokEngine *engine, const DalnokTrackId *members, int32_t count, const char *name);
+DalnokStatus dalnok_track_stack_set_collapsed(DalnokEngine *engine, DalnokTrackId stack, bool collapsed);
+DalnokStatus dalnok_track_stack_ungroup(DalnokEngine *engine, DalnokTrackId stack);
 
 /* ---- Automation -------------------------------------------------------
  * Breakpoints in timeline frames, linear between points and held before the first and after the last.

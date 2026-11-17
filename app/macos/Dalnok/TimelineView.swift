@@ -396,6 +396,7 @@ final class TimelineView: NSView {
         for (i, track) in session.tracks.enumerated() {
             let y = laneY(i)
             guard y + Theme.trackHeight > Theme.rulerHeight, y < bounds.height else { continue }
+            if track.isStack { drawStackSummary(ctx, track, laneY: y) }
             for clip in track.clips { drawClip(ctx, clip, track: track, laneY: y, scale: scale) }
             if let rec = recording, rec.tracks.contains(track.id) { drawRecording(ctx, rec, laneY: y) }
         }
@@ -548,6 +549,21 @@ final class TimelineView: NSView {
             if let label = mark.1 { (label as NSString).draw(at: CGPoint(x: x + 4, y: 2), withAttributes: attrs) }
         }
         drawTempoMarkers(ctx)
+    }
+
+    /// A stack's lane: its members' clips as slim bars in their colours (a map of the stack), one row each.
+    private func drawStackSummary(_ ctx: CGContext, _ stack: TrackView, laneY y: CGFloat) {
+        let members = session.members(of: stack.id)
+        guard !members.isEmpty else { return }
+        let top = y + 8, h = Theme.trackHeight - 16, row = max(2, min(8, h / CGFloat(members.count)))
+        for (k, m) in members.enumerated() {
+            ctx.setFillColor(m.color.withAlphaComponent(stack.collapsed ? 0.75 : 0.4).cgColor)
+            for c in m.clips {
+                let x0 = xPos(forFrame: Double(c.start)), x1 = xPos(forFrame: Double(c.end))
+                guard x1 > 0, x0 < bounds.width else { continue }
+                ctx.fill(CGRect(x: x0, y: top + CGFloat(k) * row, width: max(1, x1 - x0), height: max(1.5, row - 1.5)))
+            }
+        }
     }
 
     /// The cycle region: a band in the ruler (bright when on) and, when on, a faint wash over the lanes.

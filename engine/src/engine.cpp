@@ -966,6 +966,66 @@ bool Engine::setComp(int32_t folder, std::vector<CompSegment> comp, std::string 
     });
 }
 
+DalnokTrackId Engine::makeStack(const std::vector<DalnokTrackId> &members, const std::string &name, std::string &err) {
+    const auto id = nextTrack_;
+    const bool ok = edit("Create Track Stack", true, [&](Model &m) {
+        if (members.empty()) return fail(err, "choose tracks for the stack");
+        std::vector<size_t> at;
+        for (auto t : members) {
+            auto it = std::find_if(m.tracks.begin(), m.tracks.end(), [t](const TrackState &x) { return x.id == t; });
+            if (it == m.tracks.end()) return fail(err, "no such track");
+            if (it->isStack || it->stack) return fail(err, "a track can be in one stack, and stacks don't nest yet");
+            at.push_back(static_cast<size_t>(it - m.tracks.begin()));
+        }
+        std::sort(at.begin(), at.end());
+        TrackState stack;
+        stack.id = id;
+        stack.kind = kTrackBus;
+        stack.isStack = true;
+        stack.name = name.empty() ? "Stack" : name;
+        stack.color = m.tracks[at.front()].color;
+        stack.output = m.tracks[at.front()].output; // the stack goes where its first member went
+        stack.runtime = std::make_shared<TrackRuntime>();
+        // Members (in their current order) follow the stack, which takes the first member's place.
+        std::vector<TrackState> moved;
+        for (size_t i : at) moved.push_back(m.tracks[i]);
+        for (auto it = at.rbegin(); it != at.rend(); ++it) m.tracks.erase(m.tracks.begin() + static_cast<long>(*it));
+        for (auto &t : moved) { t.output = id; t.stack = id; }
+        const auto insertAt = m.tracks.begin() + static_cast<long>(at.front());
+        moved.insert(moved.begin(), std::move(stack));
+        m.tracks.insert(insertAt, moved.begin(), moved.end());
+        if (m.track(id)->output && feedsBack(m, id, m.track(id)->output)) m.track(id)->output = 0;
+        return true;
+    });
+    if (!ok) return 0;
+    ++nextTrack_;
+    return id;
+}
+
+bool Engine::setStackCollapsed(DalnokTrackId stack, bool collapsed, std::string &err) {
+    return edit(collapsed ? "Close Stack" : "Open Stack", false, [&](Model &m) {
+        TrackState *t = m.track(stack);
+        if (!t || !t->isStack) return fail(err, "not a track stack");
+        t->collapsed = collapsed;
+        return true;
+    });
+}
+
+bool Engine::ungroupStack(DalnokTrackId stack, std::string &err) {
+    return edit("Ungroup Track Stack", true, [&](Model &m) {
+        TrackState *t = m.track(stack);
+        if (!t || !t->isStack) return fail(err, "not a track stack");
+        const auto out = t->output;
+        for (auto &x : m.tracks) {
+            if (x.stack == stack) { x.stack = 0; if (x.output == stack) x.output = out; }
+            std::erase_if(x.sends, [stack](const Send &s) { return s.bus == stack; });
+            if (x.output == stack) x.output = out;
+        }
+        std::erase_if(m.tracks, [stack](const TrackState &x) { return x.id == stack; });
+        return true;
+    });
+}
+
 bool Engine::removeSend(DalnokTrackId track, DalnokTrackId bus, std::string &err) {
     return edit("Remove Send", true, [&](Model &m) {
         TrackState *t = m.track(track);
@@ -983,6 +1043,7 @@ bool Engine::removeTrack(DalnokTrackId id, std::string &err) {
         std::erase_if(m.tracks, [id](const TrackState &t) { return t.id == id; });
         std::erase_if(m.folders, [id](const TakeFolder &f) { return f.track == id; });
         for (auto &t : m.tracks) { // whatever fed a deleted bus goes to the master instead
+            if (t.stack == id) t.stack = 0;
             if (t.output == id) t.output = 0;
             std::erase_if(t.sends, [id](const Send &s) { return s.bus == id; });
         }

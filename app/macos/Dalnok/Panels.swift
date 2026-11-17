@@ -243,6 +243,11 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
     private var color = Theme.gradientColor(step: 0)
     private var muted = false
     private let number = NSTextField(labelWithString: "")
+    /// Track stacks: a disclosure arrow on the stack (in place of the number); members are indented.
+    private let disclosure = NSButton(title: "", target: nil, action: nil)
+    private var numberLeading: NSLayoutConstraint!
+    private var isStackRow = false, stackCollapsed = false
+    var onToggleStack: ((DalnokTrackId, Bool) -> Void)?
     let nameLabel = NSTextField(labelWithString: "")
     private let mute = ToggleChip("M", on: Theme.muteOn, onText: .white, help: "Mute (⌃M)")
     private let solo = ToggleChip("S", on: Theme.soloOn, onText: Theme.hex(0x1A1400), help: "Solo (⌃S)")
@@ -305,12 +310,21 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
         meter.toolTip = "Post-fader level (click to reset the clip indicator)"
 
         if Analog.on { addSubview(scribble) } // first, so the name draws on top of it
-        for v in [number, nameLabel, arm, mute, solo, gain, pan, gainLabel, panLabel, meter, inputButton] as [NSView] {
+        disclosure.isBordered = false
+        disclosure.imagePosition = .imageOnly
+        disclosure.contentTintColor = Theme.textDim
+        disclosure.target = self
+        disclosure.action = #selector(toggleStack)
+        disclosure.isHidden = true
+        for v in [number, nameLabel, arm, mute, solo, gain, pan, gainLabel, panLabel, meter, inputButton, disclosure] as [NSView] {
             v.translatesAutoresizingMaskIntoConstraints = false
             addSubview(v)
         }
+        numberLeading = number.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8)
         NSLayoutConstraint.activate([
-            number.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            numberLeading,
+            disclosure.centerXAnchor.constraint(equalTo: number.centerXAnchor), disclosure.centerYAnchor.constraint(equalTo: nameLabel.centerYAnchor),
+            disclosure.widthAnchor.constraint(equalToConstant: 18), disclosure.heightAnchor.constraint(equalToConstant: 18),
             number.widthAnchor.constraint(equalToConstant: 18),
             number.firstBaselineAnchor.constraint(equalTo: nameLabel.firstBaselineAnchor),
             nameLabel.leadingAnchor.constraint(equalTo: number.trailingAnchor, constant: Analog.on ? 14 : 8),
@@ -356,6 +370,17 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
         color = t.color
         muted = t.muted
         number.stringValue = "\(index + 1)"
+        isStackRow = t.isStack
+        stackCollapsed = t.collapsed
+        number.isHidden = t.isStack
+        disclosure.isHidden = !t.isStack
+        if t.isStack {
+            disclosure.image = NSImage(systemSymbolName: t.collapsed ? "chevron.right" : "chevron.down", accessibilityDescription: nil)?
+                .withSymbolConfiguration(.init(pointSize: 11, weight: .bold))
+            disclosure.toolTip = t.collapsed ? "Open the stack (show its tracks)" : "Close the stack (hide its tracks)"
+            disclosure.setAccessibilityLabel(t.collapsed ? "Open stack \(t.name)" : "Close stack \(t.name)")
+        }
+        numberLeading.constant = t.stack != 0 ? 20 : 8 // members sit inside their stack
         if !nameLabel.isEditable { nameLabel.stringValue = t.name }
         if Analog.on {
             // Lit in the track's color; a muted channel's strip goes dark.
@@ -433,6 +458,7 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
     // MARK: Rename (double-click the name)
 
     @objc private func inputTapped() { onInputMenu?(self) }
+    @objc private func toggleStack() { onToggleStack?(trackId, !stackCollapsed) }
 
     func beginRename() {
         nameLabel.isEditable = true
@@ -494,6 +520,7 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
 /// Column of track headers; vertically synced with the timeline.
 @MainActor
 final class TrackHeaderColumn: NSView {
+    var onToggleStack: ((DalnokTrackId, Bool) -> Void)?
     let session: Session
     private(set) var rows: [TrackHeaderRow] = []
     private let rowClip = FlippedView()
@@ -589,7 +616,10 @@ final class TrackHeaderColumn: NSView {
             }
             hasSynced = true
             rows.forEach { if $0.superview == nil { rowClip.addSubview($0) } }
-            rows.forEach { $0.column = self; $0.isSelected = $0.trackId == selectedTrack; $0.onInputMenu = { [weak self] r in self?.onInputMenu?(r) } }
+            rows.forEach {
+                $0.column = self; $0.isSelected = $0.trackId == selectedTrack; $0.onInputMenu = { [weak self] r in self?.onInputMenu?(r) }
+                $0.onToggleStack = { [weak self] id, closed in self?.onToggleStack?(id, closed) }
+            }
             if let sel = selectedTrack, !tracks.contains(where: { $0.id == sel }) { selectedTrack = nil }
             needsLayout = true
         }

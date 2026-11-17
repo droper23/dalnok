@@ -153,6 +153,20 @@ const CommandDef kCommands[] = {
              }
          return status(e.setAutomation(t, target == "volume" ? kAutoVolume : kAutoPan, std::move(points), err), err);
      }},
+    {"track.makeStack", "Create Track Stack", "{tracks: [track, ...], name?}", [](ARGS) {
+         std::vector<DalnokTrackId> members;
+         if (const json::Value *l = a.get("tracks"); l && l->isArray())
+             for (const auto &v : l->array) if (v.isNumber()) members.push_back(static_cast<DalnokTrackId>(v.number));
+         const auto id = e.makeStack(members, a.getString("name", ""), err);
+         if (!id) return DALNOK_ERR_INVALID_ARG;
+         r.set("track", id);
+         return DALNOK_OK;
+     }},
+    {"track.ungroupStack", "Ungroup Track Stack", "{track}", [](ARGS) {
+         DalnokTrackId t;
+         if (!needInt(a, "track", t, err)) return DALNOK_ERR_INVALID_ARG;
+         return status(e.ungroupStack(t, err), err);
+     }},
     {"master.setGain", "Master Volume", "{db}", [](ARGS) {
          double db;
          if (!needNumber(a, "db", db, err)) return DALNOK_ERR_INVALID_ARG;

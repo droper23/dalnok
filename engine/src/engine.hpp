@@ -57,6 +57,9 @@ struct TrackState {
     std::vector<AutoPoint> volumeAuto, panAuto; // empty = not automated (the fader and knob apply)
     int32_t kind = kTrackAudio;
     DalnokTrackId output = 0;  // 0 = master; otherwise a bus track
+    DalnokTrackId stack = 0;   // member of this summing stack (a bus track), 0 = none
+    bool isStack = false;      // a bus track that is a summing stack (its members follow it in display order)
+    bool collapsed = false;    // stack shown closed (members hidden in the arrangement)
     std::vector<Send> sends;   // to bus tracks
     bool armed = false;       // record-enabled
     int32_t inputChannel = 0; // zero-based input of the recording device (audio tracks)
@@ -255,6 +258,10 @@ public:
     bool setTrackOutput(DalnokTrackId track, DalnokTrackId bus, std::string &err); // bus 0 = master
     bool setSend(DalnokTrackId track, DalnokTrackId bus, float db, bool pre, std::string &err); // adds or updates
     bool removeSend(DalnokTrackId track, DalnokTrackId bus, std::string &err);
+    // Summing stacks: a stack bus placed above its members, which are routed into it. One undo step each.
+    DalnokTrackId makeStack(const std::vector<DalnokTrackId> &members, const std::string &name, std::string &err);
+    bool setStackCollapsed(DalnokTrackId stack, bool collapsed, std::string &err);
+    bool ungroupStack(DalnokTrackId stack, std::string &err); // members go to the stack's output; the stack goes away
     // Take folders. setComp replaces the comp (one undo step) and rebuilds the pieces that play.
     bool setComp(int32_t folder, std::vector<CompSegment> comp, std::string &err);
     int32_t makeTakeFolder(Model &m, DalnokTrackId track, std::vector<DalnokClipId> takes, std::string &err); // inside an edit

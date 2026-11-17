@@ -47,6 +47,9 @@ struct TrackView {
     var plugins: [Plugin] = []
     var isBus = false
     var output: DalnokTrackId = 0 // 0 = master
+    var stack: DalnokTrackId = 0  // summing stack this track is in
+    var isStack = false
+    var collapsed = false
     var sends: [DalnokSend] = []
     var volumeAuto: [DalnokAutoPoint] = [], panAuto: [DalnokAutoPoint] = []
     func automation(_ target: Int32) -> [DalnokAutoPoint] { target == 1 ? panAuto : volumeAuto }
@@ -119,17 +122,30 @@ final class Session {
                                  isInstrument: ti.kind == Int32(DALNOK_TRACK_INSTRUMENT.rawValue), armed: ti.armed,
                                  inputChannel: ti.input_channel, plugins: plugins,
                                  isBus: ti.kind == Int32(DALNOK_TRACK_BUS.rawValue), output: dalnok_track_output(h, tid),
+                                 stack: ti.stack, isStack: ti.is_stack, collapsed: ti.collapsed,
                                  sends: Array(sends.prefix(min(sendCount, 16))),
                                  volumeAuto: automationPoints(tid, 0), panAuto: automationPoints(tid, 1)))
         }
-        tracks = out
+        allTracks = out
+        // Members of a closed stack are hidden from the arrangement, headers and mixer.
+        let closed = Set(out.filter { $0.isStack && $0.collapsed }.map(\.id))
+        tracks = out.filter { !closed.contains($0.stack) }
         onChange?()
         return true
     }
 
-    func track(_ id: DalnokTrackId) -> TrackView? { tracks.first { $0.id == id } }
+    func track(_ id: DalnokTrackId) -> TrackView? { allTracks.first { $0.id == id } }
+    /// Every track, including members of closed stacks (`tracks` is what's shown).
+    private(set) var allTracks: [TrackView] = []
+    func members(of stack: DalnokTrackId) -> [TrackView] { allTracks.filter { $0.stack == stack } }
+    @discardableResult
+    func makeStack(_ members: [DalnokTrackId], name: String = "") -> DalnokTrackId {
+        let id = dalnok_track_stack_create(h, members, Int32(members.count), name); refresh(); return id
+    }
+    func setStackCollapsed(_ stack: DalnokTrackId, _ collapsed: Bool) { dalnok_track_stack_set_collapsed(h, stack, collapsed); refresh() }
+    func ungroupStack(_ stack: DalnokTrackId) { dalnok_track_stack_ungroup(h, stack); refresh() }
     func clip(_ id: DalnokClipId) -> ClipView? {
-        for t in tracks { if let c = t.clips.first(where: { $0.id == id }) { return c } }
+        for t in allTracks { if let c = t.clips.first(where: { $0.id == id }) { return c } }
         return nil
     }
 
@@ -147,7 +163,7 @@ final class Session {
         let ok = dalnok_track_set_send(h, t, bus, db, pre) == DALNOK_OK; refresh(); return ok
     }
     func removeSend(_ t: DalnokTrackId, _ bus: DalnokTrackId) { dalnok_track_remove_send(h, t, bus); refresh() }
-    var buses: [TrackView] { tracks.filter(\.isBus) }
+    var buses: [TrackView] { allTracks.filter(\.isBus) }
     // Take folders
     func takeFolders(_ track: DalnokTrackId) -> [Int32] {
         let n = dalnok_take_folders(h, track, nil, 0)

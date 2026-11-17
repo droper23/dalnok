@@ -183,6 +183,9 @@ json::Value Engine::describe() const {
             tv.set(key, std::move(list));
         }
         if (t.output) tv.set("output", t.output);
+        if (t.stack) tv.set("stack", t.stack);
+        if (t.isStack) tv.set("isStack", true);
+        if (t.collapsed) tv.set("collapsed", true);
         if (!t.sends.empty()) {
             json::Value sends = json::Value::makeArray();
             for (const auto &snd : t.sends) {
@@ -336,7 +339,7 @@ bool Engine::saveProject(const std::string &path, std::string &err, bool copyMed
     doc.set("format", "dalnok-project");
     // The oldest version that holds everything in this project, so older builds open what they can play.
     bool routing = false;
-    for (const auto &t : model_.tracks) routing = routing || t.kind == kTrackBus || t.output || !t.sends.empty();
+    for (const auto &t : model_.tracks) routing = routing || t.kind == kTrackBus || t.output || !t.sends.empty() || t.stack;
     if (!model_.folders.empty()) {
         json::Value folders = json::Value::makeArray();
         for (const auto &f : model_.folders) {
@@ -463,6 +466,9 @@ std::unique_ptr<Engine::PreparedProject> Engine::prepareDocument(const json::Val
             const std::string kind = tv.getString("kind", "audio");
             t.kind = kind == "instrument" ? kTrackInstrument : kind == "bus" ? kTrackBus : kTrackAudio;
             t.output = static_cast<DalnokTrackId>(std::max<int64_t>(0, toInt(tv, "output")));
+            t.stack = static_cast<DalnokTrackId>(std::max<int64_t>(0, toInt(tv, "stack")));
+            t.isStack = tv.getBool("isStack", false) && t.kind == kTrackBus;
+            t.collapsed = t.isStack && tv.getBool("collapsed", false);
             for (const auto &[key, pts] : {std::pair<const char *, std::vector<AutoPoint> *>{"volumeAutomation", &t.volumeAuto},
                                            {"panAutomation", &t.panAuto}}) {
                 const json::Value *list = tv.get(key);
@@ -631,6 +637,8 @@ std::unique_ptr<Engine::PreparedProject> Engine::prepareDocument(const json::Val
             model.folders.push_back(std::move(f));
         }
     }
+    for (auto &t : model.tracks) // a stack membership must name a stack; otherwise it's dropped
+        if (t.stack && !(model.track(t.stack) && model.track(t.stack)->isStack)) t.stack = 0;
     // Routing must name existing buses and never loop; a damaged file is an error, not a silent re-route.
     for (const auto &t : model.tracks) {
         if (t.kind == kTrackBus && std::any_of(model.clips.begin(), model.clips.end(), [&](const ClipState &c) { return c.track == t.id; })) {
