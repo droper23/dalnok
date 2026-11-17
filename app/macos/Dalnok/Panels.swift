@@ -352,6 +352,7 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
 
     /// Applies model values (after edits, undo, or scripts) without fighting an active drag.
     func update(_ t: TrackView, index: Int) {
+        if color != t.color || muted != t.muted { needsDisplay = true }
         color = t.color
         muted = t.muted
         number.stringValue = "\(index + 1)"
@@ -419,6 +420,10 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
     override func draw(_ dirtyRect: NSRect) {
         (Analog.on ? Analog.faceplate : Theme.panelRaised).setFill()
         bounds.fill()
+        if !Analog.on { // a wash of the track colour helps find a track in a long list
+            (muted ? TrackTint(base: color).muted : color).withAlphaComponent(0.08).setFill()
+            bounds.fill()
+        }
         Theme.separator.setFill()
         NSRect(x: 0, y: bounds.height - 1, width: bounds.width, height: 1).fill()
         Theme.hairline.setFill()

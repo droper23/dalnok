@@ -173,3 +173,78 @@ enum Analog {
         ctx.fillEllipse(in: CGRect(x: c.x - r * 0.45, y: c.y - r * 0.45, width: r * 0.9, height: r * 0.9))
     }
 }
+
+/// Warm Analog master: a needle meter on a backlit paper dial. VU-style ballistics (about 300 ms to settle,
+/// a little overshoot) driven by the master level, 0 VU at -18 dBFS; a peak lamp holds for a second after the
+/// signal comes within 1 dB of full scale. The LED ladder beside it stays the exact peak meter.
+@MainActor
+final class NeedleMeter: NSView {
+    private var angle: Double = -1, velocity: Double = 0 // -1 = left stop, 1 = right stop
+    private var last = CACurrentMediaTime(), peakUntil: Double = 0
+    override var isFlipped: Bool { true }
+
+    /// Feed linear peak levels (left, right) about 60 times a second.
+    func push(_ l: Float, _ r: Float) {
+        let now = CACurrentMediaTime(), dt = min(0.05, now - last)
+        last = now
+        let level = max(l, r)
+        if level > 0.891 { peakUntil = now + 1 } // within 1 dB of full scale
+        let vu = level > 0 ? 20 * log10(Double(level)) + 18 : -60 // 0 VU = -18 dBFS
+        let target = Self.position(forVU: vu)
+        if Motion.reduced { angle += (target - angle) * min(1, dt / 0.3 * 3) }
+        else { // mass-spring: settles in about 300 ms with a slight overshoot, like a real movement
+            let k = 140.0, damping = 17.0
+            velocity += (k * (target - angle) - damping * velocity) * dt
+            angle += velocity * dt
+        }
+        angle = min(1.08, max(-1.05, angle))
+        needsDisplay = true
+    }
+    /// Scale position (-1 … 1) for a VU value: -20 at the left stop, 0 at about two thirds, +3 at the right stop.
+    static func position(forVU vu: Double) -> Double {
+        let v = min(3.5, max(-21, vu))
+        let p = pow(10, v / 20), lo = pow(10, -20.0 / 20), hi = pow(10, 3.0 / 20)
+        return (p - lo) / (hi - lo) * 2 - 1
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+        let r = bounds.insetBy(dx: 2, dy: 2)
+        // Bezel and backlit paper.
+        ctx.setFillColor(NSColor(white: 0.05, alpha: 1).cgColor)
+        ctx.addPath(CGPath(roundedRect: r, cornerWidth: 4, cornerHeight: 4, transform: nil)); ctx.fillPath()
+        let face = r.insetBy(dx: 3, dy: 3)
+        let paper = NSGradient(starting: NSColor(calibratedRed: 0.98, green: 0.90, blue: 0.70, alpha: 1),
+                               ending: NSColor(calibratedRed: 0.86, green: 0.70, blue: 0.45, alpha: 1))
+        NSGraphicsContext.saveGraphicsState()
+        NSBezierPath(roundedRect: face, xRadius: 2, yRadius: 2).addClip()
+        paper?.draw(in: face, angle: 90)
+        // Scale arc around a pivot below the face.
+        let pivot = CGPoint(x: face.midX, y: face.maxY + face.height * 0.55)
+        let radius = face.height * 1.25, spread = 0.72 // radians each side
+        func point(_ pos: Double, _ rad: CGFloat) -> CGPoint {
+            let a = Double.pi / 2 + pos * spread
+            return CGPoint(x: pivot.x - CGFloat(cos(a)) * rad, y: pivot.y - CGFloat(sin(a)) * rad)
+        }
+        let ink = NSColor(white: 0.12, alpha: 1), red = NSColor(calibratedRed: 0.75, green: 0.12, blue: 0.08, alpha: 1)
+        for vu in [-20.0, -10, -7, -5, -3, -2, -1, 0, 1, 2, 3] {
+            let pos = Self.position(forVU: vu)
+            ctx.setStrokeColor((vu > 0 ? red : ink).cgColor)
+            ctx.setLineWidth(vu == 0 ? 1.4 : 1)
+            ctx.move(to: point(pos, radius)); ctx.addLine(to: point(pos, radius - (vu == 0 || vu == -20 || vu == 3 ? 7 : 4))); ctx.strokePath()
+        }
+        ctx.setStrokeColor(red.cgColor); ctx.setLineWidth(2.5)
+        ctx.addArc(center: pivot, radius: radius + 1.5, startAngle: CGFloat(Double.pi * 1.5 + Self.position(forVU: 0) * spread),
+                   endAngle: CGFloat(Double.pi * 1.5 + spread), clockwise: false)
+        ctx.strokePath()
+        let legend: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 7, weight: .bold), .foregroundColor: ink]
+        ("VU" as NSString).draw(at: CGPoint(x: face.midX - 5, y: face.maxY - 13), withAttributes: legend)
+        // Needle.
+        ctx.setStrokeColor(NSColor(white: 0.08, alpha: 1).cgColor); ctx.setLineWidth(1.2)
+        ctx.move(to: point(angle, radius + 2)); ctx.addLine(to: point(angle, radius * 0.45)); ctx.strokePath()
+        NSGraphicsContext.restoreGraphicsState()
+        // Peak lamp.
+        let lit = CACurrentMediaTime() < peakUntil
+        Analog.led(ctx, in: CGRect(x: face.maxX - 9, y: face.minY + 3, width: 6, height: 6), color: Theme.recordOn, lit: lit)
+    }
+}

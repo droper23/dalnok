@@ -58,6 +58,8 @@ final class FaderControl: NSControl {
     private var dragStart: (x: CGFloat, pos: Double)?
     /// Vertical (mixer strip): unity near the top, drag up to raise.
     var vertical = false { didSet { invalidateIntrinsicContentSize(); needsDisplay = true } }
+    /// The cap takes the channel colour (mixer strips).
+    var colorCap = false { didSet { needsDisplay = true } }
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -89,7 +91,7 @@ final class FaderControl: NSControl {
     }
 
     private var grooveRect: CGRect {
-        vertical ? CGRect(x: bounds.midX - 2, y: 8, width: 4, height: bounds.height - 16)
+        vertical ? CGRect(x: bounds.maxX - 14, y: 8, width: 4, height: bounds.height - 16)
                  : CGRect(x: 6, y: bounds.midY - 2, width: bounds.width - 12, height: 4)
     }
     private func x(for pos: Double) -> CGFloat { grooveRect.minX + CGFloat(pos) * grooveRect.width }
@@ -135,21 +137,31 @@ final class FaderControl: NSControl {
         ctx.setFillColor(tint.withAlphaComponent(0.55).cgColor)
         ctx.addPath(CGPath(roundedRect: CGRect(x: g.minX, y: capY, width: g.width, height: max(0, g.maxY - capY)),
                            cornerWidth: 2, cornerHeight: 2, transform: nil)); ctx.fillPath()
-        // Scale ticks: +6, 0 (longer), -6, -12, -24, -48.
-        ctx.setFillColor(Theme.textFaint.cgColor)
+        // Printed scale: ticks with dB legends (0 longer and brighter), so the fader is calibrated, not decorative.
+        let legend: [NSAttributedString.Key: Any] = [.font: Theme.mono(7.5, .medium), .foregroundColor: Theme.textFaint]
         for d: Float in [6, 0, -6, -12, -24, -48] {
             let ty = y(for: Self.position(for: d)).rounded()
             let w: CGFloat = d == 0 ? 6 : 3
+            ctx.setFillColor((d == 0 ? Theme.textDim : Theme.textFaint).cgColor)
             ctx.fill(CGRect(x: g.minX - 3 - w, y: ty, width: w, height: 1))
             ctx.fill(CGRect(x: g.maxX + 3, y: ty, width: w, height: 1))
+            if bounds.width >= 36 {
+                let text = (d > 0 ? "+\(Int(d))" : "\(Int(d))") as NSString
+                let size = text.size(withAttributes: legend)
+                text.draw(at: CGPoint(x: g.minX - 10 - size.width, y: ty - size.height / 2), withAttributes: legend)
+            }
         }
-        let cap = CGRect(x: bounds.midX - 9, y: capY - 6, width: 18, height: 12)
-        ctx.setShadow(offset: CGSize(width: 0, height: 1), blur: 2, color: NSColor.black.withAlphaComponent(0.6).cgColor)
-        ctx.setFillColor((tracking ? Theme.hex(0xF2F3F5) : Theme.hex(0xC9CCD2)).cgColor)
+        // Cap: in the channel's colour with a centre groove line (find a channel's fader by colour).
+        let cap = CGRect(x: g.midX - 9, y: capY - 7, width: 18, height: 14)
+        ctx.setShadow(offset: CGSize(width: 0, height: 1.5), blur: 2.5, color: NSColor.black.withAlphaComponent(0.7).cgColor)
+        let capColor = colorCap ? (tracking ? tint.blended(withFraction: 0.25, of: .white) ?? tint : tint) : (tracking ? Theme.hex(0xF2F3F5) : Theme.hex(0xC9CCD2))
+        ctx.setFillColor(capColor.cgColor)
         ctx.addPath(CGPath(roundedRect: cap, cornerWidth: 2, cornerHeight: 2, transform: nil)); ctx.fillPath()
         ctx.setShadow(offset: .zero, blur: 0, color: nil)
-        ctx.setFillColor(Theme.hex(0x2A2D33).cgColor)
-        ctx.fill(CGRect(x: cap.minX + 3, y: capY - 0.5, width: cap.width - 6, height: 1))
+        ctx.setFillColor(NSColor.white.withAlphaComponent(0.35).cgColor) // top bevel
+        ctx.fill(CGRect(x: cap.minX + 1, y: cap.minY + 1, width: cap.width - 2, height: 1))
+        ctx.setFillColor(NSColor.black.withAlphaComponent(0.75).cgColor)
+        ctx.fill(CGRect(x: cap.minX + 2, y: capY - 0.75, width: cap.width - 4, height: 1.5))
         if window?.firstResponder === self {
             ctx.setStrokeColor(NSColor.keyboardFocusIndicatorColor.cgColor); ctx.setLineWidth(1)
             ctx.stroke(cap.insetBy(dx: -1.5, dy: -1.5))
@@ -618,8 +630,9 @@ final class ToggleChip: NSControl {
     var pulsing = false {
         didSet {
             guard pulsing != oldValue else { return }
-            let target = Analog.on ? led : glow // analog: the LED itself blinks softly
-            if pulsing { Motion.pulse(target, from: Analog.on ? 1 : 0.9, to: Analog.on ? 0.35 : 0.2, period: 1.1) } else { Motion.stopPulse(target) }
+            // Analog: the whole lamp breathes slowly; Graphite: the halo pulses.
+            if pulsing { Motion.pulse(Analog.on ? face : glow, from: Analog.on ? 1 : 0.9, to: Analog.on ? 0.55 : 0.2, period: Analog.on ? 1.6 : 1.1) }
+            else { Motion.stopPulse(Analog.on ? face : glow) }
             applyState(animated: true)
         }
     }
@@ -627,28 +640,6 @@ final class ToggleChip: NSControl {
     private var pressed = false { didSet { applyState(animated: true) } }
     private var hovering = false { didSet { applyState(animated: true) } }
     private let face = CALayer(), glow = CALayer(), label = CATextLayer()
-    /// Warm Analog: the state lives in an LED lens on a dark cap (the letter stays engraved on the cap).
-    private let led = CALayer()
-    private static var ledImages: [String: (on: CGImage, off: CGImage)] = [:]
-    private static func ledImages(for color: NSColor) -> (on: CGImage, off: CGImage) {
-        let key = color.description
-        if let cached = ledImages[key] { return cached }
-        func render(_ lit: Bool) -> CGImage {
-            let size = 16
-            let ctx = CGContext(data: nil, width: size * 2, height: size * 2, bitsPerComponent: 8, bytesPerRow: 0,
-                                space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
-            ctx.scaleBy(x: 2, y: 2)
-            NSGraphicsContext.saveGraphicsState()
-            NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: false)
-            Analog.led(ctx, in: CGRect(x: 4, y: 4.5, width: 7.5, height: 7.5), color: color, lit: lit)
-            NSGraphicsContext.restoreGraphicsState()
-            return ctx.makeImage()!
-        }
-        let images = (render(true), render(false))
-        ledImages[key] = images
-        return images
-    }
-
     init(_ letter: String, on: NSColor, onText: NSColor, help: String) {
         self.letter = letter
         self.onColor = on
@@ -677,16 +668,18 @@ final class ToggleChip: NSControl {
         layer?.addSublayer(face)
         face.addSublayer(label)
         if Analog.on {
-            face.addSublayer(led)
-            glow.isHidden = true
-            label.alignmentMode = .right
+            // A lit-cap lamp button: the whole cap glows in its colour (the state reads from across the room).
+            glow.cornerRadius = 4
+            glow.shadowRadius = 7
+            label.font = Theme.ui(10.5, .heavy)
+            label.fontSize = 10.5
         }
         layer?.masksToBounds = false
         addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self))
         applyState(animated: false)
     }
     required init?(coder: NSCoder) { fatalError() }
-    override var intrinsicContentSize: NSSize { NSSize(width: Analog.on ? 28 : 22, height: 18) }
+    override var intrinsicContentSize: NSSize { NSSize(width: Analog.on ? 24 : 22, height: 18) }
     override var isFlipped: Bool { true }
     override var wantsUpdateLayer: Bool { true }
 
@@ -697,33 +690,34 @@ final class ToggleChip: NSControl {
         face.bounds = bounds
         face.position = CGPoint(x: bounds.midX, y: bounds.midY)
         glow.frame = bounds
-        label.frame = Analog.on ? CGRect(x: 0, y: (bounds.height - 13) / 2, width: bounds.width - 5, height: 13)
-                                : CGRect(x: 0, y: (bounds.height - 13) / 2, width: bounds.width, height: 13)
-        led.frame = CGRect(x: -1, y: (bounds.height - 16) / 2, width: 16, height: 16)
+        label.frame = CGRect(x: 0, y: (bounds.height - 13) / 2, width: bounds.width, height: 13)
         label.contentsScale = window?.backingScaleFactor ?? 2
         CATransaction.commit()
     }
 
     private func applyState(animated: Bool) {
         if Analog.on {
-            let images = Self.ledImages(for: onColor)
             let body = { [self] in
-                // Dark machined cap; the LED carries the state, so the cap never changes color.
-                face.backgroundColor = (pressed ? NSColor(white: 0.10, alpha: 1) : hovering ? NSColor(white: 0.20, alpha: 1) : NSColor(white: 0.15, alpha: 1)).cgColor
-                face.borderColor = NSColor(white: 0, alpha: 0.8).cgColor
+                // Lamp lens: unlit it's a dark tinted lens (you can still tell which colour it lights),
+                // lit it's the colour itself with a hot halo and dark engraved lettering.
+                let unlit = onColor.blended(withFraction: 0.82, of: NSColor(white: 0.08, alpha: 1)) ?? onColor
+                face.backgroundColor = (isOn ? onColor : (hovering ? unlit.blended(withFraction: 0.12, of: .white) ?? unlit : unlit)).cgColor
+                face.borderColor = (isOn ? onColor.blended(withFraction: 0.35, of: .white) ?? onColor : NSColor(white: 0, alpha: 0.85)).cgColor
                 face.shadowColor = NSColor.black.cgColor
-                face.shadowOpacity = pressed ? 0.1 : 0.6
+                face.shadowOpacity = pressed ? 0.1 : 0.55
                 face.shadowRadius = 1
                 face.shadowOffset = CGSize(width: 0, height: pressed ? -0.5 : -1.5)
-                label.foregroundColor = (isOn ? Theme.text : Theme.textDim).cgColor
-                led.contents = isOn ? images.on : images.off
+                glow.shadowOpacity = isOn ? 0.85 : 0
+                label.foregroundColor = (isOn ? onText : onColor.withAlphaComponent(0.55)).cgColor
                 face.transform = pressed ? CATransform3DMakeTranslation(0, 1, 0) : CATransform3DIdentity
             }
-            if animated { Motion.layers(Motion.quick, body) } else { CATransaction.begin(); CATransaction.setDisableActions(true); body(); CATransaction.commit() }
+            // Lamp physics: a filament snaps on and glows down slowly when switched off.
+            if animated { Motion.layers(isOn ? 0.05 : 0.22, body) } else { CATransaction.begin(); CATransaction.setDisableActions(true); body(); CATransaction.commit() }
             return
         }
         let body = { [self] in
-            face.backgroundColor = (isOn ? onColor : (pressed ? Theme.controlHi : (hovering ? Theme.knobHover : Theme.control))).cgColor
+            // Off: just an outline (quiet), so a lit chip stands out across a long track list.
+            face.backgroundColor = (isOn ? onColor : (pressed ? Theme.controlHi : (hovering ? Theme.knobHover : NSColor.clear))).cgColor
             face.borderColor = (isOn ? NSColor.clear : Theme.hairline).cgColor
             label.foregroundColor = (isOn ? onText : (hovering ? Theme.text : Theme.textDim)).cgColor
             glow.shadowOpacity = isOn ? (pulsing ? 0.9 : 0.45) : 0

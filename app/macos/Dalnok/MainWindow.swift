@@ -460,7 +460,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             row.meter.push(l, r)
             row.gain.updateMeter(max(row.meter.levelDb.0, row.meter.levelDb.1))
         }
-        if !mixer.isHidden { mixer.pushMeters { levels[$0] ?? (0, 0) }; mixer.master.meter.push(ml0, mr0) }
+        if !mixer.isHidden { mixer.pushMeters { levels[$0] ?? (0, 0) }; mixer.master.meter.push(ml0, mr0); if Analog.on { mixer.master.needle.push(ml0, mr0) } }
         // Automated tracks: knobs and faders show the automated value at the playhead.
         for t in session.tracks where !t.volumeAuto.isEmpty || !t.panAuto.isEmpty {
             let v = session.automationValue(t, 0, at: e.position), p = session.automationValue(t, 1, at: e.position)

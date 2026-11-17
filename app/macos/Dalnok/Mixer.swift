@@ -138,6 +138,7 @@ final class ChannelStrip: NSView {
         sendsStack.alignment = .centerX
         sendsStack.spacing = 2
         fader.vertical = true
+        fader.colorCap = true
         fader.onBegin = { [weak self] in self?.session.engine.beginGroup("Volume") }
         fader.onChange = { [weak self] db in guard let self else { return }; self.session.setGain(self.trackId, db: db); self.dbLabel.stringValue = FaderControl.format(db) }
         fader.onEnd = { [weak self] in self?.session.engine.endGroup() }
@@ -185,8 +186,8 @@ final class ChannelStrip: NSView {
             faderRow.topAnchor.constraint(equalTo: pan.bottomAnchor, constant: 6),
             faderRow.centerXAnchor.constraint(equalTo: centerXAnchor),
             faderRow.bottomAnchor.constraint(equalTo: dbLabel.topAnchor, constant: -2),
-            fader.widthAnchor.constraint(equalToConstant: 30),
-            meter.widthAnchor.constraint(equalToConstant: 8),
+            fader.widthAnchor.constraint(equalToConstant: 44),
+            meter.widthAnchor.constraint(equalToConstant: 10),
             dbLabel.bottomAnchor.constraint(equalTo: chips.topAnchor, constant: -4),
             dbLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
             chips.bottomAnchor.constraint(equalTo: scribble.topAnchor, constant: -6),
@@ -209,6 +210,12 @@ final class ChannelStrip: NSView {
         if isSelected { Theme.selectedHeader.setFill(); bounds.fill() }
         color.setFill(); NSRect(x: 0, y: 0, width: bounds.width, height: 3).fill() // track color along the top
         Theme.separator.setFill(); NSRect(x: bounds.width - 1, y: 0, width: 1, height: bounds.height).fill()
+        if Analog.on, let ctx = NSGraphicsContext.current?.cgContext { // a channel module: screwed to the frame
+            for p in [CGPoint(x: 7, y: 9), CGPoint(x: bounds.width - 8, y: 9), CGPoint(x: 7, y: bounds.height - 8), CGPoint(x: bounds.width - 8, y: bounds.height - 8)] {
+                Analog.screw(ctx, at: p, radius: 2.5)
+            }
+            NSColor.white.withAlphaComponent(0.05).setFill(); NSRect(x: 0, y: 3, width: 1, height: bounds.height - 3).fill() // left bevel
+        }
     }
     override var isFlipped: Bool { true }
     override func mouseDown(with event: NSEvent) { onSelect?(trackId) }
@@ -356,11 +363,13 @@ final class MasterStrip: NSView {
     let fader = FaderControl()
     let meter = MeterView()
     let dbLabel = NSTextField(labelWithString: "")
+    let needle = NeedleMeter() // Warm Analog only
     private let name = NSTextField(labelWithString: "Master")
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
         fader.vertical = true
+        fader.colorCap = true
         fader.tint = Theme.accent
         fader.setAccessibilityLabel("Master volume")
         meter.vertical = true
@@ -368,11 +377,15 @@ final class MasterStrip: NSView {
         name.font = Theme.ui(11.5, .semibold); name.textColor = Theme.accent; name.alignment = .center
         let row = NSStackView(views: [fader, meter])
         row.spacing = 4
-        for v in [row, dbLabel, name] as [NSView] { v.translatesAutoresizingMaskIntoConstraints = false; addSubview(v) }
+        for v in [needle, row, dbLabel, name] as [NSView] { v.translatesAutoresizingMaskIntoConstraints = false; addSubview(v) }
+        needle.isHidden = !Analog.on
+        needle.setAccessibilityLabel("Master needle meter")
         NSLayoutConstraint.activate([
-            widthAnchor.constraint(equalToConstant: 86),
-            row.topAnchor.constraint(equalTo: topAnchor, constant: 30), row.centerXAnchor.constraint(equalTo: centerXAnchor),
-            fader.widthAnchor.constraint(equalToConstant: 30), meter.widthAnchor.constraint(equalToConstant: 10),
+            widthAnchor.constraint(equalToConstant: Analog.on ? 112 : 86),
+            needle.topAnchor.constraint(equalTo: topAnchor, constant: 10), needle.centerXAnchor.constraint(equalTo: centerXAnchor),
+            needle.widthAnchor.constraint(equalToConstant: 100), needle.heightAnchor.constraint(equalToConstant: Analog.on ? 62 : 0),
+            row.topAnchor.constraint(equalTo: needle.bottomAnchor, constant: Analog.on ? 10 : 20), row.centerXAnchor.constraint(equalTo: centerXAnchor),
+            fader.widthAnchor.constraint(equalToConstant: 44), meter.widthAnchor.constraint(equalToConstant: 12),
             row.bottomAnchor.constraint(equalTo: dbLabel.topAnchor, constant: -2),
             dbLabel.centerXAnchor.constraint(equalTo: centerXAnchor), dbLabel.bottomAnchor.constraint(equalTo: name.topAnchor, constant: -10),
             name.centerXAnchor.constraint(equalTo: centerXAnchor), name.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
