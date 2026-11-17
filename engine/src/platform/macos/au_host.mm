@@ -68,6 +68,13 @@ public:
             }
             AURenderCallbackStruct cb{&AudioUnitProcessor::provideInput, this};
             AudioUnitSetProperty(unit_, kAudioUnitProperty_SetRenderCallback, kAudioUnitScope_Input, 0, &cb, sizeof cb);
+            // Sidechain: a second input bus (element 1) that takes stereo float gets the track's sidechain feed.
+            UInt32 buses = 0, size = sizeof buses;
+            if (AudioUnitGetProperty(unit_, kAudioUnitProperty_ElementCount, kAudioUnitScope_Input, 0, &buses, &size) == noErr && buses > 1 &&
+                AudioUnitSetProperty(unit_, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Input, 1, &fmt, sizeof fmt) == noErr) {
+                AURenderCallbackStruct sc{&AudioUnitProcessor::provideSidechain, this};
+                sidechain_ = AudioUnitSetProperty(unit_, kAudioUnitProperty_SetRenderCallback, kAudioUnitScope_Input, 1, &sc, sizeof sc) == noErr;
+            }
         }
         UInt32 frames = static_cast<UInt32>(maxBlock);
         AudioUnitSetProperty(unit_, kAudioUnitProperty_MaximumFramesPerSlice, kAudioUnitScope_Global, 0, &frames, sizeof frames);
@@ -102,6 +109,18 @@ public:
         for (UInt32 b = 0; b < data->mNumberBuffers && b < 2; ++b) {
             auto *dst = static_cast<float *>(data->mBuffers[b].mData);
             for (UInt32 i = 0; i < frames; ++i) dst[i] = src[b][i];
+        }
+        return noErr;
+    }
+
+    bool hasSidechain() const override { return sidechain_; }
+    static OSStatus provideSidechain(void *ref, AudioUnitRenderActionFlags *, const AudioTimeStamp *, UInt32, UInt32 frames,
+                                     AudioBufferList *data) DALNOK_NONBLOCKING {
+        auto *self = static_cast<AudioUnitProcessor *>(ref);
+        const float *src[2] = {self->scL_, self->scR_ ? self->scR_ : self->scL_};
+        for (UInt32 b = 0; b < data->mNumberBuffers && b < 2; ++b) {
+            auto *dst = static_cast<float *>(data->mBuffers[b].mData);
+            for (UInt32 i = 0; i < frames; ++i) dst[i] = src[b] ? src[b][i] : 0.0f;
         }
         return noErr;
     }
@@ -264,7 +283,7 @@ private:
     AudioTimeStamp time_{};
     std::vector<float> inL_, inR_;
     std::string name_, vendor_, classId_;
-    bool instrument_ = false;
+    bool instrument_ = false, sidechain_ = false;
     SpscQueue<ParamChange, 1024> changes_;
     std::mutex producer_;
     std::map<uint32_t, double> touched_;

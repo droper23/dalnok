@@ -977,6 +977,10 @@
           "verified"
         ],
         [
+          "Sidechain inputs for Audio Units (second input bus) and CLAP (second audio port)",
+          "implemented"
+        ],
+        [
           "Plugin delay compensation (tracks, buses and sends; live and exports)",
           "verified"
         ]
