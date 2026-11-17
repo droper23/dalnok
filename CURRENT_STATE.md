@@ -6,6 +6,7 @@ milestone: Phase 1 + Migration (M5) + Time stretch (M6) + UI pass 1 (M7) done; P
 # Current State
 
 ## Latest session
+- Scarlett recheck through AVFoundation: a short capture peaked at -29.2 dBFS on channels 1 and 2, with exactly identical samples; channels 3 and 4 were silent. The capture path may duplicate a channel, so independent inputs remain unverified.
 - Added an independent bounded SPSC audio capture buffer with all-or-nothing writes and dropped-frame accounting. Native tests pass normally and under ThreadSanitizer; it is not integrated into device capture or disk writing.
 - Open selects foreign projects and asks before import; Logic packages and stem folders are accepted. GUI self-test covers cancel and confirm.
 - Scarlett Solo 4th Gen detected over USB at 48 kHz (4 inputs, 2 outputs). An external 2.66 s capture recorded a very low signal; microphone operation and Dalnok capture are not yet established.
