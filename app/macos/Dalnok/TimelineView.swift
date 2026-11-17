@@ -677,6 +677,35 @@ final class TimelineView: NSView {
     }
 
     /// Position display text: "bar.beat.sixteenth.tick" (240 ticks per 16th) or minutes and seconds.
+    // MARK: Accessibility: every visible clip is a pressable element (press selects it).
+
+    override func isAccessibilityElement() -> Bool { true }
+    override func accessibilityRole() -> NSAccessibility.Role? { .group }
+    override func accessibilityLabel() -> String? { "Arrangement" }
+    override func accessibilityChildren() -> [Any]? {
+        var out: [Any] = []
+        for (i, t) in session.tracks.enumerated() {
+            let y = laneY(i)
+            guard y + Theme.trackHeight > Theme.rulerHeight, y < bounds.height else { continue }
+            for c in t.clips {
+                let r = clipRect(c, laneY: y).intersection(bounds)
+                guard !r.isEmpty else { continue }
+                let length = TimelineView.formatTime(Double(c.length) / sampleRate, step: 0.1)
+                let label = "\(c.name.isEmpty ? "Clip" : c.name) on \(t.name), at \(positionText(c.start)), \(length) long"
+                    + (c.isMidi ? ", MIDI" : "") + (c.offline ? ", audio missing" : "")
+                let id = c.id
+                out.append(AXItem.make(in: self, rect: r, role: .button, label: label,
+                                       value: selectedClips.contains(id) ? "selected" : nil) { [weak self] in
+                    guard let self else { return false }
+                    self.select([id], primary: id)
+                    if let clip = self.session.clip(id) { self.onClipSelected?(clip) }
+                    return true
+                })
+            }
+        }
+        return out
+    }
+
     func positionText(_ frame: Int64) -> String {
         guard Self.barsAndBeats else { return Self.formatTime(Double(frame) / sampleRate) }
         let b = session.bar(atBeat: session.frameToBeat(Double(frame)) + 1e-9)

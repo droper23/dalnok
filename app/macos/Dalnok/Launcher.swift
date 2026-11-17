@@ -128,6 +128,37 @@ final class LauncherView: NSView {
         Theme.separator.setFill(); CGRect(x: bounds.width - 1, y: 0, width: 1, height: bounds.height).fill()
     }
 
+    // MARK: Accessibility: scenes and filled slots are buttons (press launches or stops, as a click does).
+
+    override func isAccessibilityElement() -> Bool { true }
+    override func accessibilityRole() -> NSAccessibility.Role? { .group }
+    override func accessibilityChildren() -> [Any]? {
+        let h = session.engine.handle
+        var out: [Any] = (0..<Int(session.scenes)).map { k in
+            AXItem.make(in: self, rect: sceneRect(k), role: .button, label: "Launch scene \(k + 1)") { [weak self] in
+                guard let self else { return false }
+                return dalnok_launcher_launch_scene(self.session.engine.handle, Int32(k)) == DALNOK_OK
+            }
+        }
+        for (i, track) in session.tracks.enumerated() {
+            let playing = dalnok_launcher_playing(h, track.id)
+            for k in 0..<Int(session.scenes) {
+                guard let clip = session.slotClip(track.id, Int32(k)) else { continue }
+                let r = slotRect(row: i, slot: k).intersection(bounds)
+                guard !r.isEmpty else { continue }
+                let id = track.id, isPlaying = playing == Int32(k)
+                out.append(AXItem.make(in: self, rect: r, role: .button,
+                                       label: "Slot \(k + 1) on \(track.name): \(clip.name)", value: isPlaying ? "playing" : "stopped") { [weak self] in
+                    guard let self else { return false }
+                    dalnok_launcher_launch(self.session.engine.handle, id, isPlaying ? -1 : Int32(k))
+                    self.needsDisplay = true
+                    return true
+                })
+            }
+        }
+        return out
+    }
+
     override func menu(for event: NSEvent) -> NSMenu? {
         let p = convert(event.locationInWindow, from: nil)
         for (i, track) in session.tracks.enumerated() {

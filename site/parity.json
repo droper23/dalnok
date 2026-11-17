@@ -143,7 +143,7 @@
           "todo"
         ]
       ],
-      "evidence": "Self-test checks live gain-halo levels, drives both knobs with synthesized mouse events, then undoes."
+      "evidence": "Self-test checks live gain-halo levels, drives both knobs with synthesized mouse events, then undoes. Accessibility: knobs and faders are sliders with values and increment/decrement; arrangement clips and launcher scenes/slots are exposed as buttons with track, position, length and state, and the self-test presses a clip through its accessibility element to select it. Not yet checked with VoiceOver itself."
     },
     {
       "id": "imp-reaper",

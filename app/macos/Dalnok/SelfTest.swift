@@ -1124,6 +1124,17 @@ final class SelfTest {
             check(s.track(track.id)?.clips.count == before + 1 && e.undoName == "Place Copy", "dragging a slot onto the timeline places a copy (\(before)→\(s.track(track.id)?.clips.count ?? -1), \(e.undoName), \(w.lastFlashText))")
             _ = perform("Undo"); _ = perform("Undo")
         }
+        // VoiceOver: the slot is a button with its clip and state; the arrangement lists clips as buttons.
+        let slotItems = (lv.accessibilityChildren() ?? []).compactMap { $0 as? AXItem }
+        let slotItem = slotItems.first { ($0.accessibilityLabel() ?? "").hasPrefix("Slot 1 on \(track.name)") }
+        check(slotItem != nil && slotItems.filter { ($0.accessibilityLabel() ?? "").hasPrefix("Launch scene") }.count == Int(s.scenes),
+              "VoiceOver finds the launcher's scenes and the filled slot (\(slotItem?.accessibilityLabel() ?? "none"))")
+        w.timeline.selectedClip = nil
+        let clipItems = (w.timeline.accessibilityChildren() ?? []).compactMap { $0 as? AXItem }
+        let clipItem = clipItems.first { ($0.accessibilityLabel() ?? "").contains("on \(track.name), at ") }
+        check(clipItem?.accessibilityPerformPress() == true && w.timeline.selectedClip != nil && clipItem?.accessibilityFrame().width ?? 0 > 0,
+              "VoiceOver presses an arrangement clip to select it (\(clipItem?.accessibilityLabel() ?? "none"))")
+        w.timeline.selectedClip = clip.id
         // Drag an arrangement clip left into an empty slot on its own row: the slot gets a copy, the clip stays.
         if let from = w.timeline.windowPoint(ofClip: clip.id), let start = s.clip(clip.id)?.start {
             let r = lv.slotRect(row: row, slot: 1)

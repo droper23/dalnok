@@ -771,3 +771,25 @@ final class IconButton: NSButton {
         Motion.layers(Motion.standard) { layer?.transform = CATransform3DIdentity }
     }
 }
+
+
+// MARK: - Accessibility items for drawn content
+
+/// An element VoiceOver can find and press inside a view that draws its content (clips, launcher slots).
+final class AXItem: NSAccessibilityElement {
+    var onPress: (() -> Bool)?
+    override func accessibilityPerformPress() -> Bool { onPress?() ?? false }
+
+    @MainActor
+    static func make(in view: NSView, rect: CGRect, role: NSAccessibility.Role, label: String, value: String? = nil,
+                     press: (() -> Bool)? = nil) -> AXItem {
+        let e = AXItem()
+        e.setAccessibilityRole(role)
+        e.setAccessibilityLabel(label)
+        if let value { e.setAccessibilityValue(value) }
+        e.setAccessibilityParent(view)
+        if let window = view.window { e.setAccessibilityFrame(window.convertToScreen(view.convert(rect, to: nil))) }
+        e.onPress = press
+        return e
+    }
+}
