@@ -172,7 +172,12 @@ final class SelfTest {
             let half = RotaryKnob.meterReleaseSeconds / 2
             loud.updateMeter(-15, now: t0 + half); quiet.updateMeter(-57, now: q0 + half) // the meter's own 24 dB/s fall is ignored
             let mid = (loud.meterDb, quiet.meterDb)
+            let midScale = loud.faceScale, expected = RotaryKnob.revealScale + (1 - RotaryKnob.revealScale) * 0.5
             loud.updateMeter(-22, now: t0 + 2 * half); quiet.updateMeter(-120, now: q0 + 2 * half)
+            if !Analog.on {
+                check(abs(midScale - expected) < 0.001 && abs(loud.faceScale - 1) < 1e-9 && abs(quiet.faceScale - 1) < 1e-9,
+                      String(format: "dial face grows back in step with the falling ring (half-way %.3f, expected %.3f; end %.3f)", midScale, expected, loud.faceScale))
+            }
             check(abs(mid.0 - -31.5) < 0.01 && abs(mid.1 - -52.5) < 0.01 && loud.meterDb <= -60 && quiet.meterDb <= -60,
                   String(format: "rings fall at their own rates and empty together (half-way %.2f / %.2f dB, end %.0f / %.0f)", mid.0, mid.1, loud.meterDb, quiet.meterDb))
         }
@@ -294,6 +299,21 @@ final class SelfTest {
                   "Space starts playback with gain knob focused")
             check(NSApp.mainMenu?.performKeyEquivalent(with: space) == true && !e.isPlaying,
                   "Space pauses playback with gain knob focused")
+            NSApp.sendEvent(space) // the real event path, not just the menu
+            let viaEvent = e.isPlaying
+            NSApp.sendEvent(space)
+            check(viaEvent && !e.isPlaying, "real Space key toggles playback with gain knob focused (started=\(viaEvent), stopped=\(!e.isPlaying))")
+            // Clicking a dial must not take the keyboard: Space still reaches the transport afterwards.
+            w.window?.makeFirstResponder(w.timeline)
+            let c = gain.convert(CGPoint(x: gain.bounds.midX, y: gain.bounds.midY), to: nil)
+            let before = gain.value
+            gain.mouseDown(with: mouse(.leftMouseDown, c)); gain.mouseUp(with: mouse(.leftMouseUp, c))
+            check(w.window?.firstResponder !== gain && gain.value == before, "clicking a gain dial doesn't take keyboard focus")
+            NSApp.sendEvent(space); let started = e.isPlaying; NSApp.sendEvent(space)
+            check(started && !e.isPlaying, "real Space key works after clicking a dial")
+            check(abs(GainKnob.position(for: 0) - 0.5) < 1e-9 && GainKnob.db(for: 0.5) == 0 && GainKnob.db(for: 1) == FaderControl.maxDb
+                  && abs(GainKnob.db(for: GainKnob.position(for: -12)) - -12) < 1e-3 && GainKnob.db(for: 0) == -.infinity,
+                  "gain dial: 0 dB at the top center, +\(FaderControl.maxDb) dB at full, −∞ at zero, round-trips")
         }
         check(s.track(t0)?.name == "Lead Vox", "renamed track (\(s.track(t0)?.name ?? "-"))")
 
@@ -746,7 +766,7 @@ final class SelfTest {
         s.setGain(track, db: -12)
         try? await Task.sleep(for: .milliseconds(400))
         _ = perform("Undo")
-        let target = FaderControl.position(for: s.track(track)?.gainDb ?? 0)
+        let target = GainKnob.position(for: s.track(track)?.gainDb ?? 0)
         let mid = row.gain.value
         try? await Task.sleep(for: .milliseconds(400))
         check(abs(mid - target) > 0.01 && abs(row.gain.value - target) < 1e-6,
@@ -766,7 +786,7 @@ final class SelfTest {
         Motion.override = false
         s.setGain(track, db: -6)
         _ = perform("Undo")
-        check(abs(row.gain.value - FaderControl.position(for: s.track(track)?.gainDb ?? 0)) < 1e-6, "with Reduce Motion the knob jumps instantly")
+        check(abs(row.gain.value - GainKnob.position(for: s.track(track)?.gainDb ?? 0)) < 1e-6, "with Reduce Motion the knob jumps instantly")
         w.transport.setRecording(true)
         check(w.transport.recordButton.layer?.animation(forKey: "pulse") == nil, "with Reduce Motion nothing pulses")
         w.transport.setRecording(false)

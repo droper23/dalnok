@@ -116,7 +116,7 @@ final class FaderControl: NSControl {
     }
 
     override func mouseDown(with event: NSEvent) {
-        window?.makeFirstResponder(self)
+        releaseTextFocus(window) // clicking a control never keeps the keyboard
         if event.modifierFlags.contains(.option) || event.clickCount == 2 {
             onBegin?(); set(0); onEnd?(); ValueBubble.hide()
             return
@@ -160,7 +160,7 @@ final class FaderControl: NSControl {
         switch event.specialKey {
         case .rightArrow?, .upArrow?: step(+0.5)
         case .leftArrow?, .downArrow?: step(-0.5)
-        default: super.keyDown(with: event)
+        default: if !forwardShortcut(event) { super.keyDown(with: event) }
         }
     }
     private func step(_ d: Float) {
@@ -203,6 +203,7 @@ class RotaryKnob: NSControl {
     private let face = CAShapeLayer()
     private let pointer = CAShapeLayer()
     static let revealScale: CGFloat = 0.68
+    var faceScale: CGFloat { face.affineTransform().a } // for tests
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -322,14 +323,18 @@ class RotaryKnob: NSControl {
             CATransaction.commit()
             return
         }
+        // While the ring falls after stop, the face grows back and the track fades in step with it
+        // (driven every UI tick), so all three finish together with no jump at the end.
+        let p = on ? CGFloat(releaseProgress ?? 0) : 1
+        let scale = Self.revealScale + (1 - Self.revealScale) * p
         CATransaction.begin()
-        CATransaction.setDisableActions(!animated)
+        CATransaction.setDisableActions(!animated || releaseProgress != nil)
         CATransaction.setAnimationDuration(0.16)
         CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(name: .easeOut))
-        face.setAffineTransform(on ? CGAffineTransform(scaleX: Self.revealScale, y: Self.revealScale) : .identity)
+        face.setAffineTransform(CGAffineTransform(scaleX: scale, y: scale))
         haloValue.opacity = on ? 1 : 0
-        haloTrack.opacity = on ? 1 : 0
-        face.fillColor = (on ? Theme.knobHover : Theme.controlHi).cgColor
+        haloTrack.opacity = Float(1 - p)
+        face.fillColor = (Theme.knobHover.blended(withFraction: p, of: Theme.controlHi) ?? Theme.controlHi).cgColor
         CATransaction.commit()
     }
 
@@ -340,17 +345,20 @@ class RotaryKnob: NSControl {
         haloValue.strokeColor = color.cgColor
         haloValue.shadowColor = color.cgColor
         layoutLayers()
-        setRevealed(interacting || meterVisible, animated: !meterVisible)
+        setRevealed(interacting || meterVisible, animated: true)
     }
 
     /// When playback stops, every ring falls to empty over the same time (each at its own rate) instead
     /// of at the meter's fixed dB/s, so all rings go dark together.
     static let meterReleaseSeconds: Double = 0.8
     private(set) var release: (startDb: Float, start: CFTimeInterval)?
+    /// 0…1 through the post-stop fall (nil when not falling, or while the user is touching the knob).
+    private var releaseProgress: Double?
     private var lastInputDb: Float = -120
 
     func transportChanged(playing: Bool) {
         release = !playing && showsMeter && meterDb > -60 ? (meterDb, CACurrentMediaTime()) : nil
+        releaseProgress = nil
     }
 
     func updateMeter(_ db: Float, now: CFTimeInterval = CACurrentMediaTime()) {
@@ -360,8 +368,10 @@ class RotaryKnob: NSControl {
             // After the fall, a rising input is new signal (e.g. monitoring); a still-falling one is the old tail.
             if t >= 1 && (db <= -60 || db > lastInputDb) {
                 release = nil
+                releaseProgress = nil
             } else {
                 let curve = r.startDb - (r.startDb + 60) * Float(min(1, t))
+                releaseProgress = hovering || tracking ? nil : min(1, t)
                 meterDb = t >= 1 ? -120 : curve
                 updateReveal()
                 return
@@ -418,7 +428,7 @@ class RotaryKnob: NSControl {
     }
 
     override func mouseDown(with event: NSEvent) {
-        window?.makeFirstResponder(self)
+        releaseTextFocus(window) // clicking a control never keeps the keyboard
         onBegin?()
         if event.modifierFlags.contains(.option) || event.clickCount == 2 {
             set(defaultValue); onEnd?(); ValueBubble.hide(); return
@@ -452,7 +462,7 @@ class RotaryKnob: NSControl {
         switch event.specialKey {
         case .rightArrow?, .upArrow?: nudge(0.05)
         case .leftArrow?, .downArrow?: nudge(-0.05)
-        default: super.keyDown(with: event)
+        default: if !forwardShortcut(event) { super.keyDown(with: event) }
         }
     }
     private func nudge(_ d: Double) { onBegin?(); set(value + d); onEnd?(); ValueBubble.hide() }
@@ -464,24 +474,52 @@ class RotaryKnob: NSControl {
     func previewReveal(_ on: Bool) { hovering = on; updateReveal() }
 }
 
-/// Gain uses the same audio taper and unity detent as the original fader.
+/// A click on a knob or fader ends text editing but doesn't take keyboard focus, so Space, R, Delete…
+/// keep reaching the transport and timeline. (Tab still focuses controls for keyboard use.)
+@MainActor func releaseTextFocus(_ window: NSWindow?) {
+    if window?.firstResponder is NSText { window?.makeFirstResponder(nil) }
+}
+
+/// A focused control hands keys it doesn't use (Space, R, …) to the menu shortcuts instead of beeping.
+@MainActor func forwardShortcut(_ event: NSEvent) -> Bool {
+    NSApp.mainMenu?.performKeyEquivalent(with: event) ?? false
+}
+
+/// Gain: unity (0 dB) at the top center, as on hardware. The upper half is linear in dB up to
+/// +maxDb; the lower half uses the fader's quarter-power amplitude taper down to −∞.
 @MainActor
 final class GainKnob: RotaryKnob {
-    var db: Float {
-        get { FaderControl.db(for: value) }
-        set { value = FaderControl.position(for: newValue) }
+    static func position(for db: Float) -> Double {
+        guard db > -95 else { return 0 }
+        if db >= 0 { return 0.5 + 0.5 * Double(min(db, FaderControl.maxDb) / FaderControl.maxDb) }
+        return 0.5 * pow(pow(10, Double(db) / 20), 0.25)
     }
-    func glide(toDb db: Float) { glide(to: FaderControl.position(for: db)) }
+    static func db(for position: Double) -> Float {
+        let p = min(1, max(0, position))
+        var d: Float
+        if p >= 0.5 { d = Float((p - 0.5) / 0.5) * FaderControl.maxDb }
+        else {
+            guard p > 0.001 else { return -.infinity }
+            d = Float(20 * log10(pow(p / 0.5, 4)))
+        }
+        if abs(d) < 0.1 { d = 0 } // unity detent
+        return d <= -95 ? -.infinity : d
+    }
+    var db: Float {
+        get { Self.db(for: value) }
+        set { value = Self.position(for: newValue) }
+    }
+    func glide(toDb db: Float) { glide(to: Self.position(for: db)) }
     var onGainChange: ((Float) -> Void)?
 
     override init(frame: NSRect) {
         super.init(frame: frame)
         bipolar = false
         showsMeter = true
-        defaultValue = FaderControl.position(for: 0)
+        defaultValue = Self.position(for: 0)
         value = defaultValue
-        format = { FaderControl.format(FaderControl.db(for: $0)) }
-        onChange = { [weak self] v in self?.onGainChange?(FaderControl.db(for: v)) }
+        format = { FaderControl.format(GainKnob.db(for: $0)) }
+        onChange = { [weak self] v in self?.onGainChange?(GainKnob.db(for: v)) }
         setAccessibilityValue(format(value))
         toolTip = "Gain (dB)"
     }

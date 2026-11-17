@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 ### Changed (2026-11-16, knob rings)
+- Gain dials put 0 dB at the top center (+6 dB at full, −∞ at zero); the dial face grows back in step with the falling level ring after stop, so there is no jump at the end.
+- Clicking a knob or fader no longer takes keyboard focus, and a focused one passes Space and other shortcuts to the menu (the real Space key previously did nothing).
 - When playback stops, every gain knob's level ring falls to empty over the same 0.8 s, each at its own rate, so they all go dark together (self-test checks the timing to 0.01 dB).
 
 ### Changed (2026-11-16, Warm Analog overhaul)
