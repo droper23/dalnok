@@ -47,6 +47,6 @@ metronome (engine `renderClick`, C API `dalnok_metronome_set`), `Motion.swift` a
 
 ## Next steps
 1. Loopback latency measurement on the Scarlett (needs an output-to-input cable) and an owner MiniLab recording.
-2. Piano roll editor (note drag, velocity lane) and bars-and-beats ruler; metronome; tempo map.
-3. ADR-0009 stage 2: `dalnok-scan` helper, then the VST3 adapter with a passthrough null test.
+2. Tempo map and count-in; piano roll marquee selection.
+3. ADR-0009 stage 3: VST3 adapter (stage 2, the out-of-process scanner, is done: `tools/dalnok-scan`, `scripts/ci/plugin-scan.sh`).
 4. Review `git log` for this session's commit; publish `site/` only when the owner agrees.

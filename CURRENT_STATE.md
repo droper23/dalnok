@@ -1,11 +1,14 @@
 ---
 updated: 2026-11-16
 phase: 2–4 in progress (recording, MIDI, plugin discovery) — Phase 1 complete
-milestone: M8 recording and MIDI integration done; plugin hosting (ADR-0009) next after recording validation
+milestone: M10 plugin validation (ADR-0009 stage 2) done; VST3 hosting (stage 3) next
 ---
 # Current State
 
-## Latest session (M9: piano roll, bars and beats, metronome, motion)
+## Latest session (M10: plugin validation, ADR-0009 stage 2)
+- `dalnok-scan` validates plugins out of process (timeout, parallel, cached); Audio ▸ Plug-ins… lists them. Fixture crash/hang/no-code plugins are contained (`scripts/ci/plugin-scan.sh`). Vital validates in all three formats. The owner's full library has not been scanned yet (Scan button in the app). Hosting (loading onto tracks) is next.
+
+## Earlier (M9: piano roll, bars and beats, metronome, motion)
 - Piano roll (P or double-click a MIDI clip), bars-and-beats ruler/grid/snap/LCD, tempo and meter in the control bar, metronome (K), and app-wide motion that respects Reduce Motion. `scripts/make-test-project.sh` generates test projects.
 - Verified: 92 tests, GUI self-test 185 checks (both themes), RT effects and TSan clean. Animations are checked by state, not by eye.
 - Fixed a launch bug where the tempo field stole keyboard focus and disabled Space, R and Delete.
@@ -83,7 +86,7 @@ slot, and retired ones come back through an SPSC queue. See [[System Overview]],
 ## Not yet / incomplete
 - Loopback latency measurement, power-loss validation, punch in/out, multiple armed audio tracks, separate input/output devices (built-in mic + speakers is refused with an explanation).
 - Tempo changes, count-in, piano roll marquee selection, sample-accurate MIDI input timing.
-- Plugin loading and processing (ADR-0009 stage 2 onward). Most VST3/CLAP kinds show as unknown until the sandboxed scan.
+- Plugin loading and processing (ADR-0009 stage 3 onward). Kinds stay unknown for unscanned bundles until a scan runs.
 - Automatic project-recovery prompting and retention controls; live theme switching.
 - Disk streaming. Media is fully decoded into RAM, about 23 MB per stereo minute at 48 kHz.
 - Input selection in the UI and handling sample-rate changes; the engine rate is fixed at launch.
@@ -102,7 +105,7 @@ Finish validating recording (loopback latency, power loss, real keyboard), then 
 1. With a cable from the Scarlett's output to input 1, add and run a loopback latency measurement (`dalnok-cli`), then decide whether reported latency is trustworthy.
 2. Owner: play the MiniLab with `dalnok-cli midi-play <id> 20 --record`, and try recording in the app.
 3. Piano roll marquee selection and keyboard note entry; tempo map; count-in.
-4. ADR-0009 stage 2: `dalnok-scan` helper process, then the VST3 adapter.
+4. ADR-0009 stage 3: VST3 adapter (component + processor) with a passthrough fixture null test, then instruments on tracks.
 
 ## Open migration items
 - Verify Logic `.logicx` placement against a real Logic **Final Cut Pro XML export** of the same project

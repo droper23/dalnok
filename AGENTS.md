@@ -33,6 +33,8 @@ Swift/AppKit front end on macOS. GPL-3.0-or-later. This repo is also the project
 - `scripts/make-test-project.sh <folder> [demo|band|midi|states|large] [--screenshots] [--open]` generates
   deterministic projects (synthesized audio and MIDI) and optional both-theme snapshots. Use these, never the
   owner's material, for screenshots, UI checks and bug repros.
+- Plugins: `tools/dalnok-scan` loads one plugin per process; never load third-party plugin code in the app or
+  engine process for scanning. `scripts/ci/plugin-scan.sh` builds fake plugins (incl. crashing and hanging ones).
 - Animations go through `app/macos/Dalnok/Motion.swift` (respects Reduce Motion; off during snapshots and tests
   unless a test turns it on).
 - Tests record through `DALNOK_SIMULATED_INPUT` + `dalnok_engine_pump_input`, which runs the real duplex callback.
