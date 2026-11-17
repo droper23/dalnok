@@ -73,16 +73,20 @@ enum Theme {
     // MARK: Track colors
 
     static let gradientSteps = 12
-    /// Rainbow gradient starting at green (amber in Warm Analog): 12 steps of 30° in OKLCH, equal lightness/chroma,
+    /// Graphite: rainbow gradient starting at green, 12 steps of 30° in OKLCH, equal lightness/chroma,
     /// odd steps slightly lighter so adjacent tracks also differ in lightness (color-blind safety).
     static func gradientColor(step: Int) -> NSColor {
         let n = gradientSteps
         let i = ((step % n) + n) % n
-        // Warm Analog starts at amber and uses softer chroma, like aged console scribble strips.
-        let warm = activeStyle == .warmAnalog
-        let hue = (warm ? 55.0 : 145.0) + 360.0 / Double(n) * Double(i)
-        let lightness = (warm ? 0.69 : 0.70) + (i % 2 == 1 ? 0.05 : 0)
-        return OKLCH.color(l: lightness, c: warm ? 0.105 : 0.135, h: hue)
+        if activeStyle == .warmAnalog {
+            // Vintage console cap colours: warm and cool alternate so neighbours separate, and the muddy olive
+            // and brown hues are left out (they sink into the brown canvas). Steady lightness, softer chroma.
+            let hues: [Double] = [70, 255, 42, 150, 0, 228, 95, 292, 25, 128, 322, 195]
+            return OKLCH.color(l: 0.73 + (i % 2 == 1 ? 0.04 : 0), c: i == 11 ? 0.075 : 0.115, h: hues[i])
+        }
+        let hue = 145.0 + 360.0 / Double(n) * Double(i)
+        let lightness = 0.70 + (i % 2 == 1 ? 0.05 : 0)
+        return OKLCH.color(l: lightness, c: 0.135, h: hue)
     }
 
     static func trackColor(step: Int, custom: Int32) -> NSColor {

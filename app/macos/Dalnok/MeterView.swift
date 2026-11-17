@@ -89,7 +89,7 @@ final class MeterView: NSView {
                 ctx.setFillColor(color(lv).cgColor)
                 ctx.fill(CGRect(x: r.minX, y: r.minY, width: r.width, height: h))
                 ctx.setFillColor(color(hold).withAlphaComponent(0.9).cgColor)
-                ctx.fill(CGRect(x: r.minX, y: r.minY + r.height * fraction(hold) - 1, width: r.width, height: 1))
+                ctx.fill(CGRect(x: r.minX, y: r.minY + r.height * fraction(hold) - 2, width: r.width, height: 2))
             } else {
                 let h = (bounds.height - gap) / 2
                 r = CGRect(x: 0, y: CGFloat(i) * (h + gap), width: bounds.width, height: h)
