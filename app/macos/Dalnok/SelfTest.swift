@@ -470,13 +470,24 @@ final class SelfTest {
             view.cacheDisplay(in: view.bounds, to: bitmap)
             try? bitmap.representation(using: .png, properties: [:])?.write(to: workdir.appendingPathComponent("settings.png"))
         }
-        w.settings.themePicker.selectItem(at: 1)
+        // Live theme switching: the window rebuilds in the other style around the same project and undo history.
+        let startStyle = Theme.activeStyle, firstWindow = w.window
+        let tracksBefore = s.tracks.map(\.id), undoBefore = e.undoName
+        let other = startStyle == .graphite ? 1 : 0
+        w.settings.themePicker.selectItem(at: other)
         _ = NSApp.sendAction(#selector(SettingsController.themeChanged(_:)), to: w.settings, from: w.settings.themePicker)
-        check(Theme.preferredStyle == .warmAnalog, "settings saves the Warm Analog theme")
-        let otherStyle = Theme.activeStyle == .graphite ? 1 : 0
-        w.settings.themePicker.selectItem(at: otherStyle)
+        await wait(0.2)
+        check(Theme.preferredStyle == Theme.Style.allCases[other] && Theme.activeStyle == Theme.Style.allCases[other],
+              "settings switches the theme live (\(Theme.activeStyle.title))")
+        check(w.window !== firstWindow && w.window?.isVisible == true && firstWindow?.isVisible != true, "the main window is rebuilt and the old one closed")
+        check(s.tracks.map(\.id) == tracksBefore && e.undoName == undoBefore, "the project and undo history carry over")
+        check((w.transport.reels.superview != nil) == Analog.on, "the rebuilt window uses the new style's parts (tape reels \(Analog.on ? "shown" : "hidden"))")
+        check(w.settings.window?.isVisible == true && w.settings.relaunch.isHidden, "settings stays open, with no relaunch needed")
+        try? w.snapshot(to: workdir.appendingPathComponent("theme-switched.png"))
+        w.settings.themePicker.selectItem(at: other == 1 ? 0 : 1)
         _ = NSApp.sendAction(#selector(SettingsController.themeChanged(_:)), to: w.settings, from: w.settings.themePicker)
-        check(w.settings.appearanceNote.stringValue.contains("reopen") && !w.settings.relaunch.isHidden, "settings explains when the new theme applies and offers Relaunch Now")
+        await wait(0.2)
+        check(Theme.activeStyle == startStyle, "switching back restores \(startStyle.title)")
         w.settings.copyAudio.state = .off
         _ = NSApp.sendAction(#selector(SettingsController.copyChanged(_:)), to: w.settings, from: w.settings.copyAudio)
         check(!MainWindowController.copyAudioOnSave, "settings updates copy-audio preference")

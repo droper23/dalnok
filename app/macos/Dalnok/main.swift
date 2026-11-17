@@ -122,6 +122,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return .terminateLater
     }
 
+    /// Switches the appearance live: rebuilds the main window (and closes secondary windows) around the same
+    /// session, keeping the window frame, the open project, undo history and MIDI inputs. Refused while recording.
+    @discardableResult func switchTheme(to style: Theme.Style) -> Bool {
+        guard style != Theme.activeStyle else { return true }
+        guard !engine.isRecording else { return false }
+        let old = main!
+        let frame = old.window?.frame
+        let settings = old.settings
+        old.tearDown(keeping: [settings.window].compactMap { $0 })
+        Theme.activeStyle = style
+        session.forceRefresh() // track colours come from the style's palette
+        let next = MainWindowController(session: session)
+        next.settings = settings
+        next.openedMidiSources = old.openedMidiSources
+        main = next
+        NSApp.mainMenu = buildMenu(target: next)
+        Migration.applyKeymap(SourceDAW.preferred, to: NSApp.mainMenu)
+        if let frame { next.window?.setFrame(frame, display: false) }
+        next.showWindow(nil)
+        old.window?.delegate = nil
+        old.window?.close()
+        if settings.window?.isVisible == true { settings.window?.orderFront(nil) }
+        next.flash("Appearance: \(style.title)")
+        return true
+    }
+
     /// A normal launch (not a snapshot, screenshot, self-test or UI walk run).
     var interactiveLaunch: Bool {
         let a = CommandLine.arguments

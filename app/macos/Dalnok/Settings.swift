@@ -75,7 +75,7 @@ final class SettingsController: NSWindowController {
         copyAudio.state = MainWindowController.copyAudioOnSave ? .on : .off
         appearanceNote.stringValue = Theme.preferredStyle == Theme.activeStyle
             ? "Graphite is crisp and focused. Warm Analog brings a softer studio palette."
-            : "Dalnok needs to reopen to change its appearance."
+            : "The appearance changes when recording stops, or relaunch now."
         relaunch.isHidden = Theme.preferredStyle == Theme.activeStyle
     }
     @objc func relaunchTapped(_ sender: Any?) {
@@ -86,6 +86,8 @@ final class SettingsController: NSWindowController {
         let i = themePicker.indexOfSelectedItem
         guard Theme.Style.allCases.indices.contains(i) else { return }
         Theme.preferredStyle = Theme.Style.allCases[i]
+        // Live: the windows rebuild in the new style (while recording, the change waits for a relaunch).
+        _ = (NSApp.delegate as? AppDelegate)?.switchTheme(to: Theme.preferredStyle)
         refresh()
     }
     @objc func copyChanged(_ sender: Any?) {

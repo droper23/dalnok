@@ -264,6 +264,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         palette.onOpenGuide = { [weak self] c in self?.conceptGuide.show(daw: c.daw, query: c.term) }
         session.onChange = { [weak self] in self?.modelChanged() }
         session.onMessage = { [weak self] msg in self?.flash(msg) }
+        emptyState.isHidden = true // modelChanged shows it if the project has no tracks (also for a rebuilt window)
         modelChanged()
         applyMetronome()
 
@@ -274,6 +275,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    /// Before a live theme switch: stop the tick and close every window but this one and `keeping`.
+    func tearDown(keeping: [NSWindow]) {
+        timer?.invalidate(); timer = nil
+        for w in NSApp.windows where w !== window && !keeping.contains(where: { $0 === w }) && w.isVisible { w.close() }
+        pluginWindows.removeAll()
+    }
 
     private var lastRecoveryRevision: UInt64?
     private var recoveryDirectory: URL? {

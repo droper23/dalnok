@@ -17,9 +17,9 @@ enum Theme {
         get { UserDefaults.standard.string(forKey: preferenceKey).flatMap(Style.init(rawValue:)) ?? .graphite }
         set { UserDefaults.standard.set(newValue.rawValue, forKey: preferenceKey) }
     }
-    // The interface is built from AppKit layers at launch. A new preference is
-    // applied on the next launch so an in-progress project is never disturbed.
-    static let activeStyle: Style = {
+    // The style the windows are drawn with. Changing it live rebuilds the windows (AppDelegate.switchTheme);
+    // tokens are computed so the rebuilt views pick up the new palette.
+    nonisolated(unsafe) static var activeStyle: Style = { // main thread only
         if let override = ProcessInfo.processInfo.environment["DALNOK_THEME"], let style = Style(rawValue: override) { return style }
         return preferredStyle
     }()
@@ -28,34 +28,34 @@ enum Theme {
     }
 
     // MARK: Neutrals (cool graphite, 4 elevation steps)
-    static let window = tone(0x111214, 0x18130F)
-    static let panel = tone(0x17181B, 0x211A15)        // ruler, control bar
-    static let panelRaised = tone(0x1D1F23, 0x2A211A)  // track headers
-    static let control = tone(0x2A2D33, 0x403229)      // fader grooves, chip backgrounds
-    static let controlHi = tone(0x3A3E46, 0x584638)
-    static let laneA = tone(0x141518, 0x1C1713)
-    static let laneB = tone(0x16171A, 0x201A15)
-    static let laneHighlight = tone(0x1C1E22, 0x2A2019) // selected track's lane
-    static let lcd = tone(0x0B0C0E, 0x120D0A)           // position display well
+    static var window: NSColor { tone(0x111214, 0x18130F) }
+    static var panel: NSColor { tone(0x17181B, 0x211A15) }        // ruler, control bar
+    static var panelRaised: NSColor { tone(0x1D1F23, 0x2A211A) }  // track headers
+    static var control: NSColor { tone(0x2A2D33, 0x403229) }      // fader grooves, chip backgrounds
+    static var controlHi: NSColor { tone(0x3A3E46, 0x584638) }
+    static var laneA: NSColor { tone(0x141518, 0x1C1713) }
+    static var laneB: NSColor { tone(0x16171A, 0x201A15) }
+    static var laneHighlight: NSColor { tone(0x1C1E22, 0x2A2019) } // selected track's lane
+    static var lcd: NSColor { tone(0x0B0C0E, 0x120D0A) }           // position display well
     static let hairline = hex(0xFFFFFF, 0.07)
     static let separator = hex(0x000000, 0.55)
     static let gridMajor = hex(0xFFFFFF, 0.06)
     static let gridMinor = hex(0xFFFFFF, 0.025)
-    static let text = tone(0xE8E9EC, 0xF2E7D7)
-    static let textDim = tone(0x9A9EA6, 0xC0AB96)
-    static let textFaint = tone(0x898E97, 0x9B8876)
+    static var text: NSColor { tone(0xE8E9EC, 0xF2E7D7) }
+    static var textDim: NSColor { tone(0x9A9EA6, 0xC0AB96) }
+    static var textFaint: NSColor { tone(0x898E97, 0x9B8876) }
 
     // MARK: Reserved state colors (never used for tracks alone; always paired with form)
-    static let accent = tone(0xE8B25C, 0xE6AB69)        // time display / brand
-    static let playhead = tone(0xF4F4F5, 0xF6E5CE)
+    static var accent: NSColor { tone(0xE8B25C, 0xE6AB69) }        // time display / brand
+    static var playhead: NSColor { tone(0xF4F4F5, 0xF6E5CE) }
     static let selection = hex(0xFFFFFF)
-    static let cycle = tone(0xE9C24A, 0xE8B54F) // cycle region in the ruler (Logic users know it as yellow)
+    static var cycle: NSColor { tone(0xE9C24A, 0xE8B54F) } // cycle region in the ruler (Logic users know it as yellow)
     static let muteOn = hex(0x5B9BFF)        // blue chip (Logic convention)
     static let soloOn = hex(0xF5C451)        // yellow chip
     static let clipRed = hex(0xFF5A4F)
     static let recordOn = hex(0xE5484D)      // record arm / recording (always with an "R" or ● shape)
-    static let selectedHeader = tone(0x262930, 0x3A2B21)
-    static let knobHover = tone(0x44484F, 0x685344)
+    static var selectedHeader: NSColor { tone(0x262930, 0x3A2B21) }
+    static var knobHover: NSColor { tone(0x44484F, 0x685344) }
 
     // MARK: Metrics (4-pt grid)
     static let rulerHeight: CGFloat = 28

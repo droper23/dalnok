@@ -1509,7 +1509,7 @@
         ],
         [
           "Live theme switching",
-          "todo"
+          "verified"
         ],
         [
           "Additional analog themes",
@@ -1520,7 +1520,7 @@
           "todo"
         ]
       ],
-      "evidence": "UI audit, reviewed screenshots, and app self-tests in both themes. Theme changes require reopening; VoiceOver and all auxiliary windows are not yet verified. Motion: the self-test checks that knobs glide after undo, the record button pulses and the palette fades, and that all of it is instant with Reduce Motion. Warm Analog: the self-test passes all checks in that theme (including the patch-cable count for a two-plug-in chain); visual review from snapshots; see 06 - Design/Warm Analog.",
+      "evidence": "UI audit, reviewed screenshots, and app self-tests in both themes. Live switching: the self-test changes the theme in Settings both ways from each theme; the main window is rebuilt in the new style with the same project, track colours and undo history, settings stays open (a change during recording waits for a relaunch). Warm Analog extras: vintage track palette, tape reels (self-test checks they wind with the playhead), splice-bay Takes window, lit-pin piano roll, walnut mixer cheeks. VoiceOver and all auxiliary windows are not yet verified. Motion: the self-test checks that knobs glide after undo, the record button pulses and the palette fades, and that all of it is instant with Reduce Motion. Warm Analog: the self-test passes all checks in that theme (including the patch-cable count for a two-plug-in chain); visual review from snapshots; see 06 - Design/Warm Analog.",
       "screenshot": "screenshots/warm-analog.png"
     },
     {
