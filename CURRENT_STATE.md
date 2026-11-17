@@ -146,7 +146,7 @@ slot, and retired ones come back through an SPSC queue. See [[System Overview]],
 - Loopback latency measurement, power-loss validation, punch in/out, multiple armed audio tracks, separate input/output devices (built-in mic + speakers is refused with an explanation).
 - Count-in, tempo ramps, importing tempo maps, sample-accurate MIDI input timing.
 - Plug-in editors, parameters and automation, latency compensation, AU/CLAP hosting, out-of-process hosting.
-- Automatic project-recovery prompting and retention controls; live theme switching.
+- Live theme switching (Relaunch Now is the stopgap).
 - Disk streaming. Media is fully decoded into RAM, about 23 MB per stereo minute at 48 kHz.
 - Input selection in the UI and handling sample-rate changes; the engine rate is fixed at launch.
 

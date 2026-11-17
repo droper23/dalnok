@@ -439,6 +439,23 @@ final class SelfTest {
                 check(e.isDirty && s.projectURL == nil, "recovered snapshot is an unsaved project")
                 check(FileManager.default.fileExists(atPath: recovery.path), "recovery keeps the original snapshot")
             }
+            // Launch-time crash detection, in the test's own recovery folder.
+            setenv("DALNOK_RECOVERY_DIR", recoveryDir.path, 1)
+            defer { unsetenv("DALNOK_RECOVERY_DIR") }
+            let marker = recoveryDir.appendingPathComponent("running.json")
+            func writeMarker(pid: Int32, started: Double) {
+                try? JSONSerialization.data(withJSONObject: ["pid": Int(pid), "started": started]).write(to: marker)
+            }
+            writeMarker(pid: 999_999, started: Date().timeIntervalSince1970 - 3_600) // a session that is gone
+            check(w.unfinishedSessionSnapshot() == recovery, "a session that ended unexpectedly offers its newest snapshot")
+            writeMarker(pid: 1, started: Date().timeIntervalSince1970 - 3_600) // still running (another instance)
+            check(w.unfinishedSessionSnapshot() == nil, "no offer while that session is still running")
+            writeMarker(pid: 999_999, started: Date().timeIntervalSince1970 + 60) // nothing saved since it started
+            check(w.unfinishedSessionSnapshot() == nil, "no offer when that session saved no snapshot")
+            w.beginSessionMarker()
+            w.endSessionMarker()
+            check(!FileManager.default.fileExists(atPath: marker.path) && w.unfinishedSessionSnapshot() == nil,
+                  "a clean quit removes the marker, so the next launch offers nothing")
         }
 
         try? w.snapshot(to: workdir.appendingPathComponent("selftest.png"))

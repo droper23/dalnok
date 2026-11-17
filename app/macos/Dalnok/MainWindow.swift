@@ -225,6 +225,65 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         return url
     }
 
+    // MARK: Crash recovery at launch
+
+    /// A marker that says "a Dalnok session is running"; removed on a clean quit. Finding one from a process
+    /// that is gone means the last session ended unexpectedly.
+    private var sessionMarker: URL? { recoveryDirectory?.appendingPathComponent("running.json") }
+
+    /// The newest recovery snapshot written by a session that didn't quit cleanly, if any (and that session's
+    /// process isn't still running). Call before `beginSessionMarker`.
+    func unfinishedSessionSnapshot() -> URL? {
+        guard let marker = sessionMarker, let dir = recoveryDirectory,
+              let data = try? Data(contentsOf: marker),
+              let info = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        let pid = (info["pid"] as? NSNumber)?.int32Value ?? 0
+        if pid > 0 && pid != getpid() && (kill(pid, 0) == 0 || errno == EPERM) { return nil } // that session is still open
+        let started = (info["started"] as? NSNumber)?.doubleValue ?? 0
+        let snapshots = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
+        return snapshots
+            .filter { $0.pathExtension == "dalnok" && $0.lastPathComponent.hasPrefix("Recovery-") }
+            .compactMap { url -> (URL, Date)? in
+                guard let d = try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate,
+                      d.timeIntervalSince1970 >= started else { return nil }
+                return (url, d)
+            }
+            .max { $0.1 < $1.1 }?.0
+    }
+
+    /// Records this session as running and prunes recovery snapshots older than two weeks.
+    func beginSessionMarker() {
+        guard let marker = sessionMarker, let dir = recoveryDirectory else { return }
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let info: [String: Any] = ["pid": Int(getpid()), "started": Date().timeIntervalSince1970]
+        try? JSONSerialization.data(withJSONObject: info).write(to: marker, options: .atomic)
+        let cutoff = Date().addingTimeInterval(-14 * 86_400)
+        for url in (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
+        where url.lastPathComponent.hasPrefix("Recovery-") {
+            if let d = try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate, d < cutoff {
+                try? FileManager.default.removeItem(at: url)
+            }
+        }
+    }
+    func endSessionMarker() { if let m = sessionMarker { try? FileManager.default.removeItem(at: m) } }
+
+    /// At launch: if the last session ended unexpectedly and left a snapshot, offer to open it.
+    func offerCrashRecovery() {
+        let snapshot = unfinishedSessionSnapshot()
+        beginSessionMarker()
+        guard let snapshot, let window else { return }
+        let when = (try? snapshot.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? Date()
+        let alert = NSAlert()
+        alert.messageText = "Dalnok quit unexpectedly"
+        alert.informativeText = "Your work was saved automatically at \(DateFormatter.localizedString(from: when, dateStyle: .none, timeStyle: .short)). Open the recovered copy? It opens as a new unsaved project; nothing else is changed."
+        alert.addButton(withTitle: "Open Recovered Project")
+        alert.addButton(withTitle: "Not Now")
+        alert.beginSheetModal(for: window) { [weak self] resp in
+            guard resp == .alertFirstButtonReturn else { return }
+            MainActor.assumeIsolated { self?.confirmDiscard { self?.openRecovery(snapshot) } }
+        }
+    }
+
     @objc func recoverSnapshot(_ sender: Any?) {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.dalnokProject]

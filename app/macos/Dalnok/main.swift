@@ -87,6 +87,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let audio = files.filter { $0.pathExtension != "dalnok" && !foreign.contains($0) }
 
         if let f = foreign.first { main.importProject(f, confirm: false) }
+        if interactiveLaunch { DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in self?.main.offerCrashRecovery() } }
         if files.isEmpty && snapshot == nil && !args.contains("--no-welcome") && !WelcomeController.hasCompleted {
             main.welcome.show()
         }
@@ -120,10 +121,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return .terminateLater
     }
 
+    /// A normal launch (not a snapshot, screenshot, self-test or UI walk run).
+    var interactiveLaunch: Bool {
+        let a = CommandLine.arguments
+        return !["--snapshot", "--screenshots", "--selftest", "--uiwalk", "--plugin-snapshot"].contains { a.contains($0) }
+    }
     /// Set by Settings ▸ "Relaunch Now": start a fresh instance (with the saved project) once this one quits.
     var relaunchOnQuit = false
     func applicationWillTerminate(_ notification: Notification) {
         engine.shutdown()
+        if interactiveLaunch { main.endSessionMarker() }
         guard relaunchOnQuit else { return }
         let bundle = Bundle.main.bundleURL
         let p = Process()
