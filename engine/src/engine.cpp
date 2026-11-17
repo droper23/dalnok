@@ -879,6 +879,30 @@ DalnokClipId Engine::copyToSlot(DalnokClipId clip, int32_t slot, std::string &er
     return id;
 }
 
+DalnokClipId Engine::placeCopy(DalnokClipId clip, DalnokTrackId track, int64_t start, std::string &err) {
+    const auto id = nextClip_;
+    const bool ok = edit("Place Copy", true, [&](Model &m) {
+        const ClipState *c = m.clip(clip);
+        const TrackState *t = m.track(track);
+        if (!c || !t) return fail(err, "no such clip or track");
+        if (start < 0) return fail(err, "start must be >= 0");
+        if (t->kind == kTrackBus || (t->kind == kTrackInstrument) != c->midi()) return fail(err, "that clip can't go on that track");
+        ClipState copy = *c;
+        copy.id = id;
+        copy.track = track;
+        copy.start = start;
+        copy.slot = -1;
+        copy.follow = 0;
+        copy.folder = 0;
+        copy.alt = false;
+        m.clips.push_back(std::move(copy));
+        return true;
+    });
+    if (!ok) return 0;
+    ++nextClip_;
+    return id;
+}
+
 namespace {
 // Next bar start strictly after `frame` (or `frame` itself when it is a bar start).
 int64_t nextBar(const Model &m, const TempoMap &map, int64_t frame) {
@@ -924,6 +948,78 @@ void Engine::stopLauncher() {
     std::string ignored;
     for (const auto &t : model_.tracks)
         if (t.runtime->playingSlot.load() >= 0 || t.runtime->launchAt.load() >= 0) launch(t.id, -1, ignored);
+}
+
+int64_t Engine::slotStart(DalnokTrackId track) const {
+    const TrackState *t = model_.track(track);
+    return t ? t->runtime->slotStart.load(std::memory_order_relaxed) : 0;
+}
+
+bool Engine::setFollowAction(DalnokClipId clip, int32_t action, int32_t loops, std::string &err) {
+    if (action < 0 || action > 2 || loops < 1 || loops > 1024) return fail(err, "follow action is 0 none, 1 next, 2 stop; loops 1-1024");
+    return edit("Follow Action", true, [&](Model &m) {
+        ClipState *c = m.clip(clip);
+        if (!c || c->slot < 0) return fail(err, "not a launcher clip");
+        c->follow = action;
+        c->followLoops = loops;
+        return true;
+    });
+}
+
+void Engine::setLauncherRecording(bool on) {
+    if (on == launcherRecording_.load()) return;
+    if (on) {
+        LaunchEvent e;
+        while (launchEvents_.pop(e)) {}
+        launchLog_.clear();
+        launcherRecordStart_ = position();
+        // Tracks already playing a slot start their segment where recording began.
+        for (const auto &t : model_.tracks)
+            if (int32_t ps = t.runtime->playingSlot.load(); ps >= 0) launchLog_.push_back({t.id, ps, launcherRecordStart_});
+        launcherRecording_.store(true);
+        return;
+    }
+    launcherRecording_.store(false);
+    LaunchEvent e;
+    while (launchEvents_.pop(e)) launchLog_.push_back(e);
+    const int64_t end = position();
+    // Each track's segments: from a switch to the next switch (or the end); slot -1 = arrangement.
+    struct Piece { DalnokTrackId track; int32_t slot; int64_t from, to, slotStart; };
+    std::vector<Piece> pieces;
+    std::map<DalnokTrackId, std::vector<LaunchEvent>> byTrack;
+    for (const auto &ev : launchLog_) byTrack[ev.track].push_back(ev);
+    for (auto &[track, evs] : byTrack) {
+        std::stable_sort(evs.begin(), evs.end(), [](const LaunchEvent &a, const LaunchEvent &b) { return a.frame < b.frame; });
+        for (size_t i = 0; i < evs.size(); ++i) {
+            const int64_t to = i + 1 < evs.size() ? evs[i + 1].frame : end;
+            if (evs[i].slot >= 0 && to > evs[i].frame) pieces.push_back({track, evs[i].slot, evs[i].frame, to, evs[i].frame});
+        }
+    }
+    launchLog_.clear();
+    if (pieces.empty()) return;
+    std::string err;
+    edit("Record Launcher", true, [&](Model &m) {
+        for (const auto &p : pieces) {
+            const auto src = std::find_if(m.clips.begin(), m.clips.end(), [&](const ClipState &c) { return c.track == p.track && c.slot == p.slot; });
+            if (src == m.clips.end() || src->length <= 0) continue;
+            const ClipState proto = *src;
+            // One clip per loop pass, the last one trimmed where the performance moved on.
+            for (int64_t at = p.from; at < p.to; at += proto.length) {
+                ClipState c = proto;
+                c.id = nextClip_++;
+                c.slot = -1;
+                c.follow = 0;
+                c.start = at;
+                c.length = std::min(proto.length, p.to - at);
+                // Recorded material replaces whatever the arrangement had there.
+                std::erase_if(m.clips, [&](const ClipState &x) {
+                    return x.track == p.track && x.slot < 0 && !x.alt && x.start >= c.start && x.start + x.length <= c.start + c.length && x.id != c.id;
+                });
+                m.clips.push_back(std::move(c));
+            }
+        }
+        return true;
+    });
 }
 
 int32_t Engine::playingSlot(DalnokTrackId track) const {
@@ -1436,6 +1532,7 @@ std::unique_ptr<RenderState> Engine::compile(std::vector<StretchJob> *needed, co
         const TrackState &t = *tp;
         indexOf[t.id] = static_cast<int32_t>(s->tracks.size());
         RenderTrack rt;
+        rt.id = t.id;
         rt.runtime = t.runtime;
         rt.bus = t.kind == kTrackBus;
         rt.monoSource = !rt.bus; // buses are stereo (balance pan)
@@ -1468,6 +1565,8 @@ std::unique_ptr<RenderState> Engine::compile(std::vector<StretchJob> *needed, co
                 if (!rt.instrument) continue;
                 RenderSlot sl;
                 sl.slot = c.slot;
+                sl.follow = c.follow;
+                sl.followLoops = std::max(1, c.followLoops);
                 sl.length = c.length;
                 for (const auto &n : *c.notes) {
                     if (n.start < c.offset || n.start >= c.offset + c.length) continue;
@@ -1530,6 +1629,8 @@ std::unique_ptr<RenderState> Engine::compile(std::vector<StretchJob> *needed, co
             if (c.slot >= 0) { // launcher slot: one loop of the clip window
                 RenderSlot sl;
                 sl.slot = c.slot;
+                sl.follow = c.follow;
+                sl.followLoops = std::max(1, c.followLoops);
                 sl.length = len;
                 sl.hasAudio = true;
                 sl.clip = {media, 0, offset, len, fi, fo, c.fadeCurve, dbToGain(c.gainDb)};
@@ -1544,6 +1645,9 @@ std::unique_ptr<RenderState> Engine::compile(std::vector<StretchJob> *needed, co
         rt.noteEnds = rt.notes;
         std::stable_sort(rt.noteEnds.begin(), rt.noteEnds.end(),
                          [](const RenderNote &a, const RenderNote &b) { return a.end < b.end; });
+        // Launcher "next" follow action: the next filled slot on this track, wrapping.
+        std::sort(rt.slots.begin(), rt.slots.end(), [](const RenderSlot &a, const RenderSlot &b) { return a.slot < b.slot; });
+        for (size_t k = 0; k < rt.slots.size(); ++k) rt.slots[k].nextSlot = rt.slots[(k + 1) % rt.slots.size()].slot;
         s->tracks.push_back(std::move(rt));
     }
     // Resolve outputs and sends to processing indices (a missing destination falls back to the master).
@@ -1805,10 +1909,14 @@ void Engine::process(float *left, float *right, int frames) DALNOK_NONBLOCKING {
             for (const RenderTrack &t : current_->tracks) {
                 TrackRuntime &rt = *t.runtime;
                 const int64_t la = rt.launchAt.load(std::memory_order_acquire);
+                const bool logging = launcherRecording_.load(std::memory_order_relaxed);
                 if (la >= 0 && la <= rp) {
-                    rt.playingSlot.store(rt.launchTarget.load(std::memory_order_relaxed), std::memory_order_relaxed);
-                    rt.slotStart = la;
+                    const int32_t target = rt.launchTarget.load(std::memory_order_relaxed);
+                    rt.playingSlot.store(target, std::memory_order_relaxed);
+                    rt.slotStart.store(la, std::memory_order_relaxed);
+                    rt.slotLoops = 0;
                     rt.launchAt.store(-1, std::memory_order_relaxed);
+                    if (logging) launchEvents_.push(LaunchEvent{t.id, target, la});
                 } else if (la >= 0 && la < rp + n) {
                     n = static_cast<int>(la - rp);
                 }
@@ -1816,7 +1924,20 @@ void Engine::process(float *left, float *right, int frames) DALNOK_NONBLOCKING {
                 if (ps < 0) continue;
                 for (const RenderSlot &sl : t.slots) {
                     if (sl.slot != ps || sl.length <= 0) continue;
-                    const int64_t rel = ((rp - rt.slotStart) % sl.length + sl.length) % sl.length;
+                    const int64_t start = rt.slotStart.load(std::memory_order_relaxed);
+                    const int64_t rel = ((rp - start) % sl.length + sl.length) % sl.length;
+                    // At a loop boundary: count it and run the follow action, exactly here.
+                    if (rel == 0 && rp > start) {
+                        ++rt.slotLoops;
+                        if (sl.follow != 0 && rt.slotLoops >= sl.followLoops && rt.launchAt.load(std::memory_order_relaxed) < 0) {
+                            const int32_t next = sl.follow == 1 ? sl.nextSlot : -1;
+                            rt.playingSlot.store(next, std::memory_order_relaxed);
+                            rt.slotStart.store(rp, std::memory_order_relaxed);
+                            rt.slotLoops = 0;
+                            if (logging) launchEvents_.push(LaunchEvent{t.id, next, rp});
+                            break;
+                        }
+                    }
                     if (rel + n > sl.length) n = static_cast<int>(sl.length - rel);
                 }
             }

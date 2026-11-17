@@ -407,6 +407,17 @@ DalnokStatus dalnok_launcher_launch_scene(DalnokEngine *e, int32_t slot) {
 }
 void dalnok_launcher_stop_all(DalnokEngine *e) { if (e) e->impl.stopLauncher(); }
 int32_t dalnok_launcher_playing(const DalnokEngine *e, DalnokTrackId t) { return e ? e->impl.playingSlot(t) : -1; }
+DalnokClipId dalnok_clip_place_copy(DalnokEngine *e, DalnokClipId c, DalnokTrackId t, int64_t start) {
+    std::string err;
+    return e ? e->impl.placeCopy(c, t, start, err) : 0;
+}
+int64_t dalnok_launcher_slot_start(const DalnokEngine *e, DalnokTrackId t) { return e ? e->impl.slotStart(t) : 0; }
+DalnokStatus dalnok_launcher_set_follow(DalnokEngine *e, DalnokClipId c, int32_t action, int32_t loops) {
+    std::string err;
+    return e ? statusFor(e->impl.setFollowAction(c, action, loops, err), err) : DALNOK_ERR_INVALID_ARG;
+}
+void dalnok_launcher_set_recording(DalnokEngine *e, bool on) { if (e) e->impl.setLauncherRecording(on); }
+bool dalnok_launcher_recording(const DalnokEngine *e) { return e && e->impl.launcherRecording(); }
 DalnokStatus dalnok_plugin_set_automation(DalnokEngine *e, DalnokTrackId t, int32_t slot, uint32_t param,
                                           const DalnokAutoPoint *pts, int32_t count) {
     if (!e || count < 0 || (count > 0 && !pts)) return DALNOK_ERR_INVALID_ARG;
@@ -748,6 +759,8 @@ DalnokStatus dalnok_clip_info(const DalnokEngine *e, DalnokClipId id, DalnokClip
     out->folder = c->folder;
     out->alt = c->alt;
     out->slot = c->slot;
+    out->follow = c->follow;
+    out->follow_loops = c->followLoops;
     if (c->midi()) {
         out->offline = false;
         out->note_count = static_cast<int32_t>(c->notes->size());

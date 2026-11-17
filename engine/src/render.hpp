@@ -37,7 +37,8 @@ struct TrackRuntime {
     std::atomic<int64_t> launchAt{-1};
     std::atomic<int32_t> launchTarget{-1};
     std::atomic<int32_t> playingSlot{-1}; // what the audio thread plays (-1 = the arrangement); readable by the UI
-    int64_t slotStart = 0;                // timeline frame where the playing slot's first loop began
+    std::atomic<int64_t> slotStart{0};    // timeline frame where the playing slot's first loop began (audio thread writes)
+    int32_t slotLoops = 0;                // completed loops of the playing slot (audio thread)
 };
 
 // Raises a meter atomic to `v` if larger. A concurrent reset may be overwritten
@@ -94,6 +95,9 @@ struct RenderSend {
 // A launcher slot's clip: loops from its start; audio as a clip window, MIDI as notes relative to the loop.
 struct RenderSlot {
     int32_t slot = -1;
+    int32_t follow = 0;     // follow action after `followLoops` loops: 0 none, 1 next filled slot, 2 stop
+    int32_t followLoops = 1;
+    int32_t nextSlot = -1;  // the next filled slot on this track (wrapping), for "next"
     int64_t length = 0; // loop length in frames
     bool hasAudio = false;
     RenderClip clip;    // audio (start ignored; placed per loop iteration)
@@ -101,6 +105,7 @@ struct RenderSlot {
 };
 
 struct RenderTrack {
+    int32_t id = 0; // DalnokTrackId
     std::shared_ptr<TrackRuntime> runtime;
     std::vector<RenderSlot> slots; // launcher clips on this track
     bool bus = false;      // mixes its input slot instead of clips

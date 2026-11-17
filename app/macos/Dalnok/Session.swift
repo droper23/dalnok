@@ -26,6 +26,7 @@ struct ClipView {
     var isMidi = false
     var folder: Int32 = 0 // take folder (comp piece when shown in the arrangement)
     var slot: Int32 = -1  // clip launcher slot (not on the timeline)
+    var follow: Int32 = 0, followLoops: Int32 = 1
     var end: Int64 { start + length }
     var isStretched: Bool { abs(rate - 1) > 1e-9 || pitch != 0 }
     var sourceSpan: Int64 { Int64((Double(length) * rate).rounded()) }
@@ -109,6 +110,8 @@ final class Session {
                                     processing: ci.processing, name: fixedString(ci.name))
                 clip.folder = ci.folder
                 clip.slot = ci.slot
+                clip.follow = ci.follow
+                clip.followLoops = ci.follow_loops
                 if ci.alt { takeClips[ci.id] = clip; continue } // takes live in their folder, not the arrangement
                 if ci.slot >= 0 { slotClips.append(clip); continue } // launcher slots, beside the arrangement
                 if ci.midi {

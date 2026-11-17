@@ -189,6 +189,11 @@ const CommandDef kCommands[] = {
          if (!needInt(a, "track", t, err) || !needInt(a, "slot", slot, err)) return DALNOK_ERR_INVALID_ARG;
          return status(e.launch(t, slot, err), err);
      }},
+    {"launcher.setFollow", "Follow Action", "{clip, action (0 none, 1 next, 2 stop), loops?}", [](ARGS) {
+         DalnokClipId c; int32_t action;
+         if (!needInt(a, "clip", c, err) || !needInt(a, "action", action, err)) return DALNOK_ERR_INVALID_ARG;
+         return status(e.setFollowAction(c, action, static_cast<int32_t>(a.getNumber("loops", 1)), err), err);
+     }},
     {"launcher.launchScene", "Launch Scene", "{slot}", [](ARGS) {
          int32_t slot;
          if (!needInt(a, "slot", slot, err)) return DALNOK_ERR_INVALID_ARG;

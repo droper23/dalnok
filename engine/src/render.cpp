@@ -254,7 +254,8 @@ void renderBlock(const RenderState &state, int64_t pos, int frames, float *left,
             for (const RenderSlot &sl : t.slots) if (sl.slot == ps && sl.length > 0) slot = &sl;
         }
         if (slot) {
-            const int64_t rel = ((pos - rt.slotStart) % slot->length + slot->length) % slot->length; // block ends by the loop end
+            const int64_t start0 = rt.slotStart.load(std::memory_order_relaxed);
+            const int64_t rel = ((pos - start0) % slot->length + slot->length) % slot->length; // block ends by the loop end
             if (slot->hasAudio) {
                 clear(s.trackL, frames); clear(s.trackR, frames);
                 mixClip(slot->clip, rel, frames, s.trackL, s.trackR);

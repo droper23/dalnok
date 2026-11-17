@@ -27,6 +27,9 @@ final class LauncherView: NSView {
     required init?(coder: NSCoder) { fatalError() }
     override var isFlipped: Bool { true }
     var width: CGFloat { CGFloat(session.scenes) * Self.slotWidth + 8 }
+    /// Places a slot clip on the timeline (track, frame) when a slot is dragged out of the launcher.
+    var onDropToTimeline: ((DalnokClipId, CGPoint) -> Bool)?
+    private var dragFrom: (clip: DalnokClipId, at: CGPoint)?
 
     func laneY(_ i: Int) -> CGFloat { Theme.rulerHeight + CGFloat(i) * Theme.trackHeight - scrollY }
     func slotRect(row: Int, slot: Int) -> CGRect {
@@ -52,6 +55,9 @@ final class LauncherView: NSView {
             ("▶ \(k + 1)" as NSString).draw(at: CGPoint(x: r.minX + 6, y: r.minY + 3), withAttributes: sceneAttrs)
         }
         Theme.separator.setFill(); CGRect(x: 0, y: Theme.rulerHeight - 1, width: bounds.width, height: 1).fill()
+        if dalnok_launcher_recording(session.engine.handle) { // recording the performance: a red edge
+            Theme.recordOn.setFill(); CGRect(x: 0, y: Theme.rulerHeight - 3, width: bounds.width, height: 2).fill()
+        }
         let pos = session.engine.position, rate = session.engine.sampleRate
         for (i, track) in session.tracks.enumerated() {
             let y = laneY(i)
@@ -73,12 +79,18 @@ final class LauncherView: NSView {
                 ctx.addPath(path); ctx.fillPath()
                 if isPlaying { // loop progress along the bottom
                     let len = Double(max(1, clip.length))
-                    let f = CGFloat(Double(pos).truncatingRemainder(dividingBy: len) / len)
+                    let start = Double(dalnok_launcher_slot_start(session.engine.handle, track.id))
+                    let rel = (Double(pos) - start).truncatingRemainder(dividingBy: len)
+                    let f = CGFloat((rel < 0 ? rel + len : rel) / len)
                     ctx.setFillColor(NSColor.white.withAlphaComponent(0.8).cgColor)
                     ctx.fill(CGRect(x: r.minX + 3, y: r.maxY - 4, width: (r.width - 6) * f, height: 2))
                 }
                 let fg = TrackTint.textColor(on: tint.base)
                 let symbol = isPlaying ? "■" : "▶"
+                if clip.follow != 0 { // follow action badge
+                    ((clip.follow == 1 ? "→" : "■") + "\(clip.followLoops)" as NSString)
+                        .draw(at: CGPoint(x: r.maxX - 22, y: r.minY + 4), withAttributes: [.font: Theme.mono(8.5, .bold), .foregroundColor: fg.withAlphaComponent(0.8)])
+                }
                 (symbol as NSString).draw(at: CGPoint(x: r.minX + 5, y: r.minY + 4),
                                           withAttributes: [.font: Theme.ui(9, .bold), .foregroundColor: fg])
                 (clip.name as NSString).draw(in: CGRect(x: r.minX + 5, y: r.minY + 17, width: r.width - 10, height: 14),
@@ -88,6 +100,63 @@ final class LauncherView: NSView {
             }
         }
         Theme.separator.setFill(); CGRect(x: bounds.width - 1, y: 0, width: 1, height: bounds.height).fill()
+    }
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let p = convert(event.locationInWindow, from: nil)
+        for (i, track) in session.tracks.enumerated() {
+            for k in 0..<Int(session.scenes) where slotRect(row: i, slot: k).contains(p) {
+                guard let clip = session.slotClip(track.id, Int32(k)) else { return nil }
+                let m = NSMenu()
+                let header = NSMenuItem(title: "Follow Action", action: nil, keyEquivalent: ""); header.isEnabled = false
+                m.addItem(header)
+                for (title, action, loops) in [("None", 0, 1), ("Next Slot After 1 Loop", 1, 1), ("Next Slot After 2 Loops", 1, 2),
+                                               ("Next Slot After 4 Loops", 1, 4), ("Stop After 1 Loop", 2, 1), ("Stop After 4 Loops", 2, 4)] {
+                    let it = NSMenuItem(title: title, action: #selector(followChosen(_:)), keyEquivalent: "")
+                    it.target = self
+                    it.representedObject = [Int(clip.id), action, loops]
+                    it.state = clip.follow == Int32(action) && (action == 0 || clip.followLoops == Int32(loops)) ? .on : .off
+                    it.indentationLevel = 1
+                    m.addItem(it)
+                }
+                m.addItem(.separator())
+                let remove = NSMenuItem(title: "Remove Clip from Slot", action: #selector(removeChosen(_:)), keyEquivalent: "")
+                remove.target = self; remove.representedObject = Int(clip.id)
+                m.addItem(remove)
+                return m
+            }
+        }
+        return nil
+    }
+    @objc func followChosen(_ sender: NSMenuItem) {
+        guard let v = sender.representedObject as? [Int], v.count == 3 else { return }
+        dalnok_launcher_set_follow(session.engine.handle, DalnokClipId(v[0]), Int32(v[1]), Int32(v[2]))
+        session.refresh(); needsDisplay = true
+    }
+    @objc func removeChosen(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? Int else { return }
+        session.removeClip(DalnokClipId(id)); needsDisplay = true
+    }
+
+    /// The scene row's record control: logs launches and writes them into the arrangement when turned off.
+    override func mouseDragged(with event: NSEvent) {
+        guard dragFrom != nil else { return }
+        NSCursor.closedHand.set()
+    }
+    override func mouseUp(with event: NSEvent) {
+        defer { dragFrom = nil; NSCursor.arrow.set() }
+        guard let d = dragFrom else { return }
+        let p = convert(event.locationInWindow, from: nil)
+        if bounds.contains(p) { // a click, not a drag out: launch / stop
+            if hypot(p.x - d.at.x, p.y - d.at.y) < 4, let clip = session.slotClips.first(where: { $0.id == d.clip }) {
+                let h = session.engine.handle
+                let playing = dalnok_launcher_playing(h, clip.track) == clip.slot
+                dalnok_launcher_launch(h, clip.track, playing ? -1 : clip.slot)
+                needsDisplay = true
+            }
+            return
+        }
+        if onDropToTimeline?(d.clip, event.locationInWindow) != true { onMessage?("Drop a launcher clip on a lane in the arrangement") }
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -103,10 +172,10 @@ final class LauncherView: NSView {
         }
         for (i, track) in session.tracks.enumerated() {
             for k in 0..<Int(session.scenes) where slotRect(row: i, slot: k).contains(p) {
-                if session.slotClip(track.id, Int32(k)) != nil {
-                    // A playing slot clicked again goes back to the arrangement.
-                    let playing = dalnok_launcher_playing(h, track.id) == Int32(k)
-                    dalnok_launcher_launch(h, track.id, playing ? -1 : Int32(k))
+                if let clip = session.slotClip(track.id, Int32(k)) {
+                    // Launch (or stop) on mouse-up, unless the clip is dragged out onto the timeline.
+                    dragFrom = (clip.id, p)
+                    return
                 } else if let sel = selectedClip(), session.clip(sel)?.track == track.id {
                     session.copyToSlot(sel, Int32(k))
                     onMessage?("Copied to slot \(k + 1): click it to launch")

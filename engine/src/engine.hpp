@@ -92,6 +92,7 @@ struct ClipState {
     DalnokClipId id = 0;
     int32_t folder = 0; // take folder this clip belongs to (0 = none)
     int32_t slot = -1;  // clip launcher slot (>= 0): not on the timeline; loops when launched
+    int32_t follow = 0, followLoops = 1; // launcher follow action: 0 none, 1 next slot, 2 stop; after N loops
     bool alt = false;   // a take inside a folder: kept, not played (the comp's pieces play)
     NoteList notes; // non-null: MIDI clip (media = 0)
     bool midi() const { return notes != nullptr; }
@@ -278,10 +279,17 @@ public:
     // Clip launcher. A slot clip is a copy of a clip that loops when launched; launching takes effect at the next
     // bar (immediately when stopped, which starts the transport). Launch state is live-only, not undoable.
     DalnokClipId copyToSlot(DalnokClipId clip, int32_t slot, std::string &err); // one undo step
+    DalnokClipId placeCopy(DalnokClipId clip, DalnokTrackId track, int64_t start, std::string &err); // a copy on the timeline
     bool launch(DalnokTrackId track, int32_t slot, std::string &err);           // slot -1 = back to the arrangement
     bool launchScene(int32_t slot, std::string &err);
     void stopLauncher();                                                         // every track back to the arrangement
     int32_t playingSlot(DalnokTrackId track) const;
+    int64_t slotStart(DalnokTrackId track) const;
+    bool setFollowAction(DalnokClipId clip, int32_t action, int32_t loops, std::string &err);
+    // Launcher performance recording: while on, every switch is logged; turning it off writes the
+    // performance into the arrangement as clips (one undo step "Record Launcher").
+    void setLauncherRecording(bool on);
+    bool launcherRecording() const { return launcherRecording_.load(); }
     // Replaces a plug-in parameter's lane on a track (normalized 0-1; empty removes it). One undo step.
     bool setPluginAutomation(DalnokTrackId track, int32_t slot, uint32_t param, std::vector<AutoPoint> points, std::string &err);
     // Replaces a track's automation lane (sorted by frame; an empty list removes it). One undo step.
@@ -494,7 +502,12 @@ private:
     std::atomic<bool> cycleOn_{false};
     std::atomic<int64_t> punchIn_{INT64_MIN}, punchOut_{INT64_MAX};
     std::atomic<int64_t> countInUntil_{0};
-    std::atomic<bool> recordCycle_{false};      // this take loops the cycle and becomes one take per pass
+    std::atomic<bool> recordCycle_{false};
+    struct LaunchEvent { DalnokTrackId track; int32_t slot; int64_t frame; };
+    std::atomic<bool> launcherRecording_{false};
+    SpscQueue<LaunchEvent, 4096> launchEvents_;
+    std::vector<LaunchEvent> launchLog_; // control thread
+    int64_t launcherRecordStart_ = 0;      // this take loops the cycle and becomes one take per pass
     int64_t recordCycleStart_ = 0, recordCycleEnd_ = 0; // the cycle when that take started (control thread)
     std::atomic<int64_t> cycleStart_{0}, cycleEnd_{0};
 

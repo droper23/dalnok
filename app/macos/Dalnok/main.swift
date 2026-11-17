@@ -312,6 +312,7 @@ func buildMenu(target: MainWindowController) -> NSMenu {
         item("Mixer", #selector(W.toggleMixer(_:)), "x", []),
         item("Clip Launcher", #selector(W.toggleLauncher(_:)), "l", [.command]),
         item("Stop All Clips", #selector(W.stopAllClips(_:)), ""),
+        item("Record Launcher to Arrangement", #selector(W.toggleLauncherRecording(_:)), ""),
         item("Show Automation", #selector(W.toggleAutomation(_:)), "a", []),
         item("Automate Volume", #selector(W.automateVolume(_:)), ""),
         item("Automate Pan", #selector(W.automatePan(_:)), ""),

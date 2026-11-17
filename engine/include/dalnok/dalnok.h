@@ -28,7 +28,7 @@
 extern "C" {
 #endif
 
-#define DALNOK_API_VERSION 20
+#define DALNOK_API_VERSION 21
 
 typedef enum {
     DALNOK_OK = 0,
@@ -310,10 +310,19 @@ DalnokStatus dalnok_take_folder_set_comp(DalnokEngine *engine, int32_t folder, c
  * the sample); launching while stopped starts the transport there. Exports play the arrangement only. */
 int32_t dalnok_launcher_scenes(const DalnokEngine *engine);
 DalnokClipId dalnok_launcher_copy_clip(DalnokEngine *engine, DalnokClipId clip, int32_t slot); /* replaces the slot; undoable */
+/* A copy of any clip (e.g. a slot clip) on a compatible track's timeline at `start`. Undoable. */
+DalnokClipId dalnok_clip_place_copy(DalnokEngine *engine, DalnokClipId clip, DalnokTrackId track, int64_t start);
 DalnokStatus dalnok_launcher_launch(DalnokEngine *engine, DalnokTrackId track, int32_t slot);   /* -1: back to the arrangement */
 DalnokStatus dalnok_launcher_launch_scene(DalnokEngine *engine, int32_t slot);
 void dalnok_launcher_stop_all(DalnokEngine *engine);
 int32_t dalnok_launcher_playing(const DalnokEngine *engine, DalnokTrackId track);              /* slot or -1 */
+int64_t dalnok_launcher_slot_start(const DalnokEngine *engine, DalnokTrackId track); /* where the playing slot's first loop began */
+/* Follow action for a slot clip: after `loops` loops, 1 = play the next filled slot, 2 = stop (0 = none). Undoable. */
+DalnokStatus dalnok_launcher_set_follow(DalnokEngine *engine, DalnokClipId clip, int32_t action, int32_t loops);
+/* Performance recording: while on, every launch and follow is logged; turning it off writes the
+ * performance into the arrangement as clips (one undo step "Record Launcher"). */
+void dalnok_launcher_set_recording(DalnokEngine *engine, bool on);
+bool dalnok_launcher_recording(const DalnokEngine *engine);
 
 /* ---- Track stacks -----------------------------------------------------
  * A summing stack is a bus placed above its members (which move to follow it and are routed into it).
@@ -367,6 +376,8 @@ typedef struct {
     int32_t folder;       /* take folder (0 = none) */
     bool alt;             /* a take inside a folder: kept, not played (the comp's pieces play) */
     int32_t slot;         /* clip launcher slot (>= 0: not on the timeline), -1 = timeline */
+    int32_t follow;       /* launcher follow action: 0 none, 1 next filled slot, 2 stop */
+    int32_t follow_loops; /* after this many loops */
 } DalnokClipInfo;
 DalnokStatus dalnok_clip_info(const DalnokEngine *engine, DalnokClipId clip, DalnokClipInfo *out);
 

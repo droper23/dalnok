@@ -269,6 +269,7 @@ json::Value Engine::describe() const {
             cv.set("name", c.name);
             if (c.folder) cv.set("folder", c.folder);
             if (c.slot >= 0) cv.set("slot", c.slot);
+            if (c.follow) { cv.set("follow", c.follow); cv.set("followLoops", c.followLoops); }
             if (c.alt) cv.set("alt", true);
             if (c.stretched()) {
                 cv.set("rate", c.rate);
@@ -568,6 +569,8 @@ std::unique_ptr<Engine::PreparedProject> Engine::prepareDocument(const json::Val
                     c.name = cv.getString("name", "Audio");
                     c.folder = static_cast<int32_t>(std::max<int64_t>(0, toInt(cv, "folder")));
                     c.slot = cv.get("slot") ? static_cast<int32_t>(std::clamp<int64_t>(toInt(cv, "slot"), -1, 255)) : -1;
+                    c.follow = static_cast<int32_t>(std::clamp<int64_t>(toInt(cv, "follow"), 0, 2));
+                    c.followLoops = static_cast<int32_t>(std::clamp<int64_t>(cv.get("followLoops") ? toInt(cv, "followLoops") : 1, 1, 1024));
                     c.alt = cv.getBool("alt", false);
                     if (cv.getString("kind", "audio") == "midi") {
                         std::vector<MidiNote> notes;

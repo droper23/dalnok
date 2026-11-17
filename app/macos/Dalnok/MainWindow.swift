@@ -195,6 +195,18 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         launcher.isHidden = !Self.showLauncher
         launcher.selectedClip = { [weak self] in self?.timeline.selectedClip }
         launcher.onMessage = { [weak self] m in self?.flash(m) }
+        launcher.onDropToTimeline = { [weak self] clip, windowPoint in
+            guard let self else { return false }
+            let p = self.timeline.convert(windowPoint, from: nil)
+            guard self.timeline.bounds.contains(p), p.y >= Theme.rulerHeight, let i = self.timeline.trackIndex(atY: p.y),
+                  i < self.session.tracks.count else { return false }
+            let track = self.session.tracks[i]
+            let at = self.timeline.snap(self.timeline.frame(forX: p.x), bypass: NSEvent.modifierFlags.contains(.control))
+            let id = dalnok_clip_place_copy(self.session.engine.handle, clip, track.id, at)
+            self.session.refresh()
+            if id != 0 { self.timeline.selectedClip = id; self.flash("Placed a copy on \(track.name)") } else { self.flash("That clip can't go on \(track.name)") }
+            return true
+        }
         mixerHeight = mixer.heightAnchor.constraint(equalToConstant: Self.showMixer ? MixerPanel.height : 0)
         mixerHeight.isActive = true
         mixer.isHidden = !Self.showMixer
@@ -414,7 +426,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     }
 
     private var transientMessageUntil = Date.distantPast
+    private(set) var lastFlashText = ""
     func flash(_ msg: String) {
+        lastFlashText = msg
         Motion.fadeNextChange(transport.statusLabel.layer, duration: Motion.standard)
         transport.statusLabel.stringValue = msg
         transientMessageUntil = Date().addingTimeInterval(4)
@@ -1108,6 +1122,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         launcher.needsDisplay = true
         if Self.showLauncher { flash("Clip launcher: select a clip, click an empty slot on its track to put it there, click to launch") }
     }
+    /// Transport ▸ Record Launcher to Arrangement: while on, launches are logged; turning it off writes them as clips.
+    @objc func toggleLauncherRecording(_ sender: Any?) {
+        let on = !dalnok_launcher_recording(session.engine.handle)
+        dalnok_launcher_set_recording(session.engine.handle, on)
+        session.refresh()
+        flash(on ? "Recording the launcher: launch clips; turn this off to write the performance into the arrangement"
+                 : "Launcher performance written into the arrangement")
+    }
     @objc func stopAllClips(_ sender: Any?) { dalnok_launcher_stop_all(session.engine.handle); launcher.needsDisplay = true }
 
     /// View ▸ Mixer (X): channel strips for every track and bus above the device panel.
@@ -1361,6 +1383,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             return true
         case #selector(clearAutomation(_:)):
             return selectedTrack.flatMap { session.track($0) }.map { !$0.automation(TimelineView.automationTarget).isEmpty } ?? false
+        case #selector(toggleLauncherRecording(_:)):
+            item.state = dalnok_launcher_recording(session.engine.handle) ? .on : .off
+            return true
         case #selector(toggleLauncher(_:)):
             item.state = Self.showLauncher ? .on : .off
             return true

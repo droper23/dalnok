@@ -1064,6 +1064,7 @@ final class SelfTest {
         func click(_ r: CGRect) {
             let at = lv.convert(CGPoint(x: r.midX, y: r.midY), to: nil)
             lv.mouseDown(with: mouse(.leftMouseDown, at))
+            lv.mouseUp(with: mouse(.leftMouseUp, at))
         }
         click(lv.slotRect(row: row, slot: 0))
         check(s.slotClip(track.id, 0) != nil && s.track(track.id)?.clips.count == track.clips.count,
@@ -1078,6 +1079,23 @@ final class SelfTest {
         await wait(2.3) // the stop lands on the next bar (2 s at 120 BPM)
         check(dalnok_launcher_playing(e.handle, track.id) == -1, "clicking it again goes back to the arrangement on the bar")
         e.pause()
+        // Follow action from the slot's menu, then drag the slot clip out onto the timeline.
+        if let slotClip = s.slotClip(track.id, 0) {
+            let item = NSMenuItem(); item.representedObject = [Int(slotClip.id), 1, 2]
+            lv.followChosen(item)
+            check(s.slotClip(track.id, 0)?.follow == 1 && s.slotClip(track.id, 0)?.followLoops == 2, "the slot menu sets a follow action")
+            let from = lv.convert(CGPoint(x: lv.slotRect(row: row, slot: 0).midX, y: lv.slotRect(row: row, slot: 0).midY), to: nil)
+            let x = w.timeline.bounds.midX
+            let to = w.timeline.convert(CGPoint(x: x, y: w.timeline.laneY(row) + 20), to: nil)
+            let before = s.track(track.id)?.clips.count ?? 0
+            lv.mouseDown(with: mouse(.leftMouseDown, from))
+            lv.mouseDragged(with: mouse(.leftMouseDragged, to))
+            lv.mouseUp(with: mouse(.leftMouseUp, to))
+            check(s.track(track.id)?.clips.count == before + 1 && e.undoName == "Place Copy", "dragging a slot onto the timeline places a copy (\(before)→\(s.track(track.id)?.clips.count ?? -1), \(e.undoName), \(w.lastFlashText))")
+            _ = perform("Undo"); _ = perform("Undo")
+        }
+        check(perform("Record Launcher to Arrangement") && dalnok_launcher_recording(e.handle), "Transport > Record Launcher to Arrangement")
+        _ = perform("Record Launcher to Arrangement")
         check(perform("Undo") && s.slotClip(track.id, 0) == nil, "undo removes the slot copy")
         if !was { _ = perform("Clip Launcher") }
     }

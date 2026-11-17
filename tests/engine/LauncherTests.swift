@@ -71,3 +71,51 @@ import Testing
         #expect(found)
     }
 }
+
+@Suite struct LauncherFollowAndRecord {
+    @Test func followActionsChainSlotsExactlyAtLoopEnds() {
+        let e = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(e) }
+        let t = dalnok_track_add(e, "T")
+        let a = makeMedia([[Float](repeating: 0.1, count: 10_000)]), b = makeMedia([[Float](repeating: 0.4, count: 8_000)])
+        defer { dalnok_media_release(a); dalnok_media_release(b) }
+        let ca = DalnokEngine.dalnok_clip_add(e, t, dalnok_pool_add(e, a, ""), 0, 0, 0)
+        let cb = DalnokEngine.dalnok_clip_add(e, t, dalnok_pool_add(e, b, ""), 20_000, 0, 0)
+        let sa = dalnok_launcher_copy_clip(e, ca, 0), sb = dalnok_launcher_copy_clip(e, cb, 1)
+        _ = dalnok_clip_remove(e, ca); _ = dalnok_clip_remove(e, cb)
+        #expect(dalnok_launcher_set_follow(e, sa, 1, 1) == DALNOK_OK && undoName(e) == "Follow Action")
+        #expect(dalnok_launcher_set_follow(e, sb, 2, 2) == DALNOK_OK)
+        #expect(dalnok_launcher_set_follow(e, sb, 3, 1) != DALNOK_OK)
+        #expect(dalnok_launcher_launch(e, t, 0) == DALNOK_OK)
+        let (l, _) = pump(e, 30_000, block: 333)
+        #expect(abs(l[9_999] - 0.1) < 1e-4 && abs(l[10_000] - 0.4) < 1e-4, "next slot exactly after one loop")
+        #expect(abs(l[25_999] - 0.4) < 1e-4 && abs(l[26_000]) < 1e-6, "stop after two loops of slot 2 (the arrangement is empty)")
+        #expect(dalnok_launcher_playing(e, t) == -1)
+    }
+
+    @Test func recordingAPerformanceWritesItIntoTheArrangement() {
+        let e = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(e) }
+        let t = dalnok_track_add(e, "T")
+        let a = makeMedia([[Float](repeating: 0.3, count: 40_000)]); defer { dalnok_media_release(a) }
+        let c = DalnokEngine.dalnok_clip_add(e, t, dalnok_pool_add(e, a, ""), 0, 0, 0)
+        #expect(dalnok_launcher_copy_clip(e, c, 0) != 0)
+        _ = dalnok_clip_remove(e, c)
+        dalnok_launcher_set_recording(e, true)
+        #expect(dalnok_launcher_recording(e))
+        dalnok_transport_play(e)
+        _ = pump(e, 10_000)
+        #expect(dalnok_launcher_launch(e, t, 0) == DALNOK_OK) // lands on bar 2 (96,000)
+        _ = pump(e, 200_000 - 10_000)
+        dalnok_launcher_set_recording(e, false)
+        #expect(undoName(e) == "Record Launcher")
+        var info = DalnokTrackInfo()
+        _ = dalnok_track_info(e, t, &info)
+        var starts: [Int64] = []
+        for k in 0..<info.clip_count {
+            let ci = clipInfo(e, dalnok_track_clip_at(e, t, k))
+            if ci.slot < 0 { starts.append(ci.start) }
+        }
+        #expect(starts.sorted().first == 96_000 && starts.count >= 2, "loop passes from the launch on: \(starts.sorted())")
+        #expect(abs(render(e, 100_000, 10)[5] - 0.3) < 1e-4, "the arrangement now plays the performance")
+        #expect(dalnok_undo(e))
+    }
+}

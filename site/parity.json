@@ -831,14 +831,22 @@
         ],
         [
           "Record a launcher performance to the timeline",
-          "todo"
+          "verified"
         ],
         [
-          "Record into slots; drag clips between the timeline and slots; follow actions",
+          "Follow actions (next slot or stop after N loops, exact at loop ends)",
+          "verified"
+        ],
+        [
+          "Drag a slot clip onto the timeline",
+          "verified"
+        ],
+        [
+          "Record into slots; drag timeline clips into slots",
           "todo"
         ]
       ],
-      "evidence": "LauncherTests: launching while playing switches exactly on the next bar and loops every clip length, stopping returns to the arrangement on a later bar, launching while stopped starts the transport, exports play the arrangement only, scenes launch every filled track. App self-test: View > Clip Launcher, clicking an empty slot copies the selected clip, clicking launches it and clicking again stops it on the bar, undo. Launch quantization is one bar; the slot progress bar is approximate."
+      "evidence": "LauncherTests: launching while playing switches exactly on the next bar and loops every clip length, stopping returns to the arrangement on a later bar, launching while stopped starts the transport, exports play the arrangement only, scenes launch every filled track. App self-test: View > Clip Launcher, clicking an empty slot copies the selected clip, clicking launches it and clicking again stops it on the bar, undo. LauncherFollowAndRecord: next-slot and stop follow actions switch on the exact loop end; recording a performance writes loop passes into the arrangement from the launch frame (one undo step). Self-test: follow action from the slot menu, dragging a slot onto the timeline, Transport > Record Launcher to Arrangement. Launch quantization is one bar."
     },
     {
       "id": "channel",
