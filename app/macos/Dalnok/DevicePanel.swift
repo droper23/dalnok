@@ -612,6 +612,14 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
     // Dragging a unit by its empty surface reorders the chain.
     private var dragStart: NSPoint?
     override func mouseDown(with event: NSEvent) { dragStart = event.locationInWindow }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true } // drag a unit even when another window is key
+    /// Empty surface (layout containers, labels, the pedal enclosure) belongs to the unit, so a press there can start
+    /// a drag (and is accepted as a first click); real controls keep their clicks.
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        let v = super.hitTest(point)
+        if v is NSStackView || v is NSGridView || v is PedalBody || (v as? NSTextField).map({ !$0.isEditable && !$0.isSelectable }) == true { return self }
+        return v
+    }
     override func mouseDragged(with event: NSEvent) {
         guard let s = dragStart, hypot(event.locationInWindow.x - s.x, event.locationInWindow.y - s.y) > 6 else { return }
         dragStart = nil

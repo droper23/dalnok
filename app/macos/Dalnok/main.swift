@@ -191,6 +191,7 @@ final class MainMenu: NSMenu {
         let verdict: Bool? = MainActor.assumeIsolated {
             let r = ShortcutRegistry.shared
             if ShortcutRegistry.capturing { return false }
+            if ShortcutRegistry.dialogInFront { return nil } // the dialog's own buttons answer Return and Escape
             if r.handle(e) { return true }
             if let k = KeyCombo(event: e), r.isBound(k) { return false }
             // Unbound keys: only ⌘/⌃ combinations go on to AppKit (for the items macOS adds, like Emoji & Symbols).

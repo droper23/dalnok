@@ -518,6 +518,7 @@ final class SelfTest {
 
     private func scrollEvent(dy: Int32, at window: CGPoint) -> NSEvent? {
         guard let cg = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2, wheel1: dy, wheel2: 0, wheel3: 0) else { return nil }
+        cg.flags = [] // not whatever modifiers the system thinks are held (⌥/⌘ would zoom instead)
         if let win = w.window { cg.location = CGPoint(x: win.frame.minX + window.x, y: (NSScreen.screens.first?.frame.height ?? 0) - (win.frame.minY + window.y)) }
         return NSEvent(cgEvent: cg)
     }
@@ -525,9 +526,12 @@ final class SelfTest {
     private func trackHeaderScrolling() async {
         let e = s.engine
         var added = 0
-        while CGFloat(s.tracks.count) * Theme.trackHeight < w.timeline.bounds.height * 2, added < 40 { s.addTrack("Scroll \(added)"); added += 1 }
+        w.window?.layoutIfNeeded()
+        let visible = max(w.timeline.bounds.height, 400)
+        while CGFloat(s.tracks.count) * Theme.trackHeight < visible * 2, added < 40 { s.addTrack("Scroll \(added)"); added += 1 }
         w.window?.layoutIfNeeded()
         await wait(0.1)
+        print("INFO  header scrolling: timeline \(w.timeline.bounds.height) pt, \(s.tracks.count) tracks, max offset \(w.timeline.maxScrollY), hidden \(w.timeline.isHidden)")
         w.timeline.scrollY = 0
         guard let row = w.headers.rows.first, let ev = scrollEvent(dy: -60, at: .zero) else {
             check(false, "header scrolling: rows and scroll events exist"); return
@@ -625,6 +629,15 @@ final class SelfTest {
               r.resolve(KeyCombo("up"), context: .pianoRoll)?.id == "midi.transpose_up" && r.allConflicts().isEmpty,
               "the same key does different things in the arrangement and the piano roll")
         check(ShortcutRegistry.reservedBySystem(KeyCombo("space", .command)) != nil, "⌘Space is flagged as belonging to macOS")
+        // A dialog owns Return and Escape: shortcuts stay out of its way (regression: Return ran Go to Start under an alert).
+        let alert = NSAlert(); alert.messageText = "Shortcut test"; alert.addButton(withTitle: "OK")
+        alert.beginSheetModal(for: w.window!) { _ in }
+        await wait(0.3)
+        let returnKey = keyEvent("\r", code: 36)
+        check(ShortcutRegistry.dialogInFront && !r.handle(returnKey), "with a sheet open, Return is left to the dialog")
+        w.window?.endSheet(alert.window)
+        await wait(0.2)
+        check(!ShortcutRegistry.dialogInFront, "after the sheet closes, shortcuts work again")
         // Export and import round-trip.
         if let data = r.exportData() {
             r.restoreAll()

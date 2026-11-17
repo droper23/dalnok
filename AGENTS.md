@@ -26,7 +26,11 @@ Swift/AppKit front end on macOS. GPL-3.0-or-later. This repo is also the project
   palette, piano roll, device panel, plug-in window, secondary windows) and writes a PNG of every visible window
   at each step, including mid-drag. Use it for visual review in both themes (`DALNOK_THEME=warmAnalog`).
   `DALNOK_WINDOW_DUMP=<dir>` makes a running app write its windows and `windows.json` on `kill -USR1`;
-  `scripts/dev/drive.swift` posts OS-level input (unlocked screen + Accessibility access only).
+  `scripts/dev/drive.swift` posts OS-level input (unlocked screen + Accessibility access only). The owner wants real
+  keyboard and mouse testing where it's useful. Before posting, confirm Dalnok is frontmost (input goes to whatever
+  app is in front). Run it with `DALNOK_RECOVERY_DIR=<scratch>`, because killing the app leaves a session marker that
+  makes the next real launch offer crash recovery. Restore any preferences the run changed (`defaults read Dalnok`).
+  The driver presses and releases modifier keys, so it never leaves ⌘/⌥ latched system-wide.
 - `.build/debug/Dalnok <files…> --selftest <dir>` drives real menus and synthesized drags end to end.
   Extend `app/macos/Dalnok/SelfTest.swift` for every new UI interaction.
 - `.build/debug/dalnok-cli commands`, `command <proj> <name> '<json>' [--save]`, `render-project`,

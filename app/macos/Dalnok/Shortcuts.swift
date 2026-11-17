@@ -490,6 +490,14 @@ final class ShortcutRegistry {
 
     // Dispatch
 
+    /// A modal session, sheet or alert owns the keyboard (Return and Escape answer it); shortcuts stay out of its way.
+    static var dialogInFront: Bool {
+        if NSApp.modalWindow != nil { return true }
+        if NSApp.windows.contains(where: { $0.isVisible && $0.attachedSheet != nil }) { return true }
+        guard let key = NSApp.keyWindow else { return false }
+        return key.isSheet || key.attachedSheet != nil || key is NSPanel && !(key is KeyPanel) && key.styleMask.contains(.titled) == false
+            || String(describing: type(of: key)).contains("Alert")
+    }
     /// The context the key press is in: the piano roll window, else the arrangement.
     static func activeContext() -> ShortcutContext {
         // The piano roll tracks its own focus (it stays "focused" even when the app is driven while inactive).
@@ -503,7 +511,7 @@ final class ShortcutRegistry {
     }
     /// Runs a key press: true if a command took it. Piano-roll commands are left to the piano roll's view.
     func handle(_ event: NSEvent) -> Bool {
-        guard !Self.capturing, let k = KeyCombo(event: event) else { return false }
+        guard !Self.capturing, !Self.dialogInFront, let k = KeyCombo(event: event) else { return false }
         let context = Self.activeContext()
         guard let a = resolve(k, context: context) else { return false }
         if a.item == nil { return false } // a view-handled action: the focused view does it
