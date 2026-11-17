@@ -58,11 +58,31 @@ struct RenderNote {
     uint8_t pitch = 0, velocity = 0;
 };
 
+// A fixed stereo delay (plug-in delay compensation). Processed in place by the thread rendering the snapshot.
+struct DelayLine {
+    explicit DelayLine(int32_t frames) : l(static_cast<size_t>(frames) + 1, 0.0f), r(l), delay(frames) {}
+    std::vector<float> l, r; // capacity delay + 1
+    size_t w = 0;
+    int32_t delay = 0;
+    void process(float *L, float *R, int n) DALNOK_NONBLOCKING {
+        const size_t cap = l.size();
+        for (int i = 0; i < n; ++i) {
+            l[w] = L[i];
+            r[w] = R[i];
+            const size_t rd = (w + cap - static_cast<size_t>(delay)) % cap;
+            L[i] = l[rd];
+            R[i] = r[rd];
+            w = (w + 1) % cap;
+        }
+    }
+};
+
 // A send into a bus's input (slot = bus index in RenderState::busL/busR).
 struct RenderSend {
     int32_t slot = -1;
     float gain = 1.0f; // linear
     bool pre = false;  // before the fader and pan
+    DelayLine *delay = nullptr; // delay compensation on this connection (null = none)
 };
 
 struct RenderTrack {
@@ -71,6 +91,8 @@ struct RenderTrack {
     int32_t busSlot = -1;  // this bus's input slot
     int32_t output = -1;   // destination bus slot, -1 = master
     std::vector<RenderSend> sends;
+    DelayLine *outDelay = nullptr; // delay compensation on the output connection (null = none)
+    int32_t latency = 0;           // frames added by this track's plug-ins
     std::vector<TrackRuntime *> soloLinks; // tracks upstream and downstream in the routing (solo follows them)
     // Automation (empty = none): volume as fader taper (amplitude^(1/4)), pan -1..1, linear between points.
     std::vector<std::pair<int64_t, float>> volumeAuto, panAuto;
@@ -94,6 +116,10 @@ struct RenderState {
     // Bus inputs, kMaxBlock frames per bus. Written only by the thread rendering this snapshot (the audio
     // thread for the live snapshot, the exporting thread for an offline one).
     mutable std::vector<float> busL, busR;
+    // Plug-in delay compensation: every path to the master is delayed to this many frames, so the
+    // timeline is rendered this far ahead of the playhead (and exports pre-roll by it).
+    int32_t compensation = 0;
+    std::vector<std::shared_ptr<DelayLine>> delayKeep; // keeps the delay lines alive with the snapshot
     std::vector<ClickMeter> clickMeter;
     SynthParams synth;
     int32_t liveTrack = -1; // index of the track that plays live MIDI input (-1 = none)
@@ -139,6 +165,8 @@ struct Scratch {
     float trackL[kMaxBlock];
     float trackR[kMaxBlock];
     float tmp[kMaxBlock];
+    float fadeL[kMaxBlock], fadeR[kMaxBlock]; // a track after its fader and pan
+    float edgeL[kMaxBlock], edgeR[kMaxBlock]; // one connection's signal while it is delayed
     PluginNote events[512];
     // Live-input notes for the live track's plugin instrument in this block (set by the live path).
     const PluginNote *liveNotes = nullptr;

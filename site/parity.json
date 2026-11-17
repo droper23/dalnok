@@ -961,11 +961,11 @@
           "todo"
         ],
         [
-          "Plugin delay compensation",
-          "todo"
+          "Plugin delay compensation (tracks, buses and sends; live and exports)",
+          "verified"
         ]
       ],
-      "evidence": "RoutingTests (offline renders, 1e-4 tolerance): output through a bus applies its fader and balance pan; post-fader and pre-fader sends add the expected levels; mute silences pre-fader sends; chained buses; solo through routing; feedback and clips on buses rejected; deleting a bus returns its sources to the master and undo restores the routing; routing survives save/reopen (format 5) and a looping file is rejected. TSan clean on the live render path tests. Live MIDI input played while stopped still goes straight to the master."
+      "evidence": "DelayCompensationTests (test VST3 that delays by exactly its reported 300 frames): a latent insert stays sample-aligned with other tracks, a latent bus and a send into it arrive together with the direct paths, and live playback puts the impulse exactly at the playhead. RoutingTests (offline renders, 1e-4 tolerance): output through a bus applies its fader and balance pan; post-fader and pre-fader sends add the expected levels; mute silences pre-fader sends; chained buses; solo through routing; feedback and clips on buses rejected; deleting a bus returns its sources to the master and undo restores the routing; routing survives save/reopen (format 5) and a looping file is rejected. TSan clean on the live render path tests. Live MIDI input played while stopped still goes straight to the master."
     },
     {
       "id": "stacks",

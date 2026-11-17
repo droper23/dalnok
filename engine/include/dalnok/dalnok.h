@@ -278,6 +278,11 @@ DalnokStatus dalnok_track_set_send(DalnokEngine *engine, DalnokTrackId track, Da
 DalnokStatus dalnok_track_remove_send(DalnokEngine *engine, DalnokTrackId track, DalnokTrackId bus);
 int32_t dalnok_track_sends(const DalnokEngine *engine, DalnokTrackId track, DalnokSend *out, int32_t capacity);
 
+/* Plug-in delay compensation in frames: every path to the master is delayed to this, playback renders the
+ * timeline this far ahead of the playhead, and offline renders pre-roll by it, so tracks stay aligned
+ * whatever latency their plug-ins (and their buses' plug-ins) add. */
+int32_t dalnok_latency_compensation(const DalnokEngine *engine);
+
 /* ---- Automation -------------------------------------------------------
  * Breakpoints in timeline frames, linear between points and held before the first and after the last.
  * Volume values are dB (<= +6; <= -95 is silence) and follow the fader's taper between points; pan is -1..1.

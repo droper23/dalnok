@@ -280,26 +280,36 @@ void renderBlock(const RenderState &state, int64_t pos, int frames, float *left,
             runInserts(t, frames, s); // every block, so reverb and delay tails continue after clips end
         }
 
-        // Pre-fader sends take the signal before the fader and pan (still silenced by mute and solo).
-        if (any) {
-            const bool silent = rt.muted.load(std::memory_order_relaxed) ||
-                                (anySolo && !linkedSolo && !rt.solo.load(std::memory_order_relaxed));
-            for (const RenderSend &snd : t.sends) {
-                if (!snd.pre || silent || snd.slot < 0) continue;
-                float *dl = busL + static_cast<size_t>(snd.slot) * kMaxBlock, *dr = busR + static_cast<size_t>(snd.slot) * kMaxBlock;
-                for (int i = 0; i < frames; ++i) { dl[i] += s.trackL[i] * snd.gain; dr[i] += s.trackR[i] * snd.gain; }
-            }
-        }
+        // A track with delay compensation keeps its delay lines running even while silent.
+        bool delayed = t.outDelay != nullptr;
+        for (const RenderSend &x : t.sends) delayed = delayed || x.delay != nullptr;
+        if (delayed && !any) { clear(s.trackL, frames); clear(s.trackR, frames); any = true; }
         float *outL = t.output < 0 ? left : busL + static_cast<size_t>(t.output) * kMaxBlock;
         float *outR = t.output < 0 ? right : busR + static_cast<size_t>(t.output) * kMaxBlock;
-        // Post-fader sends receive the faded, panned signal.
-        auto postSends = [&](int i, float vl, float vr) DALNOK_NONBLOCKING {
+        const bool silentPre = rt.muted.load(std::memory_order_relaxed) ||
+                               (anySolo && !linkedSolo && !rt.solo.load(std::memory_order_relaxed));
+        // Adds `src * gain` to a destination, through the connection's compensation delay if it has one.
+        auto addTo = [&](float *dl, float *dr, const float *srcL, const float *srcR, float gain, DelayLine *delay) DALNOK_NONBLOCKING {
+            if (!delay) {
+                for (int i = 0; i < frames; ++i) { dl[i] += srcL[i] * gain; dr[i] += srcR[i] * gain; }
+                return;
+            }
+            for (int i = 0; i < frames; ++i) { s.edgeL[i] = srcL[i] * gain; s.edgeR[i] = srcR[i] * gain; }
+            delay->process(s.edgeL, s.edgeR, frames);
+            for (int i = 0; i < frames; ++i) { dl[i] += s.edgeL[i]; dr[i] += s.edgeR[i]; }
+        };
+        // Delivers the faded signal (s.fade*) to the output and post-fader sends, and the pre-fader signal
+        // (s.track*, silenced by mute and solo) to pre-fader sends.
+        auto deliver = [&]() DALNOK_NONBLOCKING {
+            addTo(outL, outR, s.fadeL, s.fadeR, 1.0f, t.outDelay);
             for (const RenderSend &snd : t.sends) {
-                if (snd.pre || snd.slot < 0) continue;
-                busL[static_cast<size_t>(snd.slot) * kMaxBlock + static_cast<size_t>(i)] += vl * snd.gain;
-                busR[static_cast<size_t>(snd.slot) * kMaxBlock + static_cast<size_t>(i)] += vr * snd.gain;
+                if (snd.slot < 0) continue;
+                float *dl = busL + static_cast<size_t>(snd.slot) * kMaxBlock, *dr = busR + static_cast<size_t>(snd.slot) * kMaxBlock;
+                if (snd.pre) addTo(dl, dr, s.trackL, s.trackR, silentPre ? 0.0f : snd.gain, snd.delay);
+                else addTo(dl, dr, s.fadeL, s.fadeR, snd.gain, snd.delay);
             }
         };
+
         // Automated volume or pan: 32-sample linear ramps between exact automation values (same live and offline).
         if (!t.volumeAuto.empty() || !t.panAuto.empty()) {
             const bool mono = t.monoSource && !t.instrumentPlugin, solo = anySolo && !linkedSolo;
@@ -317,9 +327,8 @@ void renderBlock(const RenderState &state, int64_t pos, int frames, float *left,
                     const int i = i0 + k;
                     const float off = static_cast<float>(f - g0 + k);
                     const float vl = s.trackL[i] * (l0 + sl * off), vr = s.trackR[i] * (r0 + sr * off);
-                    outL[i] += vl;
-                    outR[i] += vr;
-                    postSends(i, vl, vr);
+                    s.fadeL[i] = vl;
+                    s.fadeR[i] = vr;
                     pl = std::max(pl, std::fabs(vl));
                     pr = std::max(pr, std::fabs(vr));
                 }
@@ -328,6 +337,7 @@ void renderBlock(const RenderState &state, int64_t pos, int frames, float *left,
                 ar = r0 + sr * end;
                 i0 += n;
             }
+            if (any) deliver();
             if (smooth) {
                 raisePeak(rt.peakL, pl);
                 raisePeak(rt.peakR, pr);
@@ -337,13 +347,10 @@ void renderBlock(const RenderState &state, int64_t pos, int frames, float *left,
         }
 
         if (!smooth) {
-            if (any)
-                for (int i = 0; i < frames; ++i) {
-                    const float vl = s.trackL[i] * gl, vr = s.trackR[i] * gr;
-                    outL[i] += vl;
-                    outR[i] += vr;
-                    postSends(i, vl, vr);
-                }
+            if (any) {
+                for (int i = 0; i < frames; ++i) { s.fadeL[i] = s.trackL[i] * gl; s.fadeR[i] = s.trackR[i] * gr; }
+                deliver();
+            }
             continue;
         }
 
@@ -361,12 +368,12 @@ void renderBlock(const RenderState &state, int64_t pos, int frames, float *left,
                 cl += dl;
                 cr += dr;
                 const float vl = s.trackL[i] * cl, vr = s.trackR[i] * cr;
-                outL[i] += vl;
-                outR[i] += vr;
-                postSends(i, vl, vr);
+                s.fadeL[i] = vl;
+                s.fadeR[i] = vr;
                 pl = std::max(pl, std::fabs(vl));
                 pr = std::max(pr, std::fabs(vr));
             }
+            deliver();
             raisePeak(rt.peakL, pl);
             raisePeak(rt.peakR, pr);
         }

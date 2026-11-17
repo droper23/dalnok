@@ -12,7 +12,8 @@ milestone: M11 VST3 hosting (ADR-0009 stage 3) done; editors, parameters and AU 
 - **Crash recovery prompt** at launch from the session marker and newest autosave snapshot.
 - **Routing**: bus tracks, outputs, pre/post sends, solo through routing, feedback rejected (C API 14, format 5). **Mixer** (X) with channel strips.
 - Verified: 129 engine tests, self-test 277 checks in both themes, `scripts/check.sh` (now prints failing checks), TSan on routing/recording suites, RT-effects clean.
-- Next: automation (volume, pan, plug-in parameters), delay compensation, take folders/comping, track stacks; master strip and insert slots in the mixer; disk streaming.
+- **Automation** (volume, pan; A) and **plug-in delay compensation** (per connection, render-ahead live, export pre-roll; the test VST3s now really delay by the latency they report).
+- Next: take folders and comping (cycle recording into takes), track stacks, plug-in parameter automation, master strip and insert slots in the mixer, disk streaming. Known: a cycle wrap with compensation > 0 plays up to the compensation's length past the loop end before the jump.
 
 ## Latest session, part 2 (UI/UX review, both themes)
 - Reviewed every main interaction in Graphite and Warm Analog with the new `--uiwalk` (real NSEvents through the windows, every window captured per step). Findings and fixes: [[UI Review 2026-11-17]]. Highlights: clips no longer draw over track headers when scrolled; Escape cancels rename; Warm Analog rename and tape fixed; AU editors no longer clipped; quitting then cancelling the save prompt no longer hangs the quit; palette ranking; snapped playhead clicks; device-panel Add tile; empty-state track buttons; piano-roll subtitle; Relaunch Now for themes.

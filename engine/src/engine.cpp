@@ -1188,6 +1188,7 @@ std::unique_ptr<RenderState> Engine::compile(std::vector<StretchJob> *needed, co
             auto it = instances.find(slot.id);
             if (it == instances.end() || !it->second) continue; // missing plugin: insert bypassed, instrument silent
             rt.keep.push_back(it->second);
+            rt.latency += static_cast<int32_t>(std::min<uint32_t>(it->second->latency(), 1u << 20));
             if (slot.instrument && rt.instrument) rt.instrumentPlugin = it->second.get();
             else if (!slot.instrument) rt.inserts.push_back(it->second.get());
         }
@@ -1288,6 +1289,53 @@ std::unique_ptr<RenderState> Engine::compile(std::vector<StretchJob> *needed, co
         for (auto id : linked)
             if (auto it = indexOf.find(id); it != indexOf.end()) s->tracks[i].soloLinks.push_back(s->tracks[static_cast<size_t>(it->second)].runtime.get());
     }
+    // Plug-in delay compensation. Order is topological (sources, then buses after everything feeding them):
+    // a bus starts when its latest input arrives; every connection is delayed so all inputs of a bus (and of
+    // the master) arrive together. Live delay lines persist across snapshots (keyed by connection and length);
+    // offline renders (pluginMap != nullptr) get fresh ones.
+    std::vector<int64_t> start(order.size(), 0);
+    std::vector<std::vector<std::pair<size_t, int32_t>>> into(order.size()); // dest index → (src index, send index or -1)
+    std::vector<std::pair<size_t, int32_t>> intoMaster;
+    std::vector<int32_t> slotOwner(static_cast<size_t>(buses), -1);
+    for (size_t i = 0; i < order.size(); ++i) if (s->tracks[i].bus) slotOwner[static_cast<size_t>(s->tracks[i].busSlot)] = static_cast<int32_t>(i);
+    for (size_t i = 0; i < order.size(); ++i) {
+        const RenderTrack &rt = s->tracks[i];
+        if (rt.output < 0) intoMaster.push_back({i, -1});
+        else into[static_cast<size_t>(slotOwner[static_cast<size_t>(rt.output)])].push_back({i, -1});
+        for (size_t k = 0; k < rt.sends.size(); ++k)
+            if (rt.sends[k].slot >= 0) into[static_cast<size_t>(slotOwner[static_cast<size_t>(rt.sends[k].slot)])].push_back({i, static_cast<int32_t>(k)});
+    }
+    for (size_t i = 0; i < order.size(); ++i)
+        for (const auto &[src, sendIndex] : into[i]) start[i] = std::max(start[i], start[src] + s->tracks[src].latency);
+    int64_t master = 0;
+    for (const auto &[src, sendIndex] : intoMaster) master = std::max(master, start[src] + s->tracks[src].latency);
+    s->compensation = static_cast<int32_t>(std::min<int64_t>(master, 1 << 20));
+    auto delayFor = [&](size_t src, int32_t sendIndex, int64_t arrival) -> DelayLine * {
+        const int64_t d = arrival - (start[src] + s->tracks[src].latency);
+        if (d <= 0) return nullptr;
+        std::shared_ptr<DelayLine> line;
+        const std::string key = std::to_string(order[src]->id) + (sendIndex < 0 ? ":out" : ":send" + std::to_string(sendIndex)) + ":" + std::to_string(d);
+        if (!pluginMap) {
+            auto &cached = delayCache_[key];
+            if (!cached) cached = std::make_shared<DelayLine>(static_cast<int32_t>(d));
+            line = cached;
+        } else {
+            line = std::make_shared<DelayLine>(static_cast<int32_t>(d));
+        }
+        s->delayKeep.push_back(line);
+        return line.get();
+    };
+    for (size_t i = 0; i < order.size(); ++i)
+        for (const auto &[src, sendIndex] : into[i]) {
+            DelayLine *d = delayFor(src, sendIndex, start[i]);
+            if (sendIndex < 0) s->tracks[src].outDelay = d; else s->tracks[src].sends[static_cast<size_t>(sendIndex)].delay = d;
+        }
+    for (const auto &[src, sendIndex] : intoMaster) s->tracks[src].outDelay = delayFor(src, -1, master);
+    if (!pluginMap) // forget delay lines no snapshot can use any more
+        for (auto it = delayCache_.begin(); it != delayCache_.end();)
+            it = it->second.use_count() == 1 && std::none_of(s->delayKeep.begin(), s->delayKeep.end(),
+                                                             [&](const auto &k) { return k == it->second; })
+                     ? delayCache_.erase(it) : std::next(it);
     s->busL.assign(static_cast<size_t>(buses) * kMaxBlock, 0.0f);
     s->busR.assign(static_cast<size_t>(buses) * kMaxBlock, 0.0f);
     return s;
@@ -1470,7 +1518,8 @@ void Engine::process(float *left, float *right, int frames) DALNOK_NONBLOCKING {
         scratch_.liveNotes = rtLiveNotes_;
         scratch_.liveNoteCount = off == n ? rtLiveNoteCount_ : 0;
         if (current_) {
-            renderBlock(*current_, rtPosition_, n, l, r, scratch_, true, anySolo);
+            // Rendered ahead by the delay compensation, so what is heard lines up with the playhead.
+            renderBlock(*current_, rtPosition_ + current_->compensation, n, l, r, scratch_, true, anySolo);
         } else {
             for (int i = 0; i < n; ++i) l[i] = r[i] = 0.0f;
         }
@@ -1547,14 +1596,27 @@ bool Engine::renderOffline(int64_t start, int64_t frames, float *left, float *ri
     const auto offline = offlinePlugins();
     const auto state = compile(nullptr, &offline);
     const bool anySolo = soloCount_.load() > 0;
-    Scratch scratch{};
+    auto scratch = std::make_unique<Scratch>();
     std::vector<SynthState> synths(state->tracks.size());
+    // Delay compensation: render the timeline ahead by the compensation and pre-roll that much first, so
+    // output frame j is timeline frame start + j exactly as heard live.
+    const int64_t m = state->compensation;
+    float discardL[kMaxBlock], discardR[kMaxBlock];
+    for (int64_t done = 0; done < m;) {
+        const int n = static_cast<int>(std::min<int64_t>(kMaxBlock, m - done));
+        renderBlock(*state, start + done, n, discardL, discardR, *scratch, false, anySolo, synths.data());
+        done += n;
+    }
     for (int64_t done = 0; done < frames;) {
         const int n = static_cast<int>(std::min<int64_t>(kMaxBlock, frames - done));
-        renderBlock(*state, start + done, n, left + done, right + done, scratch, false, anySolo, synths.data());
+        renderBlock(*state, start + m + done, n, left + done, right + done, *scratch, false, anySolo, synths.data());
         done += n;
     }
     return true;
+}
+
+int32_t Engine::compensation() const {
+    return compile(nullptr, &plugins_)->compensation; // a throwaway snapshot with fresh delay lines (no live state touched)
 }
 
 bool Engine::renderToWav(const std::string &path, int64_t start, int64_t frames, int32_t bits, std::string &err) {
@@ -1567,14 +1629,20 @@ bool Engine::renderToWav(const std::string &path, int64_t start, int64_t frames,
     renderPendingStretchesNow();
     const auto offline = offlinePlugins();
     const auto state = compile(nullptr, &offline);
-    Scratch scratch{};
+    auto scratch = std::make_unique<Scratch>();
     std::vector<SynthState> synths(state->tracks.size());
     std::vector<float> l(kMaxBlock * 64), r(kMaxBlock * 64);
+    const int64_t m = state->compensation; // pre-roll, as in renderOffline
+    for (int64_t done = 0; done < m;) {
+        const int n = static_cast<int>(std::min<int64_t>(kMaxBlock, m - done));
+        renderBlock(*state, start + done, n, l.data(), r.data(), *scratch, false, soloCount_.load() > 0, synths.data());
+        done += n;
+    }
     for (int64_t done = 0; done < frames;) {
         const auto chunk = std::min<int64_t>(static_cast<int64_t>(l.size()), frames - done);
         for (int64_t o = 0; o < chunk;) {
             const int n = static_cast<int>(std::min<int64_t>(kMaxBlock, chunk - o));
-            renderBlock(*state, start + done + o, n, l.data() + o, r.data() + o, scratch, false, soloCount_.load() > 0,
+            renderBlock(*state, start + m + done + o, n, l.data() + o, r.data() + o, *scratch, false, soloCount_.load() > 0,
                         synths.data());
             o += n;
         }

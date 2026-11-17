@@ -245,6 +245,8 @@ public:
     // Replaces the tempo and meter maps (one undo step). MIDI keeps its beat positions; audio keeps its time.
     bool setTempoMap(std::vector<TempoPoint> tempo, std::vector<MeterChange> meters, std::string &err);
     const TempoMap &tempoMap() const { return map_; }
+    // Frames of plug-in delay compensation in the current snapshot (0 when no plug-in adds latency).
+    int32_t compensation() const;
     // MIDI clips
     DalnokClipId addMidiClip(DalnokTrackId track, int64_t start, int64_t length, std::string &err,
                              std::vector<MidiNote> notes = {}, const char *undoName = "New MIDI Clip");
@@ -354,6 +356,8 @@ private:
     // Control-thread state.
     Model model_;
     TempoMap map_; // built from model_.tempo in syncRuntimes
+    // Live delay-compensation lines by connection and length; shared by snapshots (audio thread only processes them).
+    mutable std::map<std::string, std::shared_ptr<DelayLine>> delayCache_;
     std::map<DalnokMediaId, PoolEntry> pool_;
     std::vector<UndoStep> undo_, redo_;
     int groupDepth_ = 0;

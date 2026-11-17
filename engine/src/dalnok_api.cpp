@@ -384,6 +384,7 @@ int32_t dalnok_track_sends(const DalnokEngine *e, DalnokTrackId t, DalnokSend *o
         out[i] = {tr->sends[static_cast<size_t>(i)].bus, tr->sends[static_cast<size_t>(i)].db, tr->sends[static_cast<size_t>(i)].pre};
     return static_cast<int32_t>(tr->sends.size());
 }
+int32_t dalnok_latency_compensation(const DalnokEngine *e) { return e ? e->impl.compensation() : 0; }
 DalnokStatus dalnok_track_set_automation(DalnokEngine *e, DalnokTrackId t, int32_t target, const DalnokAutoPoint *pts,
                                          int32_t count) {
     if (!e || count < 0 || (count > 0 && !pts)) return DALNOK_ERR_INVALID_ARG;
