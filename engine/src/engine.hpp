@@ -142,7 +142,7 @@ public:
     void newProject();
     // copyMedia: copy referenced audio not already inside the project folder into
     // "<project folder>/Audio Files/" and reference the copies.
-    bool saveProject(const std::string &path, std::string &err, bool copyMedia = false);
+    bool saveProject(const std::string &path, std::string &err, bool copyMedia = false, bool markSaved = true);
     bool loadProject(const std::string &path, int32_t &missing, std::string &err);
     // Two-phase load: prepare (parse + decode, any thread) then apply (control thread).
     struct PreparedProject;

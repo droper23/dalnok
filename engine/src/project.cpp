@@ -171,7 +171,7 @@ bool copyIntoFolder(const fs::path &src, const fs::path &dir, fs::path &dest, st
 }
 } // namespace
 
-bool Engine::saveProject(const std::string &path, std::string &err, bool copyMedia) {
+bool Engine::saveProject(const std::string &path, std::string &err, bool copyMedia, bool markSaved) {
     const fs::path projectDir = fs::absolute(fs::path(path)).parent_path();
     if (copyMedia) {
         // Copy first; only if every copy succeeds do the pool paths change.
@@ -203,7 +203,7 @@ bool Engine::saveProject(const std::string &path, std::string &err, bool copyMed
     }
     for (auto &kv : body.object) doc.set(kv.first, std::move(kv.second));
     if (!writeFileAtomically(path, json::serialize(doc, true), err)) return false;
-    savedRevision_ = revision_;
+    if (markSaved) savedRevision_ = revision_;
     return true;
 }
 

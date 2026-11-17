@@ -6,7 +6,8 @@ milestone: Phase 1 + Migration (M5) + Time stretch (M6) + UI pass 1 (M7) done; P
 # Current State
 
 ## Latest session
-- Added independently tested off-thread capture draining and an exclusive temporary PCM spool with read-only inspection of complete frames and partial tails. This is not yet a recorder, a project import path, or crash recovery. Normal and ThreadSanitizer native tests pass.
+- A tested project snapshot API writes a recovery copy without changing the model revision or saved/dirty state. Automatic scheduling and recovery UI are not implemented.
+- Added independently tested off-thread capture draining and an exclusive temporary PCM spool with read-only inspection of complete frames and partial tails. A process-kill test verifies that the spool’s complete-frame prefix remains inspectable, and a synthetic ten-second capture has the expected frames and samples. This is not yet a recorder, a project import path, or end-to-end crash recovery. Normal, AddressSanitizer, and ThreadSanitizer native tests pass.
 - Scarlett recheck through AVFoundation: a short capture peaked at -29.2 dBFS on channels 1 and 2, with exactly identical samples; channels 3 and 4 were silent. The capture path may duplicate a channel, so independent inputs remain unverified.
 - Added an independent bounded SPSC audio capture buffer with all-or-nothing writes and dropped-frame accounting. Native tests pass normally and under ThreadSanitizer; it is not integrated into device capture or disk writing.
 - Open selects foreign projects and asks before import; Logic packages and stem folders are accepted. GUI self-test covers cancel and confirm.
@@ -29,7 +30,7 @@ milestone: Phase 1 + Migration (M5) + Time stretch (M6) + UI pass 1 (M7) done; P
 - CI has two jobs: build + test, and real-time effect analysis with Homebrew LLVM.
 
 ## Architecture (now)
-C++20 engine (`engine/`) → C API (`dalnok.h`, v2) → AppKit UI (`app/macos/`). The **engine owns the
+C++20 engine (`engine/`) → C API (`dalnok.h`, v5) → AppKit UI (`app/macos/`). The **engine owns the
 project model**: tracks, clips in z-order, and a media pool. Every edit is a named, undoable command with
 whole-model snapshot undo, also reachable as JSON through the command catalog. The UI is a read-only view
 that refreshes on `dalnok_model_revision`. Render snapshots reach the audio thread through an atomic

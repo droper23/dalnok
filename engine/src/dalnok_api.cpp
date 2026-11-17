@@ -362,6 +362,15 @@ DalnokStatus dalnok_project_save(DalnokEngine *e, const char *path, char *err, s
     }
     return DALNOK_OK;
 }
+DalnokStatus dalnok_project_save_snapshot(DalnokEngine *e, const char *path, char *err, size_t err_len) {
+    if (!e || !path) return DALNOK_ERR_INVALID_ARG;
+    std::string msg;
+    if (!e->impl.saveProject(path, msg, false, false)) {
+        copyOut(err, err_len, msg);
+        return DALNOK_ERR_IO;
+    }
+    return DALNOK_OK;
+}
 DalnokStatus dalnok_project_load(DalnokEngine *e, const char *path, int32_t *missing_out, char *err,
                                  size_t err_len) {
     if (!e || !path) return DALNOK_ERR_INVALID_ARG;

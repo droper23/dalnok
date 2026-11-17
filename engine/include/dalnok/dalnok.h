@@ -28,7 +28,7 @@
 extern "C" {
 #endif
 
-#define DALNOK_API_VERSION 4
+#define DALNOK_API_VERSION 5
 
 typedef enum {
     DALNOK_OK = 0,
@@ -253,6 +253,9 @@ void dalnok_project_new(DalnokEngine *engine);
 /* Writes a versioned JSON project atomically (temp file + rename). Media is
  * referenced by path (absolute and relative to the project file). */
 DalnokStatus dalnok_project_save(DalnokEngine *engine, const char *path, char *err, size_t err_len);
+/* Write a recovery snapshot without marking the current project saved or copying media.
+ * Use a separate recovery path, never the primary project file. [control thread] */
+DalnokStatus dalnok_project_save_snapshot(DalnokEngine *engine, const char *path, char *err, size_t err_len);
 /* As dalnok_project_save; with copy_media, audio outside the project folder is
  * first copied into "<project folder>/Audio Files/" (identical files reused,
  * name clashes numbered) and the project then references the copies. */

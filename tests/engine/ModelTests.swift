@@ -125,6 +125,25 @@ import Testing
         return samples
     }
 
+    @Test func recoverySnapshotKeepsDirtyStateAndAudio() throws {
+        let e = dalnok_engine_create(sr)!; defer { dalnok_engine_destroy(e) }
+        try makeProject(e, audio: dir.appendingPathComponent("snapshot-audio.wav"))
+        let expected = render(e, frames: 30_000)
+        let revision = dalnok_model_revision(e)
+        let snapshot = dir.appendingPathComponent("recovery.dalnok").path
+        #expect(dalnok_project_dirty(e))
+        #expect(dalnok_project_save_snapshot(e, snapshot, nil, 0) == DALNOK_OK)
+        #expect(dalnok_project_dirty(e) && dalnok_model_revision(e) == revision)
+        let loaded = dalnok_engine_create(sr)!; defer { dalnok_engine_destroy(loaded) }
+        var missing: Int32 = -1
+        #expect(dalnok_project_load(loaded, snapshot, &missing, nil, 0) == DALNOK_OK && missing == 0)
+        let actual = render(loaded, frames: 30_000)
+        expectClose(actual.0, expected.0, tol: 0, "snapshot left")
+        expectClose(actual.1, expected.1, tol: 0, "snapshot right")
+        #expect(dalnok_project_save_snapshot(e, dir.appendingPathComponent("missing/recovery.dalnok").path, nil, 0) == DALNOK_ERR_IO)
+        #expect(dalnok_project_dirty(e) && dalnok_model_revision(e) == revision)
+    }
+
     @Test func saveLoadRoundTripsExactly() throws {
         let e = dalnok_engine_create(sr)!; defer { dalnok_engine_destroy(e) }
         try makeProject(e, audio: dir.appendingPathComponent("a.wav"))
