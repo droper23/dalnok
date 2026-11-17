@@ -102,7 +102,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
     private var lastRecoveryRevision: UInt64?
     private var recoveryDirectory: URL? {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
+        if let override = ProcessInfo.processInfo.environment["DALNOK_RECOVERY_DIR"], !override.isEmpty {
+            return URL(fileURLWithPath: override, isDirectory: true)
+        }
+        return FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
             .appendingPathComponent("Dalnok/Recovery", isDirectory: true)
     }
 

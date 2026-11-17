@@ -5,7 +5,7 @@
 - Atomic saves use unique temporary files and preserve an existing project file’s permissions.
 
 ### Added (2026-11-16, recovery snapshots)
-- Periodic recovery snapshots while a project has unsaved changes, and File ▸ Recover Snapshot to open a copy as a new unsaved project. Snapshots are retained in Application Support/Dalnok/Recovery. Automatic timing and real crash recovery need validation.
+- Periodic recovery snapshots while a project has unsaved changes, and File ▸ Recover Snapshot to open a copy as a new unsaved project. Snapshots are retained in Application Support/Dalnok/Recovery. The automatic timer and recovery after an isolated process kill are smoke-tested; power-loss behavior and automatic recovery prompting remain to be addressed.
 
 ### Added (2026-11-16, recovery foundation)
 - C API v5 adds a project snapshot operation that preserves the saved/dirty state. Automatic snapshots and manual recovery now use this operation.
