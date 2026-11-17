@@ -220,6 +220,7 @@ func buildMenu(target: MainWindowController) -> NSMenu {
         item("New Track", #selector(W.newTrack(_:)), "n", [.command, .option]),
         item("New Instrument Track", #selector(W.newInstrumentTrack(_:)), "n", [.command, .option, .shift]),
         item("New Bus", #selector(W.newBus(_:)), "n", [.command, .option, .control]),
+        item("Clear Automation", #selector(W.clearAutomation(_:)), ""),
         item("Rename Track", #selector(W.renameTrack(_:)), ""),
         item("Delete Track", #selector(W.deleteTrack(_:)), "\u{8}", [.command]),
         .separator(),
@@ -304,6 +305,9 @@ func buildMenu(target: MainWindowController) -> NSMenu {
         item("Bars and Beats Ruler", #selector(W.toggleBarsAndBeats(_:)), "b", [.command, .option]),
         item("Device Panel", #selector(W.toggleDevicePanel(_:)), "d", [.command, .option]),
         item("Mixer", #selector(W.toggleMixer(_:)), "x", []),
+        item("Show Automation", #selector(W.toggleAutomation(_:)), "a", []),
+        item("Automate Volume", #selector(W.automateVolume(_:)), ""),
+        item("Automate Pan", #selector(W.automatePan(_:)), ""),
     ])
     menu("Window", [
         item("Minimize", #selector(NSWindow.performMiniaturize(_:)), "m"),

@@ -72,6 +72,8 @@ struct RenderTrack {
     int32_t output = -1;   // destination bus slot, -1 = master
     std::vector<RenderSend> sends;
     std::vector<TrackRuntime *> soloLinks; // tracks upstream and downstream in the routing (solo follows them)
+    // Automation (empty = none): volume as fader taper (amplitude^(1/4)), pan -1..1, linear between points.
+    std::vector<std::pair<int64_t, float>> volumeAuto, panAuto;
     std::vector<RenderClip> clips; // z-order: later clips overwrite earlier ones
     bool monoSource = true;        // every clip is mono -> constant-power pan law
     bool instrument = false;       // MIDI track (built-in synth unless instrumentPlugin is set)

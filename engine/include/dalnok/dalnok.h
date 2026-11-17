@@ -28,7 +28,7 @@
 extern "C" {
 #endif
 
-#define DALNOK_API_VERSION 14
+#define DALNOK_API_VERSION 15
 
 typedef enum {
     DALNOK_OK = 0,
@@ -277,6 +277,18 @@ typedef struct { DalnokTrackId bus; float db; bool pre; } DalnokSend; /* pre: be
 DalnokStatus dalnok_track_set_send(DalnokEngine *engine, DalnokTrackId track, DalnokTrackId bus, float db, bool pre);
 DalnokStatus dalnok_track_remove_send(DalnokEngine *engine, DalnokTrackId track, DalnokTrackId bus);
 int32_t dalnok_track_sends(const DalnokEngine *engine, DalnokTrackId track, DalnokSend *out, int32_t capacity);
+
+/* ---- Automation -------------------------------------------------------
+ * Breakpoints in timeline frames, linear between points and held before the first and after the last.
+ * Volume values are dB (<= +6; <= -95 is silence) and follow the fader's taper between points; pan is -1..1.
+ * While a lane has points it overrides the fader or knob; mute and solo still apply. */
+typedef enum { DALNOK_AUTO_VOLUME = 0, DALNOK_AUTO_PAN = 1 } DalnokAutoTarget;
+typedef struct { int64_t frame; float value; } DalnokAutoPoint;
+/* Replaces the lane (one undo step); count 0 removes it. */
+DalnokStatus dalnok_track_set_automation(DalnokEngine *engine, DalnokTrackId track, int32_t target,
+                                         const DalnokAutoPoint *points, int32_t count);
+int32_t dalnok_track_automation(const DalnokEngine *engine, DalnokTrackId track, int32_t target,
+                                DalnokAutoPoint *out, int32_t capacity); /* total count */
 DalnokStatus dalnok_track_info(const DalnokEngine *engine, DalnokTrackId track, DalnokTrackInfo *out);
 
 /* Clips of a track in z-order (later = on top; overlapping clips: top wins). */

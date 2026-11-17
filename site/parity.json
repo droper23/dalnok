@@ -1008,19 +1008,19 @@
       "why": "Movement in a mix.",
       "steps": [
         [
-          "Automation lanes",
-          "todo"
+          "Volume and pan automation drawn over each lane (View > Show Automation, A): add, move, delete points",
+          "verified"
         ],
         [
           "Write modes (read, touch, latch)",
           "todo"
         ],
         [
-          "Sample-accurate playback",
-          "todo"
+          "Smooth playback on a fixed 32-frame ramp grid; live playback equals the export",
+          "verified"
         ]
       ],
-      "evidence": "Planned for Phase 4."
+      "evidence": "AutomationTests: volume follows the fader taper between points (exact values midway and a quarter of the way), held before and after, pan automation, mute still applies, live playback in 333-frame blocks matches the offline export sample for sample, save/reopen (format 6, also at 44.1 kHz) and undo. App self-test adds, drags and deletes points through the timeline and clears a lane from the Track menu. Not yet: plug-in parameter automation, write modes (touch/latch), automation following clip moves."
     },
     {
       "id": "vst3",

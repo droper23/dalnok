@@ -454,6 +454,18 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             row.gain.updateMeter(max(row.meter.levelDb.0, row.meter.levelDb.1))
         }
         if !mixer.isHidden { mixer.pushMeters { levels[$0] ?? (0, 0) } }
+        // Automated tracks: knobs and faders show the automated value at the playhead.
+        for t in session.tracks where !t.volumeAuto.isEmpty || !t.panAuto.isEmpty {
+            let v = session.automationValue(t, 0, at: e.position), p = session.automationValue(t, 1, at: e.position)
+            if let row = headers.row(t.id) {
+                if let v, !row.gain.tracking { row.gain.db = v }
+                if let p, !row.pan.tracking { row.pan.pan = p }
+            }
+            if !mixer.isHidden, let strip = mixer.strips.first(where: { $0.trackId == t.id }) {
+                if let v, !strip.fader.tracking { strip.fader.db = v; strip.dbLabel.stringValue = FaderControl.format(v) }
+                if let p, !strip.pan.tracking { strip.pan.pan = p }
+            }
+        }
         if e.isRecording { updateRecording() }
         let (ml, mr) = e.masterMeter()
         transport.masterMeter.push(ml, mr)
@@ -1044,6 +1056,20 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         })
     }
 
+    /// View ▸ Show Automation (A): volume or pan curves over each lane; click to add points, drag to move,
+    /// ⌥-click to delete. Clips aren't editable while it's on.
+    @objc func toggleAutomation(_ sender: Any?) {
+        timeline.showAutomation.toggle()
+        flash(timeline.showAutomation ? "Automation: click a lane to add a point, drag to move, ⌥-click to delete (A to hide)" : "Automation hidden")
+    }
+    @objc func automateVolume(_ sender: Any?) { TimelineView.automationTarget = 0; if !timeline.showAutomation { toggleAutomation(nil) }; timeline.needsDisplay = true }
+    @objc func automatePan(_ sender: Any?) { TimelineView.automationTarget = 1; if !timeline.showAutomation { toggleAutomation(nil) }; timeline.needsDisplay = true }
+    /// Track ▸ Clear Automation: removes the shown parameter's automation from the selected track.
+    @objc func clearAutomation(_ sender: Any?) {
+        guard let id = selectedTrack else { return }
+        session.setAutomation(id, TimelineView.automationTarget, [])
+    }
+
     /// Track ▸ New Bus: an aux track; route outputs or sends to it from the mixer or the track menu.
     @objc func newBus(_ sender: Any?) {
         let id = session.addBus()
@@ -1230,6 +1256,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         case #selector(toggleMetronome(_:)):
             item.state = Self.metronomeOn ? .on : .off
             return true
+        case #selector(toggleAutomation(_:)):
+            item.state = timeline.showAutomation ? .on : .off
+            return true
+        case #selector(automateVolume(_:)):
+            item.state = timeline.showAutomation && TimelineView.automationTarget == 0 ? .on : .off
+            return true
+        case #selector(automatePan(_:)):
+            item.state = timeline.showAutomation && TimelineView.automationTarget == 1 ? .on : .off
+            return true
+        case #selector(clearAutomation(_:)):
+            return selectedTrack.flatMap { session.track($0) }.map { !$0.automation(TimelineView.automationTarget).isEmpty } ?? false
         case #selector(toggleMixer(_:)):
             item.state = Self.showMixer ? .on : .off
             return true

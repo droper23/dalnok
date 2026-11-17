@@ -47,6 +47,8 @@ struct TrackView {
     var isBus = false
     var output: DalnokTrackId = 0 // 0 = master
     var sends: [DalnokSend] = []
+    var volumeAuto: [DalnokAutoPoint] = [], panAuto: [DalnokAutoPoint] = []
+    func automation(_ target: Int32) -> [DalnokAutoPoint] { target == 1 ? panAuto : volumeAuto }
     var instrumentName: String? { plugins.first { $0.instrument }?.name }
     var effects: [Plugin] { plugins.filter { !$0.instrument } }
 }
@@ -111,7 +113,8 @@ final class Session {
                                  isInstrument: ti.kind == Int32(DALNOK_TRACK_INSTRUMENT.rawValue), armed: ti.armed,
                                  inputChannel: ti.input_channel, plugins: plugins,
                                  isBus: ti.kind == Int32(DALNOK_TRACK_BUS.rawValue), output: dalnok_track_output(h, tid),
-                                 sends: Array(sends.prefix(min(sendCount, 16)))))
+                                 sends: Array(sends.prefix(min(sendCount, 16))),
+                                 volumeAuto: automationPoints(tid, 0), panAuto: automationPoints(tid, 1)))
         }
         tracks = out
         onChange?()
@@ -137,6 +140,30 @@ final class Session {
     }
     func removeSend(_ t: DalnokTrackId, _ bus: DalnokTrackId) { dalnok_track_remove_send(h, t, bus); refresh() }
     var buses: [TrackView] { tracks.filter(\.isBus) }
+    private func automationPoints(_ t: DalnokTrackId, _ target: Int32) -> [DalnokAutoPoint] {
+        let n = dalnok_track_automation(h, t, target, nil, 0)
+        guard n > 0 else { return [] }
+        var out = [DalnokAutoPoint](repeating: DalnokAutoPoint(), count: Int(n))
+        _ = dalnok_track_automation(h, t, target, &out, n)
+        return out
+    }
+    @discardableResult
+    func setAutomation(_ t: DalnokTrackId, _ target: Int32, _ points: [DalnokAutoPoint]) -> Bool {
+        let ok = dalnok_track_set_automation(h, t, target, points, Int32(points.count)) == DALNOK_OK
+        refresh(); return ok
+    }
+    /// Automation value at a frame (volume in dB following the fader taper; pan -1..1), or nil if not automated.
+    func automationValue(_ t: TrackView, _ target: Int32, at frame: Int64) -> Float? {
+        let pts = t.automation(target)
+        guard let first = pts.first, let last = pts.last else { return nil }
+        if frame <= first.frame { return first.value }
+        if frame >= last.frame { return last.value }
+        guard let i = pts.firstIndex(where: { $0.frame > frame }), i > 0 else { return last.value }
+        let a = pts[i - 1], b = pts[i], f = Float(frame - a.frame) / Float(b.frame - a.frame)
+        if target == 1 { return a.value + (b.value - a.value) * f }
+        let pa = FaderControl.position(for: a.value), pb = FaderControl.position(for: b.value)
+        return FaderControl.db(for: pa + (pb - pa) * Double(f))
+    }
     func setPan(_ t: DalnokTrackId, _ p: Float) { dalnok_track_set_pan(h, t, p); refresh() }
     func setMute(_ t: DalnokTrackId, _ m: Bool) { dalnok_track_set_mute(h, t, m); refresh() }
     func setSolo(_ t: DalnokTrackId, _ on: Bool) { dalnok_track_set_solo(h, t, on); refresh() }

@@ -138,6 +138,21 @@ const CommandDef kCommands[] = {
          if (!needInt(a, "track", t, err) || !needInt(a, "bus", b, err)) return DALNOK_ERR_INVALID_ARG;
          return status(e.removeSend(t, b, err), err);
      }},
+    {"track.setAutomation", "Set Automation", "{track, target (\"volume\" | \"pan\"), points: [[frame, value], ...]}", [](ARGS) {
+         DalnokTrackId t;
+         if (!needInt(a, "track", t, err)) return DALNOK_ERR_INVALID_ARG;
+         const std::string target = a.getString("target", "volume");
+         if (target != "volume" && target != "pan") { err = "target is volume or pan"; return DALNOK_ERR_INVALID_ARG; }
+         std::vector<AutoPoint> points;
+         if (const json::Value *pl = a.get("points"); pl && pl->isArray())
+             for (const auto &p : pl->array) {
+                 if (!p.isArray() || p.array.size() != 2 || !p.array[0].isNumber() || !p.array[1].isNumber()) {
+                     err = "each point is [frame, value]"; return DALNOK_ERR_INVALID_ARG;
+                 }
+                 points.push_back({static_cast<int64_t>(p.array[0].number), static_cast<float>(p.array[1].number)});
+             }
+         return status(e.setAutomation(t, target == "volume" ? kAutoVolume : kAutoPan, std::move(points), err), err);
+     }},
     {"track.setArmed", "Record Enable Track", "{track, armed}", [](ARGS) {
          DalnokTrackId t;
          if (!needInt(a, "track", t, err)) return DALNOK_ERR_INVALID_ARG;

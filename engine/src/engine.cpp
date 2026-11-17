@@ -855,6 +855,23 @@ bool Engine::setSend(DalnokTrackId track, DalnokTrackId bus, float db, bool pre,
     });
 }
 
+bool Engine::setAutomation(DalnokTrackId track, int32_t target, std::vector<AutoPoint> points, std::string &err) {
+    if (target != kAutoVolume && target != kAutoPan) return fail(err, "automation target must be volume (0) or pan (1)");
+    if (points.size() > 100000) return fail(err, "too many automation points");
+    for (const auto &p : points) {
+        if (p.frame < 0 || !std::isfinite(p.value)) return fail(err, "automation points need frame >= 0 and a finite value");
+        if (target == kAutoPan && (p.value < -1 || p.value > 1)) return fail(err, "pan automation is -1 to 1");
+        if (target == kAutoVolume && p.value > 6) return fail(err, "volume automation is at most +6 dB");
+    }
+    std::stable_sort(points.begin(), points.end(), [](const AutoPoint &a, const AutoPoint &b) { return a.frame < b.frame; });
+    return edit(target == kAutoVolume ? "Volume Automation" : "Pan Automation", true, [&](Model &m) {
+        TrackState *t = m.track(track);
+        if (!t) return fail(err, "no such track");
+        (target == kAutoVolume ? t->volumeAuto : t->panAuto) = std::move(points);
+        return true;
+    });
+}
+
 bool Engine::removeSend(DalnokTrackId track, DalnokTrackId bus, std::string &err) {
     return edit("Remove Send", true, [&](Model &m) {
         TrackState *t = m.track(track);
@@ -1162,6 +1179,9 @@ std::unique_ptr<RenderState> Engine::compile(std::vector<StretchJob> *needed, co
         rt.runtime = t.runtime;
         rt.bus = t.kind == kTrackBus;
         rt.monoSource = !rt.bus; // buses are stereo (balance pan)
+        for (const auto &p : t.volumeAuto) // fader taper: amplitude^(1/4); -inf at the bottom
+            rt.volumeAuto.push_back({p.frame, p.value <= -95 ? 0.0f : std::pow(dbToGain(p.value), 0.25f)});
+        for (const auto &p : t.panAuto) rt.panAuto.push_back({p.frame, p.value});
         rt.instrument = t.kind == kTrackInstrument;
         if (rt.instrument && t.armed) s->liveTrack = static_cast<int32_t>(s->tracks.size());
         for (const auto &slot : t.plugins) {

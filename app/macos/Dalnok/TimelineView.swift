@@ -64,6 +64,106 @@ final class TimelineView: NSView {
     private struct RulerDrag { enum Kind { case create, move, start, end }; var kind: Kind; let x: CGFloat; let start: Int64; let end: Int64; var moved = false }
     private var rulerDrag: RulerDrag?
     private var scrubbing = false
+    // MARK: Automation view (A): curves over each lane; clips are not editable while it's on.
+    var showAutomation = false { didSet { needsDisplay = true } }
+    static var automationTarget: Int32 = 0 // 0 volume, 1 pan
+    private struct AutoDrag { let track: DalnokTrackId; var points: [DalnokAutoPoint]; var index: Int }
+    private var autoDrag: AutoDrag?
+    private let autoMargin: CGFloat = 8
+
+    /// Lane y for an automation value (volume: fader taper, top = +6 dB; pan: top = left, bottom = right).
+    func autoY(_ value: Float, laneY: CGFloat) -> CGFloat {
+        let f = Self.automationTarget == 1 ? Double(value + 1) / 2 : FaderControl.position(for: value)
+        let top = laneY + autoMargin, h = Theme.trackHeight - 2 * autoMargin
+        return top + CGFloat(Self.automationTarget == 1 ? f : 1 - f) * h
+    }
+    func autoValue(atY y: CGFloat, laneY: CGFloat) -> Float {
+        let top = laneY + autoMargin, h = Theme.trackHeight - 2 * autoMargin
+        let f = Double(min(max((y - top) / h, 0), 1))
+        if Self.automationTarget == 1 { return Float(f * 2 - 1) }
+        return max(-200, FaderControl.db(for: 1 - f))
+    }
+
+    private func drawAutomation(_ ctx: CGContext) {
+        guard showAutomation else { return }
+        for (i, track) in session.tracks.enumerated() {
+            let y = laneY(i)
+            guard y + Theme.trackHeight > Theme.rulerHeight, y < bounds.height else { continue }
+            ctx.setFillColor(Theme.laneA.withAlphaComponent(0.55).cgColor) // clips recede
+            ctx.fill(CGRect(x: 0, y: y, width: bounds.width, height: Theme.trackHeight - 1))
+            let pts = track.automation(Self.automationTarget)
+            let color = TrackTint(base: track.color).waveform
+            if pts.isEmpty { // the static fader or knob value, dashed
+                let v = Self.automationTarget == 1 ? track.pan : track.gainDb
+                let ly = autoY(v, laneY: y)
+                ctx.setStrokeColor(color.withAlphaComponent(0.6).cgColor)
+                ctx.setLineWidth(1.5); ctx.setLineDash(phase: 0, lengths: [5, 4])
+                ctx.move(to: CGPoint(x: 0, y: ly)); ctx.addLine(to: CGPoint(x: bounds.width, y: ly)); ctx.strokePath()
+                ctx.setLineDash(phase: 0, lengths: [])
+                continue
+            }
+            ctx.setStrokeColor(color.cgColor)
+            ctx.setLineWidth(2)
+            ctx.move(to: CGPoint(x: 0, y: autoY(pts[0].value, laneY: y)))
+            for p in pts { ctx.addLine(to: CGPoint(x: xPos(forFrame: Double(p.frame)), y: autoY(p.value, laneY: y))) }
+            ctx.addLine(to: CGPoint(x: bounds.width, y: autoY(pts[pts.count - 1].value, laneY: y)))
+            ctx.strokePath()
+            for p in pts {
+                let c = CGPoint(x: xPos(forFrame: Double(p.frame)), y: autoY(p.value, laneY: y))
+                guard c.x > -6, c.x < bounds.width + 6 else { continue }
+                let r = CGRect(x: c.x - 4, y: c.y - 4, width: 8, height: 8)
+                ctx.setFillColor(Theme.panel.cgColor); ctx.fillEllipse(in: r)
+                ctx.setStrokeColor(color.cgColor); ctx.setLineWidth(1.5); ctx.strokeEllipse(in: r)
+            }
+        }
+        let name = Self.automationTarget == 1 ? "PAN AUTOMATION" : "VOLUME AUTOMATION"
+        (name as NSString).draw(at: CGPoint(x: bounds.width - 140, y: Theme.rulerHeight + 4),
+                                withAttributes: [.font: Theme.mono(9, .semibold), .foregroundColor: Theme.accent])
+    }
+
+    /// Automation gestures: click empty lane space adds a point (and drags it), drag a point to move it,
+    /// ⌥-click a point to delete it. Each gesture is one undo step.
+    private func autoMouseDown(_ p: CGPoint, _ event: NSEvent) -> Bool {
+        guard showAutomation, let i = trackIndex(atY: p.y), i < session.tracks.count else { return false }
+        let track = session.tracks[i], y = laneY(i)
+        var pts = track.automation(Self.automationTarget)
+        let hit = pts.firstIndex { abs(xPos(forFrame: Double($0.frame)) - p.x) <= 6 && abs(autoY($0.value, laneY: y) - p.y) <= 6 }
+        session.engine.beginGroup(Self.automationTarget == 1 ? "Pan Automation" : "Volume Automation")
+        if let h = hit, event.modifierFlags.contains(.option) {
+            pts.remove(at: h)
+            session.setAutomation(track.id, Self.automationTarget, pts)
+            session.engine.endGroup()
+            return true
+        }
+        var index: Int
+        if let h = hit { index = h } else {
+            let frame = snap(frame(forX: p.x), bypass: event.modifierFlags.contains(.control))
+            if pts.isEmpty { // start from the current static value so the rest of the song doesn't jump
+                let v = Self.automationTarget == 1 ? track.pan : track.gainDb
+                if frame > 0 { pts.append(DalnokAutoPoint(frame: 0, value: v)) }
+            }
+            pts.append(DalnokAutoPoint(frame: frame, value: autoValue(atY: p.y, laneY: y)))
+            pts.sort { $0.frame < $1.frame }
+            index = pts.lastIndex { $0.frame == frame } ?? pts.count - 1
+            session.setAutomation(track.id, Self.automationTarget, pts)
+        }
+        autoDrag = AutoDrag(track: track.id, points: pts, index: index)
+        return true
+    }
+    private func autoMouseDragged(_ p: CGPoint, _ event: NSEvent) -> Bool {
+        guard var d = autoDrag, let i = session.tracks.firstIndex(where: { $0.id == d.track }) else { return false }
+        let y = laneY(i)
+        var f = snap(frame(forX: p.x), bypass: event.modifierFlags.contains(.control))
+        // A point stays between its neighbors.
+        if d.index > 0 { f = max(f, d.points[d.index - 1].frame + 1) }
+        if d.index + 1 < d.points.count { f = min(f, d.points[d.index + 1].frame - 1) }
+        d.points[d.index] = DalnokAutoPoint(frame: max(0, f), value: autoValue(atY: p.y, laneY: y))
+        session.setAutomation(d.track, Self.automationTarget, d.points)
+        autoDrag = d
+        let v = d.points[d.index].value
+        ValueBubble.show(Self.automationTarget == 1 ? PanKnob.format(Double(v)) : FaderControl.format(v), above: self, at: p.x)
+        return true
+    }
     /// Autopunch range (red, lower ruler); drawn while `showPunch`.
     var punchRange: (Int64, Int64)? { didSet { needsDisplay = true } }
     var showPunch = false { didSet { needsDisplay = true } }
@@ -307,6 +407,7 @@ final class TimelineView: NSView {
             ctx.setStrokeColor(Theme.selection.cgColor); ctx.setLineWidth(1); ctx.stroke(r)
             ctx.restoreGState()
         }
+        drawAutomation(ctx)
         drawRuler(ctx, scale: scale)
         updateSelectionGlow()
 
@@ -726,6 +827,7 @@ final class TimelineView: NSView {
         onActivate?()
         let p = convert(event.locationInWindow, from: nil)
         if p.y >= Theme.rulerHeight / 2 && p.y < Theme.rulerHeight { seek(toX: p.x); scrubbing = true; return } // lower half: playhead
+        if p.y >= Theme.rulerHeight && autoMouseDown(p, event) { return }
         if p.y < Theme.rulerHeight { // upper half: cycle
             let c = session.cycle
             let a = xPos(forFrame: Double(c.start)), b = xPos(forFrame: Double(c.end))
@@ -801,6 +903,7 @@ final class TimelineView: NSView {
             return
         }
         if scrubbing { seek(toX: p.x); return }
+        if autoMouseDragged(p, event) { return }
         guard var d = drag else { return }
         let bypass = event.modifierFlags.contains(.control)
         let delta = Double(p.x - d.startX) * framesPerPoint
@@ -874,6 +977,7 @@ final class TimelineView: NSView {
 
     override func mouseUp(with event: NSEvent) {
         if scrubbing { scrubbing = false; return }
+        if autoDrag != nil { autoDrag = nil; session.engine.endGroup(); ValueBubble.hide(); return }
         if let r = rulerDrag {
             rulerDrag = nil
             if !r.moved { seek(toX: r.x) }

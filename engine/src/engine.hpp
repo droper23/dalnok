@@ -45,8 +45,16 @@ struct PluginSlot {
     std::string state; // last known plugin state (used when the plugin is missing, and for saving)
 };
 
+// Automation: breakpoints in timeline frames. Volume values are dB; pan values are -1 (left) to 1 (right).
+struct AutoPoint {
+    int64_t frame = 0;
+    float value = 0;
+};
+enum AutoTarget : int32_t { kAutoVolume = 0, kAutoPan = 1 };
+
 struct TrackState {
     DalnokTrackId id = 0;
+    std::vector<AutoPoint> volumeAuto, panAuto; // empty = not automated (the fader and knob apply)
     int32_t kind = kTrackAudio;
     DalnokTrackId output = 0;  // 0 = master; otherwise a bus track
     std::vector<Send> sends;   // to bus tracks
@@ -228,6 +236,8 @@ public:
     bool setTrackOutput(DalnokTrackId track, DalnokTrackId bus, std::string &err); // bus 0 = master
     bool setSend(DalnokTrackId track, DalnokTrackId bus, float db, bool pre, std::string &err); // adds or updates
     bool removeSend(DalnokTrackId track, DalnokTrackId bus, std::string &err);
+    // Replaces a track's automation lane (sorted by frame; an empty list removes it). One undo step.
+    bool setAutomation(DalnokTrackId track, int32_t target, std::vector<AutoPoint> points, std::string &err);
     bool setArmed(DalnokTrackId id, bool armed, std::string &err);
     bool setInputChannel(DalnokTrackId id, int32_t channel, std::string &err);
     // Sets the first tempo and meter; later changes keep their beat and bar positions.

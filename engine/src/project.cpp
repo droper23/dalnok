@@ -30,7 +30,7 @@ namespace fs = std::filesystem;
 namespace dalnok {
 
 namespace {
-constexpr int kFormatVersion = 5; // 3: shared MIDI sources preserve notes crossing split clips; 4: tempo and meter maps;
+constexpr int kFormatVersion = 6; // 6: volume and pan automation // 3: shared MIDI sources preserve notes crossing split clips; 4: tempo and meter maps;
                                    // 5: bus tracks, track outputs and sends
 constexpr int kConstantTempoVersion = 3; // written when there are no tempo or meter changes, so older builds still open it
 
@@ -169,6 +169,18 @@ json::Value Engine::describe() const {
         tv.set("name", t.name);
         if (t.kind == kTrackInstrument) { tv.set("kind", "instrument"); tv.set("instrument", "dalnok.poly"); }
         if (t.kind == kTrackBus) tv.set("kind", "bus");
+        for (const auto &[key, pts] : {std::pair<const char *, const std::vector<AutoPoint> *>{"volumeAutomation", &t.volumeAuto},
+                                       {"panAutomation", &t.panAuto}}) {
+            if (pts->empty()) continue;
+            json::Value list = json::Value::makeArray();
+            for (const auto &p : *pts) {
+                json::Value v = json::Value::makeArray();
+                v.push(static_cast<double>(p.frame));
+                v.push(static_cast<double>(p.value));
+                list.push(std::move(v));
+            }
+            tv.set(key, std::move(list));
+        }
         if (t.output) tv.set("output", t.output);
         if (!t.sends.empty()) {
             json::Value sends = json::Value::makeArray();
@@ -322,7 +334,9 @@ bool Engine::saveProject(const std::string &path, std::string &err, bool copyMed
     // The oldest version that holds everything in this project, so older builds open what they can play.
     bool routing = false;
     for (const auto &t : model_.tracks) routing = routing || t.kind == kTrackBus || t.output || !t.sends.empty();
-    doc.set("version", routing ? 5 : model_.tempo.size() > 1 || model_.meters.size() > 1 ? 4 : kConstantTempoVersion);
+    bool automation = false;
+    for (const auto &t : model_.tracks) automation = automation || !t.volumeAuto.empty() || !t.panAuto.empty();
+    doc.set("version", automation ? 6 : routing ? 5 : model_.tempo.size() > 1 || model_.meters.size() > 1 ? 4 : kConstantTempoVersion);
     json::Value body = describe();
     for (auto &[key, value] : body.object) {
         if (key != "media") continue;
@@ -426,6 +440,21 @@ std::unique_ptr<Engine::PreparedProject> Engine::prepareDocument(const json::Val
             const std::string kind = tv.getString("kind", "audio");
             t.kind = kind == "instrument" ? kTrackInstrument : kind == "bus" ? kTrackBus : kTrackAudio;
             t.output = static_cast<DalnokTrackId>(std::max<int64_t>(0, toInt(tv, "output")));
+            for (const auto &[key, pts] : {std::pair<const char *, std::vector<AutoPoint> *>{"volumeAutomation", &t.volumeAuto},
+                                           {"panAutomation", &t.panAuto}}) {
+                const json::Value *list = tv.get(key);
+                if (!list) continue;
+                if (!list->isArray()) { err = "invalid automation"; return nullptr; }
+                for (const auto &pv : list->array) {
+                    if (!pv.isArray() || pv.array.size() != 2 || !pv.array[0].isNumber() || !pv.array[1].isNumber() ||
+                        pv.array[0].number < 0 || !std::isfinite(pv.array[1].number)) {
+                        err = "invalid automation point"; return nullptr;
+                    }
+                    pts->push_back({scale(static_cast<int64_t>(pv.array[0].number)),
+                                    std::clamp(static_cast<float>(pv.array[1].number), key[0] == 'p' ? -1.0f : -200.0f, key[0] == 'p' ? 1.0f : 6.0f)});
+                }
+                std::stable_sort(pts->begin(), pts->end(), [](const AutoPoint &a, const AutoPoint &b) { return a.frame < b.frame; });
+            }
             if (const json::Value *sl = tv.get("sends"); sl && sl->isArray())
                 for (const auto &sv : sl->array) {
                     if (!sv.isArray() || sv.array.size() != 3 || !sv.array[0].isNumber() || !sv.array[1].isNumber()) {

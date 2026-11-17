@@ -213,6 +213,17 @@ final class UIWalk {
             for pw in w.pluginWindows.values { pw.window?.orderOut(nil) }
         }
 
+        // Automation view with a few curves.
+        if s.tracks.count > 3 {
+            let bar = { (b: Int) in Int64(self.s.beatToFrame(self.s.barToBeat(b)).rounded()) }
+            s.setAutomation(s.tracks[2].id, 0, [DalnokAutoPoint(frame: 0, value: -20), DalnokAutoPoint(frame: bar(4), value: 0),
+                                                 DalnokAutoPoint(frame: bar(8), value: 0), DalnokAutoPoint(frame: bar(12), value: -40)])
+            s.setAutomation(s.tracks[0].id, 0, [DalnokAutoPoint(frame: bar(2), value: -6), DalnokAutoPoint(frame: bar(6), value: 3)])
+        }
+        w.toggleAutomation(nil)
+        await pause(200); shot("automation")
+        w.toggleAutomation(nil)
+
         // Mixer: strips with routing; drag a fader (mid-drag picture).
         let mixerWasShown = MainWindowController.showMixer
         if !mixerWasShown { w.toggleMixer(nil) }

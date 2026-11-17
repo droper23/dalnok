@@ -189,6 +189,38 @@ void renderLiveInput(const RenderState &state, int frames, float *left, float *r
     raisePeak(rt.peakR, pr);
 }
 
+namespace {
+// Linear interpolation over breakpoints; held flat before the first and after the last point.
+float autoAt(const std::vector<std::pair<int64_t, float>> &pts, int64_t frame) DALNOK_NONBLOCKING {
+    if (frame <= pts.front().first) return pts.front().second;
+    if (frame >= pts.back().first) return pts.back().second;
+    size_t lo = 0, hi = pts.size() - 1;
+    while (hi - lo > 1) { const size_t mid = (lo + hi) / 2; (pts[mid].first <= frame ? lo : hi) = mid; }
+    const auto &a = pts[lo], &b = pts[hi];
+    const float t = static_cast<float>(frame - a.first) / static_cast<float>(b.first - a.first);
+    return a.second + (b.second - a.second) * t;
+}
+
+// Fader and pan gains at a frame for an automated track (mute and solo still apply).
+void autoGains(const RenderTrack &t, const TrackRuntime &rt, bool mono, bool anySolo, int64_t frame,
+               float &gl, float &gr) DALNOK_NONBLOCKING {
+    const bool silent = rt.muted.load(std::memory_order_relaxed) || (anySolo && !rt.solo.load(std::memory_order_relaxed));
+    float g = rt.gain.load(std::memory_order_relaxed);
+    if (!t.volumeAuto.empty()) { const float v = autoAt(t.volumeAuto, frame); g = v * v * v * v; }
+    if (silent) g = 0;
+    const float p = std::clamp(t.panAuto.empty() ? rt.pan.load(std::memory_order_relaxed) : autoAt(t.panAuto, frame), -1.0f, 1.0f);
+    if (mono) {
+        constexpr float kHalfPi = 1.57079632679f, kSqrt2 = 1.41421356237f;
+        const float theta = (p + 1.0f) * 0.5f * kHalfPi;
+        gl = g * kSqrt2 * quarterSin(kHalfPi - theta);
+        gr = g * kSqrt2 * quarterSin(theta);
+    } else {
+        gl = g * (p > 0.0f ? 1.0f - p : 1.0f);
+        gr = g * (p < 0.0f ? 1.0f + p : 1.0f);
+    }
+}
+} // namespace
+
 void renderBlock(const RenderState &state, int64_t pos, int frames, float *left, float *right,
                  Scratch &s, bool smooth, bool anySolo, SynthState *synths) DALNOK_NONBLOCKING {
     clear(left, frames);
@@ -268,6 +300,41 @@ void renderBlock(const RenderState &state, int64_t pos, int frames, float *left,
                 busR[static_cast<size_t>(snd.slot) * kMaxBlock + static_cast<size_t>(i)] += vr * snd.gain;
             }
         };
+        // Automated volume or pan: 32-sample linear ramps between exact automation values (same live and offline).
+        if (!t.volumeAuto.empty() || !t.panAuto.empty()) {
+            const bool mono = t.monoSource && !t.instrumentPlugin, solo = anySolo && !linkedSolo;
+            // Ramps run between exact values on a fixed 32-frame grid of the timeline, so every sample depends only
+            // on its position: live playback (any block size) and exports produce the same samples.
+            float pl = 0, pr = 0, al = 0, ar = 0;
+            for (int i0 = 0; i0 < frames;) {
+                const int64_t f = pos + i0, g0 = f - ((f % 32) + 32) % 32;
+                const int n = static_cast<int>(std::min<int64_t>(frames - i0, g0 + 32 - f));
+                float l0, r0, l1, r1;
+                autoGains(t, rt, mono, solo, g0, l0, r0);
+                autoGains(t, rt, mono, solo, g0 + 32, l1, r1);
+                const float sl = (l1 - l0) / 32.0f, sr = (r1 - r0) / 32.0f;
+                for (int k = 0; k < n && any; ++k) {
+                    const int i = i0 + k;
+                    const float off = static_cast<float>(f - g0 + k);
+                    const float vl = s.trackL[i] * (l0 + sl * off), vr = s.trackR[i] * (r0 + sr * off);
+                    outL[i] += vl;
+                    outR[i] += vr;
+                    postSends(i, vl, vr);
+                    pl = std::max(pl, std::fabs(vl));
+                    pr = std::max(pr, std::fabs(vr));
+                }
+                const float end = static_cast<float>(f - g0 + n);
+                al = l0 + sl * end;
+                ar = r0 + sr * end;
+                i0 += n;
+            }
+            if (smooth) {
+                raisePeak(rt.peakL, pl);
+                raisePeak(rt.peakR, pr);
+                rt.curL = al; rt.curR = ar; rt.primed = true; // leaving automation continues from here
+            }
+            continue;
+        }
 
         if (!smooth) {
             if (any)

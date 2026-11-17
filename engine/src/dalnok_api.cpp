@@ -384,6 +384,21 @@ int32_t dalnok_track_sends(const DalnokEngine *e, DalnokTrackId t, DalnokSend *o
         out[i] = {tr->sends[static_cast<size_t>(i)].bus, tr->sends[static_cast<size_t>(i)].db, tr->sends[static_cast<size_t>(i)].pre};
     return static_cast<int32_t>(tr->sends.size());
 }
+DalnokStatus dalnok_track_set_automation(DalnokEngine *e, DalnokTrackId t, int32_t target, const DalnokAutoPoint *pts,
+                                         int32_t count) {
+    if (!e || count < 0 || (count > 0 && !pts)) return DALNOK_ERR_INVALID_ARG;
+    std::vector<dalnok::AutoPoint> points;
+    for (int32_t i = 0; i < count; ++i) points.push_back({pts[i].frame, pts[i].value});
+    std::string err;
+    return statusFor(e->impl.setAutomation(t, target, std::move(points), err), err);
+}
+int32_t dalnok_track_automation(const DalnokEngine *e, DalnokTrackId t, int32_t target, DalnokAutoPoint *out, int32_t cap) {
+    const auto *tr = e ? e->impl.model().track(t) : nullptr;
+    if (!tr || (target != 0 && target != 1)) return 0;
+    const auto &pts = target == 0 ? tr->volumeAuto : tr->panAuto;
+    for (int32_t i = 0; out && i < cap && i < static_cast<int32_t>(pts.size()); ++i) out[i] = {pts[static_cast<size_t>(i)].frame, pts[static_cast<size_t>(i)].value};
+    return static_cast<int32_t>(pts.size());
+}
 DalnokStatus dalnok_track_set_armed(DalnokEngine *e, DalnokTrackId t, bool armed) {
     std::string err;
     return e ? statusFor(e->impl.setArmed(t, armed, err), err) : DALNOK_ERR_INVALID_ARG;

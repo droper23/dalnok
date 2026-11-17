@@ -1011,6 +1011,35 @@ final class SelfTest {
         let after = s.track(src)?.gainDb ?? 0
         check(after < before - 3, "dragging the strip fader down lowers the volume (\(before) → \(after) dB)")
         check(s.engine.undoName == "Volume" && perform("Undo") && abs((s.track(src)?.gainDb ?? 0) - before) < 0.01, "the fader drag is one undo step")
+        // Automation: View ▸ Show Automation, click to add, drag to move, ⌥-click to delete, each one undo step.
+        let tl = w.timeline
+        check(perform("Show Automation") && tl.showAutomation, "View > Show Automation shows the curves")
+        if let i = s.tracks.firstIndex(where: { $0.id == src }) {
+            let y = tl.laneY(i)
+            let x = tl.xPos(forFrame: s.beatToFrame(s.barToBeat(2)))
+            let click = tl.convert(CGPoint(x: x, y: tl.autoY(-12, laneY: y)), to: nil)
+            tl.mouseDown(with: mouse(.leftMouseDown, click)); tl.mouseUp(with: mouse(.leftMouseUp, click))
+            let pts = s.track(src)?.volumeAuto ?? []
+            check(pts.count == 2 && pts[0].frame == 0 && abs(pts[1].value - (-12)) < 0.8,
+                  "clicking a lane adds a point (and one at the start holding the fader value): \(pts.map { ($0.frame, $0.value) })")
+            check(s.engine.undoName == "Volume Automation", "adding a point is one undo step")
+            let to = tl.convert(CGPoint(x: x + 40, y: tl.autoY(0, laneY: y)), to: nil)
+            tl.mouseDown(with: mouse(.leftMouseDown, click))
+            for k in 1...5 { tl.mouseDragged(with: mouse(.leftMouseDragged, CGPoint(x: click.x + (to.x - click.x) * CGFloat(k) / 5, y: click.y + (to.y - click.y) * CGFloat(k) / 5))) }
+            tl.mouseUp(with: mouse(.leftMouseUp, to))
+            let moved = s.track(src)?.volumeAuto.last
+            check(moved.map { $0.frame > pts[1].frame && abs($0.value) < 0.8 } == true, "dragging a point moves it in time and value")
+            if let moved, let at = s.track(src)?.volumeAuto.last.map({ tl.convert(CGPoint(x: tl.xPos(forFrame: Double($0.frame)), y: tl.autoY($0.value, laneY: y)), to: nil) }) {
+                tl.mouseDown(with: mouse(.leftMouseDown, at, .option)); tl.mouseUp(with: mouse(.leftMouseUp, at, .option))
+                check(s.track(src)?.volumeAuto.count == 1, "⌥-click deletes a point")
+                check(perform("Undo") && s.track(src)?.volumeAuto.last?.frame == moved.frame, "undo restores the deleted point")
+            }
+            w.headers.select(src)
+            check(perform("Clear Automation") && s.track(src)?.volumeAuto.isEmpty == true, "Track > Clear Automation removes the lane")
+        }
+        check(perform("Automate Pan") && TimelineView.automationTarget == 1, "View > Automate Pan switches the shown parameter")
+        TimelineView.automationTarget = 0
+        _ = perform("Show Automation")
         // Removing the bus clears the send.
         w.headers.select(bus)
         check(perform("Delete Track") && s.track(src)?.sends.isEmpty == true, "deleting the bus removes sends to it")
