@@ -180,6 +180,13 @@ final class PianoRollView: NSView {
             let ry = y(p)
             guard ry + rowHeight >= g.minY, ry <= g.maxY else { continue }
             let black = [1, 3, 6, 8, 10].contains(p % 12)
+            if Analog.on { // ledger paper: warm rows with a faint rule under each, a red-brown rule under each C
+                ctx.setFillColor(Theme.hex(black ? 0x17120E : 0x1F1913).cgColor)
+                ctx.fill(CGRect(x: g.minX, y: ry, width: g.width, height: rowHeight))
+                ctx.setFillColor((p % 12 == 0 ? Theme.hex(0xB0603E, 0.45) : Theme.hex(0xE8D8C0, 0.05)).cgColor)
+                ctx.fill(CGRect(x: g.minX, y: ry + rowHeight - 1, width: g.width, height: 1))
+                continue
+            }
             ctx.setFillColor((black ? Theme.laneB.blended(withFraction: 0.35, of: .black) ?? Theme.laneB : Theme.laneB).cgColor)
             ctx.fill(CGRect(x: g.minX, y: ry, width: g.width, height: rowHeight))
             if p % 12 == 0 { ctx.setFillColor(Theme.gridMajor.cgColor); ctx.fill(CGRect(x: g.minX, y: ry + rowHeight - 1, width: g.width, height: 1)) }
@@ -196,6 +203,7 @@ final class PianoRollView: NSView {
             guard r.maxX >= g.minX, r.minX <= g.maxX, r.maxY >= g.minY, r.minY <= g.maxY else { continue }
             let sel = selection.contains(NoteKey(start: n.start, pitch: n.pitch))
             let v = CGFloat(n.velocity) / 127
+            if Analog.on { drawPin(ctx, r, velocity: v, tint: tint, selected: sel); continue }
             let path = CGPath(roundedRect: r, cornerWidth: 2.5, cornerHeight: 2.5, transform: nil)
             ctx.addPath(path)
             ctx.setFillColor(tint.base.withAlphaComponent(0.35 + 0.65 * v).cgColor)
@@ -227,6 +235,30 @@ final class PianoRollView: NSView {
         drawKeyboard(ctx, g)
         drawRuler(ctx, g)
         drawVelocity(ctx, c, tint)
+    }
+
+    /// Warm Analog: a note is a lit pin, a glass tube in a dark housing whose brightness follows velocity,
+    /// with a round lamp at the note's start.
+    private func drawPin(_ ctx: CGContext, _ r: CGRect, velocity v: CGFloat, tint: TrackTint, selected: Bool) {
+        let housing = CGPath(roundedRect: r.insetBy(dx: 0, dy: 0.5), cornerWidth: r.height / 2, cornerHeight: r.height / 2, transform: nil)
+        ctx.addPath(housing); ctx.setFillColor(Theme.hex(0x0E0A08).cgColor); ctx.fillPath()
+        let lamp = OKLCH.adjust(tint.base, dl: 0.08, chromaScale: 1.1)
+        let tube = r.insetBy(dx: min(2, r.width / 4), dy: max(1.5, r.height * 0.28))
+        if tube.width > 0, tube.height > 0 {
+            ctx.setFillColor(lamp.withAlphaComponent(0.12 + 0.3 * v).cgColor) // bloom
+            ctx.fill(tube.insetBy(dx: -1, dy: -1))
+            ctx.setFillColor(lamp.withAlphaComponent(0.4 + 0.6 * v).cgColor)
+            ctx.addPath(CGPath(roundedRect: tube, cornerWidth: tube.height / 2, cornerHeight: tube.height / 2, transform: nil)); ctx.fillPath()
+        }
+        let d = max(3, r.height - 3)
+        let head = CGRect(x: r.minX + 1, y: r.midY - d / 2, width: d, height: d)
+        ctx.setFillColor(lamp.withAlphaComponent(0.35 * v + 0.15).cgColor); ctx.fillEllipse(in: head.insetBy(dx: -1.5, dy: -1.5))
+        ctx.setFillColor(NSColor(white: 1, alpha: 0.55 + 0.4 * v).blended(withFraction: 0.5, of: lamp)?.cgColor ?? lamp.cgColor)
+        ctx.fillEllipse(in: head)
+        ctx.addPath(housing)
+        ctx.setStrokeColor((selected ? Theme.selection : Theme.hex(0x000000, 0.6)).cgColor)
+        ctx.setLineWidth(selected ? 1.5 : 0.75)
+        ctx.strokePath()
     }
 
     private func drawBeatLines(_ ctx: CGContext, from top: CGFloat, height: CGFloat) {
