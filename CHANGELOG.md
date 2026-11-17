@@ -1,6 +1,13 @@
 # Changelog
 
 ## [Unreleased]
+### Added (2026-11-17, overhaul parts 2–3)
+- Keyboard shortcut registry and editor (⌥⌘K): every command with a stable id, category and context; any number of shortcuts; presets approximating Logic Pro, Ableton Live, REAPER, Pro Tools, Cubase and Studio One; conflicts, macOS-reserved keys, saved sets, JSON import/export (ADR-0010).
+- Plug-in browser: categories, fuzzy search, format/vendor filters, favorites, recents, most used, collections, tags; double-click or drag onto a track or the device panel. Plug-in chain reordering (drag or Move Left/Right; C API 26).
+- Clip Cut/Copy/Paste/Duplicate/Select All with an engine clipboard; Track ▸ Select Previous/Next Track; Bypass Plug-ins; View ▸ Warm Analog Style, Tape Machine (⇧⌘T), Enter Full Screen; Window ▸ Close Window.
+- Tape Machine: a two-track recorder view of the same transport with physically modelled reels, wind keys, counter, VU meters and track lamps.
+### Fixed (2026-11-17, overhaul parts 2–3)
+- A plain K could toggle Count-In; Return didn't answer an open sheet; dragging a device failed while another window was key; the plug-in list said CLAP couldn't be added.
 ### Added (2026-11-17, overhaul part 1)
 - Plug-in bypass: an undoable engine edit, saved with the project (format 10, C API 25, `plugin.setBypassed`). A bypassed effect nulls against the dry signal; a bypassed instrument is silent. Graphite shows a power button on each device.
 - Warm Analog pedalboard: every plug-in is a stomp box generated from seeded parameters (finish, colour, knobs, artwork, lettering, LED, footswitch). Its size follows the number of controls, the footswitch is the real bypass, each control can be shown as a knob, small knob, selector, switch or slider, and the look can be re-rolled or overridden part by part.

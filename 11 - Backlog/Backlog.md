@@ -1,5 +1,13 @@
 # Backlog (ordered)
 
+Overhaul follow-ups (2026-11-17, from [[Overhaul Audit 2026-11-17]]):
+- Track height resize, hide/show, duplicate track, track groups; markers and jump between markers; vertical zoom and zoom to selection
+- VoiceOver pass and keyboard-only walkthrough of every window
+- Warm Analog open time (5.5 s vs 2.6 s on the 64-track project): profile
+- Opt-in tape coloration effect (separate from the Tape Machine view)
+- Out-of-process plug-in hosting (isolation)
+- Review plug-in categories on a scanned real library
+
 0. Logic: verify placement with a real FCPXML export (needs the owner); track names; take folders
 1. ADR-0008 recording architecture; input device selection; record-arm; monitoring
 1b. Warp/flex markers editable inside clips (reuses the stretch cache per segment); transient detection

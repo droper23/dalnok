@@ -5,7 +5,13 @@ milestone: M11 VST3 hosting (ADR-0009 stage 3) done; editors, parameters and AU 
 ---
 # Current State
 
-## Latest session (overhaul part 1; 2026-11-17)
+## Latest session (overhaul parts 2–3; 2026-11-17)
+- Done from the owner's brief: shortcut registry, presets and editor (ADR-0010); plug-in browser and chain reordering; clip clipboard; Tape Machine; dialog-safe shortcuts; dead-control scan. Status and the honest not-done list: [[Overhaul Audit 2026-11-17]].
+- Verification: 158 engine tests, 12 hosting tests, self-test 424 (Graphite) / 435 (Warm Analog) checks, real keyboard and mouse input for every new interaction (see the audit). Format 10, C API 26.
+- Real-input rules (AGENTS.md): confirm Dalnok is frontmost, use `DALNOK_RECOVERY_DIR`, restore preferences.
+- Next: track height/hide/duplicate/groups, markers, VoiceOver and keyboard-only pass, Warm Analog open time, tape coloration (opt-in), out-of-process hosting.
+
+## Earlier session (overhaul part 1; 2026-11-17)
 - The owner's overhaul brief is tracked in [[Overhaul Audit 2026-11-17]]. Done: track-header scrolling (shared viewport), plug-in bypass (engine, C API 25, format 10), the Warm Analog pedalboard (seeded generated pedals, `Pedals.swift`), and tape-reel physics.
 - Owner direction: test with real OS-level keyboard and mouse input when the screen is unlocked (`scripts/dev/drive.swift` + `DALNOK_WINDOW_DUMP`). This replaces the earlier ban. Header scrolling, footswitch bypass, ⌘S, ⌘Z, knob drag, and palette and popover dismissal (outside click, Escape) were all checked with real input.
 - Verification: 154 engine tests; `scripts/ci/plugin-host.sh` (11, incl. bypass null test); GUI self-test passes in Graphite and Warm Analog.
