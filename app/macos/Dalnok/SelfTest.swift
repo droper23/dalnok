@@ -107,6 +107,13 @@ final class SelfTest {
         let quantum = w.timeline.snapQuantum()
         check(q > 0 && abs(Double(moved.start) - (Double(moved.start) / quantum).rounded() * quantum) <= 1,
               "move snapped to grid (\(q) frames, \(TimelineView.barsAndBeats ? "bars and beats" : "time"))")
+        do { // a click on empty lane space places the playhead on the grid
+            let x = w.timeline.xPos(forFrame: quantum * 7.4)
+            let at = w.timeline.convert(CGPoint(x: x, y: w.timeline.bounds.maxY - 4), to: nil)
+            w.timeline.mouseDown(with: mouse(.leftMouseDown, at)); w.timeline.mouseUp(with: mouse(.leftMouseUp, at))
+            await wait(0.15) // the audio thread applies seeks
+            check(abs(Double(s.engine.position) - quantum * 7) < 1.5, "clicking empty space snaps the playhead (\(s.engine.position))")
+        }
         check(e.undoName == "Move Clip", "drag is one undo step (\(e.undoName))")
         _ = perform("Undo")
         check(s.clip(first.id)?.start == 0, "undo returns clip to 0")
@@ -176,6 +183,11 @@ final class SelfTest {
         w.palette.filter("splt plhd")
         check(w.palette.results.first?.title == "Split at Playhead", "fuzzy 'splt plhd' → \(w.palette.results.first?.title ?? "-")")
         check(w.palette.results.first?.shortcut == "⌘T", "palette shows shortcut \(w.palette.results.first?.shortcut ?? "-")")
+        w.palette.filter("tempo")
+        check(w.palette.results.first?.title.localizedCaseInsensitiveContains("tempo") == true &&
+              !w.palette.results.contains { $0.title.contains("Speakers") },
+              "'tempo' leads with tempo commands, without scattered-letter matches (\(w.palette.results.prefix(3).map(\.title)))")
+        w.palette.filter("splt plhd")
         w.timeline.selectedClip = first.id
         e.seek(s.clip(first.id)!.start + s.clip(first.id)!.length / 2)
         await wait(0.3)
@@ -331,6 +343,14 @@ final class SelfTest {
         check(typing && !consumed && !e.isPlaying,
               "Space types into the rename field instead of starting playback (typing=\(typing), menu consumed=\(consumed))")
         check(!(NSApp.mainMenu?.performKeyEquivalent(with: rightArrow) ?? true), "arrow keys stay in the rename field")
+        if let row = w.headers.row(t0), let editor = row.nameLabel.currentEditor() as? NSTextView {
+            let before = s.track(t0)?.name
+            editor.insertText("Discarded", replacementRange: editor.selectedRange())
+            editor.doCommand(by: #selector(NSResponder.cancelOperation(_:)))
+            check(!MainWindowController.isTyping && s.track(t0)?.name == before && row.nameLabel.stringValue == before,
+                  "Escape cancels the rename and keeps the old name")
+            check(perform("Rename Track"), "rename again after cancelling")
+        }
         w.headers.row(t0)?.nameLabel.stringValue = "Lead Vox"
         w.window?.makeFirstResponder(nil)
         check(!MainWindowController.isTyping && NSApp.mainMenu?.performKeyEquivalent(with: space) == true && e.isPlaying,
@@ -368,6 +388,11 @@ final class SelfTest {
         check(perform("New"), "menu File > New")
         check(s.tracks.isEmpty, "new project is empty")
         check(!w.emptyState.isHidden && w.timeline.isHidden, "empty state shown for an empty project")
+        if let b = w.emptyState.subviewsDeep.compactMap({ $0 as? NSButton }).first(where: { $0.title == "New Instrument Track" }) {
+            b.performClick(nil)
+            check(s.tracks.count == 1 && s.tracks.first?.isInstrument == true, "empty state's New Instrument Track adds one")
+            _ = perform("Undo")
+        } else { check(false, "empty state offers New Instrument Track") }
         let opened = await withCheckedContinuation { cont in w.openProject(project) { cont.resume(returning: $0) } }
         check(opened, "background open completed")
         check(s.tracks.count == files.count, "reopened \(s.tracks.count) tracks")
@@ -432,7 +457,7 @@ final class SelfTest {
         let otherStyle = Theme.activeStyle == .graphite ? 1 : 0
         w.settings.themePicker.selectItem(at: otherStyle)
         _ = NSApp.sendAction(#selector(SettingsController.themeChanged(_:)), to: w.settings, from: w.settings.themePicker)
-        check(w.settings.appearanceNote.stringValue.contains("Reopen"), "settings explains when the new theme applies")
+        check(w.settings.appearanceNote.stringValue.contains("reopen") && !w.settings.relaunch.isHidden, "settings explains when the new theme applies and offers Relaunch Now")
         w.settings.copyAudio.state = .off
         _ = NSApp.sendAction(#selector(SettingsController.copyChanged(_:)), to: w.settings, from: w.settings.copyAudio)
         check(!MainWindowController.copyAudioOnSave, "settings updates copy-audio preference")
@@ -811,6 +836,8 @@ final class SelfTest {
         let limiter = (try? s.addPlugin(track, path: "au:aufx:lmtr:appl")) ?? 0
         let panel = w.devicePanel
         check(!panel.isHidden && panel.devices.map(\.slot) == [slot, limiter], "device panel shows the track's plug-ins in order")
+        check(panel.subviewsDeep.contains { ($0 as? NSButton)?.title.contains("Add Plug-in") == true && !$0.isHiddenOrHasHiddenAncestor },
+              "device panel offers Add Plug-in after the chain")
         if Analog.on {
             panel.layoutCables()
             check(panel.cableCount == 3, "Warm Analog patches IN → AUDelay → AUPeakLimiter → OUT with \(panel.cableCount) cables")
@@ -967,4 +994,9 @@ final class SelfTest {
         fflush(stdout)
         exit(failures == 0 ? 0 : 1)
     }
+}
+
+extension NSView {
+    /// Every descendant view (self excluded), depth first.
+    var subviewsDeep: [NSView] { subviews.flatMap { [$0] + $0.subviewsDeep } }
 }

@@ -115,6 +115,19 @@ final class PluginWindowController: NSWindowController, NSWindowDelegate, NSTabl
         }
         editorOpen = true
         fitEditor(width: CGFloat(w), height: CGFloat(h))
+        // Some editors (Apple's Audio Units among them) settle their size after joining the window and don't
+        // report it: re-fit to the editor view's own frame once it has had a chance to lay out.
+        // Resizable editors (most Audio Units) fill the window and follow it; fixed-size ones are measured once.
+        editorHost.clipsToBounds = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.editorOpen, let v = self.editorHost.subviews.first else { return }
+            if v.autoresizingMask.contains(.width) && v.autoresizingMask.contains(.height) {
+                v.frame = self.editorHost.bounds
+            } else if abs(v.frame.width - self.editorHost.bounds.width) > 1 || abs(v.frame.height - self.editorHost.bounds.height) > 1 {
+                self.fitEditor(width: v.frame.width, height: v.frame.height)
+                v.setFrameOrigin(.zero)
+            }
+        }
         return true
     }
 

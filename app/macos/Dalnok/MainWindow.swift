@@ -164,6 +164,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         emptyState.onImportAudio = { [weak self] in self?.importAudio() }
         emptyState.onOpen = { [weak self] in self?.openDocument(nil) }
         emptyState.onMigrate = { [weak self] in self?.showMigrationAssistant(nil) }
+        emptyState.onNewInstrument = { [weak self] in self?.newInstrumentTrack(nil) }
+        emptyState.onNewAudioTrack = { [weak self] in self?.newTrack(nil) }
 
         transport.onPlayPause = { [weak self] in self?.togglePlay() }
         transport.onRecord = { [weak self] in self?.toggleRecord(nil) }
@@ -789,7 +791,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         if let url = session.projectURL { saveProject(to: url) } else { saveDocumentAs(sender) }
     }
 
-    @objc func saveDocumentAs(_ sender: Any?, then: (() -> Void)? = nil) {
+    @objc func saveDocumentAs(_ sender: Any?) { saveAs() }
+
+    /// Save As; `then` runs after a successful save, `otherwise` if it's cancelled or fails.
+    func saveAs(then: (() -> Void)? = nil, otherwise: (() -> Void)? = nil) {
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.dalnokProject]
         panel.nameFieldStringValue = session.projectURL?.lastPathComponent ?? "Untitled.dalnok"
@@ -801,10 +806,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         box.addSubview(copy)
         panel.accessoryView = box
         panel.beginSheetModal(for: window!) { [weak self] resp in
-            guard resp == .OK, let url = panel.url else { return }
             MainActor.assumeIsolated { () -> Void in
+                guard resp == .OK, let url = panel.url else { otherwise?(); return }
                 Self.copyAudioOnSave = copy.state == .on
-                if self?.saveProject(to: url) == true { then?() }
+                if self?.saveProject(to: url) == true { then?() } else { otherwise?() }
             }
         }
     }
@@ -847,7 +852,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     }
 
     /// Runs `proceed` after resolving unsaved changes (Save / Don't Save / Cancel).
-    func confirmDiscard(_ proceed: @escaping () -> Void) {
+    /// Asks to save unsaved changes. `cancelled` runs when the person cancels (or saving fails), so callers
+    /// waiting on an answer (like quitting) always get one.
+    func confirmDiscard(_ proceed: @escaping () -> Void, cancelled: (() -> Void)? = nil) {
         guard session.engine.isDirty else { proceed(); return }
         let alert = NSAlert()
         alert.messageText = "Save changes to “\(window?.title ?? "Untitled")”?"
@@ -861,12 +868,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
                 switch resp {
                 case .alertFirstButtonReturn:
                     if let url = self.session.projectURL {
-                        if self.saveProject(to: url) { proceed() }
+                        if self.saveProject(to: url) { proceed() } else { cancelled?() }
                     } else {
-                        self.saveDocumentAs(nil, then: proceed)
+                        self.saveAs(then: proceed, otherwise: cancelled)
                     }
                 case .alertSecondButtonReturn: proceed()
-                default: break
+                default: cancelled?()
                 }
             }
         }
@@ -1017,8 +1024,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         if session.setTempoMap(session.tempoPoints, meters) { flash("Removed the time signature change") }
     }
 
-    @objc func zoomIn() { timeline.zoom(by: 0.5, around: timeline.bounds.midX) }
-    @objc func zoomOut() { timeline.zoom(by: 2, around: timeline.bounds.midX) }
+    /// Keyboard zoom keeps the playhead where it is when it's on screen, otherwise the view's centre.
+    private var zoomAnchor: CGFloat {
+        let x = timeline.xPos(forFrame: Double(session.engine.position))
+        return x >= 0 && x <= timeline.bounds.width ? x : timeline.bounds.midX
+    }
+    @objc func zoomIn() { timeline.zoom(by: 0.5, around: zoomAnchor) }
+    @objc func zoomOut() { timeline.zoom(by: 2, around: zoomAnchor) }
     @objc func zoomToFit() { timeline.zoomToFit() }
 
     // MARK: Menu validation

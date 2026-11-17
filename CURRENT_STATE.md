@@ -5,7 +5,11 @@ milestone: M11 VST3 hosting (ADR-0009 stage 3) done; editors, parameters and AU 
 ---
 # Current State
 
-## Latest session (tempo and meter maps; Phase 3 closed)
+## Latest session, part 2 (UI/UX review, both themes)
+- Reviewed every main interaction in Graphite and Warm Analog with the new `--uiwalk` (real NSEvents through the windows, every window captured per step). Findings and fixes: [[UI Review 2026-11-17]]. Highlights: clips no longer draw over track headers when scrolled; Escape cancels rename; Warm Analog rename and tape fixed; AU editors no longer clipped; quitting then cancelling the save prompt no longer hangs the quit; palette ranking; snapped playhead clicks; device-panel Add tile; empty-state track buttons; piano-roll subtitle; Relaunch Now for themes.
+- Self-test 243 checks in both themes; `scripts/check.sh` passes. OS-level input not exercised (screen locked); `scripts/dev/drive.swift` + `DALNOK_WINDOW_DUMP` are ready for that.
+
+## Latest session, part 1 (tempo and meter maps; Phase 3 closed)
 - **Tempo and meter maps** (C API 12, project format 4): stepped tempo changes at any beat and time-signature changes at bars. Any tempo edit remaps MIDI clips and notes through beats (old map → new map), so MIDI stays on its beats and audio keeps its time; split pieces keep sharing their note source. The metronome schedule (tempo and meter segments) lives in the RenderState; quantize follows the map. Constant-tempo projects are still written as version 3.
 - **UI:** ruler, grid, snapping, LCD, piano-roll grid/ruler/snap and "New MIDI Clip" walk bars through the maps. The control bar shows and edits the tempo and meter in effect at the playhead. Transport ▸ Add/Remove Tempo Change and Time Signature Change at Playhead (⌥⇧⌘T adds a tempo change and focuses the field). Changes appear as flags on the ruler.
 - **Marquee selection** in the arrangement (drag on empty space; Shift adds; a click without dragging still seeks).

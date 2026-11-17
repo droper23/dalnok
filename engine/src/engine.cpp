@@ -568,7 +568,7 @@ DalnokClipId Engine::addMidiClip(DalnokTrackId track, int64_t start, int64_t len
         c.start = start;
         c.length = length;
         c.notes = sortedNotes(std::move(notes));
-        c.name = "MIDI";
+        c.name = t->name; // like a region: named after its track until renamed
         m.clips.push_back(std::move(c));
         return true;
     });

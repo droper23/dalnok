@@ -307,10 +307,17 @@ final class WelcomeController: NSObject, NSTableViewDataSource, NSTableViewDeleg
         }
         let other = NSButton(title: "Something else / start fresh", target: self, action: #selector(pickDAW(_:)))
         other.identifier = .init("none")
-        other.bezelStyle = .rounded
+        other.isBordered = false // a quiet secondary choice under the three big ones
+        other.attributedTitle = NSAttributedString(string: "Something else, or start fresh →",
+                                                   attributes: [.font: Theme.ui(13, .medium), .foregroundColor: Theme.accent])
         let row = NSStackView(views: buttons)
         row.spacing = 12
-        reset([title, sub, row, other])
+        // This step is short: centre it in the window (the next step's table uses the full height).
+        let above = NSView(), below = NSView()
+        reset([above, title, sub, row, other, below])
+        above.heightAnchor.constraint(equalTo: below.heightAnchor).isActive = true
+        content.setCustomSpacing(18, after: sub)
+        content.setCustomSpacing(14, after: row)
     }
 
     @objc func pickDAW(_ sender: NSButton) {

@@ -1,6 +1,11 @@
 # Changelog
 
 ## [Unreleased]
+### Fixed (2026-11-17, UI review)
+- Clips drew over track headers when zoomed or scrolled; Escape didn't cancel track renames; Warm Analog rename text was invisible and the tape label disappeared after renaming; Audio Unit editors were clipped; cancelling the save prompt while quitting left the quit pending; command-palette ranking favored scattered letter matches; the gain value bubble covered the track name.
+### Changed (2026-11-17, UI review)
+- Playhead clicks snap to the grid (⌃ for exact); keyboard zoom keeps the playhead in place; device panel gains an Add Plug-in tile, centred knobs and wrapped names; empty state offers new audio and instrument tracks; piano-roll subtitle shows snap and selection; MIDI clips are named after their track; welcome and Settings polish (Relaunch Now). Review tooling: `--uiwalk`, `DALNOK_WINDOW_DUMP`, `scripts/dev/drive.swift`.
+
 ### Added (2026-11-17, tempo and meter maps)
 - Tempo changes and time-signature changes: Transport menu commands, ruler flags, and a control bar that shows and edits the values at the playhead. MIDI keeps its beats across changes; audio keeps its time. Metronome, quantize, ruler, grid, snapping, LCD and piano roll follow the maps. C API 12 (`dalnok_tempo_map_set` and conversions), command `project.setTempoMap`, project format 4 (only when a project has changes).
 - Marquee selection of clips across tracks in the arrangement.

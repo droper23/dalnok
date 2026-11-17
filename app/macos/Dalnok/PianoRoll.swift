@@ -51,11 +51,13 @@ final class PianoRollController: NSWindowController, NSWindowDelegate {
     }
     func updateTitle() {
         guard let c = roll.clip, let t = roll.session.track(c.track) else { return }
-        window?.title = "Piano Roll — \(t.name): \(c.name)"
+        window?.title = c.name == "MIDI" || c.name == t.name ? "Piano Roll — \(t.name)" : "Piano Roll — \(t.name): \(c.name)"
+        roll.updateSubtitle()
     }
     /// Called after any model change: the clip may have been edited elsewhere, undone or deleted.
     func modelChanged() {
         guard window?.isVisible == true else { return }
+        roll.updateSubtitle()
         if roll.clip == nil { window?.orderOut(nil); return }
         updateTitle()
         roll.needsDisplay = true
@@ -67,7 +69,7 @@ final class PianoRollView: NSView {
     let session: Session
     var clipId: DalnokClipId = 0
     /// Selected notes, identified by their values (notes have no ids; values are unique in practice).
-    var selection: Set<NoteKey> = [] { didSet { needsDisplay = true } }
+    var selection: Set<NoteKey> = [] { didSet { needsDisplay = true; updateSubtitle() } }
     struct NoteKey: Hashable { let start: Int64, pitch: UInt8 }
     var entryFrame: Double? { didSet { needsDisplay = true } }
     var entryPitch = 60 { didSet { needsDisplay = true } }
@@ -75,13 +77,35 @@ final class PianoRollView: NSView {
     // Layout
     static let keyWidth: CGFloat = 48, rulerHeight: CGFloat = 22, velocityHeight: CGFloat = 72, edge: CGFloat = 6
     var rowHeight: CGFloat = 12
-    var framesPerPoint: Double = 200 { didSet { needsDisplay = true } }
+    var framesPerPoint: Double = 200 { didSet { needsDisplay = true; if snapBeats != shownSnap { updateSubtitle() } } }
+    private var shownSnap = 0.0
+
+    /// Window subtitle: the snap value and what's selected, so state isn't hidden.
+    func updateSubtitle() {
+        shownSnap = snapBeats
+        let snap = snapBeats > 1 ? "\(Int(snapBeats)) quarter notes" : "1/\(Int((4 / snapBeats).rounded())) note"
+        var parts = ["Snap \(snap) (⌃ to bypass)"]
+        if let c = clip {
+            let sel = c.notes.filter { selection.contains(NoteKey(start: $0.start, pitch: $0.pitch)) }
+            if sel.isEmpty {
+                parts.append(c.notes.count == 1 ? "1 note" : "\(c.notes.count) notes")
+            } else {
+                parts.append("\(sel.count) of \(c.notes.count) selected")
+                let names = ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B"]
+                let pitches = Set(sel.map(\.pitch)), vels = sel.map { Int($0.velocity) }
+                if pitches.count == 1, let p = pitches.first { parts.append("\(names[Int(p) % 12])\(Int(p) / 12 - 1)") }
+                if let lo = vels.min(), let hi = vels.max() { parts.append(lo == hi ? "velocity \(lo)" : "velocity \(lo)–\(hi)") }
+            }
+        }
+        window?.subtitle = parts.joined(separator: "  ·  ")
+    }
     var scrollX: Double = 0 { didSet { needsDisplay = true } }   // timeline frame at the grid's left edge
     var scrollY: CGFloat = 0 { didSet { needsDisplay = true } }  // points from the top (pitch 127)
 
     init(session: Session) {
         self.session = session
         super.init(frame: .zero)
+        clipsToBounds = true
         wantsLayer = true
         toolTip = "Drag empty space to select notes. Option-arrow keys move the entry cursor; Return inserts a note."
     }
@@ -176,6 +200,13 @@ final class PianoRollView: NSView {
             ctx.addPath(path)
             ctx.setFillColor(tint.base.withAlphaComponent(0.35 + 0.65 * v).cgColor)
             ctx.fillPath()
+            // A bright start cap and top edge keep quiet (dim) notes readable against the grid in both themes.
+            ctx.saveGState(); ctx.addPath(path); ctx.clip()
+            ctx.setFillColor(tint.waveform.withAlphaComponent(0.95).cgColor)
+            ctx.fill(CGRect(x: r.minX, y: r.minY, width: min(3, r.width), height: r.height))
+            ctx.setFillColor(tint.waveform.withAlphaComponent(0.5).cgColor)
+            ctx.fill(CGRect(x: r.minX, y: r.minY, width: r.width, height: 1))
+            ctx.restoreGState()
             ctx.addPath(path)
             ctx.setStrokeColor((sel ? Theme.selection : tint.border).cgColor)
             ctx.setLineWidth(sel ? 1.5 : 1)

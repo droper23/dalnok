@@ -7,6 +7,7 @@ final class SettingsController: NSWindowController {
     let themePicker = NSPopUpButton(frame: .zero, pullsDown: false)
     let copyAudio = NSButton(checkboxWithTitle: "Copy audio into the project folder when saving", target: nil, action: nil)
     let appearanceNote = NSTextField(wrappingLabelWithString: "")
+    let relaunch = NSButton(title: "Relaunch Now", target: nil, action: nil)
 
     init() {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 520, height: 300),
@@ -39,12 +40,18 @@ final class SettingsController: NSWindowController {
         projects.textColor = Theme.textDim
         copyAudio.target = self; copyAudio.action = #selector(copyChanged(_:))
         copyAudio.toolTip = "Keeps saved projects easier to move between computers."
-        let stack = NSStackView(views: [title, intro, appearance, themePicker, appearanceNote, projects, copyAudio])
+        relaunch.bezelStyle = .rounded
+        relaunch.controlSize = .small
+        relaunch.target = self; relaunch.action = #selector(relaunchTapped(_:))
+        relaunch.toolTip = "Quit and reopen Dalnok with the new appearance (you'll be asked to save changes first)"
+        let note = NSStackView(views: [appearanceNote, relaunch])
+        note.spacing = 8
+        let stack = NSStackView(views: [title, intro, appearance, themePicker, note, projects, copyAudio])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 8
         stack.setCustomSpacing(18, after: intro)
-        stack.setCustomSpacing(16, after: appearanceNote)
+        stack.setCustomSpacing(16, after: note)
         stack.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(stack)
         NSLayoutConstraint.activate([
@@ -68,7 +75,12 @@ final class SettingsController: NSWindowController {
         copyAudio.state = MainWindowController.copyAudioOnSave ? .on : .off
         appearanceNote.stringValue = Theme.preferredStyle == Theme.activeStyle
             ? "Graphite is crisp and focused. Warm Analog brings a softer studio palette."
-            : "Reopen Dalnok to apply the selected appearance."
+            : "Dalnok needs to reopen to change its appearance."
+        relaunch.isHidden = Theme.preferredStyle == Theme.activeStyle
+    }
+    @objc func relaunchTapped(_ sender: Any?) {
+        (NSApp.delegate as? AppDelegate)?.relaunchOnQuit = true
+        NSApp.terminate(nil) // a cancelled save prompt clears the flag (AppDelegate.applicationShouldTerminate)
     }
     @objc func themeChanged(_ sender: Any?) {
         let i = themePicker.indexOfSelectedItem

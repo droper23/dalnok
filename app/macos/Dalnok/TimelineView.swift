@@ -66,6 +66,7 @@ final class TimelineView: NSView {
         self.session = session
         super.init(frame: .zero)
         wantsLayer = true
+        clipsToBounds = true // macOS 14+ defaults to false; clips scrolled left of the view would cover the headers
         layer?.backgroundColor = Theme.laneA.cgColor
         playheadLayer.backgroundColor = Theme.playhead.withAlphaComponent(0.9).cgColor
         playheadLayer.zPosition = 10
@@ -171,7 +172,7 @@ final class TimelineView: NSView {
         CATransaction.setDisableActions(true)
         playheadLayer.frame = CGRect(x: x - 0.5, y: Theme.rulerHeight - 12, width: 1, height: bounds.height)
         playheadLayer.isHidden = x < -2 || x > bounds.width + 2
-        playheadCap.position = CGPoint(x: x, y: Theme.rulerHeight - 15)
+        playheadCap.position = CGPoint(x: x, y: Theme.rulerHeight - 12) // below the bar numbers, so "1" stays readable
         playheadCap.isHidden = playheadLayer.isHidden
         CATransaction.commit()
     }
@@ -427,14 +428,14 @@ final class TimelineView: NSView {
         for (i, mark) in marks.enumerated() {
             let x = (xPos(forFrame: mark.0) * scale).rounded() / scale
             ctx.setFillColor(Theme.textFaint.cgColor)
-            ctx.fill(CGRect(x: x, y: 4, width: px, height: Theme.rulerHeight - 5))
+            ctx.fill(CGRect(x: x, y: 2, width: px, height: Theme.rulerHeight - 3))
             let next = i + 1 < marks.count ? marks[i + 1].0 : mark.0 + step
             ctx.setFillColor(Theme.hex(0xFFFFFF, 0.12).cgColor)
             for k in 1..<4 {
                 let tx = (xPos(forFrame: mark.0 + (next - mark.0) * Double(k) / 4) * scale).rounded() / scale
                 ctx.fill(CGRect(x: tx, y: Theme.rulerHeight - (k == 2 ? 8 : 5), width: px, height: k == 2 ? 7 : 4))
             }
-            if let label = mark.1 { (label as NSString).draw(at: CGPoint(x: x + 4, y: 5), withAttributes: attrs) }
+            if let label = mark.1 { (label as NSString).draw(at: CGPoint(x: x + 4, y: 2), withAttributes: attrs) }
         }
         drawTempoMarkers(ctx)
     }
@@ -485,7 +486,7 @@ final class TimelineView: NSView {
         return String(format: "%d:%06.3f", m, s)
     }
 
-    private func clipRect(_ clip: ClipView, laneY: CGFloat) -> CGRect {
+    func clipRect(_ clip: ClipView, laneY: CGFloat) -> CGRect {
         let x0 = xPos(forFrame: Double(clip.start)), x1 = xPos(forFrame: Double(clip.end))
         return CGRect(x: x0, y: laneY + 3, width: max(2, x1 - x0), height: Theme.trackHeight - 7)
     }
@@ -528,7 +529,9 @@ final class TimelineView: NSView {
         if !clip.preservePitch && abs(clip.rate - 1) > 1e-9 { tags.append("varispeed") }
         if clip.processing { tags.append("rendering…") }
         if clip.gainDb != 0 { tags.append(clip.gainDb.isFinite ? String(format: "%+.1f dB", clip.gainDb) : "−∞ dB") }
-        let title = NSMutableAttributedString(string: clip.name, attributes: nameAttrs)
+        // Older projects named every MIDI clip "MIDI"; show the track's name instead, as new clips are named.
+        let name = clip.isMidi && clip.name == "MIDI" ? track.name : clip.name
+        let title = NSMutableAttributedString(string: name, attributes: nameAttrs)
         if !tags.isEmpty { title.append(NSAttributedString(string: "   " + tags.joined(separator: "   "), attributes: tagAttrs)) }
         title.draw(at: CGPoint(x: max(rect.minX, 0) + 6, y: rect.minY + 1.5))
         ctx.restoreGState()
@@ -820,8 +823,10 @@ final class TimelineView: NSView {
         onSelectionChange?()
     }
 
+    /// Clicks place the playhead on the snap grid (hold Control for an exact position).
     private func seek(toX x: CGFloat) {
-        session.engine.seek(Int64(max(0, frame(forX: x))))
+        let bypass = NSApp.currentEvent?.modifierFlags.contains(.control) ?? false
+        session.engine.seek(snap(max(0, frame(forX: x)), bypass: bypass))
         updatePlayhead()
         onSeek?()
     }

@@ -99,8 +99,17 @@ enum PaletteIndex {
             }
         }
         guard qi == q.count else { return 0 }
-        // Strong preference for titles that start with the query ("sp" → "Split…").
-        if String(t).hasPrefix(String(q)) { score += 20 }
+        // Strong preference for titles that start with the query ("sp" → "Split…"), then for the query
+        // appearing as a whole word or word prefix ("tempo" → "Add Tempo Change"). Letters scattered across
+        // unrelated words ("tempo" in "sysTEM sPeakers…") score low so real matches lead.
+        let text = String(t), needle = String(q)
+        if text.hasPrefix(needle) { score += 20 }
+        if let r = text.range(of: needle) {
+            score += 15
+            if r.lowerBound == text.startIndex || !text[text.index(before: r.lowerBound)].isLetter { score += 15 }
+        } else if q.count >= 3 {
+            score /= 3
+        }
         return score
     }
 }
@@ -228,6 +237,8 @@ final class CommandPalette: NSObject, NSTableViewDataSource, NSTableViewDelegate
             if a.score != b.score { return a.score > b.score }
             return a.order < b.order
         }
+        // Once there are real matches, leave out weak scattered ones.
+        if let top = hits.first?.score { hits = hits.filter { $0.score * 4 >= top } }
         results = hits.map { $0.entry }
         matchedVia = hits.map { $0.via }
         table.reloadData()

@@ -16,6 +16,22 @@ final class DevicePanel: NSView {
     private let stack = NSStackView()
     private let empty = NSTextField(labelWithString: "")
     private let addButton = NSButton(title: "Add Plug-in…", target: nil, action: nil)
+    private lazy var addTile: NSButton = {
+        let b = NSButton(title: "+  Add Plug-in", target: self, action: #selector(addTapped))
+        b.isBordered = false
+        b.font = Theme.ui(11, .medium)
+        b.contentTintColor = Theme.textDim
+        b.wantsLayer = true
+        b.layer?.cornerRadius = 6
+        b.layer?.borderWidth = 1
+        b.layer?.borderColor = Theme.hairline.cgColor
+        b.toolTip = "Add a plug-in after the last one on this track"
+        b.setAccessibilityLabel("Add plug-in")
+        b.translatesAutoresizingMaskIntoConstraints = false
+        b.widthAnchor.constraint(equalToConstant: 120).isActive = true
+        b.heightAnchor.constraint(equalToConstant: DevicePanel.height - 20).isActive = true
+        return b
+    }()
     var onOpen: ((DalnokTrackId, Int32) -> Void)?
     var onAdd: (() -> Void)?
 
@@ -77,6 +93,11 @@ final class DevicePanel: NSView {
                 return d
             }
             devices.forEach { stack.addArrangedSubview($0) }
+            addTile.removeFromSuperview()
+            if let last = devices.last {
+                stack.addArrangedSubview(addTile)
+                stack.setCustomSpacing(Analog.on ? 96 : 10, after: last) // analog: past the OUT jack
+            }
             for d in devices where !Motion.reduced {
                 d.alphaValue = 0
                 Motion.views(Motion.gentle) { d.animator().alphaValue = 1 }
@@ -86,7 +107,8 @@ final class DevicePanel: NSView {
         empty.isHidden = !plugins.isEmpty
         addButton.isHidden = !plugins.isEmpty || t == nil
         empty.stringValue = t == nil ? "Select a track to see its plug-ins." :
-            "No plug-ins on \(t!.name)\(t!.isInstrument ? " (it plays Dalnok Poly)" : ""). Add one from Audio ▸ Plug-ins."
+            t!.isInstrument ? "\(t!.name) plays the built-in Dalnok Poly. Add an instrument or effect plug-in."
+                            : "No plug-ins on \(t!.name) yet."
     }
 
     /// Picks up parameter changes made elsewhere (the plug-in's own editor, undo of controls).
@@ -238,16 +260,19 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         grid.columnSpacing = 12
         let header = NSStackView(views: [title, NSView(), editButton, openButton])
         header.spacing = 6
-        let body = NSStackView(views: [header, grid])
+        // Knobs sit in the middle of the unit, so a one-row controller doesn't leave the bottom half empty.
+        let above = NSView(), below = NSView()
+        let body = NSStackView(views: [header, above, grid, below])
         body.orientation = .vertical
         body.alignment = .leading
-        body.spacing = 8
+        body.spacing = 4
         body.edgeInsets = NSEdgeInsets(top: 8, left: 12 + Self.ear, bottom: 8, right: 10 + Self.ear)
         body.translatesAutoresizingMaskIntoConstraints = false
         addSubview(body)
         NSLayoutConstraint.activate([
             body.leadingAnchor.constraint(equalTo: leadingAnchor), body.trailingAnchor.constraint(equalTo: trailingAnchor),
-            body.topAnchor.constraint(equalTo: topAnchor), body.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor),
+            body.topAnchor.constraint(equalTo: topAnchor), body.bottomAnchor.constraint(equalTo: bottomAnchor),
+            above.heightAnchor.constraint(equalTo: below.heightAnchor),
             header.widthAnchor.constraint(equalTo: body.widthAnchor, constant: -22 - 2 * Self.ear),
             widthAnchor.constraint(greaterThanOrEqualToConstant: 300),
             heightAnchor.constraint(equalToConstant: DevicePanel.height - 20),
@@ -335,11 +360,16 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
             knob.widthAnchor.constraint(equalToConstant: 30).isActive = true
             knob.heightAnchor.constraint(equalToConstant: 30).isActive = true
             let name = label(fixedString(p.title), dim: false)
+            name.maximumNumberOfLines = 2 // "Lowpass Cutoff Frequency" wraps instead of losing its meaning
+            name.lineBreakMode = .byWordWrapping
+            name.cell?.truncatesLastVisibleLine = true
+            name.preferredMaxLayoutWidth = 70
+            name.toolTip = fixedString(p.title)
             let value = label(display(p), dim: true)
             let cell = NSStackView(views: [knob, name, value])
             cell.orientation = .vertical
             cell.spacing = 2
-            cell.widthAnchor.constraint(equalToConstant: 64).isActive = true
+            cell.widthAnchor.constraint(equalToConstant: 70).isActive = true
             cells.append(cell)
             knobs.append((knob, name, value, id))
         }
@@ -348,7 +378,7 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
             while r.count < Self.columns { r.append(NSGridCell.emptyContentView) }
             grid.addRow(with: r)
         }
-        for c in 0..<grid.numberOfColumns { grid.column(at: c).width = 64; grid.column(at: c).xPlacement = .center }
+        for c in 0..<grid.numberOfColumns { grid.column(at: c).width = 70; grid.column(at: c).xPlacement = .center }
     }
 
     private func display(_ p: DalnokPluginParameter) -> String {

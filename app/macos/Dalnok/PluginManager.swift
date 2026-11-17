@@ -80,7 +80,9 @@ final class PluginManagerController: NSWindowController, NSTableViewDataSource, 
         stack.alignment = .leading
         stack.spacing = 8
         stack.edgeInsets = NSEdgeInsets(top: 14, left: 14, bottom: 12, right: 14)
-        for v in [bar, scroll] { v.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -28).isActive = true }
+        for v in [bar, scroll, summary] { v.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -28).isActive = true }
+        summary.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        summary.toolTip = "Scan status and what Dalnok can host"
         search.setContentHuggingPriority(.defaultLow, for: .horizontal)
         let content = NSView()
         content.wantsLayer = true

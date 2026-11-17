@@ -40,7 +40,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let args = Array(CommandLine.arguments.dropFirst())
         func value(_ flag: String) -> String? { args.firstIndex(of: flag).flatMap { $0 + 1 < args.count ? args[$0 + 1] : nil } }
-        let flagValues = Set(["--snapshot", "--selftest", "--screenshots", "--plugin-snapshot"].compactMap(value))
+        let flagValues = Set(["--snapshot", "--selftest", "--screenshots", "--plugin-snapshot", "--uiwalk"].compactMap(value))
         let files = args.filter { !$0.hasPrefix("-") && !flagValues.contains($0) }.map { URL(fileURLWithPath: $0) }
         let snapshot = value("--snapshot").map { URL(fileURLWithPath: $0) }
 
@@ -72,6 +72,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let dir = value("--screenshots") {
             Screenshots.run(app: self, files: files, dir: URL(fileURLWithPath: dir))
             return
+        }
+        if let dir = ProcessInfo.processInfo.environment["DALNOK_WINDOW_DUMP"] { WindowDump.install(dir: URL(fileURLWithPath: dir)) }
+        if let dir = value("--uiwalk") {
+            Motion.override = false
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { UIWalk(app: self, dir: URL(fileURLWithPath: dir)).run() }
         }
         if let dir = value("--selftest") {
             SelfTest(app: self, files: files, workdir: URL(fileURLWithPath: dir)).run()
@@ -108,17 +113,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
               !CommandLine.arguments.contains("--snapshot"), !CommandLine.arguments.contains("--screenshots") else {
             return .terminateNow
         }
-        main.confirmDiscard { NSApp.reply(toApplicationShouldTerminate: true) }
-        // confirmDiscard's Cancel path never calls back; reply false then.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
-            if self?.main.window?.attachedSheet == nil, self?.engine.isDirty == true {
-                NSApp.reply(toApplicationShouldTerminate: false)
-            }
-        }
+        main.confirmDiscard({ NSApp.reply(toApplicationShouldTerminate: true) }, cancelled: { [weak self] in
+            self?.relaunchOnQuit = false
+            NSApp.reply(toApplicationShouldTerminate: false)
+        })
         return .terminateLater
     }
 
-    func applicationWillTerminate(_ notification: Notification) { engine.shutdown() }
+    /// Set by Settings ▸ "Relaunch Now": start a fresh instance (with the saved project) once this one quits.
+    var relaunchOnQuit = false
+    func applicationWillTerminate(_ notification: Notification) {
+        engine.shutdown()
+        guard relaunchOnQuit else { return }
+        let bundle = Bundle.main.bundleURL
+        let p = Process()
+        if bundle.pathExtension == "app" {
+            p.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+            p.arguments = ["-n", bundle.path] + (session.projectURL.map { ["--args", $0.path] } ?? [])
+        } else if let exe = Bundle.main.executableURL {
+            p.executableURL = exe // development build run from .build
+            p.arguments = (session.projectURL.map { [$0.path] } ?? []) + ["--no-welcome"]
+        }
+        try? p.run()
+    }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
     func application(_ sender: NSApplication, openFile filename: String) -> Bool {
@@ -173,7 +190,7 @@ func buildMenu(target: MainWindowController) -> NSMenu {
         item("Recover Recordings…", #selector(W.recoverRecordings(_:)), ""),
         .separator(),
         item("Save", #selector(W.saveDocument(_:)), "s"),
-        item("Save As…", #selector(W.saveDocumentAs(_:then:)), "s", [.command, .shift]),
+        item("Save As…", #selector(W.saveDocumentAs(_:)), "s", [.command, .shift]),
         .separator(),
         item("Import Audio…", #selector(W.importAudio), "i"),
         item("Export Mix…", #selector(W.exportMix(_:)), "b"),
@@ -290,3 +307,38 @@ app.setActivationPolicy(.regular)
 let delegate = AppDelegate()
 app.delegate = delegate
 app.run()
+
+
+/// Development aid for driving the real app with OS-level input: on SIGUSR1 every visible window draws itself to `<dir>/<n>-<title>.png` and
+/// `<dir>/windows.json` lists window frames in screen points (top-left origin) plus the key window. The app
+/// renders its own views, so no Screen Recording permission is needed. Off unless DALNOK_WINDOW_DUMP is set.
+@MainActor enum WindowDump {
+    nonisolated(unsafe) static var source: DispatchSourceSignal?
+    static func install(dir: URL) {
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        signal(SIGUSR1, SIG_IGN)
+        let s = DispatchSource.makeSignalSource(signal: SIGUSR1, queue: .main)
+        s.setEventHandler { dump(dir) }
+        s.resume()
+        source = s
+    }
+    static func dump(_ dir: URL) {
+        let screenHeight = NSScreen.screens.first?.frame.height ?? 0
+        var list: [[String: Any]] = []
+        for (i, w) in NSApp.windows.enumerated() where w.isVisible {
+            guard let view = w.contentView?.superview ?? w.contentView else { continue }
+            let name = "\(i)-" + (w.title.isEmpty ? String(describing: type(of: w)) : w.title).replacingOccurrences(of: "/", with: "-")
+            if let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
+                view.cacheDisplay(in: view.bounds, to: rep)
+                try? rep.representation(using: .png, properties: [:])?.write(to: dir.appendingPathComponent(name + ".png"))
+            }
+            let f = w.frame
+            list.append(["file": name + ".png", "title": w.title, "key": w.isKeyWindow,
+                         "x": f.minX, "y": screenHeight - f.maxY, "w": f.width, "h": f.height])
+        }
+        let info: [String: Any] = ["windows": list, "frontmost": NSApp.isActive, "time": Date().timeIntervalSince1970]
+        if let data = try? JSONSerialization.data(withJSONObject: info, options: [.prettyPrinted]) {
+            try? data.write(to: dir.appendingPathComponent("windows.json"))
+        }
+    }
+}

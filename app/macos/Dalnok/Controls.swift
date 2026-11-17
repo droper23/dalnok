@@ -28,8 +28,14 @@ final class ValueBubble {
         l.stringValue = text
         l.sizeToFit()
         let w = l.frame.width + 12, h: CGFloat = 18
-        let p = view.convert(CGPoint(x: x, y: view.isFlipped ? 0 : view.bounds.height), to: root)
-        l.frame = CGRect(x: p.x - w / 2, y: p.y + (root.isFlipped ? -h - 4 : 4), width: w, height: h)
+        // Below the control, over its caption (which the bubble replaces while dragging), so it never covers
+        // the track name above; above only when there's no room below.
+        let bottom = view.convert(CGPoint(x: x, y: view.isFlipped ? view.bounds.height : 0), to: root)
+        let top = view.convert(CGPoint(x: x, y: view.isFlipped ? 0 : view.bounds.height), to: root)
+        let belowY = root.isFlipped ? bottom.y + 1 : bottom.y - h - 1
+        let fits = root.isFlipped ? belowY + h <= root.bounds.maxY : belowY >= root.bounds.minY
+        let y = fits ? belowY : (root.isFlipped ? top.y - h - 4 : top.y + 4)
+        l.frame = CGRect(x: max(2, bottom.x - w / 2), y: y, width: w, height: h)
         l.isHidden = false
     }
 

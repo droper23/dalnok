@@ -7,6 +7,8 @@ final class EmptyStateView: NSView {
     var onImportAudio: (() -> Void)?
     var onOpen: (() -> Void)?
     var onMigrate: (() -> Void)?
+    var onNewInstrument: (() -> Void)?
+    var onNewAudioTrack: (() -> Void)?
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -16,7 +18,7 @@ final class EmptyStateView: NSView {
         let title = NSTextField(labelWithString: "Start your session")
         title.font = Theme.ui(17, .semibold)
         title.textColor = Theme.text
-        let sub = NSTextField(labelWithString: "Drop audio files or open a project to get started.")
+        let sub = NSTextField(labelWithString: "Drop audio files, open a project, or add a track to record or play.")
         sub.font = Theme.ui(12)
         sub.textColor = Theme.textDim
         func button(_ title: String, _ key: String, _ sel: Selector, primary: Bool = false) -> NSButton {
@@ -33,7 +35,12 @@ final class EmptyStateView: NSView {
             button("Migration Assistant…", "", #selector(migrateTapped)),
         ])
         buttons.spacing = 10
-        let stack = NSStackView(views: [icon, title, sub, buttons])
+        let tracks = NSStackView(views: [
+            button("New Audio Track", "⌥⌘N", #selector(newAudioTapped)),
+            button("New Instrument Track", "⌥⇧⌘N", #selector(newInstrumentTapped)),
+        ])
+        tracks.spacing = 10
+        let stack = NSStackView(views: [icon, title, sub, buttons, tracks])
         stack.orientation = .vertical
         stack.alignment = .centerX
         stack.spacing = 10
@@ -66,4 +73,6 @@ final class EmptyStateView: NSView {
     @objc private func importTapped() { onImportAudio?() }
     @objc private func openTapped() { onOpen?() }
     @objc private func migrateTapped() { onMigrate?() }
+    @objc private func newInstrumentTapped() { onNewInstrument?() }
+    @objc private func newAudioTapped() { onNewAudioTrack?() }
 }

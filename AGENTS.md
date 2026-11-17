@@ -22,6 +22,11 @@ Swift/AppKit front end on macOS. GPL-3.0-or-later. This repo is also the project
   `DALNOK_SANITIZE=1 scripts/check.sh` also runs the engine tests under ASan and TSan (CI always does).
 - `scripts/bundle.sh` creates `dist/Dalnok.app`.
 - `.build/debug/Dalnok <files…> --snapshot out.png [--play]` renders the UI to a PNG for visual checks.
+- `.build/debug/Dalnok <project> --uiwalk <dir>` sends real NSEvents through the windows (clicks, drags, keys,
+  palette, piano roll, device panel, plug-in window, secondary windows) and writes a PNG of every visible window
+  at each step, including mid-drag. Use it for visual review in both themes (`DALNOK_THEME=warmAnalog`).
+  `DALNOK_WINDOW_DUMP=<dir>` makes a running app write its windows and `windows.json` on `kill -USR1`;
+  `scripts/dev/drive.swift` posts OS-level input (unlocked screen + Accessibility access only).
 - `.build/debug/Dalnok <files…> --selftest <dir>` drives real menus and synthesized drags end to end.
   Extend `app/macos/Dalnok/SelfTest.swift` for every new UI interaction.
 - `.build/debug/dalnok-cli commands`, `command <proj> <name> '<json>' [--save]`, `render-project`,

@@ -413,7 +413,8 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
         nameLabel.isEditable = true
         nameLabel.isBezeled = true
         nameLabel.drawsBackground = true
-        nameLabel.backgroundColor = Theme.window
+        // Warm Analog keeps writing on the tape (dark ink); Graphite edits in a dark well.
+        nameLabel.backgroundColor = Analog.on ? Theme.hex(0xF1E7D0) : Theme.window
         window?.makeFirstResponder(nameLabel)
         nameLabel.currentEditor()?.selectAll(nil)
     }
@@ -422,10 +423,21 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
         guard nameLabel.isEditable else { return }
         nameLabel.isEditable = false
         nameLabel.isBezeled = false
-        nameLabel.drawsBackground = false
-        let name = nameLabel.stringValue.trimmingCharacters(in: .whitespaces)
+        nameLabel.drawsBackground = Analog.on // the tape stays
+        nameLabel.backgroundColor = Analog.on ? Theme.hex(0xE6DAC0) : .clear
+        let name = renameCancelled ? "" : nameLabel.stringValue.trimmingCharacters(in: .whitespaces)
+        renameCancelled = false
         if !name.isEmpty { session.renameTrack(trackId, name) } else { session.refresh() }
         if let t = session.track(trackId) { nameLabel.stringValue = t.name }
+    }
+    private var renameCancelled = false
+
+    /// Escape cancels the rename and keeps the old name; Return commits.
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy sel: Selector) -> Bool {
+        guard sel == #selector(NSResponder.cancelOperation(_:)) else { return false }
+        renameCancelled = true
+        window?.makeFirstResponder(nil)
+        return true
     }
 
     // MARK: Mouse: select, double-click rename, drag to reorder
