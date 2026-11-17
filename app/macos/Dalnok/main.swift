@@ -245,6 +245,11 @@ func buildMenu(target: MainWindowController) -> NSMenu {
         item("Record", #selector(W.toggleRecord(_:)), "r", []),
         item("Metronome", #selector(W.toggleMetronome(_:)), "k", []),
         item("Edit Tempo", #selector(W.editTempo(_:)), "t", [.command, .option]),
+        .separator(),
+        item("Add Tempo Change at Playhead", #selector(W.addTempoChange(_:)), "t", [.command, .option, .shift]),
+        item("Add Time Signature Change at Playhead", #selector(W.addMeterChange(_:)), ""),
+        item("Remove Tempo Change at Playhead", #selector(W.removeTempoChange(_:)), ""),
+        item("Remove Time Signature Change at Playhead", #selector(W.removeMeterChange(_:)), ""),
     ])
     let outputMenu = NSMenuItem(title: "Output Device", action: nil, keyEquivalent: "")
     outputMenu.submenu = NSMenu(title: "Output Device")

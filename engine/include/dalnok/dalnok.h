@@ -28,7 +28,7 @@
 extern "C" {
 #endif
 
-#define DALNOK_API_VERSION 11
+#define DALNOK_API_VERSION 12
 
 typedef enum {
     DALNOK_OK = 0,
@@ -435,11 +435,28 @@ DalnokStatus dalnok_midi_clip_set_notes(DalnokEngine *engine, DalnokClipId clip,
 int32_t dalnok_midi_clip_notes(const DalnokEngine *engine, DalnokClipId clip, DalnokNote *out, int32_t capacity);
 /* Moves note starts toward a grid of `grid_beats` anchored at frame 0 (strength 0-1). */
 DalnokStatus dalnok_midi_quantize(DalnokEngine *engine, DalnokClipId clip, double grid_beats, double strength);
-/* Constant tempo and meter (no tempo map yet). Changing BPM scales MIDI clip and note
- * timing to preserve their beat positions; audio clips remain at their time positions. */
+/* Tempo and meter maps. Beats are quarter notes from the timeline origin; bars are zero-based
+ * (bar 1 on screen = 0). Tempo is constant between points; meter changes start on a bar.
+ * Any tempo change keeps MIDI clips and notes on their beats; audio clips keep their time.
+ * dalnok_tempo_set changes the first tempo and meter and keeps later changes at their beats/bars. */
+typedef struct { double beat, bpm; } DalnokTempoPoint;
+typedef struct { int32_t bar, numerator, denominator; } DalnokMeterPoint;
 DalnokStatus dalnok_tempo_set(DalnokEngine *engine, double bpm, int32_t numerator, int32_t denominator);
-double dalnok_tempo_bpm(const DalnokEngine *engine);
-void dalnok_meter(const DalnokEngine *engine, int32_t *numerator, int32_t *denominator);
+double dalnok_tempo_bpm(const DalnokEngine *engine);     /* first tempo */
+void dalnok_meter(const DalnokEngine *engine, int32_t *numerator, int32_t *denominator); /* first meter */
+/* Replaces both maps (one undo step). The first tempo point is at beat 0 and the first meter at bar 0. */
+DalnokStatus dalnok_tempo_map_set(DalnokEngine *engine, const DalnokTempoPoint *tempo, int32_t tempo_count,
+                                  const DalnokMeterPoint *meter, int32_t meter_count);
+int32_t dalnok_tempo_points(const DalnokEngine *engine, DalnokTempoPoint *out, int32_t capacity); /* total count */
+int32_t dalnok_meter_points(const DalnokEngine *engine, DalnokMeterPoint *out, int32_t capacity);
+double dalnok_tempo_at(const DalnokEngine *engine, double beat);
+/* Unrounded conversions for display; they extrapolate before 0 with the first tempo or meter. */
+double dalnok_beat_to_frame(const DalnokEngine *engine, double beat);
+double dalnok_frame_to_beat(const DalnokEngine *engine, double frame);
+double dalnok_bar_to_beat(const DalnokEngine *engine, int32_t bar);
+/* Bar (zero-based) containing `beat`, the position inside it in meter beats (zero-based), and its meter. */
+void dalnok_beat_to_bar(const DalnokEngine *engine, double beat, int32_t *bar, double *beat_in_bar,
+                        int32_t *numerator, int32_t *denominator);
 
 /* ---- Undo ------------------------------------------------------------ */
 

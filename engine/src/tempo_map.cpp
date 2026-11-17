@@ -78,4 +78,66 @@ bool TempoMap::frameToBeat(int64_t frame, double &out) const {
     return true;
 }
 
+double TempoMap::beatToFrameExact(double beat) const {
+    if (segments_.empty()) return 0;
+    const auto next = std::upper_bound(segments_.begin(), segments_.end(), beat,
+        [](double value, const Segment &s) { return value < s.beat; });
+    const auto &s = next == segments_.begin() ? segments_.front() : *std::prev(next);
+    return static_cast<double>(s.frame + (static_cast<long double>(beat) - s.beat) * s.framesPerBeat);
+}
+
+double TempoMap::frameToBeatExact(double frame) const {
+    if (segments_.empty()) return 0;
+    const long double position = frame;
+    const auto next = std::upper_bound(segments_.begin(), segments_.end(), position,
+        [](long double value, const Segment &s) { return value < s.frame; });
+    const auto &s = next == segments_.begin() ? segments_.front() : *std::prev(next);
+    return static_cast<double>(s.beat + (position - s.frame) / s.framesPerBeat);
+}
+
+bool validMeters(const std::vector<MeterChange> &meters, std::string &err) {
+    if (meters.empty() || meters.front().bar != 0) return fail(err, "meter map must start at bar 1");
+    for (size_t i = 0; i < meters.size(); ++i) {
+        const auto &m = meters[i];
+        if (m.num < 1 || m.num > 32 || (m.den != 1 && m.den != 2 && m.den != 4 && m.den != 8 && m.den != 16))
+            return fail(err, "meter must be 1-32 over 1, 2, 4, 8 or 16");
+        if (m.bar < 0 || m.bar > 100000) return fail(err, "meter bar out of range");
+        if (i && m.bar <= meters[i - 1].bar) return fail(err, "meter bars must be strictly increasing");
+    }
+    return true;
+}
+
+namespace {
+double barBeats(const MeterChange &m) { return m.num * 4.0 / m.den; }
+} // namespace
+
+double barToBeat(const std::vector<MeterChange> &meters, int32_t bar) {
+    double beat = 0;
+    for (size_t i = 0; i < meters.size(); ++i) {
+        const int32_t end = i + 1 < meters.size() ? meters[i + 1].bar : INT32_MAX;
+        const int32_t upto = std::min(bar, end);
+        if (upto > meters[i].bar) beat += (upto - meters[i].bar) * barBeats(meters[i]);
+        if (bar <= end) break;
+    }
+    if (bar < 0 && !meters.empty()) beat = bar * barBeats(meters.front());
+    return beat;
+}
+
+void beatToBar(const std::vector<MeterChange> &meters, double beat, int32_t &bar, double &beatInBar, int32_t &num,
+               int32_t &den) {
+    MeterChange m = meters.empty() ? MeterChange{} : meters.front();
+    double start = 0;
+    for (size_t i = 1; i < meters.size(); ++i) {
+        const double next = start + (meters[i].bar - m.bar) * barBeats(m);
+        if (beat < next) break;
+        start = next;
+        m = meters[i];
+    }
+    const double bars = std::floor((beat - start) / barBeats(m) + 1e-9);
+    bar = m.bar + static_cast<int32_t>(bars);
+    beatInBar = std::max(0.0, (beat - start - bars * barBeats(m)) * m.den / 4.0);
+    num = m.num;
+    den = m.den;
+}
+
 } // namespace dalnok

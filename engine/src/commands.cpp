@@ -131,8 +131,33 @@ const CommandDef kCommands[] = {
     {"project.setTempo", "Set Tempo and Meter", "{bpm, numerator?, denominator?}", [](ARGS) {
          double bpm;
          if (!needNumber(a, "bpm", bpm, err)) return DALNOK_ERR_INVALID_ARG;
-         return status(e.setTempo(bpm, static_cast<int32_t>(a.getNumber("numerator", e.model().meterNum)),
-                                  static_cast<int32_t>(a.getNumber("denominator", e.model().meterDen)), err), err);
+         return status(e.setTempo(bpm, static_cast<int32_t>(a.getNumber("numerator", e.model().meters.front().num)),
+                                  static_cast<int32_t>(a.getNumber("denominator", e.model().meters.front().den)), err), err);
+     }},
+    {"project.setTempoMap", "Set Tempo and Meter Map",
+     "{tempo: [[beat, bpm], ...] (first at beat 0), meter?: [[bar (zero-based), numerator, denominator], ...]}", [](ARGS) {
+         const json::Value *tl = a.get("tempo");
+         if (!tl || !tl->isArray() || tl->array.empty()) { err = "tempo must be a nonempty array"; return DALNOK_ERR_INVALID_ARG; }
+         std::vector<TempoPoint> tempo;
+         for (const auto &p : tl->array) {
+             if (!p.isArray() || p.array.size() != 2 || !p.array[0].isNumber() || !p.array[1].isNumber()) {
+                 err = "each tempo point is [beat, bpm]"; return DALNOK_ERR_INVALID_ARG;
+             }
+             tempo.push_back({p.array[0].number, p.array[1].number});
+         }
+         std::vector<MeterChange> meters = e.model().meters;
+         if (const json::Value *ml = a.get("meter")) {
+             meters.clear();
+             if (!ml->isArray()) { err = "meter must be an array"; return DALNOK_ERR_INVALID_ARG; }
+             for (const auto &p : ml->array) {
+                 if (!p.isArray() || p.array.size() != 3 || !p.array[0].isNumber() || !p.array[1].isNumber() || !p.array[2].isNumber()) {
+                     err = "each meter change is [bar, numerator, denominator]"; return DALNOK_ERR_INVALID_ARG;
+                 }
+                 meters.push_back({static_cast<int32_t>(p.array[0].number), static_cast<int32_t>(p.array[1].number),
+                                   static_cast<int32_t>(p.array[2].number)});
+             }
+         }
+         return status(e.setTempoMap(std::move(tempo), std::move(meters), err), err);
      }},
     {"transport.setMetronome", "Metronome", "{on, level? (0-1)}", [](ARGS) {
          e.setMetronome(a.getBool("on", true), static_cast<float>(a.getNumber("level", 0.5)));

@@ -1,4 +1,4 @@
-# Project Format (version 3)
+# Project Format (version 4)
 
 A single JSON file (`.dalnok`), written atomically: temp file, then `fsync`, then `rename`.
 Media is **referenced**, not copied, by absolute path plus a path relative to the project file.
@@ -36,8 +36,14 @@ On load, the relative path is tried first, so moving a project folder together w
   split continue without retriggering after reopen. Shared sources must contain identical note lists.
   Version 1 and 2 files still load; older readers reject version 3 rather than silently losing split continuity.
   Earlier files have no source identity, so their existing splits cannot be linked automatically.
-- Changing constant BPM scales MIDI clip and note frames to preserve beat positions; audio remains time-locked.
-  Frame rounding applies at each tempo edit. Tempo and meter maps remain unimplemented.
+- **Version 4** adds `tempoMap` (`[[beat, bpm], …]`, quarter-note beats, first at 0, strictly increasing) and
+  `meterMap` (`[[bar, numerator, denominator], …]`, zero-based bars, first at 0). `tempo` and `meter` still hold the
+  first values. Version 3 is still written when there are no changes, so older builds open constant-tempo projects;
+  a version 3 reader rejects a project with changes instead of playing it at the wrong tempo. A damaged map is an
+  error, not a silent fallback.
+- MIDI is stored in frames. Any tempo edit remaps every MIDI clip and note frame → beat (old map) → frame (new map),
+  so MIDI keeps its beats while audio stays time-locked. Clips sharing a note source and origin (split pieces) keep
+  sharing it. Each tempo edit can round positions by up to one frame.
 - **Missing media** loads as *offline*: the clip is kept and renders silence, and the reference is kept on
   the next save. `dalnok_project_load` reports the count.
 - **Rejected files** (bad JSON, wrong format, a newer `version`, dangling references) leave the open project untouched.

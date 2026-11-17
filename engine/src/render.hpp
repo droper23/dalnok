@@ -70,11 +70,51 @@ struct RenderTrack {
     std::vector<std::shared_ptr<PluginProcessor>> keep;   // keeps instances alive while this snapshot exists
 };
 
+// Metronome schedule: tempo segments (quarter-note beats) and meter segments.
+struct ClickTempo { double beat, frame, framesPerBeat; };
+struct ClickMeter { double beat, step; int32_t num; }; // step: quarter notes per click
+
 struct RenderState {
     std::vector<RenderTrack> tracks;
+    std::vector<ClickTempo> clickTempo;
+    std::vector<ClickMeter> clickMeter;
     SynthParams synth;
     int32_t liveTrack = -1; // index of the track that plays live MIDI input (-1 = none)
 };
+
+// First metronome click at or after `pos` (INT64_MAX if none); `accent` marks a bar start.
+// Plain arithmetic only: this runs on the audio thread.
+inline double clickFrameToBeat(const std::vector<ClickTempo> &t, double f) DALNOK_NONBLOCKING {
+    size_t i = 0;
+    while (i + 1 < t.size() && t[i + 1].frame <= f) ++i;
+    return t[i].beat + (f - t[i].frame) / t[i].framesPerBeat;
+}
+inline double clickBeatToFrame(const std::vector<ClickTempo> &t, double b) DALNOK_NONBLOCKING {
+    size_t i = 0;
+    while (i + 1 < t.size() && t[i + 1].beat <= b) ++i;
+    return t[i].frame + (b - t[i].beat) * t[i].framesPerBeat;
+}
+inline int64_t nextClick(const RenderState &s, int64_t pos, bool &accent) DALNOK_NONBLOCKING {
+    accent = false;
+    if (s.clickTempo.empty() || s.clickMeter.empty()) return INT64_MAX;
+    const auto &meter = s.clickMeter;
+    double q = clickFrameToBeat(s.clickTempo, static_cast<double>(pos) - 0.5);
+    for (int guard = 0; guard < 4; ++guard) {
+        size_t mi = 0;
+        while (mi + 1 < meter.size() && meter[mi + 1].beat <= q + 1e-9) ++mi;
+        const double rel = (q - meter[mi].beat) / meter[mi].step;
+        int64_t j = rel <= 0 ? 0 : static_cast<int64_t>(rel);
+        if (static_cast<double>(j) < rel - 1e-9) ++j;
+        double qc = meter[mi].beat + static_cast<double>(j) * meter[mi].step;
+        int64_t num = meter[mi].num;
+        if (mi + 1 < meter.size() && qc >= meter[mi + 1].beat - 1e-9) { qc = meter[mi + 1].beat; j = 0; num = meter[mi + 1].num; }
+        const double exact = clickBeatToFrame(s.clickTempo, qc);
+        const int64_t f = exact < 0 ? -1 : static_cast<int64_t>(exact + 0.5);
+        if (f >= pos) { accent = j % num == 0; return f; }
+        q = qc + 1e-6;
+    }
+    return INT64_MAX;
+}
 
 constexpr int kMaxBlock = 512; // internal processing chunk (frames)
 

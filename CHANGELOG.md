@@ -1,6 +1,10 @@
 # Changelog
 
 ## [Unreleased]
+### Added (2026-11-17, tempo and meter maps)
+- Tempo changes and time-signature changes: Transport menu commands, ruler flags, and a control bar that shows and edits the values at the playhead. MIDI keeps its beats across changes; audio keeps its time. Metronome, quantize, ruler, grid, snapping, LCD and piano roll follow the maps. C API 12 (`dalnok_tempo_map_set` and conversions), command `project.setTempoMap`, project format 4 (only when a project has changes).
+- Marquee selection of clips across tracks in the arrangement.
+
 ### Added (2026-11-16, arrangement multi-selection)
 - Shift-click selects clips across tracks. Arrow keys nudge them together; horizontal group drag and Delete operate as one undo step. The command catalog and C API expose atomic group nudging and deletion.
 

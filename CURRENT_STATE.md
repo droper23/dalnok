@@ -1,11 +1,18 @@
 ---
 updated: 2026-11-16
-phase: 2–4 in progress (recording, MIDI, plugin discovery) — Phase 1 complete
+phase: Phases 1 and 3 complete; 2 and 4 in progress
 milestone: M11 VST3 hosting (ADR-0009 stage 3) done; editors, parameters and AU hosting next
 ---
 # Current State
 
-## Latest session (arrangement multi-selection)
+## Latest session (tempo and meter maps; Phase 3 closed)
+- **Tempo and meter maps** (C API 12, project format 4): stepped tempo changes at any beat and time-signature changes at bars. Any tempo edit remaps MIDI clips and notes through beats (old map → new map), so MIDI stays on its beats and audio keeps its time; split pieces keep sharing their note source. The metronome schedule (tempo and meter segments) lives in the RenderState; quantize follows the map. Constant-tempo projects are still written as version 3.
+- **UI:** ruler, grid, snapping, LCD, piano-roll grid/ruler/snap and "New MIDI Clip" walk bars through the maps. The control bar shows and edits the tempo and meter in effect at the playhead. Transport ▸ Add/Remove Tempo Change and Time Signature Change at Playhead (⌥⇧⌘T adds a tempo change and focuses the field). Changes appear as flags on the ruler.
+- **Marquee selection** in the arrangement (drag on empty space; Shift adds; a click without dragging still seeks).
+- Verified: `scripts/check.sh` (113 engine tests incl. 8 TempoMaps tests, self-test 238 checks), TSan on Midi/Metronome/TempoMaps suites, RT effect analysis (Xcode clang; `CXX=$(xcrun -f clang++) scripts/ci/rt-effects.sh` when Homebrew LLVM is absent).
+- Not done: tempo ramps, importing tempo maps (importers keep the first tempo), count-in (belongs with punch recording), sample-accurate MIDI input (needs output host time in the device callbacks and mid-block live voice starts), MiniLab recording by the owner.
+
+## Earlier (arrangement multi-selection)
 - Shift-click selects clips across tracks; left/right arrows nudge, horizontal drag moves, and Delete removes the selection. Each is undoable as a group. Generated engine tests and GUI self-test cover boundaries, keyboard routing and undo. Group drag is horizontal only; marquee selection is not implemented. C API version 11 adds atomic clip nudging and deletion.
 
 ## Earlier (tempo-map groundwork)
@@ -133,7 +140,7 @@ slot, and retired ones come back through an SPSC queue. See [[System Overview]],
 
 ## Not yet / incomplete
 - Loopback latency measurement, power-loss validation, punch in/out, multiple armed audio tracks, separate input/output devices (built-in mic + speakers is refused with an explanation).
-- Tempo changes, count-in, piano roll marquee selection, sample-accurate MIDI input timing.
+- Count-in, tempo ramps, importing tempo maps, sample-accurate MIDI input timing.
 - Plug-in editors, parameters and automation, latency compensation, AU/CLAP hosting, out-of-process hosting.
 - Automatic project-recovery prompting and retention controls; live theme switching.
 - Disk streaming. Media is fully decoded into RAM, about 23 MB per stereo minute at 48 kHz.

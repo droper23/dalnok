@@ -167,6 +167,35 @@ final class Session {
     var meter: (Int32, Int32) { var n: Int32 = 4, d: Int32 = 4; dalnok_meter(h, &n, &d); return (n, d) }
     func setTempo(_ bpm: Double, _ num: Int32, _ den: Int32) -> Bool { let ok = dalnok_tempo_set(h, bpm, num, den) == DALNOK_OK; refresh(); return ok }
     var framesPerBeat: Int64 { Int64((engine.sampleRate * 60 / bpm).rounded()) }
+
+    // Tempo and meter maps. Beats are quarter notes from the origin; bars are zero-based.
+    var tempoPoints: [DalnokTempoPoint] {
+        let n = dalnok_tempo_points(h, nil, 0)
+        var out = [DalnokTempoPoint](repeating: DalnokTempoPoint(), count: Int(n))
+        _ = dalnok_tempo_points(h, &out, n); return out
+    }
+    var meterPoints: [DalnokMeterPoint] {
+        let n = dalnok_meter_points(h, nil, 0)
+        var out = [DalnokMeterPoint](repeating: DalnokMeterPoint(), count: Int(n))
+        _ = dalnok_meter_points(h, &out, n); return out
+    }
+    @discardableResult
+    func setTempoMap(_ tempo: [DalnokTempoPoint], _ meters: [DalnokMeterPoint]) -> Bool {
+        let ok = dalnok_tempo_map_set(h, tempo, Int32(tempo.count), meters, Int32(meters.count)) == DALNOK_OK
+        refresh(); return ok
+    }
+    func beatToFrame(_ beat: Double) -> Double { dalnok_beat_to_frame(h, beat) }
+    func frameToBeat(_ frame: Double) -> Double { dalnok_frame_to_beat(h, frame) }
+    func barToBeat(_ bar: Int) -> Double { dalnok_bar_to_beat(h, Int32(clamping: bar)) }
+    func tempo(atBeat beat: Double) -> Double { dalnok_tempo_at(h, beat) }
+    /// Bar (zero-based), position inside it in meter beats (zero-based) and the meter at a quarter-note beat.
+    func bar(atBeat beat: Double) -> (bar: Int, beatInBar: Double, num: Int, den: Int) {
+        var b: Int32 = 0, n: Int32 = 4, d: Int32 = 4, inBar = 0.0
+        dalnok_beat_to_bar(h, beat, &b, &inBar, &n, &d)
+        return (Int(b), inBar, Int(n), Int(d))
+    }
+    /// Frames per quarter note at a frame position.
+    func framesPerBeat(at frame: Double) -> Double { engine.sampleRate * 60 / tempo(atBeat: frameToBeat(frame)) }
     func setStretch(_ c: DalnokClipId, length: Int64, rate: Double, pitch: Float, preservePitch: Bool) {
         dalnok_clip_set_stretch(h, c, length, rate, pitch, preservePitch); refresh()
     }

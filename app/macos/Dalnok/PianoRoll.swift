@@ -103,16 +103,21 @@ final class PianoRollView: NSView {
     func frame(atX x: CGFloat) -> Double { scrollX + Double(x - grid.minX) * framesPerPoint }
     func y(_ pitch: Int) -> CGFloat { grid.minY + CGFloat(127 - pitch) * rowHeight - scrollY }
     func pitch(atY y: CGFloat) -> Int { max(0, min(127, 127 - Int(floor((y - grid.minY + scrollY) / rowHeight)))) }
-    var framesPerBeat: Double { session.engine.sampleRate * 60 / session.bpm }
-    var beatsPerBar: Double { let m = session.meter; return Double(m.0) * 4 / Double(m.1) }
-    var meterBeatFrames: Double { framesPerBeat * 4 / Double(session.meter.1) }
-    /// Snap unit: a 16th note, or an 8th / beat when zoomed out.
-    var snapFrames: Double {
-        let sixteenth = framesPerBeat / 4
-        for k in [1.0, 2, 4, 8, 16] where sixteenth * k / framesPerPoint >= 10 { return sixteenth * k }
-        return sixteenth * 16
+    /// Frames per quarter note where the view is centred (the tempo map can vary).
+    var framesPerBeat: Double { session.framesPerBeat(at: frame(atX: grid.midX)) }
+    /// Snap unit in quarter notes: a 16th note, or longer when zoomed out.
+    var snapBeats: Double {
+        for k in [1.0, 2, 4, 8, 16] where framesPerBeat / 4 * k / framesPerPoint >= 10 { return k / 4 }
+        return 4
     }
-    func snap(_ f: Double, bypass: Bool) -> Double { bypass ? f.rounded() : (f / snapFrames).rounded() * snapFrames }
+    /// Snap unit in frames at the view centre (keyboard moves and default note lengths).
+    var snapFrames: Double { snapBeats * framesPerBeat }
+    /// Snaps on the beat grid, which follows tempo changes.
+    func snap(_ f: Double, bypass: Bool) -> Double {
+        guard !bypass else { return f.rounded() }
+        let q = snapBeats
+        return session.beatToFrame((session.frameToBeat(f) / q).rounded() * q).rounded()
+    }
 
     func timeline(_ n: DalnokNote, _ c: ClipView) -> Double { Double(c.start + n.start - c.offset) }
     func rect(_ n: DalnokNote, _ c: ClipView) -> CGRect {
@@ -194,15 +199,26 @@ final class PianoRollView: NSView {
     }
 
     private func drawBeatLines(_ ctx: CGContext, from top: CGFloat, height: CGFloat) {
-        let beat = meterBeatFrames, bar = framesPerBeat * beatsPerBar
-        let sixteenth = framesPerBeat / 4
-        let step = sixteenth / framesPerPoint >= 8 ? sixteenth : (beat / framesPerPoint >= 8 ? beat : bar)
-        var f = (frame(atX: grid.minX) / step).rounded(.down) * step
-        while x(f) <= grid.maxX {
-            let isBar = abs((f / bar).rounded() * bar - f) < 1, isBeat = abs((f / beat).rounded() * beat - f) < 1
-            ctx.setFillColor((isBar ? Theme.hex(0xFFFFFF, 0.14) : isBeat ? Theme.gridMajor : Theme.gridMinor).cgColor)
-            ctx.fill(CGRect(x: x(f).rounded(), y: top, width: 1, height: height))
-            f += step
+        // Walk bars through the meter map; inside each bar, 16ths, meter beats, or nothing when zoomed out.
+        var bar = session.bar(atBeat: session.frameToBeat(frame(atX: grid.minX))).bar
+        var guardCount = 0
+        while guardCount < 2_000 {
+            guardCount += 1
+            let start = session.barToBeat(bar), end = session.barToBeat(bar + 1)
+            if x(session.beatToFrame(start)) > grid.maxX { break }
+            let meterBeat = 4.0 / Double(session.bar(atBeat: start).den)
+            let sixteenthPts = session.beatToFrame(start + 0.25) - session.beatToFrame(start)
+            let beatPts = session.beatToFrame(start + meterBeat) - session.beatToFrame(start)
+            let step = sixteenthPts / framesPerPoint >= 8 ? 0.25 : (beatPts / framesPerPoint >= 8 ? meterBeat : end - start)
+            var q = start
+            while q < end - 1e-9 {
+                let rel = q - start
+                let isBar = rel < 1e-9, isBeat = abs((rel / meterBeat).rounded() * meterBeat - rel) < 1e-9
+                ctx.setFillColor((isBar ? Theme.hex(0xFFFFFF, 0.14) : isBeat ? Theme.gridMajor : Theme.gridMinor).cgColor)
+                ctx.fill(CGRect(x: x(session.beatToFrame(q)).rounded(), y: top, width: 1, height: height))
+                q += step
+            }
+            bar += 1
         }
     }
 
@@ -240,17 +256,21 @@ final class PianoRollView: NSView {
     private func drawRuler(_ ctx: CGContext, _ g: CGRect) {
         Theme.panel.setFill(); CGRect(x: 0, y: 0, width: bounds.width, height: Self.rulerHeight).fill()
         Theme.separator.setFill(); CGRect(x: 0, y: Self.rulerHeight - 1, width: bounds.width, height: 1).fill()
-        let bar = framesPerBeat * beatsPerBar
-        var f = (frame(atX: g.minX) / bar).rounded(.down) * bar
         let attrs: [NSAttributedString.Key: Any] = [.font: Theme.mono(10), .foregroundColor: Theme.textDim]
-        let every = max(1, Int((70 * framesPerPoint / bar).rounded(.up)))
-        while x(f) <= g.maxX {
-            let index = Int((f / bar).rounded())
-            if x(f) >= g.minX && index % every == 0 {
+        let center = session.frameToBeat(frame(atX: g.midX))
+        let c = session.bar(atBeat: center)
+        let barFrames = session.beatToFrame(session.barToBeat(c.bar + 1)) - session.beatToFrame(session.barToBeat(c.bar))
+        let every = max(1, Int((70 * framesPerPoint / max(1, barFrames)).rounded(.up)))
+        var index = session.bar(atBeat: session.frameToBeat(frame(atX: g.minX))).bar
+        index = Int((Double(index) / Double(every)).rounded(.down)) * every
+        while index < 1_000_000 {
+            let f = session.beatToFrame(session.barToBeat(index))
+            if x(f) > g.maxX { break }
+            if x(f) >= g.minX && index >= 0 {
                 Theme.textFaint.setFill(); CGRect(x: x(f).rounded(), y: 5, width: 1, height: Self.rulerHeight - 6).fill()
                 ("\(index + 1)" as NSString).draw(at: CGPoint(x: x(f) + 4, y: 4), withAttributes: attrs)
             }
-            f += bar
+            index += every
         }
     }
 
@@ -378,7 +398,9 @@ final class PianoRollView: NSView {
             // Snap the gesture so the grabbed note lands on the grid; keep relative timing.
             let moving = d.original.filter { d.moving.contains(key($0)) }
             guard let earliest = moving.map(\.start).min(), let low = moving.map(\.pitch).min(), let high = moving.map(\.pitch).max() else { return }
-            let dt = max(-earliest, Int64(bypass ? dxFrames.rounded() : (dxFrames / snapFrames).rounded() * snapFrames))
+            // The beat grid follows tempo changes: snap the earliest note's landing point, then move all by that delta.
+            let origin = Double((clip?.start ?? 0) - (clip?.offset ?? 0)), t0 = origin + Double(earliest)
+            let dt = max(-earliest, Int64(bypass ? dxFrames.rounded() : snap(t0 + dxFrames, bypass: false) - t0))
             let dp = max(-Int(low), min(127 - Int(high), -Int(((p.y - d.start.y) / rowHeight).rounded())))
             for n in d.original {
                 guard d.moving.contains(key(n)) else { result.append(n); continue }
@@ -502,10 +524,9 @@ final class PianoRollView: NSView {
         guard let c = clip else { return }
         let all = selection.isEmpty
         var sel: Set<NoteKey> = []
-        let q = snapFrames
         let notes = c.notes.map { n -> DalnokNote in
             guard all || selection.contains(key(n)) else { return n }
-            let t = timeline(n, c), snapped = (t / q).rounded() * q
+            let t = timeline(n, c), snapped = snap(t, bypass: false)
             let m = DalnokNote(start: max(0, n.start + Int64(snapped - t)), length: n.length, pitch: n.pitch, velocity: n.velocity)
             if !all { sel.insert(key(m)) }
             return m

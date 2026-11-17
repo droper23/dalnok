@@ -201,39 +201,81 @@ final class TimelineView: NSView {
         get { UserDefaults.standard.object(forKey: "rulerBarsAndBeats") as? Bool ?? true }
         set { UserDefaults.standard.set(newValue, forKey: "rulerBarsAndBeats") }
     }
-    var framesPerBeat: Double { sampleRate * 60 / session.bpm }
-    var beatsPerBar: Double { let m = session.meter; return Double(m.0) * 4 / Double(m.1) }
+    /// Frames per quarter note and quarter notes per bar where the view is centred (the map can vary).
+    var framesPerBeat: Double { session.framesPerBeat(at: frame(forX: bounds.midX)) }
+    var beatsPerBar: Double {
+        let m = session.bar(atBeat: session.frameToBeat(frame(forX: bounds.midX)))
+        return Double(m.num) * 4 / Double(m.den)
+    }
 
-    /// Ruler step in frames for the current zoom (about 90 points apart).
+    /// Grid spacing for the current zoom (lines about 90 points apart): whole bars, or quarter notes inside a bar.
+    struct GridStep { var bars = 0; var beats = 1.0 }
+    func gridStepBeats() -> GridStep {
+        let target = framesPerPoint * 90 / framesPerBeat
+        for q in [0.0625, 0.125, 0.25, 0.5, 1] where q >= target && q < beatsPerBar - 1e-9 { return GridStep(bars: 0, beats: q) }
+        let bars = [1, 2, 4, 8, 16, 32, 64, 128, 256].first { Double($0) * beatsPerBar >= target } ?? 256
+        return GridStep(bars: bars, beats: 0)
+    }
+
+    /// Ruler step in frames at the view centre (used for nudging and for minutes-and-seconds mode).
     func gridStepFrames() -> Double {
         guard Self.barsAndBeats else { return gridStep() * sampleRate }
-        let target = framesPerPoint * 90 / framesPerBeat
-        let bar = beatsPerBar
-        let steps = ([0.0625, 0.125, 0.25, 0.5, 1] + [1.0, 2, 4, 8, 16, 32, 64, 128, 256].map { $0 * bar }).sorted()
-        return (steps.first { $0 >= target } ?? steps.last!) * framesPerBeat
+        let g = gridStepBeats()
+        return (g.bars > 0 ? Double(g.bars) * beatsPerBar : g.beats) * framesPerBeat
     }
 
     /// Snapping unit: a quarter of the ruler step (a 16th note when the ruler shows beats).
     func snapQuantum() -> Double { gridStepFrames() / 4 }
 
-    /// "bar.beat.sixteenth" (1-based) for a frame, or the bar alone for whole-bar steps.
-    func barsLabel(_ frame: Double, wholeBars: Bool) -> String {
-        let beats = (frame / framesPerBeat * 4).rounded() / 4
-        let bar = Int((beats / beatsPerBar + 1e-9).rounded(.down))
-        let inBar = beats - Double(bar) * beatsPerBar
-        if wholeBars || inBar < 1e-9 { return "\(bar + 1)" }
-        let beatLength = 4.0 / Double(session.meter.1)
-        let beat = Int((inBar / beatLength + 1e-9).rounded(.down))
-        let sixteenth = Int(((inBar - Double(beat) * beatLength) * 4).rounded())
-        return sixteenth == 0 ? "\(bar + 1).\(beat + 1)" : "\(bar + 1).\(beat + 1).\(sixteenth + 1)"
+    struct GridLine { let frame: Double; let bar: Int; let beatInBar: Double; var isBar: Bool { beatInBar < 1e-9 } }
+
+    /// Grid lines between two frames, walking bars through the meter and tempo maps.
+    func gridLines(from f0: Double, to f1: Double) -> [GridLine] {
+        let g = gridStepBeats()
+        var bar = session.bar(atBeat: session.frameToBeat(f0)).bar
+        if g.bars > 1 { bar = Int((Double(bar) / Double(g.bars)).rounded(.down)) * g.bars }
+        var lines: [GridLine] = []
+        while lines.count < 4_000 {
+            let start = session.barToBeat(bar)
+            if session.beatToFrame(start) > f1 { break }
+            if g.bars > 0 {
+                lines.append(GridLine(frame: session.beatToFrame(start), bar: bar, beatInBar: 0)); bar += g.bars
+            } else {
+                let end = session.barToBeat(bar + 1)
+                var q = start
+                while q < end - 1e-9 {
+                    lines.append(GridLine(frame: session.beatToFrame(q), bar: bar, beatInBar: q - start)); q += g.beats
+                }
+                bar += 1
+            }
+        }
+        return lines
     }
 
-    /// Snaps to the minor grid (a quarter of the ruler step). Hold Control to bypass.
+    /// "bar.beat.sixteenth" (1-based) for a frame, or the bar alone for whole-bar steps.
+    func barsLabel(_ frame: Double, wholeBars: Bool) -> String {
+        let beat = (session.frameToBeat(frame) * 4).rounded() / 4
+        let b = session.bar(atBeat: beat + 1e-9)
+        if wholeBars || b.beatInBar < 1e-6 { return "\(b.bar + 1)" }
+        let whole = Int((b.beatInBar + 1e-6).rounded(.down))
+        let perBeat = max(1, 16 / b.den)
+        let sub = Int(((b.beatInBar - Double(whole)) * Double(perBeat)).rounded())
+        return sub == 0 ? "\(b.bar + 1).\(whole + 1)" : "\(b.bar + 1).\(whole + 1).\(sub + 1)"
+    }
+
+    /// Snaps to the minor grid (a quarter of the ruler step) inside the bar, following the maps.
+    /// Hold Control to bypass.
     func snap(_ frame: Double, bypass: Bool) -> Int64 {
         let f = max(0, frame)
         guard !bypass else { return Int64(f.rounded()) }
-        let q = snapQuantum()
-        return Int64((f / q).rounded() * q)
+        guard Self.barsAndBeats else { let q = snapQuantum(); return Int64((f / q).rounded() * q) }
+        let g = gridStepBeats()
+        let beat = session.frameToBeat(f)
+        let b = session.bar(atBeat: beat)
+        let barStart = session.barToBeat(b.bar), barEnd = session.barToBeat(b.bar + 1)
+        let q = g.bars > 0 ? Double(g.bars) * (barEnd - barStart) / 4 : g.beats / 4
+        let snapped = min(barEnd, barStart + ((beat - barStart) / q).rounded() * q)
+        return max(0, Int64(session.beatToFrame(snapped).rounded()))
     }
 
     // MARK: Drawing
@@ -332,21 +374,33 @@ final class TimelineView: NSView {
     }
 
     private func drawGrid(_ ctx: CGContext, scale: CGFloat) {
-        let step = gridStepFrames()
-        var t = floor(frame(forX: 0) / step) * step
-        let endT = frame(forX: bounds.width)
         let px = 1 / scale
-        let barFrames = beatsPerBar * framesPerBeat
-        while t <= endT {
-            let x = (xPos(forFrame: t) * scale).rounded() / scale
+        let f0 = frame(forX: 0), f1 = frame(forX: bounds.width)
+        guard Self.barsAndBeats else {
+            let step = gridStepFrames()
+            var t = floor(f0 / step) * step
+            while t <= f1 {
+                let x = (xPos(forFrame: t) * scale).rounded() / scale
+                ctx.setFillColor(Theme.gridMajor.cgColor)
+                ctx.fill(CGRect(x: x, y: Theme.rulerHeight, width: px, height: bounds.height))
+                let mx = xPos(forFrame: t + step / 2)
+                ctx.setFillColor(Theme.gridMinor.cgColor)
+                ctx.fill(CGRect(x: (mx * scale).rounded() / scale, y: Theme.rulerHeight, width: px, height: bounds.height))
+                t += step
+            }
+            return
+        }
+        let lines = gridLines(from: f0, to: f1 + gridStepFrames())
+        for (i, line) in lines.enumerated() {
+            let x = (xPos(forFrame: line.frame) * scale).rounded() / scale
             // Bar lines are stronger than beat lines when the grid shows beats.
-            let isBar = !Self.barsAndBeats || step >= barFrames || abs((t / barFrames).rounded() * barFrames - t) < 1
-            ctx.setFillColor((isBar ? Theme.gridMajor : Theme.gridMinor.withAlphaComponent(0.06)).cgColor)
+            ctx.setFillColor((line.isBar ? Theme.gridMajor : Theme.gridMinor.withAlphaComponent(0.06)).cgColor)
             ctx.fill(CGRect(x: x, y: Theme.rulerHeight, width: px, height: bounds.height))
-            let mx = xPos(forFrame: t + step / 2)
-            ctx.setFillColor(Theme.gridMinor.cgColor)
-            ctx.fill(CGRect(x: (mx * scale).rounded() / scale, y: Theme.rulerHeight, width: px, height: bounds.height))
-            t += step
+            if i + 1 < lines.count {
+                let mx = xPos(forFrame: (line.frame + lines[i + 1].frame) / 2)
+                ctx.setFillColor(Theme.gridMinor.cgColor)
+                ctx.fill(CGRect(x: (mx * scale).rounded() / scale, y: Theme.rulerHeight, width: px, height: bounds.height))
+            }
         }
     }
 
@@ -356,38 +410,70 @@ final class TimelineView: NSView {
         ctx.setFillColor(Theme.separator.cgColor)
         ctx.fill(CGRect(x: 0, y: Theme.rulerHeight - 1, width: bounds.width, height: 1))
 
-        let step = gridStepFrames()
-        var t = floor(frame(forX: 0) / step) * step
-        let endT = frame(forX: bounds.width)
         let attrs: [NSAttributedString.Key: Any] = [.font: Theme.mono(10), .foregroundColor: Theme.textDim]
         let px = 1 / scale
-        let wholeBars = step >= beatsPerBar * framesPerBeat - 1
-        while t <= endT + step {
-            let x = (xPos(forFrame: t) * scale).rounded() / scale
+        let step = gridStepFrames()
+        let f0 = frame(forX: 0), f1 = frame(forX: bounds.width)
+        // Ticks: (frame, label) pairs; minor ticks interpolate between them.
+        var marks: [(Double, String?)] = []
+        if Self.barsAndBeats {
+            let wholeBars = gridStepBeats().bars > 0
+            let lines = gridLines(from: f0, to: f1 + step)
+            marks = lines.map { ($0.frame, $0.frame >= 0 ? barsLabel($0.frame, wholeBars: wholeBars) : nil) }
+        } else {
+            var t = floor(f0 / step) * step
+            while t <= f1 + step { marks.append((t, t >= 0 ? Self.formatTime(t / sampleRate, step: step / sampleRate) : nil)); t += step }
+        }
+        for (i, mark) in marks.enumerated() {
+            let x = (xPos(forFrame: mark.0) * scale).rounded() / scale
             ctx.setFillColor(Theme.textFaint.cgColor)
             ctx.fill(CGRect(x: x, y: 4, width: px, height: Theme.rulerHeight - 5))
+            let next = i + 1 < marks.count ? marks[i + 1].0 : mark.0 + step
             ctx.setFillColor(Theme.hex(0xFFFFFF, 0.12).cgColor)
             for k in 1..<4 {
-                let tx = (xPos(forFrame: t + step * Double(k) / 4) * scale).rounded() / scale
+                let tx = (xPos(forFrame: mark.0 + (next - mark.0) * Double(k) / 4) * scale).rounded() / scale
                 ctx.fill(CGRect(x: tx, y: Theme.rulerHeight - (k == 2 ? 8 : 5), width: px, height: k == 2 ? 7 : 4))
             }
-            if t >= 0 {
-                let label = Self.barsAndBeats ? barsLabel(t, wholeBars: wholeBars) : Self.formatTime(t / sampleRate, step: step / sampleRate)
-                (label as NSString).draw(at: CGPoint(x: x + 4, y: 5), withAttributes: attrs)
-            }
-            t += step
+            if let label = mark.1 { (label as NSString).draw(at: CGPoint(x: x + 4, y: 5), withAttributes: attrs) }
+        }
+        drawTempoMarkers(ctx)
+    }
+
+    /// Tempo and meter changes after the start, as small flags on the ruler (the first values live in the control bar).
+    private func drawTempoMarkers(_ ctx: CGContext) {
+        guard Self.barsAndBeats else { return }
+        var flags: [(Double, String)] = session.tempoPoints.dropFirst().map {
+            (session.beatToFrame($0.beat), String(format: "\u{2669}%g", $0.bpm))
+        }
+        flags += session.meterPoints.dropFirst().map {
+            (session.beatToFrame(session.barToBeat(Int($0.bar))), "\($0.numerator)/\($0.denominator)")
+        }
+        // One flag per position: a tempo and a time signature change on the same downbeat share a label.
+        var merged: [(Double, String)] = []
+        for flag in flags.sorted(by: { $0.0 < $1.0 }) {
+            if let last = merged.last, abs(last.0 - flag.0) < 1 { merged[merged.count - 1].1 += "  " + flag.1 } else { merged.append(flag) }
+        }
+        let attrs: [NSAttributedString.Key: Any] = [.font: Theme.mono(9, .semibold), .foregroundColor: Theme.panel]
+        for (frame, text) in merged {
+            let x = xPos(forFrame: frame)
+            guard x > -60, x < bounds.width else { continue }
+            let size = (text as NSString).size(withAttributes: attrs)
+            let r = CGRect(x: x, y: Theme.rulerHeight - 12, width: size.width + 6, height: 11)
+            ctx.setFillColor(Theme.accent.cgColor)
+            ctx.addPath(CGPath(roundedRect: r, cornerWidth: 2, cornerHeight: 2, transform: nil)); ctx.fillPath()
+            ctx.fill(CGRect(x: x, y: 2, width: 1, height: Theme.rulerHeight - 3))
+            (text as NSString).draw(at: CGPoint(x: x + 3, y: r.minY), withAttributes: attrs)
         }
     }
 
     /// Position display text: "bar.beat.sixteenth.tick" (240 ticks per 16th) or minutes and seconds.
     func positionText(_ frame: Int64) -> String {
         guard Self.barsAndBeats else { return Self.formatTime(Double(frame) / sampleRate) }
-        let sixteenths = Double(frame) / framesPerBeat * 4
-        let whole = Int(sixteenths.rounded(.down)), ticks = Int((sixteenths - Double(whole)) * 240)
-        let perBar = Int((beatsPerBar * 4).rounded())
-        let bar = whole / max(perBar, 1), inBar = whole % max(perBar, 1)
-        let perBeat = max(1, 16 / Int(session.meter.1))
-        return String(format: "%d.%d.%d.%03d", bar + 1, inBar / perBeat + 1, inBar % perBeat + 1, ticks)
+        let b = session.bar(atBeat: session.frameToBeat(Double(frame)) + 1e-9)
+        let sixteenths = b.beatInBar * 16 / Double(b.den) // 16ths since the bar start
+        let whole = Int(sixteenths.rounded(.down)), ticks = min(239, Int((sixteenths - Double(whole)) * 240))
+        let perBeat = max(1, 16 / b.den)
+        return String(format: "%d.%d.%d.%03d", b.bar + 1, whole / perBeat + 1, whole % perBeat + 1, ticks)
     }
 
     static func formatTime(_ t: Double, step: Double = 0.001) -> String {

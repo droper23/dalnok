@@ -599,7 +599,7 @@
           "verified"
         ]
       ],
-      "evidence": "UndoAndEditing and Fades tests (crossfade weights checked numerically); self-test drives real drags, fade handles, and menu items. GUI self-test verifies shift-selection, group nudge/drag/delete and undo; group drag is horizontal only.",
+      "evidence": "UndoAndEditing and Fades tests (crossfade weights checked numerically); self-test drives real drags, fade handles, and menu items. GUI self-test verifies shift-selection, marquee selection across tracks, group nudge/drag/delete and undo; group drag is horizontal only.",
       "screenshot": "screenshots/arrangement.png"
     },
     {
@@ -659,8 +659,8 @@
           "implemented"
         ],
         [
-          "Bars and beats grid (needs tempo)",
-          "todo"
+          "Bars and beats grid, following tempo and meter changes",
+          "verified"
         ],
         [
           "Snap to clip edges and transients",
@@ -1335,19 +1335,19 @@
           "verified"
         ],
         [
-          "Tempo changes (tempo map)",
-          "todo"
+          "Tempo changes (tempo map): MIDI stays on its beats, audio keeps its time",
+          "verified"
         ],
         [
-          "Meter changes",
-          "todo"
+          "Meter changes (ruler, grid, snapping, metronome accents)",
+          "verified"
         ],
         [
           "Count-in",
           "todo"
         ]
       ],
-      "evidence": "MidiTests (tempo validation, persistence, quantize grid) and Metronome tests (click on the exact beat sample, 1.6 kHz accent / 1 kHz beat, silent in offline renders). The self-test edits tempo and meter in the control bar, checks the bars-and-beats position display and toggles the metronome, confirming it reaches the output past the end of the session. One constant tempo only. Offline-render MIDI tests verify tempo edits, split-note continuity, undo and reopening."
+      "evidence": "MidiTests (tempo validation, persistence, quantize grid) and Metronome tests (click on the exact beat sample, 1.6 kHz accent / 1 kHz beat, silent in offline renders). The self-test edits tempo and meter in the control bar, checks the bars-and-beats position display and toggles the metronome, confirming it reaches the output past the end of the session. Offline-render MIDI tests verify tempo edits, split-note continuity, undo and reopening. TempoMaps tests: notes crossing a tempo change keep their beats (exact frames), clips after it move, quantize follows the map, the metronome clicks on the exact samples and accents the new bars across tempo and meter changes, maps survive save/reopen (also at another sample rate) and damaged maps are rejected. The self-test adds, edits and removes tempo and time-signature changes through the Transport menu and control bar, and checks the ruler, LCD and control bar follow the playhead. Tempo changes are steps (no ramps); importers bring in the first tempo only."
     },
     {
       "id": "palette",

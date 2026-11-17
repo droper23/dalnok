@@ -28,7 +28,7 @@ menu. Imported REAPER playrates and Ableton warp markers now play correctly.
 Input and recording (with a Scarlett test rig), monitoring, split, fades, crossfades, autosave and crash
 recovery, basic routing, disk streaming.
 
-## Phase 3: MIDI and instruments 🔶 (MIDI clips, live input, recording, quantize, Dalnok Poly; piano roll, tempo map, metronome next)
+## Phase 3: MIDI and instruments ✅ (MIDI clips, live input, recording, quantize, Dalnok Poly, piano roll, velocity, tempo and meter maps, metronome; open: real-keyboard test, sample-accurate input timing)
 MIDI tracks, recording and playback, piano roll, quantize, velocity, tempo and meter map, first stock instrument.
 
 ## Phase 4: Professional production 🔶 (read-only plugin discovery; hosting plan in [[ADR-0009 Plugin hosting]])

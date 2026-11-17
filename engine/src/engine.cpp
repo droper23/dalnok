@@ -281,10 +281,10 @@ bool Engine::edit(const char *name, bool structural, F &&fn) {
 }
 
 void Engine::syncRuntimes() {
-    // Metronome timing and click oscillators (beats: 1 kHz, bar starts: 1.6 kHz; 35 ms decay).
-    const double beat = sampleRate_ * 60.0 / model_.bpm * 4.0 / model_.meterDen;
-    beatFrames_.store(beat, std::memory_order_relaxed);
-    beatsPerBar_.store(model_.meterNum, std::memory_order_relaxed);
+    // The model's tempo map is always valid (edits validate it); fall back to 120 BPM defensively.
+    std::string ignored;
+    if (!TempoMap::build(sampleRate_, model_.tempo, map_, ignored)) TempoMap::build(sampleRate_, {TempoPoint{}}, map_, ignored);
+    // Click oscillators (beats: 1 kHz, bar starts: 1.6 kHz; 35 ms decay). The schedule is in the RenderState.
     const double w = 2 * 3.14159265358979 * 1000.0 / sampleRate_, wa = 2 * 3.14159265358979 * 1600.0 / sampleRate_;
     clickCoef_.store(static_cast<float>(2 * std::cos(w)), std::memory_order_relaxed);
     clickSin_.store(static_cast<float>(std::sin(w)), std::memory_order_relaxed);
@@ -350,6 +350,7 @@ void Engine::resetModel() {
     redo_.clear();
     groupDepth_ = 0;
     nextColor_ = 0;
+    syncRuntimes();
     ++revision_;
     savedRevision_ = revision_;
 }
@@ -476,45 +477,62 @@ bool Engine::nudgeClips(const std::vector<DalnokClipId> &ids, int64_t delta, std
     });
 }
 
-bool Engine::setTempo(double bpm, int32_t num, int32_t den, std::string &err) {
-    return edit("Tempo", true, [&](Model &m) {
-        if (!(bpm >= 20 && bpm <= 400)) return fail(err, "tempo must be 20-400 BPM");
-        if (num < 1 || num > 32 || (den != 1 && den != 2 && den != 4 && den != 8 && den != 16))
-            return fail(err, "meter must be 1-32 over 1, 2, 4, 8 or 16");
-        if (bpm != m.bpm) {
-            const long double ratio = static_cast<long double>(m.bpm) / bpm;
-            std::map<const std::vector<MidiNote> *, NoteList> scaledLists;
-            auto scale = [ratio](int64_t frame, int64_t &out) {
-                const long double value = static_cast<long double>(frame) * ratio;
-                if (frame < 0 || value > static_cast<long double>(INT64_MAX / 2)) return false;
-                out = static_cast<int64_t>(std::llround(value));
-                return true;
-            };
-            for (auto &clip : m.clips) {
-                if (!clip.midi()) continue;
-                int64_t start, offset, end;
-                if (clip.length > INT64_MAX - clip.start || !scale(clip.start, start) || !scale(clip.offset, offset) ||
-                    !scale(clip.start + clip.length, end))
+namespace {
+// Moves every MIDI clip and note so it keeps its beat position under `to`. Clips that share a note
+// list and a source origin (split pieces) keep sharing one remapped list.
+bool remapMidi(Model &m, const TempoMap &from, const TempoMap &to, std::string &err) {
+    auto remap = [&](int64_t frame, int64_t &out) {
+        double beat;
+        return from.frameToBeat(frame, beat) && to.beatToFrame(beat, out);
+    };
+    std::map<std::pair<const std::vector<MidiNote> *, int64_t>, NoteList> lists;
+    for (auto &clip : m.clips) {
+        if (!clip.midi()) continue;
+        const int64_t origin = clip.start - clip.offset;
+        int64_t newOrigin, start, end;
+        if (clip.length > INT64_MAX / 4 || !remap(origin, newOrigin) || !remap(clip.start, start) ||
+            !remap(clip.start + clip.length, end) || start < 0)
+            return fail(err, "tempo change would move MIDI beyond the supported timeline");
+        const auto key = std::make_pair(clip.notes.get(), origin);
+        auto found = lists.find(key);
+        if (found == lists.end()) {
+            std::vector<MidiNote> notes = *clip.notes;
+            for (auto &note : notes) {
+                int64_t a, b;
+                if (!remap(origin + note.start, a) || !remap(origin + note.start + note.length, b))
                     return fail(err, "tempo change would move MIDI beyond the supported timeline");
-                auto found = scaledLists.find(clip.notes.get());
-                if (found == scaledLists.end()) {
-                    std::vector<MidiNote> notes = *clip.notes;
-                    for (auto &note : notes) {
-                        int64_t noteStart, noteLength;
-                        if (!scale(note.start, noteStart) || !scale(note.length, noteLength))
-                            return fail(err, "tempo change would move MIDI beyond the supported timeline");
-                        note.start = noteStart;
-                        note.length = std::max<int64_t>(1, noteLength);
-                    }
-                    found = scaledLists.emplace(clip.notes.get(), std::make_shared<const std::vector<MidiNote>>(std::move(notes))).first;
-                }
-                clip.start = start; clip.offset = offset; clip.length = std::max<int64_t>(1, end - start);
-                clip.notes = found->second;
+                note.start = std::max<int64_t>(0, a - newOrigin);
+                note.length = std::max<int64_t>(1, b - a);
             }
+            found = lists.emplace(key, std::make_shared<const std::vector<MidiNote>>(std::move(notes))).first;
         }
-        m.bpm = bpm;
-        m.meterNum = num;
-        m.meterDen = den;
+        clip.start = start;
+        clip.offset = std::max<int64_t>(0, start - newOrigin);
+        clip.length = std::max<int64_t>(1, end - start);
+        clip.notes = found->second;
+    }
+    return true;
+}
+} // namespace
+
+bool Engine::setTempo(double bpm, int32_t num, int32_t den, std::string &err) {
+    auto tempo = model_.tempo;
+    auto meters = model_.meters;
+    tempo.front().bpm = bpm;
+    meters.front().num = num;
+    meters.front().den = den;
+    return setTempoMap(std::move(tempo), std::move(meters), err);
+}
+
+bool Engine::setTempoMap(std::vector<TempoPoint> tempo, std::vector<MeterChange> meters, std::string &err) {
+    TempoMap next;
+    if (!TempoMap::build(sampleRate_, tempo, next, err)) return false;
+    if (!validMeters(meters, err)) return false;
+    if (tempo.size() > 10000 || meters.size() > 10000) return fail(err, "too many tempo or meter changes");
+    return edit("Tempo", true, [&](Model &m) {
+        if (!remapMidi(m, map_, next, err)) return false;
+        m.tempo = std::move(tempo);
+        m.meters = std::move(meters);
         return true;
     });
 }
@@ -577,14 +595,17 @@ bool Engine::quantize(DalnokClipId id, double gridBeats, double strength, std::s
         if (!c->midi()) return fail(err, "not a MIDI clip");
         if (!(gridBeats >= 1.0 / 64 && gridBeats <= 16) || !(strength > 0 && strength <= 1))
             return fail(err, "grid must be 1/64-16 beats and strength 0-1");
-        const double grid = gridBeats * sampleRate_ * 60.0 / m.bpm;
-        // The grid is anchored to the timeline (bar 1), not to the clip.
+        // The grid is in beats from the timeline origin (bar 1), not the clip, and follows the tempo map.
         const auto origin = c->start - c->offset;
         std::vector<MidiNote> notes = *c->notes;
         for (auto &n : notes) {
-            const double at = static_cast<double>(origin + n.start);
-            const double snapped = std::round(at / grid) * grid;
-            n.start = std::max<int64_t>(0, static_cast<int64_t>(std::llround(at + (snapped - at) * strength)) - origin);
+            const int64_t at = origin + n.start;
+            double beat;
+            int64_t snapped;
+            if (!map_.frameToBeat(at, beat) || !map_.beatToFrame(std::round(beat / gridBeats) * gridBeats, snapped))
+                return fail(err, "note is beyond the supported timeline");
+            const double moved = static_cast<double>(at) + static_cast<double>(snapped - at) * strength;
+            n.start = std::max<int64_t>(0, static_cast<int64_t>(std::llround(moved)) - origin);
         }
         c->notes = sortedNotes(std::move(notes));
         return true;
@@ -974,6 +995,10 @@ std::unique_ptr<RenderState> Engine::compile(std::vector<StretchJob> *needed, co
     const PluginMap &instances = pluginMap ? *pluginMap : plugins_;
     auto s = std::make_unique<RenderState>();
     s->synth = SynthParams::make(sampleRate_);
+    for (const auto &seg : map_.segments())
+        s->clickTempo.push_back({seg.beat, static_cast<double>(seg.frame), static_cast<double>(seg.framesPerBeat)});
+    for (const auto &m : model_.meters)
+        s->clickMeter.push_back({barToBeat(model_.meters, m.bar), 4.0 / m.den, m.num});
     for (const auto &t : model_.tracks) {
         RenderTrack rt;
         rt.runtime = t.runtime;
@@ -1090,23 +1115,18 @@ void Engine::duplexCallback(void *ctx, float *left, float *right, const float *i
 }
 
 void Engine::renderClick(float *left, float *right, int frames, int64_t pos) DALNOK_NONBLOCKING {
-    const double beat = beatFrames_.load(std::memory_order_relaxed);
     const bool on = metronome_.load(std::memory_order_relaxed);
     const float level = metronomeLevel_.load(std::memory_order_relaxed), decay = clickDecay_.load(std::memory_order_relaxed);
-    // First beat at or after pos (positions are non-negative, so truncation is floor).
-    auto k = static_cast<int64_t>(static_cast<double>(pos) / beat);
-    if (static_cast<double>(k) * beat < static_cast<double>(pos) - 0.5) ++k;
-    auto next = static_cast<int64_t>(static_cast<double>(k) * beat + 0.5);
+    bool accent = false;
+    int64_t next = on && current_ ? nextClick(*current_, pos, accent) : INT64_MAX;
     for (int i = 0; i < frames; ++i) {
         if (on && pos + i == next) { // start a click: sine via a two-term recursion, no libm on this thread
-            const bool accent = k % beatsPerBar_.load(std::memory_order_relaxed) == 0;
             clickCoefNow_ = accent ? clickAccentCoef_.load(std::memory_order_relaxed) : clickCoef_.load(std::memory_order_relaxed);
             clickY1_ = 0;
             clickY2_ = -(accent ? clickAccentSin_.load(std::memory_order_relaxed) : clickSin_.load(std::memory_order_relaxed));
             clickEnv_ = level * (accent ? 1.0f : 0.6f);
             clickLeft_ = static_cast<int>(sampleRate_ * 0.08);
-            ++k;
-            next = static_cast<int64_t>(static_cast<double>(k) * beat + 0.5);
+            next = nextClick(*current_, pos + i + 1, accent);
         }
         if (clickLeft_ <= 0) continue;
         const float y = clickCoefNow_ * clickY1_ - clickY2_;

@@ -30,7 +30,8 @@ namespace fs = std::filesystem;
 namespace dalnok {
 
 namespace {
-constexpr int kFormatVersion = 3; // 3: shared MIDI sources preserve notes crossing split clips
+constexpr int kFormatVersion = 4; // 3: shared MIDI sources preserve notes crossing split clips; 4: tempo and meter maps
+constexpr int kConstantTempoVersion = 3; // written when there are no tempo or meter changes, so older builds still open it
 
 bool readFile(const std::string &path, std::string &out, std::string &err) {
     std::ifstream in(path, std::ios::binary);
@@ -107,12 +108,33 @@ json::Value Engine::describe() const {
     using json::Value;
     Value root = Value::makeObject();
     root.set("sampleRate", sampleRate_);
-    root.set("tempo", model_.bpm);
+    root.set("tempo", model_.bpm());
     {
         json::Value meter = json::Value::makeArray();
-        meter.push(model_.meterNum);
-        meter.push(model_.meterDen);
+        meter.push(model_.meters.front().num);
+        meter.push(model_.meters.front().den);
         root.set("meter", std::move(meter));
+    }
+    if (model_.tempo.size() > 1) {
+        json::Value map = json::Value::makeArray();
+        for (const auto &p : model_.tempo) {
+            json::Value point = json::Value::makeArray();
+            point.push(p.beat);
+            point.push(p.bpm);
+            map.push(std::move(point));
+        }
+        root.set("tempoMap", std::move(map));
+    }
+    if (model_.meters.size() > 1) {
+        json::Value map = json::Value::makeArray();
+        for (const auto &m : model_.meters) {
+            json::Value point = json::Value::makeArray();
+            point.push(m.bar);
+            point.push(m.num);
+            point.push(m.den);
+            map.push(std::move(point));
+        }
+        root.set("meterMap", std::move(map));
     }
 
     std::set<DalnokMediaId> used;
@@ -276,7 +298,7 @@ bool Engine::saveProject(const std::string &path, std::string &err, bool copyMed
     }
     json::Value doc = json::Value::makeObject();
     doc.set("format", "dalnok-project");
-    doc.set("version", kFormatVersion);
+    doc.set("version", model_.tempo.size() > 1 || model_.meters.size() > 1 ? kFormatVersion : kConstantTempoVersion);
     json::Value body = describe();
     for (auto &[key, value] : body.object) {
         if (key != "media") continue;
@@ -498,12 +520,41 @@ std::unique_ptr<Engine::PreparedProject> Engine::prepareDocument(const json::Val
         }
     }
 
-    model.bpm = std::clamp(doc.getNumber("tempo", 120), 20.0, 400.0);
+    model.tempo.front().bpm = std::clamp(doc.getNumber("tempo", 120), 20.0, 400.0);
     if (const json::Value *meter = doc.get("meter"); meter && meter->isArray() && meter->array.size() == 2 &&
         meter->array[0].isNumber() && meter->array[1].isNumber()) {
-        model.meterNum = static_cast<int32_t>(std::clamp(meter->array[0].number, 1.0, 32.0));
+        model.meters.front().num = static_cast<int32_t>(std::clamp(meter->array[0].number, 1.0, 32.0));
         const int den = static_cast<int>(meter->array[1].number);
-        model.meterDen = (den == 1 || den == 2 || den == 4 || den == 8 || den == 16) ? den : 4;
+        model.meters.front().den = (den == 1 || den == 2 || den == 4 || den == 8 || den == 16) ? den : 4;
+    }
+    // Maps are validated as a whole; a damaged map is an error rather than a silent timing change.
+    if (const json::Value *map = doc.get("tempoMap")) {
+        std::vector<TempoPoint> tempo;
+        if (map->isArray())
+            for (const auto &p : map->array)
+                if (p.isArray() && p.array.size() == 2 && p.array[0].isNumber() && p.array[1].isNumber())
+                    tempo.push_back({p.array[0].number, p.array[1].number});
+        TempoMap check;
+        std::string why;
+        if (!map->isArray() || tempo.size() != map->array.size() || !TempoMap::build(sampleRate, tempo, check, why)) {
+            err = "project has an invalid tempo map" + (why.empty() ? std::string() : ": " + why);
+            return nullptr;
+        }
+        model.tempo = std::move(tempo);
+    }
+    if (const json::Value *map = doc.get("meterMap")) {
+        std::vector<MeterChange> meters;
+        if (map->isArray())
+            for (const auto &p : map->array)
+                if (p.isArray() && p.array.size() == 3 && p.array[0].isNumber() && p.array[1].isNumber() && p.array[2].isNumber())
+                    meters.push_back({static_cast<int32_t>(p.array[0].number), static_cast<int32_t>(p.array[1].number),
+                                      static_cast<int32_t>(p.array[2].number)});
+        std::string why;
+        if (!map->isArray() || meters.size() != map->array.size() || !validMeters(meters, why)) {
+            err = "project has an invalid meter map" + (why.empty() ? std::string() : ": " + why);
+            return nullptr;
+        }
+        model.meters = std::move(meters);
     }
     auto prepared = std::make_unique<PreparedProject>();
     // Render stretched clips now (we're off the main thread) so playback is ready on apply.

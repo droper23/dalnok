@@ -902,8 +902,42 @@ final class SelfTest {
         let eighth = e.sampleRate * 60 / 96 / 2
         check(w.timeline.positionText(Int64(eighth * 2)) == "1.3.1.000" &&
               w.timeline.barsLabel(eighth * 2, wholeBars: false) == "1.3", "3/8 ruler and LCD count eighth-note beats")
-        check(abs(w.pianoRoll.roll.meterBeatFrames - eighth) < 1e-6, "3/8 piano roll uses eighth-note beat lines")
+        check(abs(s.barToBeat(1) - 1.5) < 1e-9, "3/8 bar is three eighth notes")
         _ = s.setTempo(96, 3, 4)
+        // Tempo and meter changes through the Transport menu, the tempo field and the meter popup.
+        let beat96 = e.sampleRate * 60 / 96
+        e.seek(Int64(beat96 * 6)) // bar 3 (3/4)
+        try? await Task.sleep(for: .milliseconds(50))
+        check(perform("Add Tempo Change at Playhead") && s.tempoPoints.count == 2 && s.tempoPoints[1].beat == 6,
+              "Transport > Add Tempo Change adds a change at the playhead")
+        w.window?.makeFirstResponder(nil)
+        w.transport.tempoField.stringValue = "144"
+        w.tempoEdited(nil)
+        check(s.tempoPoints.map(\.bpm) == [96, 144] && abs(s.bpm - 96) < 1e-9, "tempo field edits the change under the playhead only")
+        check(abs(s.beatToFrame(9) - (beat96 * 6 + e.sampleRate * 60 / 144 * 3)) < 1e-6 &&
+              w.timeline.barsLabel(beat96 * 6 + e.sampleRate * 60 / 144 * 3, wholeBars: false) == "4",
+              "ruler places bar 4 at the faster tempo")
+        check(perform("Add Time Signature Change at Playhead") && s.meterPoints.count == 2 && s.meterPoints[1].bar == 2,
+              "Transport > Add Time Signature Change adds a change at the bar")
+        w.transport.meterPopup.selectItem(withTitle: "7/8")
+        w.meterChosen(nil)
+        check(s.meterPoints.last?.numerator == 7 && s.meter == (3, 4), "meter popup edits the change under the playhead only")
+        check(abs(s.barToBeat(4) - (6 + 3.5 * 2)) < 1e-9, "bars after the change are 7/8 long")
+        e.seek(Int64(s.beatToFrame(9.5)))
+        try? await Task.sleep(for: .milliseconds(150))
+        check(w.transport.timeLabel.stringValue.hasPrefix("4.1.") && w.transport.tempoField.stringValue == "144" &&
+              w.transport.meterPopup.titleOfSelectedItem == "7/8", "LCD, tempo and meter follow the playhead (\(w.transport.timeLabel.stringValue))")
+        e.seek(Int64(beat96))
+        try? await Task.sleep(for: .milliseconds(150))
+        check(w.transport.tempoField.stringValue == "96" && w.transport.meterPopup.titleOfSelectedItem == "3/4",
+              "control bar shows the first tempo before the change")
+        try? w.snapshot(to: workdir.appendingPathComponent("tempo-map.png"))
+        e.seek(Int64(s.beatToFrame(7)))
+        try? await Task.sleep(for: .milliseconds(50))
+        check(perform("Remove Time Signature Change at Playhead") && s.meterPoints.count == 1, "removing the time signature change")
+        check(perform("Remove Tempo Change at Playhead") && s.tempoPoints.count == 1, "removing the tempo change")
+        check(perform("Undo") && s.tempoPoints.count == 2 && perform("Undo") && s.meterPoints.count == 2, "undo restores removed changes")
+        _ = s.setTempoMap([DalnokTempoPoint(beat: 0, bpm: 96)], [DalnokMeterPoint(bar: 0, numerator: 3, denominator: 4)])
         check(perform("Bars and Beats Ruler") && !TimelineView.barsAndBeats, "View > Bars and Beats Ruler toggles to time")
         try? await Task.sleep(for: .milliseconds(100))
         check(w.transport.timeLabel.stringValue.contains(":"), "LCD shows minutes and seconds (\(w.transport.timeLabel.stringValue))")

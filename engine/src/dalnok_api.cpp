@@ -385,10 +385,51 @@ DalnokStatus dalnok_tempo_set(DalnokEngine *e, double bpm, int32_t num, int32_t 
 }
 void dalnok_metronome_set(DalnokEngine *e, bool on, float level) { if (e) e->impl.setMetronome(on, level); }
 bool dalnok_metronome_enabled(const DalnokEngine *e) { return e && e->impl.metronome(); }
-double dalnok_tempo_bpm(const DalnokEngine *e) { return e ? e->impl.model().bpm : 120; }
+double dalnok_tempo_bpm(const DalnokEngine *e) { return e ? e->impl.model().bpm() : 120; }
 void dalnok_meter(const DalnokEngine *e, int32_t *num, int32_t *den) {
-    if (num) *num = e ? e->impl.model().meterNum : 4;
-    if (den) *den = e ? e->impl.model().meterDen : 4;
+    if (num) *num = e ? e->impl.model().meters.front().num : 4;
+    if (den) *den = e ? e->impl.model().meters.front().den : 4;
+}
+DalnokStatus dalnok_tempo_map_set(DalnokEngine *e, const DalnokTempoPoint *tempo, int32_t tempo_count,
+                                  const DalnokMeterPoint *meter, int32_t meter_count) {
+    if (!e || !tempo || tempo_count < 1 || !meter || meter_count < 1) return DALNOK_ERR_INVALID_ARG;
+    std::vector<dalnok::TempoPoint> t;
+    for (int32_t i = 0; i < tempo_count; ++i) t.push_back({tempo[i].beat, tempo[i].bpm});
+    std::vector<dalnok::MeterChange> m;
+    for (int32_t i = 0; i < meter_count; ++i) m.push_back({meter[i].bar, meter[i].numerator, meter[i].denominator});
+    std::string err;
+    return statusFor(e->impl.setTempoMap(std::move(t), std::move(m), err), err);
+}
+int32_t dalnok_tempo_points(const DalnokEngine *e, DalnokTempoPoint *out, int32_t capacity) {
+    if (!e) return 0;
+    const auto &t = e->impl.model().tempo;
+    for (int32_t i = 0; out && i < capacity && i < static_cast<int32_t>(t.size()); ++i) out[i] = {t[i].beat, t[i].bpm};
+    return static_cast<int32_t>(t.size());
+}
+int32_t dalnok_meter_points(const DalnokEngine *e, DalnokMeterPoint *out, int32_t capacity) {
+    if (!e) return 0;
+    const auto &m = e->impl.model().meters;
+    for (int32_t i = 0; out && i < capacity && i < static_cast<int32_t>(m.size()); ++i) out[i] = {m[i].bar, m[i].num, m[i].den};
+    return static_cast<int32_t>(m.size());
+}
+double dalnok_beat_to_frame(const DalnokEngine *e, double beat) { return e ? e->impl.tempoMap().beatToFrameExact(beat) : 0; }
+double dalnok_frame_to_beat(const DalnokEngine *e, double frame) { return e ? e->impl.tempoMap().frameToBeatExact(frame) : 0; }
+double dalnok_bar_to_beat(const DalnokEngine *e, int32_t bar) { return e ? dalnok::barToBeat(e->impl.model().meters, bar) : 0; }
+void dalnok_beat_to_bar(const DalnokEngine *e, double beat, int32_t *bar, double *beat_in_bar, int32_t *num, int32_t *den) {
+    int32_t b = 0, n = 4, d = 4;
+    double inBar = 0;
+    if (e) dalnok::beatToBar(e->impl.model().meters, beat, b, inBar, n, d);
+    if (bar) *bar = b;
+    if (beat_in_bar) *beat_in_bar = inBar;
+    if (num) *num = n;
+    if (den) *den = d;
+}
+double dalnok_tempo_at(const DalnokEngine *e, double beat) {
+    if (!e) return 120;
+    const auto &t = e->impl.model().tempo;
+    double bpm = t.front().bpm;
+    for (const auto &p : t) if (p.beat <= beat + 1e-9) bpm = p.bpm;
+    return bpm;
 }
 
 DalnokStatus dalnok_engine_pump(DalnokEngine *e, float *l, float *r, int32_t frames) {

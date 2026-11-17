@@ -252,10 +252,12 @@ extension MainWindowController {
     /// A 4-bar MIDI clip at the playhead on the selected instrument track.
     @objc func newMidiClip(_ sender: Any?) {
         guard let id = selectedTrack, session.track(id)?.isInstrument == true else { return }
-        var num: Int32 = 4, den: Int32 = 4
-        dalnok_meter(session.engine.handle, &num, &den)
-        let bar = session.framesPerBeat * Int64(num) * 4 / Int64(den)
-        let clip = session.addMidiClip(id, start: session.engine.position, length: bar * 4)
+        // Four bars from the playhead, measured through the tempo and meter maps.
+        let start = session.engine.position
+        let b = session.bar(atBeat: session.frameToBeat(Double(start)))
+        let endBeat = session.frameToBeat(Double(start)) + (session.barToBeat(b.bar + 4) - session.barToBeat(b.bar))
+        let length = max(1, Int64(session.beatToFrame(endBeat).rounded()) - start)
+        let clip = session.addMidiClip(id, start: start, length: length)
         if clip != 0 { timeline.selectedClip = clip }
     }
 

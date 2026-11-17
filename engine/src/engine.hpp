@@ -10,6 +10,7 @@
 #include "plugin_host.hpp"
 #include "render.hpp"
 #include "stretch_cache.hpp"
+#include "tempo_map.hpp"
 
 #include <algorithm>
 #include <array>
@@ -81,8 +82,9 @@ struct ClipState {
 struct Model {
     std::vector<TrackState> tracks; // display order
     std::vector<ClipState> clips;   // z-order: later = on top
-    double bpm = 120;               // constant tempo (no tempo changes yet)
-    int32_t meterNum = 4, meterDen = 4;
+    std::vector<TempoPoint> tempo{TempoPoint{}};    // quarter-note beats; first point at beat 0
+    std::vector<MeterChange> meters{MeterChange{}}; // first change at bar 0
+    double bpm() const { return tempo.front().bpm; }
 
     TrackState *track(DalnokTrackId id);
     const TrackState *track(DalnokTrackId id) const;
@@ -190,8 +192,11 @@ public:
     DalnokTrackId addInstrumentTrack(const std::string &name, std::string &err);
     bool setArmed(DalnokTrackId id, bool armed, std::string &err);
     bool setInputChannel(DalnokTrackId id, int32_t channel, std::string &err);
+    // Sets the first tempo and meter; later changes keep their beat and bar positions.
     bool setTempo(double bpm, int32_t num, int32_t den, std::string &err);
-    int64_t framesPerBeat() const { return static_cast<int64_t>(std::llround(sampleRate_ * 60.0 / model_.bpm)); }
+    // Replaces the tempo and meter maps (one undo step). MIDI keeps its beat positions; audio keeps its time.
+    bool setTempoMap(std::vector<TempoPoint> tempo, std::vector<MeterChange> meters, std::string &err);
+    const TempoMap &tempoMap() const { return map_; }
     // MIDI clips
     DalnokClipId addMidiClip(DalnokTrackId track, int64_t start, int64_t length, std::string &err,
                              std::vector<MidiNote> notes = {}, const char *undoName = "New MIDI Clip");
@@ -299,6 +304,7 @@ private:
 
     // Control-thread state.
     Model model_;
+    TempoMap map_; // built from model_.tempo in syncRuntimes
     std::map<DalnokMediaId, PoolEntry> pool_;
     std::vector<UndoStep> undo_, redo_;
     int groupDepth_ = 0;
@@ -370,8 +376,6 @@ private:
     std::atomic<int32_t> soloCount_{0};
     std::atomic<bool> metronome_{false};
     std::atomic<float> metronomeLevel_{0.5f};
-    std::atomic<double> beatFrames_{24000};
-    std::atomic<int32_t> beatsPerBar_{4};
     // Click oscillator coefficients (control thread computes them; see syncRuntimes).
     std::atomic<float> clickCoef_{0}, clickAccentCoef_{0}, clickSin_{0}, clickAccentSin_{0}, clickDecay_{0};
     std::atomic<int64_t> seekRequest_{-1};

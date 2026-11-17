@@ -338,6 +338,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         e.collectGarbage()
         session.refresh() // picks up changes from any source (e.g. scripts)
         _ = session.pollJobs() // installs finished time-stretch renders
+        followTempoSegment()
         let playing = e.isPlaying, recording = e.isRecording
         if playing != wasPlaying || recording != wasRecording {
             transport.setPlaying(playing)
@@ -349,9 +350,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         }
         // Visual metronome: the button ticks on each beat, harder on the downbeat.
         if playing && Self.metronomeOn {
-            let beat = Int(Double(e.position) / (timeline.framesPerBeat * 4 / Double(session.meter.1)))
+            let b = session.bar(atBeat: session.frameToBeat(Double(e.position)))
+            let beat = b.bar * 1_000 + Int(b.beatInBar)
             if beat != lastBeat {
-                let downbeat = beat % max(1, Int(session.meter.0)) == 0
+                let downbeat = Int(b.beatInBar) == 0
                 Motion.centerAnchor(transport.metronomeButton.layer)
                 Motion.bounce(transport.metronomeButton.layer, scale: downbeat ? 1.3 : 1.14, duration: 0.16)
                 lastBeat = beat
@@ -912,17 +914,45 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         updateTempoDisplay()
     }
 
+    /// Index of the tempo point and meter change in effect at the playhead.
+    func tempoSegmentAtPlayhead() -> (tempo: Int, meter: Int, beat: Double) {
+        let beat = session.frameToBeat(Double(session.engine.position))
+        let tempo = session.tempoPoints.lastIndex { $0.beat <= beat + 1e-9 } ?? 0
+        let bar = session.bar(atBeat: beat).bar
+        let meter = session.meterPoints.lastIndex { Int($0.bar) <= bar } ?? 0
+        return (tempo, meter, beat)
+    }
+
     func updateTempoDisplay() {
-        let m = session.meter
-        if transport.tempoField.currentEditor() == nil { transport.tempoField.stringValue = String(format: "%g", session.bpm) }
-        transport.meterPopup.selectItem(withTitle: "\(m.0)/\(m.1)")
+        let at = tempoSegmentAtPlayhead()
+        let tempo = session.tempoPoints, meters = session.meterPoints
+        let bpm = tempo.indices.contains(at.tempo) ? tempo[at.tempo].bpm : session.bpm
+        if transport.tempoField.currentEditor() == nil { transport.tempoField.stringValue = String(format: "%g", bpm) }
+        let m = meters.indices.contains(at.meter) ? meters[at.meter] : DalnokMeterPoint(bar: 0, numerator: 4, denominator: 4)
+        let title = "\(m.numerator)/\(m.denominator)"
+        if transport.meterPopup.item(withTitle: title) == nil { transport.meterPopup.addItem(withTitle: title) }
+        transport.meterPopup.selectItem(withTitle: title)
+        let changes = tempo.count > 1 || meters.count > 1
+        transport.tempoField.toolTip = changes ? "Tempo at the playhead (this project has tempo or meter changes)" : "Tempo"
         transport.timeLabel.toolTip = TimelineView.barsAndBeats ? "Bar . beat . sixteenth . tick" : "Minutes : seconds"
+        shownTempoSegment = (at.tempo, at.meter)
+    }
+    private var shownTempoSegment = (0, 0)
+
+    /// Keeps the tempo and meter display on the playhead's segment while it moves.
+    func followTempoSegment() {
+        guard session.tempoPoints.count > 1 || session.meterPoints.count > 1 else { return }
+        let at = tempoSegmentAtPlayhead()
+        if at.tempo != shownTempoSegment.0 || at.meter != shownTempoSegment.1 { updateTempoDisplay() }
     }
 
     @objc func tempoEdited(_ sender: Any?) {
-        let m = session.meter
+        var tempo = session.tempoPoints
+        let at = tempoSegmentAtPlayhead()
         guard let bpm = Double(transport.tempoField.stringValue.replacingOccurrences(of: ",", with: ".")),
-              session.setTempo(bpm, m.0, m.1) else {
+              tempo.indices.contains(at.tempo) else { flash("Tempo must be 20–400 BPM"); return updateTempoDisplay() }
+        tempo[at.tempo].bpm = bpm
+        guard session.setTempoMap(tempo, session.meterPoints) else {
             flash("Tempo must be 20–400 BPM")
             return updateTempoDisplay()
         }
@@ -934,9 +964,57 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
     @objc func meterChosen(_ sender: Any?) {
         let parts = (transport.meterPopup.titleOfSelectedItem ?? "4/4").split(separator: "/").compactMap { Int32($0) }
-        guard parts.count == 2 else { return }
-        _ = session.setTempo(session.bpm, parts[0], parts[1])
+        var meters = session.meterPoints
+        let at = tempoSegmentAtPlayhead()
+        guard parts.count == 2, meters.indices.contains(at.meter) else { return }
+        meters[at.meter].numerator = parts[0]; meters[at.meter].denominator = parts[1]
+        if !session.setTempoMap(session.tempoPoints, meters) { flash("Couldn't change the time signature") }
         timeline.needsDisplay = true
+    }
+
+    /// Adds a tempo change at the playhead (rounded to a 16th note), starting at the current tempo, then edits it.
+    @objc func addTempoChange(_ sender: Any?) {
+        var tempo = session.tempoPoints
+        let at = tempoSegmentAtPlayhead()
+        let beat = (at.beat * 4).rounded() / 4
+        guard beat > 0 else { return editTempo(nil) }
+        if let i = tempo.firstIndex(where: { abs($0.beat - beat) < 1e-9 }) { _ = i; return editTempo(nil) }
+        tempo.append(DalnokTempoPoint(beat: beat, bpm: session.tempo(atBeat: beat)))
+        tempo.sort { $0.beat < $1.beat }
+        guard session.setTempoMap(tempo, session.meterPoints) else { return flash("Couldn't add a tempo change here") }
+        flash("Tempo change at \(timeline.barsLabel(session.beatToFrame(beat), wholeBars: false)): type the new tempo")
+        updateTempoDisplay()
+        editTempo(nil)
+    }
+
+    /// Adds a meter change at the bar the playhead is in (or the next bar if it's past the downbeat).
+    @objc func addMeterChange(_ sender: Any?) {
+        var meters = session.meterPoints
+        let b = session.bar(atBeat: tempoSegmentAtPlayhead().beat)
+        let bar = Int32(b.beatInBar < 1e-6 ? b.bar : b.bar + 1)
+        guard bar > 0, !meters.contains(where: { $0.bar == bar }) else { return flash("There's already a time signature at bar \(bar + 1)") }
+        meters.append(DalnokMeterPoint(bar: bar, numerator: Int32(b.num), denominator: Int32(b.den)))
+        meters.sort { $0.bar < $1.bar }
+        guard session.setTempoMap(session.tempoPoints, meters) else { return flash("Couldn't add a time signature here") }
+        session.engine.seek(Int64(session.beatToFrame(session.barToBeat(Int(bar))).rounded()))
+        flash("Time signature change at bar \(bar + 1): choose it in the control bar")
+        updateTempoDisplay()
+    }
+
+    @objc func removeTempoChange(_ sender: Any?) {
+        var tempo = session.tempoPoints
+        let at = tempoSegmentAtPlayhead()
+        guard at.tempo > 0 else { return }
+        tempo.remove(at: at.tempo)
+        if session.setTempoMap(tempo, session.meterPoints) { flash("Removed the tempo change") }
+    }
+
+    @objc func removeMeterChange(_ sender: Any?) {
+        var meters = session.meterPoints
+        let at = tempoSegmentAtPlayhead()
+        guard at.meter > 0 else { return }
+        meters.remove(at: at.meter)
+        if session.setTempoMap(session.tempoPoints, meters) { flash("Removed the time signature change") }
     }
 
     @objc func zoomIn() { timeline.zoom(by: 0.5, around: timeline.bounds.midX) }
@@ -1005,6 +1083,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         case #selector(toggleMetronome(_:)):
             item.state = Self.metronomeOn ? .on : .off
             return true
+        case #selector(removeTempoChange(_:)):
+            return tempoSegmentAtPlayhead().tempo > 0
+        case #selector(removeMeterChange(_:)):
+            return tempoSegmentAtPlayhead().meter > 0
         case #selector(toggleDevicePanel(_:)):
             item.state = Self.showDevicePanel ? .on : .off
             return true
