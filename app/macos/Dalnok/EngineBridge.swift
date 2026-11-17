@@ -91,6 +91,12 @@ final class Engine {
             throw EngineError(description: cString(err))
         }
     }
+    func saveSnapshot(to url: URL) throws {
+        var err = [CChar](repeating: 0, count: 512)
+        guard dalnok_project_save_snapshot(handle, url.path, &err, 512) == DALNOK_OK else {
+            throw EngineError(description: cString(err))
+        }
+    }
     /// Returns the number of offline (missing) media files.
     func load(from url: URL) throws -> Int {
         var err = [CChar](repeating: 0, count: 512)
@@ -149,7 +155,7 @@ final class Engine {
     }
 
     /// Opens a project without blocking the UI: parse + decode off the main thread, then swap in.
-    func loadInBackground(from url: URL) async throws -> Int {
+    func loadInBackground(from url: URL, recovering: Bool = false) async throws -> Int {
         struct Prepared: @unchecked Sendable { let data: OpaquePointer; let missing: Int }
         let rate = sampleRate
         let prepared = try await Task.detached(priority: .userInitiated) { () throws -> Prepared in
@@ -161,7 +167,8 @@ final class Engine {
             }
             return Prepared(data: data, missing: Int(missing))
         }.value
-        guard dalnok_project_apply(handle, prepared.data) == DALNOK_OK else {
+        let status = recovering ? dalnok_project_apply_recovery(handle, prepared.data) : dalnok_project_apply(handle, prepared.data)
+        guard status == DALNOK_OK else {
             throw EngineError(description: "project could not be applied")
         }
         return prepared.missing

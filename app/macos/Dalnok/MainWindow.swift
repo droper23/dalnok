@@ -100,6 +100,49 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
     required init?(coder: NSCoder) { fatalError() }
 
+    private var lastRecoveryRevision: UInt64?
+    private var recoveryDirectory: URL? {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
+            .appendingPathComponent("Dalnok/Recovery", isDirectory: true)
+    }
+
+    /// Each snapshot has its own name so saving a later project cannot destroy an earlier recovery copy.
+    @discardableResult
+    func writeRecoverySnapshot(in directory: URL) throws -> URL? {
+        guard session.engine.isDirty, session.engine.revision != lastRecoveryRevision, !session.isOpening else { return nil }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let name = "Recovery-\(Int(Date().timeIntervalSince1970))-\(UUID().uuidString).dalnok"
+        let url = directory.appendingPathComponent(name)
+        try session.engine.saveSnapshot(to: url)
+        lastRecoveryRevision = session.engine.revision
+        return url
+    }
+
+    @objc func recoverSnapshot(_ sender: Any?) {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.dalnokProject]
+        panel.directoryURL = recoveryDirectory
+        panel.message = "Choose a recovery snapshot. It opens as a new unsaved project."
+        panel.beginSheetModal(for: window!) { [weak self] response in
+            guard response == .OK, let url = panel.url, let self else { return }
+            self.confirmDiscard { self.openRecovery(url) }
+        }
+    }
+
+    func openRecovery(_ url: URL, completion: ((Bool) -> Void)? = nil) {
+        Task {
+            do {
+                fitOnNextChange = true
+                try await session.recover(url)
+                completion?(true)
+            } catch {
+                fitOnNextChange = false
+                presentError(title: "Couldn't recover \(url.lastPathComponent)", error)
+                completion?(false)
+            }
+        }
+    }
+
     // MARK: Model → UI
 
     private func modelChanged() {
@@ -174,6 +217,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         let (ml, mr) = e.masterMeter()
         transport.masterMeter.push(ml, mr)
         tickCount += 1
+        if tickCount % 1800 == 0 && !SelfTest.running, let directory = recoveryDirectory {
+            do { _ = try writeRecoverySnapshot(in: directory) }
+            catch { flash("Recovery snapshot failed: \(error)") }
+        }
         if tickCount % 30 == 0 && !e.deviceAlive { deviceLost() }
         if transientMessageUntil < Date(), transientMessageUntil != .distantPast {
             transientMessageUntil = .distantPast
@@ -599,7 +646,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
     /// Runs `proceed` after resolving unsaved changes (Save / Don't Save / Cancel).
     func confirmDiscard(_ proceed: @escaping () -> Void) {
-        guard session.engine.isDirty, session.length > 0 || session.engine.canUndo else { proceed(); return }
+        guard session.engine.isDirty else { proceed(); return }
         let alert = NSAlert()
         alert.messageText = "Save changes to “\(window?.title ?? "Untitled")”?"
         alert.informativeText = "Your changes will be lost if you don't save them."

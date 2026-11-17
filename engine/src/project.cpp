@@ -44,10 +44,22 @@ bool readFile(const std::string &path, std::string &out, std::string &err) {
 
 // Write-to-temp + fsync + rename: a crash mid-save never corrupts the old file.
 bool writeFileAtomically(const std::string &path, const std::string &data, std::string &err) {
-    const std::string tmp = path + ".tmp-" + std::to_string(::getpid());
-    FILE *f = std::fopen(tmp.c_str(), "wb");
+    // A unique, exclusively created temporary file avoids collisions and
+    // prevents following an existing symlink when saving a recovery copy.
+    std::string pattern = path + ".tmp-XXXXXX";
+    std::vector<char> name(pattern.begin(), pattern.end());
+    name.push_back('\0');
+    const int fd = ::mkstemp(name.data());
+    if (fd < 0) {
+        err = "cannot create temporary file for " + path;
+        return false;
+    }
+    const std::string tmp(name.data());
+    FILE *f = ::fdopen(fd, "wb");
     if (!f) {
-        err = "cannot write " + tmp;
+        ::close(fd);
+        std::remove(tmp.c_str());
+        err = "cannot open temporary file for " + path;
         return false;
     }
     const bool wrote = std::fwrite(data.data(), 1, data.size(), f) == data.size() && std::fflush(f) == 0 &&
@@ -366,7 +378,7 @@ std::unique_ptr<Engine::PreparedProject> Engine::prepareDocument(const json::Val
     return prepared;
 }
 
-void Engine::applyProject(std::unique_ptr<PreparedProject> p) {
+void Engine::applyProject(std::unique_ptr<PreparedProject> p, bool recovered) {
     resetModel();
     for (auto &[k, m] : p->stretched) cache_.insert(k, std::move(m));
     model_ = std::move(p->model);
@@ -377,7 +389,7 @@ void Engine::applyProject(std::unique_ptr<PreparedProject> p) {
     nextColor_ = p->maxColor + 1;
     syncRuntimes();
     ++revision_;
-    savedRevision_ = p->imported ? revision_ - 1 : revision_; // an import is unsaved work
+    savedRevision_ = (p->imported || recovered) ? revision_ - 1 : revision_; // an import is unsaved work
     commit();
 }
 

@@ -227,6 +227,16 @@ final class Session {
                                 : "Opened \(url.lastPathComponent)")
     }
 
+    /// Recovery copies are opened as unsaved projects; the snapshot is never overwritten by Save.
+    func recover(_ url: URL) async throws {
+        isOpening = true
+        defer { isOpening = false }
+        let missing = try await engine.loadInBackground(from: url, recovering: true)
+        projectURL = nil
+        refresh()
+        onMessage?(missing > 0 ? "Recovered project; \(missing) audio file(s) missing." : "Recovered project. Save it to keep your changes.")
+    }
+
     /// Imports a Logic/Ableton/REAPER/FCPXML project or stems folder as a new, unsaved project.
     func importForeign(_ url: URL) async throws -> ImportReport? {
         isOpening = true

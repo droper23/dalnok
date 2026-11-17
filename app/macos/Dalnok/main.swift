@@ -63,7 +63,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard engine.isDirty, session.length > 0, main.window?.attachedSheet == nil, !SelfTest.running else {
+        guard engine.isDirty, main.window?.attachedSheet == nil, !SelfTest.running else {
             return .terminateNow
         }
         main.confirmDiscard { NSApp.reply(toApplicationShouldTerminate: true) }
@@ -124,6 +124,7 @@ func buildMenu(target: MainWindowController) -> NSMenu {
     menu("File", [
         item("New", #selector(W.newDocument(_:)), "n"),
         item("Open…", #selector(W.openDocument(_:)), "o"),
+        item("Recover Snapshot…", #selector(W.recoverSnapshot(_:)), ""),
         .separator(),
         item("Save", #selector(W.saveDocument(_:)), "s"),
         item("Save As…", #selector(W.saveDocumentAs(_:then:)), "s", [.command, .shift]),

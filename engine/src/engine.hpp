@@ -148,7 +148,7 @@ public:
     struct PreparedProject;
     static std::unique_ptr<PreparedProject> prepareProject(const std::string &path, double sampleRate,
                                                            int32_t &missing, std::string &err);
-    void applyProject(std::unique_ptr<PreparedProject> p);
+    void applyProject(std::unique_ptr<PreparedProject> p, bool recovered = false);
     // Imports another DAW's project (see import/import.hpp) into a prepared project + JSON report.
     static std::unique_ptr<PreparedProject> prepareImport(const std::string &path, double sampleRate, int32_t &missing,
                                                           std::string &reportJson, std::string &err);

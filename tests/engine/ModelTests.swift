@@ -125,6 +125,19 @@ import Testing
         return samples
     }
 
+    @Test func snapshotDoesNotFollowPredictableTemporarySymlink() throws {
+        let e = dalnok_engine_create(sr)!; defer { dalnok_engine_destroy(e) }
+        _ = dalnok_track_add(e, "Recovery")
+        let snapshot = dir.appendingPathComponent("snapshot.dalnok")
+        let victim = dir.appendingPathComponent("untouched.txt")
+        try "keep this".write(to: victim, atomically: true, encoding: .utf8)
+        let legacyTemp = snapshot.path + ".tmp-\(ProcessInfo.processInfo.processIdentifier)"
+        try FileManager.default.createSymbolicLink(atPath: legacyTemp, withDestinationPath: victim.path)
+        #expect(dalnok_project_save_snapshot(e, snapshot.path, nil, 0) == DALNOK_OK)
+        #expect(try String(contentsOf: victim, encoding: .utf8) == "keep this")
+        #expect(dalnok_project_dirty(e))
+    }
+
     @Test func recoverySnapshotKeepsDirtyStateAndAudio() throws {
         let e = dalnok_engine_create(sr)!; defer { dalnok_engine_destroy(e) }
         try makeProject(e, audio: dir.appendingPathComponent("snapshot-audio.wav"))
@@ -136,7 +149,10 @@ import Testing
         #expect(dalnok_project_dirty(e) && dalnok_model_revision(e) == revision)
         let loaded = dalnok_engine_create(sr)!; defer { dalnok_engine_destroy(loaded) }
         var missing: Int32 = -1
-        #expect(dalnok_project_load(loaded, snapshot, &missing, nil, 0) == DALNOK_OK && missing == 0)
+        var prepared: OpaquePointer?
+        #expect(dalnok_project_prepare(snapshot, sr, &prepared, &missing, nil, 0) == DALNOK_OK && missing == 0)
+        #expect(dalnok_project_apply_recovery(loaded, prepared) == DALNOK_OK)
+        #expect(dalnok_project_dirty(loaded))
         let actual = render(loaded, frames: 30_000)
         expectClose(actual.0, expected.0, tol: 0, "snapshot left")
         expectClose(actual.1, expected.1, tol: 0, "snapshot right")

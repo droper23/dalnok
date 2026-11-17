@@ -1,8 +1,11 @@
 # Changelog
 
 ## [Unreleased]
+### Added (2026-11-16, recovery snapshots)
+- Periodic recovery snapshots while a project has unsaved changes, and File ▸ Recover Snapshot to open a copy as a new unsaved project. Snapshots are retained in Application Support/Dalnok/Recovery. Automatic timing and real crash recovery need validation.
+
 ### Added (2026-11-16, recovery foundation)
-- C API v5 adds a project snapshot operation that preserves the saved/dirty state. Automatic snapshots and recovery UI remain unimplemented.
+- C API v5 adds a project snapshot operation that preserves the saved/dirty state. Automatic snapshots and manual recovery now use this operation.
 
 ### Added (2026-11-16, capture writer foundation)
 - Independently tested capture drain and exclusive temporary PCM spool, with failure reporting and read-only inspection of incomplete frames. These components are not yet integrated into recording.

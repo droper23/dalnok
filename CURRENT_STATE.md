@@ -6,7 +6,8 @@ milestone: Phase 1 + Migration (M5) + Time stretch (M6) + UI pass 1 (M7) done; P
 # Current State
 
 ## Latest session
-- A tested project snapshot API writes a recovery copy without changing the model revision or saved/dirty state. Automatic scheduling and recovery UI are not implemented.
+- Periodic recovery snapshots and File ▸ Recover Snapshot are implemented. The app self-test verifies snapshot creation and manual restore as a new unsaved project; automatic timing and real application-crash recovery remain unverified. Copies are retained in Application Support/Dalnok/Recovery.
+- A tested project snapshot API writes a recovery copy without changing the model revision or saved/dirty state. Periodic scheduling and manual recovery UI are implemented; crash and timer validation remain.
 - Added independently tested off-thread capture draining and an exclusive temporary PCM spool with read-only inspection of complete frames and partial tails. A process-kill test verifies that the spool’s complete-frame prefix remains inspectable, and a synthetic ten-second capture has the expected frames and samples. This is not yet a recorder, a project import path, or end-to-end crash recovery. Normal, AddressSanitizer, and ThreadSanitizer native tests pass.
 - Scarlett recheck through AVFoundation: a short capture peaked at -29.2 dBFS on channels 1 and 2, with exactly identical samples; channels 3 and 4 were silent. The capture path may duplicate a channel, so independent inputs remain unverified.
 - Added an independent bounded SPSC audio capture buffer with all-or-nothing writes and dropped-frame accounting. Native tests pass normally and under ThreadSanitizer; it is not integrated into device capture or disk writing.
@@ -30,7 +31,7 @@ milestone: Phase 1 + Migration (M5) + Time stretch (M6) + UI pass 1 (M7) done; P
 - CI has two jobs: build + test, and real-time effect analysis with Homebrew LLVM.
 
 ## Architecture (now)
-C++20 engine (`engine/`) → C API (`dalnok.h`, v5) → AppKit UI (`app/macos/`). The **engine owns the
+C++20 engine (`engine/`) → C API (`dalnok.h`, v6) → AppKit UI (`app/macos/`). The **engine owns the
 project model**: tracks, clips in z-order, and a media pool. Every edit is a named, undoable command with
 whole-model snapshot undo, also reachable as JSON through the command catalog. The UI is a read-only view
 that refreshes on `dalnok_model_revision`. Render snapshots reach the audio thread through an atomic
@@ -77,7 +78,7 @@ slot, and retired ones come back through an SPSC queue. See [[System Overview]],
 | Onboarding: "Coming from…", shortcut presets, project finder with preview, import report, Concept Guide, old-DAW words in ⌘K | Self-test |
 
 ## Not yet / incomplete
-- Relinking offline media from the UI. Autosave and crash recovery (Phase 2).
+- Automatic recovery prompting, crash-tested recovery, and retention controls (Phase 2).
 - Disk streaming. Media is fully decoded into RAM, about 23 MB per stereo minute at 48 kHz.
 - Device selection and handling sample-rate changes. The default output only; the engine rate is fixed at launch.
 

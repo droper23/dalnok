@@ -307,6 +307,25 @@ final class SelfTest {
               "exported WAV decodes to \(dalnok_media_frames(media)) frames (session \(s.length)), stereo")
         if let media { dalnok_media_release(media) }
 
+        // Exercise recovery snapshots without writing into the user's recovery folder.
+        if let track = s.tracks.first {
+            s.renameTrack(track.id, "Before Recovery")
+            let recoveryDir = workdir.appendingPathComponent("Recovery", isDirectory: true)
+            let recovery = try? w.writeRecoverySnapshot(in: recoveryDir)
+            check(recovery != nil && e.isDirty, "recovery snapshot preserves unsaved state")
+            check((try? w.writeRecoverySnapshot(in: recoveryDir)) == nil, "unchanged revision does not create another snapshot")
+            s.renameTrack(track.id, "After Recovery")
+            if let recovery {
+                Task { await wait(0.2); if let sheet = w.window?.attachedSheet { w.window?.endSheet(sheet, returnCode: .cancel) } }
+                check(perform("Recover Snapshot"), "File > Recover Snapshot opens a panel")
+                await wait(0.3)
+                let recovered = await withCheckedContinuation { cont in w.openRecovery(recovery) { cont.resume(returning: $0) } }
+                check(recovered && s.tracks.first?.name == "Before Recovery", "recovery restores the saved model")
+                check(e.isDirty && s.projectURL == nil, "recovered snapshot is an unsaved project")
+                check(FileManager.default.fileExists(atPath: recovery.path), "recovery keeps the original snapshot")
+            }
+        }
+
         try? w.snapshot(to: workdir.appendingPathComponent("selftest.png"))
         await migrationSteps()
         finish()

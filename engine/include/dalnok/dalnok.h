@@ -28,7 +28,7 @@
 extern "C" {
 #endif
 
-#define DALNOK_API_VERSION 5
+#define DALNOK_API_VERSION 6
 
 typedef enum {
     DALNOK_OK = 0,
@@ -273,6 +273,8 @@ typedef struct DalnokProjectData DalnokProjectData;
 DalnokStatus dalnok_project_prepare(const char *path, double sample_rate, DalnokProjectData **out,
                                     int32_t *missing_out, char *err, size_t err_len); /* [any thread] */
 DalnokStatus dalnok_project_apply(DalnokEngine *engine, DalnokProjectData *data);
+/* Apply a prepared recovery copy as an unsaved project; consumes data. */
+DalnokStatus dalnok_project_apply_recovery(DalnokEngine *engine, DalnokProjectData *data);
 void dalnok_project_data_release(DalnokProjectData *data); /* [any thread] */
 
 /* Imports another DAW's project: REAPER (.rpp), Ableton Live (.als), Logic Pro

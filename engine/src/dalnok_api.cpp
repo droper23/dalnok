@@ -407,6 +407,13 @@ DalnokStatus dalnok_project_apply(DalnokEngine *e, DalnokProjectData *data) {
     e->impl.applyProject(std::move(data->impl));
     return DALNOK_OK;
 }
+DalnokStatus dalnok_project_apply_recovery(DalnokEngine *e, DalnokProjectData *data) {
+    std::unique_ptr<DalnokProjectData> owned(data);
+    if (!e || !data || !data->impl) return DALNOK_ERR_INVALID_ARG;
+    if (data->impl->sampleRate != e->impl.sampleRate()) return DALNOK_ERR_INVALID_ARG;
+    e->impl.applyProject(std::move(data->impl), true);
+    return DALNOK_OK;
+}
 void dalnok_project_data_release(DalnokProjectData *data) { delete data; }
 
 DalnokStatus dalnok_project_import_report(const char *path, char *report, size_t report_len, char *err, size_t err_len) {
