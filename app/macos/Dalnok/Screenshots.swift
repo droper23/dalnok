@@ -72,6 +72,22 @@ enum Screenshots {
             try? await Task.sleep(for: .seconds(0.3))
             if let v = w.conceptGuide.window.contentView { png(v, dir.appendingPathComponent("concept-guide.png")) }
             w.conceptGuide.window.orderOut(nil)
+            // Piano roll with generated chords and a melody (no personal material).
+            app.engine.pause()
+            let keys = app.session.addInstrumentTrack("Keys")
+            let beat = app.session.framesPerBeat
+            let clip = app.session.addMidiClip(keys, start: 0, length: beat * 16)
+            var notes: [DalnokNote] = []
+            for (i, chord) in [[60, 64, 67], [57, 60, 64], [53, 57, 60], [55, 59, 62]].enumerated() {
+                for p in chord { notes.append(DalnokNote(start: Int64(i) * beat * 4, length: beat * 4 - beat / 8, pitch: UInt8(p), velocity: UInt8(70 + i * 12))) }
+            }
+            for i in 0..<16 { notes.append(DalnokNote(start: Int64(i) * beat, length: beat / 2, pitch: UInt8([72, 76, 79, 76][i % 4] + (i / 8) * 2), velocity: UInt8(60 + (i * 23) % 67))) }
+            app.session.setNotes(clip, notes)
+            w.pianoRoll.show(clip: clip)
+            w.pianoRoll.roll.selection = [PianoRollView.NoteKey(start: 5 * beat, pitch: 76)]
+            try? await Task.sleep(for: .seconds(0.4))
+            if let v = w.pianoRoll.window?.contentView { png(v, dir.appendingPathComponent("piano-roll.png")) }
+            w.pianoRoll.window?.orderOut(nil)
             w.settings.show()
             try? await Task.sleep(for: .seconds(0.3))
             if let v = w.settings.window?.contentView { png(v, dir.appendingPathComponent("settings.png")) }

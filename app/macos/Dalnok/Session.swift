@@ -139,6 +139,8 @@ final class Session {
         refresh()
     }
     var bpm: Double { dalnok_tempo_bpm(h) }
+    var meter: (Int32, Int32) { var n: Int32 = 4, d: Int32 = 4; dalnok_meter(h, &n, &d); return (n, d) }
+    func setTempo(_ bpm: Double, _ num: Int32, _ den: Int32) -> Bool { let ok = dalnok_tempo_set(h, bpm, num, den) == DALNOK_OK; refresh(); return ok }
     var framesPerBeat: Int64 { Int64((engine.sampleRate * 60 / bpm).rounded()) }
     func setStretch(_ c: DalnokClipId, length: Int64, rate: Double, pitch: Float, preservePitch: Bool) {
         dalnok_clip_set_stretch(h, c, length, rate, pitch, preservePitch); refresh()

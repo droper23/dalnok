@@ -258,6 +258,8 @@ DalnokStatus dalnok_tempo_set(DalnokEngine *e, double bpm, int32_t num, int32_t 
     std::string err;
     return e ? statusFor(e->impl.setTempo(bpm, num, den, err), err) : DALNOK_ERR_INVALID_ARG;
 }
+void dalnok_metronome_set(DalnokEngine *e, bool on, float level) { if (e) e->impl.setMetronome(on, level); }
+bool dalnok_metronome_enabled(const DalnokEngine *e) { return e && e->impl.metronome(); }
 double dalnok_tempo_bpm(const DalnokEngine *e) { return e ? e->impl.model().bpm : 120; }
 void dalnok_meter(const DalnokEngine *e, int32_t *num, int32_t *den) {
     if (num) *num = e ? e->impl.model().meterNum : 4;

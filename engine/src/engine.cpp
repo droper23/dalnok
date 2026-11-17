@@ -276,6 +276,16 @@ bool Engine::edit(const char *name, bool structural, F &&fn) {
 }
 
 void Engine::syncRuntimes() {
+    // Metronome timing and click oscillators (beats: 1 kHz, bar starts: 1.6 kHz; 35 ms decay).
+    const double beat = sampleRate_ * 60.0 / model_.bpm;
+    beatFrames_.store(beat, std::memory_order_relaxed);
+    beatsPerBar_.store(std::max(1, static_cast<int32_t>(std::lround(model_.meterNum * 4.0 / model_.meterDen))), std::memory_order_relaxed);
+    const double w = 2 * 3.14159265358979 * 1000.0 / sampleRate_, wa = 2 * 3.14159265358979 * 1600.0 / sampleRate_;
+    clickCoef_.store(static_cast<float>(2 * std::cos(w)), std::memory_order_relaxed);
+    clickSin_.store(static_cast<float>(std::sin(w)), std::memory_order_relaxed);
+    clickAccentCoef_.store(static_cast<float>(2 * std::cos(wa)), std::memory_order_relaxed);
+    clickAccentSin_.store(static_cast<float>(std::sin(wa)), std::memory_order_relaxed);
+    clickDecay_.store(static_cast<float>(std::exp(-1.0 / (0.012 * sampleRate_))), std::memory_order_relaxed);
     int32_t solos = 0;
     for (const auto &t : model_.tracks) {
         t.runtime->gain.store(dbToGain(t.gainDb), std::memory_order_relaxed);
@@ -853,6 +863,37 @@ void Engine::duplexCallback(void *ctx, float *left, float *right, const float *i
         for (int i = 0; i < frames; ++i) { left[i] += input[i]; right[i] += input[i]; }
 }
 
+void Engine::renderClick(float *left, float *right, int frames, int64_t pos) DALNOK_NONBLOCKING {
+    const double beat = beatFrames_.load(std::memory_order_relaxed);
+    const bool on = metronome_.load(std::memory_order_relaxed);
+    const float level = metronomeLevel_.load(std::memory_order_relaxed), decay = clickDecay_.load(std::memory_order_relaxed);
+    // First beat at or after pos (positions are non-negative, so truncation is floor).
+    auto k = static_cast<int64_t>(static_cast<double>(pos) / beat);
+    if (static_cast<double>(k) * beat < static_cast<double>(pos) - 0.5) ++k;
+    auto next = static_cast<int64_t>(static_cast<double>(k) * beat + 0.5);
+    for (int i = 0; i < frames; ++i) {
+        if (on && pos + i == next) { // start a click: sine via a two-term recursion, no libm on this thread
+            const bool accent = k % beatsPerBar_.load(std::memory_order_relaxed) == 0;
+            clickCoefNow_ = accent ? clickAccentCoef_.load(std::memory_order_relaxed) : clickCoef_.load(std::memory_order_relaxed);
+            clickY1_ = 0;
+            clickY2_ = -(accent ? clickAccentSin_.load(std::memory_order_relaxed) : clickSin_.load(std::memory_order_relaxed));
+            clickEnv_ = level * (accent ? 1.0f : 0.6f);
+            clickLeft_ = static_cast<int>(sampleRate_ * 0.08);
+            ++k;
+            next = static_cast<int64_t>(static_cast<double>(k) * beat + 0.5);
+        }
+        if (clickLeft_ <= 0) continue;
+        const float y = clickCoefNow_ * clickY1_ - clickY2_;
+        clickY2_ = clickY1_;
+        clickY1_ = y;
+        const float v = y * clickEnv_; // sin(w), sin(2w), ...: the onset sample is already non-zero
+        left[i] += v;
+        right[i] += v;
+        clickEnv_ *= decay;
+        --clickLeft_;
+    }
+}
+
 void Engine::handleMidiInput(int64_t pos) DALNOK_NONBLOCKING {
     constexpr int kMaxEvents = 256;
     RecordedMidi events[kMaxEvents];
@@ -943,6 +984,8 @@ void Engine::process(float *left, float *right, int frames) DALNOK_NONBLOCKING {
             transportGain_ = g;
         }
         if (current_) renderLiveInput(*current_, n, l, r, scratch_, anySolo);
+        if (play && pendingSeek_ < 0 && (clickLeft_ > 0 || metronome_.load(std::memory_order_relaxed)))
+            renderClick(l, r, n, rtPosition_);
         float pl = 0, pr = 0;
         for (int i = 0; i < n; ++i) {
             pl = std::max(pl, std::fabs(l[i]));

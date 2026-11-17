@@ -307,6 +307,41 @@ class RotaryKnob: NSControl {
 
     func updateMeter(_ db: Float) { meterDb = db; updateReveal() }
 
+    // MARK: Animated external changes (undo, redo, scripts, automation)
+
+    private var glideTimer: Timer?
+    private var peekUntil = Date.distantPast
+    /// Moves to `target` over a short ease-out glide and briefly reveals the ring, so a value that
+    /// changes without the user touching the knob is visible. Instant while dragging or with Reduce Motion.
+    func glide(to target: Double) {
+        guard abs(target - value) > 1e-6 else { return }
+        glideTimer?.invalidate()
+        guard !tracking, !Motion.reduced, window != nil else { value = target; return }
+        let start = value, began = Date(), duration = Motion.gentle
+        peek()
+        let timer = Timer(timeInterval: 1.0 / 120, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, let timer = self.glideTimer else { return }
+                let p = min(1, Date().timeIntervalSince(began) / duration)
+                let eased = 1 - pow(1 - p, 3)
+                self.value = start + (target - start) * eased
+                if p >= 1 { timer.invalidate(); self.glideTimer = nil }
+            }
+        }
+        glideTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+    }
+    /// Shows the lit ring for a moment, then returns to the resting state.
+    func peek(for seconds: Double = 0.7) {
+        guard !Motion.reduced else { return }
+        peekUntil = Date().addingTimeInterval(seconds)
+        setRevealed(true, animated: true)
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
+            guard let self, Date() >= self.peekUntil else { return }
+            self.updateReveal()
+        }
+    }
+
     override func mouseEntered(with event: NSEvent) { hovering = true; updateReveal() }
     override func mouseExited(with event: NSEvent) { hovering = false; updateReveal() }
 
@@ -372,6 +407,7 @@ final class GainKnob: RotaryKnob {
         get { FaderControl.db(for: value) }
         set { value = FaderControl.position(for: newValue) }
     }
+    func glide(toDb db: Float) { glide(to: FaderControl.position(for: db)) }
     var onGainChange: ((Float) -> Void)?
 
     override init(frame: NSRect) {
@@ -395,6 +431,7 @@ final class PanKnob: RotaryKnob {
         get { Float(value) }
         set { value = Double(newValue) }
     }
+    func glide(toPan p: Float) { glide(to: Double(p)) }
     var onPanChange: ((Float) -> Void)?
 
     override init(frame: NSRect) {
@@ -420,9 +457,26 @@ final class ToggleChip: NSControl {
     let letter: String
     let onColor: NSColor
     let onText: NSColor
-    var isOn = false { didSet { needsDisplay = true; setAccessibilityValue(isOn ? "on" : "off") } }
+    var isOn = false {
+        didSet {
+            setAccessibilityValue(isOn ? "on" : "off")
+            guard isOn != oldValue else { return }
+            applyState(animated: true)
+            if isOn { Motion.bounce(face, scale: 1.12, duration: 0.2) }
+        }
+    }
+    /// Breathing glow (an armed track while recording).
+    var pulsing = false {
+        didSet {
+            guard pulsing != oldValue else { return }
+            if pulsing { Motion.pulse(glow, from: 0.9, to: 0.2, period: 1.1) } else { Motion.stopPulse(glow) }
+            applyState(animated: true)
+        }
+    }
     var onToggle: ((Bool) -> Void)?
-    private var pressed = false
+    private var pressed = false { didSet { applyState(animated: true) } }
+    private var hovering = false { didSet { applyState(animated: true) } }
+    private let face = CALayer(), glow = CALayer(), label = CATextLayer()
 
     init(_ letter: String, on: NSColor, onText: NSColor, help: String) {
         self.letter = letter
@@ -433,31 +487,62 @@ final class ToggleChip: NSControl {
         setAccessibilityElement(true)
         setAccessibilityRole(.checkBox)
         setAccessibilityLabel(help)
+        wantsLayer = true
+        // Glow sits behind the face: a soft halo in the chip's on-color, like a lit console button.
+        glow.cornerRadius = 5
+        glow.shadowColor = on.cgColor
+        glow.shadowRadius = 5
+        glow.shadowOffset = .zero
+        glow.shadowOpacity = 0
+        glow.backgroundColor = on.withAlphaComponent(0.001).cgColor
+        face.cornerRadius = 4
+        face.borderWidth = 1
+        label.string = letter
+        label.font = Theme.ui(10, .bold)
+        label.fontSize = 10
+        label.alignmentMode = .center
+        label.contentsScale = 2
+        layer?.addSublayer(glow)
+        layer?.addSublayer(face)
+        face.addSublayer(label)
+        layer?.masksToBounds = false
+        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self))
+        applyState(animated: false)
     }
     required init?(coder: NSCoder) { fatalError() }
     override var intrinsicContentSize: NSSize { NSSize(width: 22, height: 18) }
     override var isFlipped: Bool { true }
+    override var wantsUpdateLayer: Bool { true }
 
-    override func draw(_ dirtyRect: NSRect) {
-        guard let ctx = NSGraphicsContext.current?.cgContext else { return }
-        let r = bounds.insetBy(dx: 0.5, dy: 0.5)
-        ctx.addPath(CGPath(roundedRect: r, cornerWidth: 4, cornerHeight: 4, transform: nil))
-        ctx.setFillColor((isOn ? onColor : (pressed ? Theme.controlHi : Theme.control)).cgColor)
-        ctx.fillPath()
-        if !isOn {
-            ctx.addPath(CGPath(roundedRect: r, cornerWidth: 4, cornerHeight: 4, transform: nil))
-            ctx.setStrokeColor(Theme.hairline.cgColor); ctx.setLineWidth(1); ctx.strokePath()
-        }
-        let attrs: [NSAttributedString.Key: Any] = [.font: Theme.ui(10, .bold), .foregroundColor: isOn ? onText : Theme.textDim]
-        let s = letter as NSString, size = s.size(withAttributes: attrs)
-        s.draw(at: CGPoint(x: bounds.midX - size.width / 2, y: bounds.midY - size.height / 2), withAttributes: attrs)
+    override func layout() {
+        super.layout()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        face.bounds = bounds
+        face.position = CGPoint(x: bounds.midX, y: bounds.midY)
+        glow.frame = bounds
+        label.frame = CGRect(x: 0, y: (bounds.height - 13) / 2, width: bounds.width, height: 13)
+        label.contentsScale = window?.backingScaleFactor ?? 2
+        CATransaction.commit()
     }
 
-    override func mouseDown(with event: NSEvent) { pressed = true; needsDisplay = true }
+    private func applyState(animated: Bool) {
+        let body = { [self] in
+            face.backgroundColor = (isOn ? onColor : (pressed ? Theme.controlHi : (hovering ? Theme.knobHover : Theme.control))).cgColor
+            face.borderColor = (isOn ? NSColor.clear : Theme.hairline).cgColor
+            label.foregroundColor = (isOn ? onText : (hovering ? Theme.text : Theme.textDim)).cgColor
+            glow.shadowOpacity = isOn ? (pulsing ? 0.9 : 0.45) : 0
+            face.transform = pressed ? CATransform3DMakeScale(0.9, 0.9, 1) : CATransform3DIdentity
+        }
+        if animated { Motion.layers(Motion.quick, body) } else { CATransaction.begin(); CATransaction.setDisableActions(true); body(); CATransaction.commit() }
+    }
+
+    override func mouseEntered(with event: NSEvent) { hovering = true }
+    override func mouseExited(with event: NSEvent) { hovering = false }
+    override func mouseDown(with event: NSEvent) { pressed = true }
     override func mouseUp(with event: NSEvent) {
         pressed = false
         if bounds.contains(convert(event.locationInWindow, from: nil)) { isOn.toggle(); onToggle?(isOn) }
-        needsDisplay = true
     }
     override func accessibilityPerformPress() -> Bool { isOn.toggle(); onToggle?(isOn); return true }
 }
@@ -488,6 +573,12 @@ final class IconButton: NSButton {
         image = NSImage(systemSymbolName: name, accessibilityDescription: toolTip)?.withSymbolConfiguration(cfg)
         contentTintColor = tint
     }
-    override func mouseEntered(with event: NSEvent) { layer?.backgroundColor = Theme.hex(0xFFFFFF, 0.07).cgColor }
-    override func mouseExited(with event: NSEvent) { layer?.backgroundColor = nil }
+    override func mouseEntered(with event: NSEvent) { Motion.layers(Motion.quick) { layer?.backgroundColor = Theme.hex(0xFFFFFF, 0.07).cgColor } }
+    override func mouseExited(with event: NSEvent) { Motion.layers(Motion.standard) { layer?.backgroundColor = NSColor.clear.cgColor } }
+    override func mouseDown(with event: NSEvent) {
+        Motion.centerAnchor(layer)
+        Motion.layers(Motion.quick) { layer?.transform = CATransform3DMakeScale(0.9, 0.9, 1) }
+        super.mouseDown(with: event) // runs the tracking loop and the action
+        Motion.layers(Motion.standard) { layer?.transform = CATransform3DIdentity }
+    }
 }

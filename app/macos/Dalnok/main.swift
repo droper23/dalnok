@@ -14,6 +14,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let args0 = CommandLine.arguments
+        // Captures and tests need settled frames; the self-test turns motion back on for its own checks.
+        if args0.contains("--snapshot") || args0.contains("--screenshots") || args0.contains("--selftest") { Motion.override = false }
         main = MainWindowController(session: session)
         NSApp.mainMenu = buildMenu(target: main)
         Migration.applyKeymap(SourceDAW.preferred, to: NSApp.mainMenu)
@@ -186,6 +188,7 @@ func buildMenu(target: MainWindowController) -> NSMenu {
     }
     menu("Clip", [
         item("New MIDI Clip", #selector(W.newMidiClip(_:)), "m", [.command, .shift]),
+        item("Piano Roll", #selector(W.openPianoRoll(_:)), "p", []),
         quantize,
         .separator(),
         item("Add Short Fades", #selector(W.addShortFades(_:)), "f", [.control]),
@@ -203,6 +206,8 @@ func buildMenu(target: MainWindowController) -> NSMenu {
         item("Play / Pause", #selector(W.togglePlay), " ", []),
         item("Go to Start", #selector(W.goToStart), "\r", []),
         item("Record", #selector(W.toggleRecord(_:)), "r", []),
+        item("Metronome", #selector(W.toggleMetronome(_:)), "k", []),
+        item("Edit Tempo", #selector(W.editTempo(_:)), "t", [.command, .option]),
     ])
     let outputMenu = NSMenuItem(title: "Output Device", action: nil, keyEquivalent: "")
     outputMenu.submenu = NSMenu(title: "Output Device")
@@ -222,6 +227,8 @@ func buildMenu(target: MainWindowController) -> NSMenu {
         item("Zoom In", #selector(W.zoomIn), "="),
         item("Zoom Out", #selector(W.zoomOut), "-"),
         item("Zoom to Fit", #selector(W.zoomToFit), "0"),
+        .separator(),
+        item("Bars and Beats Ruler", #selector(W.toggleBarsAndBeats(_:)), "b", [.command, .option]),
     ])
     menu("Window", [
         item("Minimize", #selector(NSWindow.performMiniaturize(_:)), "m"),

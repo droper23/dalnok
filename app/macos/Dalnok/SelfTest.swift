@@ -12,7 +12,7 @@ final class SelfTest {
     let workdir: URL
     private var failures = 0
     /// Preferences the test changes; all are restored at the end so a run never alters the owner's settings.
-    private static let restoredKeys = ["copyAudioOnSave", "comingFrom", "onboardingDone", "recordingInputUID"]
+    private static let restoredKeys = ["copyAudioOnSave", "comingFrom", "onboardingDone", "recordingInputUID", "rulerBarsAndBeats", "metronome"]
     private let previousPreferences: [String: Any]
     private var w: MainWindowController { app.main }
     private var s: Session { app.session }
@@ -98,12 +98,15 @@ final class SelfTest {
         check(s.tracks[0].clips.count == 2, "redo re-split")
         _ = perform("Undo")
 
+        check(!MainWindowController.isTyping, "no text field holds the keyboard at launch (Space, R and Delete work)")
         // Drag the clip body right: moves (snapped), one undo step.
         dragClip(first.id, zone: "body", fraction: 0.5)
         let moved = s.clip(first.id)!
         check(moved.start > 0, "drag moved clip to \(moved.start)")
-        let q = Int64(w.timeline.gridStep() / 4 * e.sampleRate)
-        check(q > 0 && moved.start % q == 0, "move snapped to grid (\(q) frames)")
+        let q = Int64(w.timeline.snapQuantum())
+        let quantum = w.timeline.snapQuantum()
+        check(q > 0 && abs(Double(moved.start) - (Double(moved.start) / quantum).rounded() * quantum) <= 1,
+              "move snapped to grid (\(q) frames, \(TimelineView.barsAndBeats ? "bars and beats" : "time"))")
         check(e.undoName == "Move Clip", "drag is one undo step (\(e.undoName))")
         _ = perform("Undo")
         check(s.clip(first.id)?.start == 0, "undo returns clip to 0")
@@ -188,7 +191,7 @@ final class SelfTest {
         // Time stretch: ⌥-drag the right edge keeps the source audio and changes its speed.
         _ = perform("Remove Fades")
         let pre = s.clip(first.id)!
-        dragClip(first.id, zone: "right", fraction: 0.25, mods: .option)
+        dragClip(first.id, zone: "right", fraction: 0.6, mods: .option)
         let st = s.clip(first.id)!
         check(st.length > pre.length && abs(Double(st.sourceSpan) - Double(pre.sourceSpan)) <= 2 && st.rate < 1,
               String(format: "⌥-drag stretched clip: length %lld→%lld, rate %.3f", pre.length, st.length, st.rate))
@@ -399,6 +402,7 @@ final class SelfTest {
         w.conceptGuide.window.orderOut(nil)
 
         await recordingAndMidi()
+        await motion()
 
         // Import a REAPER project end to end (fixture built from this run's audio files).
         let media = workdir.appendingPathComponent("Media")
@@ -535,10 +539,162 @@ final class SelfTest {
         try? await Task.sleep(for: .milliseconds(100))
         check(perform("Stop Recording", exact: true), "stop MIDI recording")
         let recorded = s.track(keys.id)?.clips.last
+        _ = recorded
+        await pianoRoll(clip: clip)
+        await tempoAndMetronome()
         check(s.track(keys.id)?.clips.count == before + 1 && recorded?.notes.count == 1 && recorded?.notes.first?.pitch == 67,
               "recorded one MIDI note (\(recorded?.notes.count ?? 0))")
         let ms = Double(recorded?.notes.first?.length ?? 0) / e.sampleRate * 1000
         check(ms > 150 && ms < 400, String(format: "recorded note length %.0f ms (held ~250 ms)", ms))
+    }
+
+    /// Piano roll through real menus, mouse gestures (synthesized events) and keys.
+    private func pianoRoll(clip: DalnokClipId) async {
+        let e = s.engine
+        w.timeline.selectedClip = clip
+        check(perform("Piano Roll", exact: true), "menu Clip > Piano Roll opens the editor")
+        let roll = w.pianoRoll.roll
+        guard let win = w.pianoRoll.window, win.isVisible, roll.clipId == clip else { return check(false, "piano roll window is visible") }
+        win.makeKey()
+        roll.layoutSubtreeIfNeeded()
+        func ev(_ type: NSEvent.EventType, _ p: CGPoint, clicks: Int = 1, mods: NSEvent.ModifierFlags = []) -> NSEvent {
+            NSEvent.mouseEvent(with: type, location: roll.convert(p, to: nil), modifierFlags: mods,
+                               timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: win.windowNumber,
+                               context: nil, eventNumber: 0, clickCount: clicks, pressure: 1)!
+        }
+        func key(_ code: UInt16, _ chars: String, mods: NSEvent.ModifierFlags = []) {
+            roll.keyDown(with: NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: mods, timestamp: 0,
+                                                windowNumber: win.windowNumber, context: nil, characters: chars,
+                                                charactersIgnoringModifiers: chars, isARepeat: false, keyCode: code)!)
+        }
+        func drag(from a: CGPoint, to b: CGPoint) {
+            roll.mouseDown(with: ev(.leftMouseDown, a))
+            for k in 1...8 { roll.mouseDragged(with: ev(.leftMouseDragged, CGPoint(x: a.x + (b.x - a.x) * CGFloat(k) / 8, y: a.y + (b.y - a.y) * CGFloat(k) / 8))) }
+            roll.mouseUp(with: ev(.leftMouseUp, b))
+        }
+        guard let c = s.clip(clip) else { return }
+        let before = c.notes.count
+        let beat = s.framesPerBeat
+        // Double-click empty grid at bar 1 beat 3 of the clip, pitch D5 (74): adds a snapped note.
+        let target = Double(c.start + 2 * beat) + Double(roll.snapFrames) * 0.2
+        let p = CGPoint(x: roll.x(target), y: roll.y(74) + roll.rowHeight / 2)
+        roll.mouseDown(with: ev(.leftMouseDown, p, clicks: 2))
+        roll.mouseUp(with: ev(.leftMouseUp, p, clicks: 2))
+        let added = s.clip(clip)?.notes.first { $0.pitch == 74 }
+        check(s.clip(clip)?.notes.count == before + 1 && added?.start == c.offset + 2 * beat, "double-click adds a snapped note (\(added?.start ?? -1))")
+        check(e.undoName == "Edit Notes", "adding a note is one undo step")
+        guard let n = added, let cur = s.clip(clip) else { return }
+        // Drag the note up two rows and right one beat: one undo step "Move Notes".
+        let r = roll.rect(n, cur)
+        drag(from: CGPoint(x: r.minX + 3, y: r.midY), to: CGPoint(x: r.minX + 3 + CGFloat(Double(beat) / roll.framesPerPoint), y: r.midY - 2 * roll.rowHeight))
+        let moved = s.clip(clip)?.notes.first { $0.pitch == 76 && $0.start == n.start + beat }
+        check(moved != nil && e.undoName == "Move Notes", "dragging a note moves it in time and pitch as one undo step")
+        // Resize from its right edge.
+        if let m = moved, let cur = s.clip(clip) {
+            let r2 = roll.rect(m, cur)
+            drag(from: CGPoint(x: r2.maxX - 2, y: r2.midY), to: CGPoint(x: r2.maxX - 2 + CGFloat(Double(beat) / roll.framesPerPoint), y: r2.midY))
+            let resized = s.clip(clip)?.notes.first { $0.pitch == 76 && $0.start == m.start }
+            check((resized?.length ?? 0) == m.length + beat && e.undoName == "Resize Notes", "dragging the right edge lengthens the note by a beat")
+            // Velocity stem: drag up.
+            if let rn = resized, let cur2 = s.clip(clip) {
+                let sx = roll.x(roll.timeline(rn, cur2)) + 1
+                let lane = roll.velocityLane
+                let h = (lane.height - 12) * CGFloat(rn.velocity) / 127
+                drag(from: CGPoint(x: sx, y: lane.maxY - 4 - h / 2), to: CGPoint(x: sx, y: lane.maxY - 4 - h / 2 - 20))
+                let v = s.clip(clip)?.notes.first { $0.pitch == 76 && $0.start == rn.start }?.velocity ?? 0
+                check(v > rn.velocity && e.undoName == "Note Velocity", "velocity lane drag raises velocity (\(rn.velocity) → \(v))")
+            }
+        }
+        // Keys: transpose down an octave, nudge right, then delete through Edit > Delete.
+        key(125, "", mods: .shift)
+        check(s.clip(clip)?.notes.contains { $0.pitch == 64 && $0.start == n.start + beat } == true, "⇧↓ transposes the selection down an octave")
+        key(124, "")
+        check(s.clip(clip)?.notes.contains { $0.pitch == 64 && $0.start == n.start + beat + Int64(roll.snapFrames) } == true, "→ nudges by the grid")
+        let count = s.clip(clip)?.notes.count ?? 0
+        check(perform("Delete") && s.clip(clip)?.notes.count == count - 1, "Edit > Delete removes the selected note, not the clip")
+        check(s.clip(clip) != nil, "the clip itself is untouched")
+        _ = perform("Undo")
+        check(s.clip(clip)?.notes.count == count, "undo restores the note")
+        key(0, "a", mods: .command)
+        check(roll.selection.count == s.clip(clip)?.notes.count, "⌘A selects all notes")
+        win.close()
+        check(!w.pianoRollIsKey, "closing the piano roll returns Delete to the arrangement")
+        w.window?.makeKey()
+    }
+
+    /// Animations run when motion is allowed and are skipped with Reduce Motion.
+    private func motion() async {
+        let e = s.engine
+        guard let track = s.tracks.first?.id, let row = w.headers.row(track) else { return check(false, "a track for motion checks") }
+        Motion.override = true
+        defer { Motion.override = false }
+        // Knob glide: an undone volume change animates instead of jumping.
+        s.setGain(track, db: -12)
+        try? await Task.sleep(for: .milliseconds(400))
+        _ = perform("Undo")
+        let target = FaderControl.position(for: s.track(track)?.gainDb ?? 0)
+        let mid = row.gain.value
+        try? await Task.sleep(for: .milliseconds(400))
+        check(abs(mid - target) > 0.01 && abs(row.gain.value - target) < 1e-6,
+              String(format: "undo glides the gain knob (%.3f → %.3f)", mid, row.gain.value))
+        // Recording indicators pulse.
+        w.transport.setRecording(true)
+        check(w.transport.recordButton.layer?.animation(forKey: "pulse") != nil, "record button pulses while recording")
+        w.transport.setRecording(false)
+        check(w.transport.recordButton.layer?.animation(forKey: "pulse") == nil, "pulse stops when recording stops")
+        // Palette fades in.
+        w.palette.show(over: w.window!)
+        check(w.palette.panel.alphaValue < 1, "command palette fades in (alpha \(w.palette.panel.alphaValue))")
+        w.palette.close()
+        try? await Task.sleep(for: .milliseconds(300))
+        check(!w.palette.isVisible, "command palette fades out and closes")
+        // Reduce Motion: the same changes are instant.
+        Motion.override = false
+        s.setGain(track, db: -6)
+        _ = perform("Undo")
+        check(abs(row.gain.value - FaderControl.position(for: s.track(track)?.gainDb ?? 0)) < 1e-6, "with Reduce Motion the knob jumps instantly")
+        w.transport.setRecording(true)
+        check(w.transport.recordButton.layer?.animation(forKey: "pulse") == nil, "with Reduce Motion nothing pulses")
+        w.transport.setRecording(false)
+        _ = e
+    }
+
+    /// Tempo field, meter popup, ruler mode, and metronome through the real controls and menus.
+    private func tempoAndMetronome() async {
+        let e = s.engine
+        w.transport.tempoField.stringValue = "96"
+        w.tempoEdited(nil)
+        check(abs(s.bpm - 96) < 1e-9 && e.undoName == "Tempo", "tempo field sets 96 BPM as an undo step")
+        w.transport.tempoField.stringValue = "1000"
+        w.tempoEdited(nil)
+        check(abs(s.bpm - 96) < 1e-9 && w.transport.tempoField.stringValue == "96", "invalid tempo is rejected and the field restored")
+        w.transport.meterPopup.selectItem(withTitle: "3/4")
+        w.meterChosen(nil)
+        check(s.meter == (3, 4), "meter popup sets 3/4")
+        let wasBars = TimelineView.barsAndBeats
+        if !wasBars { _ = perform("Bars and Beats Ruler") }
+        e.seek(Int64(e.sampleRate * 60 / 96 * 3) + Int64(e.sampleRate * 60 / 96)) // bar 2, beat 2
+        try? await Task.sleep(for: .milliseconds(150))
+        check(w.transport.timeLabel.stringValue.hasPrefix("2.2.1."), "LCD shows bars and beats (\(w.transport.timeLabel.stringValue))")
+        check(w.timeline.barsLabel(e.sampleRate * 60 / 96 * 3, wholeBars: false) == "2", "ruler labels bar 2 at its downbeat")
+        check(perform("Bars and Beats Ruler") && !TimelineView.barsAndBeats, "View > Bars and Beats Ruler toggles to time")
+        try? await Task.sleep(for: .milliseconds(100))
+        check(w.transport.timeLabel.stringValue.contains(":"), "LCD shows minutes and seconds (\(w.transport.timeLabel.stringValue))")
+        _ = perform("Bars and Beats Ruler")
+        let wasOn = MainWindowController.metronomeOn
+        check(perform("Metronome", exact: true) && dalnok_metronome_enabled(e.handle) != wasOn, "Transport > Metronome toggles the click")
+        if MainWindowController.metronomeOn {
+            // Past the end of the session only the click can make sound.
+            e.seek(s.length + Int64(e.sampleRate * 600))
+            try? await Task.sleep(for: .milliseconds(100))
+            e.play()
+            var loudest: Float = -120
+            for _ in 0..<40 { try? await Task.sleep(for: .milliseconds(25)); loudest = max(loudest, w.transport.masterMeter.levelDb.0) }
+            e.pause()
+            check(loudest > -30, String(format: "metronome reaches the output past the session end (%.1f dBFS)", loudest))
+        }
+        _ = perform("Metronome", exact: true)
+        check(dalnok_metronome_enabled(e.handle) == wasOn, "metronome restored")
     }
 
     private func finish() {

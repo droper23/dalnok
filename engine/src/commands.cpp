@@ -122,6 +122,10 @@ const CommandDef kCommands[] = {
          return status(e.setTempo(bpm, static_cast<int32_t>(a.getNumber("numerator", e.model().meterNum)),
                                   static_cast<int32_t>(a.getNumber("denominator", e.model().meterDen)), err), err);
      }},
+    {"transport.setMetronome", "Metronome", "{on, level? (0-1)}", [](ARGS) {
+         e.setMetronome(a.getBool("on", true), static_cast<float>(a.getNumber("level", 0.5)));
+         return DALNOK_OK;
+     }},
     {"midi.addClip", "New MIDI Clip", "{track, start, length}", [](ARGS) {
          DalnokTrackId t;
          int64_t start, length;

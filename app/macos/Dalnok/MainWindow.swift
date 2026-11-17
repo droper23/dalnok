@@ -14,6 +14,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     let palette = CommandPalette()
     let emptyState = EmptyStateView()
     lazy var settings = SettingsController()
+    lazy var pianoRoll = PianoRollController(session: session)
+    /// True while the piano roll is the window the user is working in (it was opened or clicked last),
+    /// so Edit ▸ Delete removes notes there instead of the selected timeline clip.
+    var pianoRollIsKey: Bool { pianoRoll.window?.isVisible == true && pianoRoll.focused }
+
+    func windowDidBecomeKey(_ notification: Notification) { pianoRoll.focused = false }
     lazy var conceptGuide = ConceptGuideController()
     lazy var welcome = WelcomeController(main: self)
     private(set) var lastImportReport: ImportReport?
@@ -24,6 +30,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     let timeline: TimelineView
     private var timer: Timer?
     private var wasPlaying = false
+    private var wasRecording = false
+    private var lastBeat = -1
     /// Self-test only: record from DALNOK_SIMULATED_INPUT instead of a device.
     static var simulatedInput = false
     static var inputMonitoring = false
@@ -87,6 +95,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
         transport.onPlayPause = { [weak self] in self?.togglePlay() }
         transport.onRecord = { [weak self] in self?.toggleRecord(nil) }
+        transport.onMetronome = { [weak self] in self?.toggleMetronome(nil) }
+        transport.tempoField.target = self
+        transport.tempoField.action = #selector(tempoEdited(_:))
+        transport.meterPopup.target = self
+        transport.meterPopup.action = #selector(meterChosen(_:))
         headers.onInputMenu = { [weak self] row in self?.showInputMenu(for: row) }
         transport.onRewind = { [weak self] in self?.goToStart() }
         transport.onImport = { [weak self] in self?.importAudio() }
@@ -94,12 +107,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         headers.onAddTrack = { [weak self] in self?.newTrack(nil) }
         timeline.onVerticalScroll = { [weak self] y in self?.headers.scrollY = y }
         timeline.onClipSelected = { [weak self] clip in self?.headers.selectedTrack = clip.track }
+        timeline.onOpenClip = { [weak self] clip in self?.pianoRoll.show(clip: clip.id) }
+        timeline.onActivate = { [weak self] in self?.pianoRoll.focused = false }
         headers.contextMenu = trackContextMenu()
         headers.onSelect = { [weak self] id in self?.timeline.highlightedTrack = id }
         palette.onOpenGuide = { [weak self] c in self?.conceptGuide.show(daw: c.daw, query: c.term) }
         session.onChange = { [weak self] in self?.modelChanged() }
         session.onMessage = { [weak self] msg in self?.flash(msg) }
         modelChanged()
+        applyMetronome()
 
         timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.tick() }
@@ -159,9 +175,30 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
     private func modelChanged() {
         headers.sync()
-        emptyState.isHidden = !session.tracks.isEmpty
-        headers.isHidden = session.tracks.isEmpty
-        timeline.isHidden = session.tracks.isEmpty
+        // Crossfade between the empty state and the arrangement.
+        let empty = session.tracks.isEmpty
+        if emptyState.isHidden == empty {
+            let show: NSView = empty ? emptyState : timeline, hide: NSView = empty ? timeline : emptyState
+            for v in [show] + (empty ? [] : [headers]) { v.alphaValue = Motion.reduced ? 1 : 0; v.isHidden = false }
+            Motion.views(Motion.gentle) {
+                show.animator().alphaValue = 1
+                if !empty { headers.animator().alphaValue = 1 }
+                hide.animator().alphaValue = 0
+                if empty { headers.animator().alphaValue = 0 }
+            }
+            hide.isHidden = Motion.reduced
+            if empty { headers.isHidden = Motion.reduced }
+            if !Motion.reduced {
+                DispatchQueue.main.asyncAfter(deadline: .now() + Motion.gentle + 0.05) { [weak self] in
+                    guard let self else { return }
+                    let nowEmpty = self.session.tracks.isEmpty
+                    self.emptyState.isHidden = !nowEmpty
+                    self.timeline.isHidden = nowEmpty
+                    self.headers.isHidden = nowEmpty
+                    for v in [self.emptyState, self.timeline, self.headers] as [NSView] { v.alphaValue = 1 }
+                }
+            }
+        }
         if let sel = timeline.selectedClip, session.clip(sel) == nil { timeline.selectedClip = nil }
         if fitOnNextChange && !session.tracks.isEmpty {
             timeline.zoomToFit()
@@ -169,6 +206,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         }
         timeline.needsDisplay = true
         updateTitle()
+        updateTempoDisplay()
+        pianoRoll.modelChanged()
         if transientMessageUntil < Date() { updateStatus() }
     }
 
@@ -181,6 +220,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
     private var transientMessageUntil = Date.distantPast
     func flash(_ msg: String) {
+        Motion.fadeNextChange(transport.statusLabel.layer, duration: Motion.standard)
         transport.statusLabel.stringValue = msg
         transientMessageUntil = Date().addingTimeInterval(4)
     }
@@ -190,7 +230,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         let sr = e.sampleRate
         let n = session.tracks.count
         _ = (sr, n)
-        transport.statusLabel.stringValue = outputDeviceDescription()
+        let text = outputDeviceDescription()
+        if transport.statusLabel.stringValue != text { Motion.fadeNextChange(transport.statusLabel.layer, duration: Motion.gentle) }
+        transport.statusLabel.stringValue = text
     }
 
     private func outputDeviceDescription() -> String {
@@ -213,12 +255,28 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         e.collectGarbage()
         session.refresh() // picks up changes from any source (e.g. scripts)
         _ = session.pollJobs() // installs finished time-stretch renders
-        let playing = e.isPlaying
-        if playing != wasPlaying {
+        let playing = e.isPlaying, recording = e.isRecording
+        if playing != wasPlaying || recording != wasRecording {
             transport.setPlaying(playing)
+            transport.setRecording(recording)
+            timeline.setTransportState(playing: playing, recording: recording)
+            for row in headers.rows { row.setRecording(recording) }
             wasPlaying = playing
+            wasRecording = recording
         }
-        transport.timeLabel.stringValue = TimelineView.formatTime(Double(e.position) / e.sampleRate)
+        // Visual metronome: the button ticks on each beat, harder on the downbeat.
+        if playing && Self.metronomeOn {
+            let beat = Int(Double(e.position) / timeline.framesPerBeat)
+            if beat != lastBeat {
+                let downbeat = beat % max(1, Int(timeline.beatsPerBar.rounded())) == 0
+                Motion.centerAnchor(transport.metronomeButton.layer)
+                Motion.bounce(transport.metronomeButton.layer, scale: downbeat ? 1.3 : 1.14, duration: 0.16)
+                lastBeat = beat
+            }
+        } else {
+            lastBeat = -1
+        }
+        transport.timeLabel.stringValue = timeline.positionText(e.position)
         timeline.followPlayhead()
         timeline.updatePlayhead()
         for row in headers.rows {
@@ -486,7 +544,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     @objc func undo(_ sender: Any?) { session.undo() }
     @objc func redo(_ sender: Any?) { session.redo() }
 
+    @objc func openPianoRoll(_ sender: Any?) {
+        guard let c = timeline.selectedClip, session.clip(c)?.isMidi == true else { return }
+        pianoRoll.show(clip: c)
+    }
+
     @objc func delete(_ sender: Any?) {
+        if pianoRollIsKey { return pianoRoll.roll.deleteSelection() }
         guard let c = timeline.selectedClip else { return }
         session.removeClip(c)
     }
@@ -713,6 +777,54 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
     // MARK: View
 
+    static var metronomeOn: Bool {
+        get { UserDefaults.standard.bool(forKey: "metronome") }
+        set { UserDefaults.standard.set(newValue, forKey: "metronome") }
+    }
+    @objc func toggleMetronome(_ sender: Any?) {
+        Self.metronomeOn.toggle()
+        applyMetronome()
+        flash(Self.metronomeOn ? "Metronome on" : "Metronome off")
+    }
+    func applyMetronome() {
+        dalnok_metronome_set(session.engine.handle, Self.metronomeOn, 0.5)
+        transport.metronomeButton.setSymbol("metronome.fill", tint: Self.metronomeOn ? Theme.accent : Theme.textDim)
+        transport.metronomeButton.setAccessibilityValue(Self.metronomeOn ? "on" : "off")
+    }
+
+    @objc func toggleBarsAndBeats(_ sender: Any?) {
+        TimelineView.barsAndBeats.toggle()
+        timeline.needsDisplay = true
+        updateTempoDisplay()
+    }
+
+    func updateTempoDisplay() {
+        let m = session.meter
+        if transport.tempoField.currentEditor() == nil { transport.tempoField.stringValue = String(format: "%g", session.bpm) }
+        transport.meterPopup.selectItem(withTitle: "\(m.0)/\(m.1)")
+        transport.timeLabel.toolTip = TimelineView.barsAndBeats ? "Bar . beat . sixteenth . tick" : "Minutes : seconds"
+    }
+
+    @objc func tempoEdited(_ sender: Any?) {
+        let m = session.meter
+        guard let bpm = Double(transport.tempoField.stringValue.replacingOccurrences(of: ",", with: ".")),
+              session.setTempo(bpm, m.0, m.1) else {
+            flash("Tempo must be 20–400 BPM")
+            return updateTempoDisplay()
+        }
+        timeline.needsDisplay = true
+        window?.makeFirstResponder(nil)
+    }
+
+    @objc func editTempo(_ sender: Any?) { transport.tempoField.beginEditing() }
+
+    @objc func meterChosen(_ sender: Any?) {
+        let parts = (transport.meterPopup.titleOfSelectedItem ?? "4/4").split(separator: "/").compactMap { Int32($0) }
+        guard parts.count == 2 else { return }
+        _ = session.setTempo(session.bpm, parts[0], parts[1])
+        timeline.needsDisplay = true
+    }
+
     @objc func zoomIn() { timeline.zoom(by: 0.5, around: timeline.bounds.midX) }
     @objc func zoomOut() { timeline.zoom(by: 2, around: timeline.bounds.midX) }
     @objc func zoomToFit() { timeline.zoomToFit() }
@@ -737,7 +849,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             item.title = session.engine.canRedo ? "Redo \(session.engine.redoName)" : "Redo"
             return session.engine.canRedo
         case #selector(delete(_:)):
-            return timeline.selectedClip != nil
+            return pianoRollIsKey ? !pianoRoll.roll.selection.isEmpty : timeline.selectedClip != nil
+        case #selector(openPianoRoll(_:)):
+            return selectedClipView?.isMidi == true
         case #selector(deleteTrack(_:)), #selector(renameTrack(_:)):
             return selectedTrack != nil
         case #selector(moveTrackUp(_:)):
@@ -771,6 +885,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             return selectedTrack != nil && !session.engine.isRecording
         case #selector(toggleRecord(_:)):
             item.title = session.engine.isRecording ? "Stop Recording" : "Record"
+            return true
+        case #selector(toggleMetronome(_:)):
+            item.state = Self.metronomeOn ? .on : .off
+            return true
+        case #selector(toggleBarsAndBeats(_:)):
+            item.state = TimelineView.barsAndBeats ? .on : .off
             return true
         case #selector(toggleInputMonitoring(_:)):
             item.state = Self.inputMonitoring ? .on : .off

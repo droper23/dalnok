@@ -5,20 +5,45 @@ import DalnokEngine
 
 // MARK: - Control bar
 
+/// Editable only on purpose (click or Transport ▸ Edit Tempo). As an ordinary text field it became the
+/// window's first responder at launch, which made Space, R and Delete count as typing.
+final class TempoField: NSTextField {
+    private var armed = false
+    override var acceptsFirstResponder: Bool { armed }
+    func beginEditing() {
+        armed = true
+        window?.makeFirstResponder(self)
+        currentEditor()?.selectAll(nil)
+    }
+    override func mouseDown(with event: NSEvent) {
+        if !armed { beginEditing() } else { super.mouseDown(with: event) }
+    }
+    override func textDidEndEditing(_ notification: Notification) {
+        super.textDidEndEditing(notification)
+        armed = false
+    }
+}
+
 @MainActor
 final class TransportBar: NSView {
     let titleLabel = NSTextField(labelWithString: "Untitled")
     /// Secondary line under the title: audio status, or a transient message.
     let statusLabel = NSTextField(labelWithString: "")
     let timeLabel = NSTextField(labelWithString: "0:00.000")
+    let lcdWell = NSView()
     let masterMeter = MeterView()
     let playButton = IconButton("play.fill", help: "Play / Pause (Space)")
     let recordButton = IconButton("circle.fill", help: "Record (R)")
+    let metronomeButton = IconButton("metronome.fill", help: "Metronome (K)")
+    var onMetronome: (() -> Void)?
     private let rewind = IconButton("backward.end.fill", help: "Go to Start (Return)")
     private let paletteButton = IconButton("magnifyingglass", help: "Command Palette (⌘K)")
     private let importButton = IconButton("plus.rectangle.on.rectangle", help: "Import Audio… (⌘I)")
     var onPlayPause: (() -> Void)?
     var onRecord: (() -> Void)?
+    /// Project tempo (type and press Return) and meter.
+    let tempoField = TempoField(string: "120")
+    let meterPopup = NSPopUpButton(frame: .zero, pullsDown: false)
     var onRewind: (() -> Void)?
     var onImport: (() -> Void)?
     var onPalette: (() -> Void)?
@@ -43,12 +68,17 @@ final class TransportBar: NSView {
         timeLabel.font = Theme.mono(20, .medium)
         timeLabel.textColor = Theme.accent
         timeLabel.alignment = .center
-        let lcd = NSView()
+        let lcd = lcdWell
         lcd.wantsLayer = true
         lcd.layer?.backgroundColor = Theme.lcd.cgColor
         lcd.layer?.cornerRadius = 6
         lcd.layer?.borderWidth = 1
         lcd.layer?.borderColor = Theme.hairline.cgColor
+        lcd.layer?.shadowRadius = 6
+        lcd.layer?.shadowOffset = .zero
+        lcd.layer?.masksToBounds = false
+        timeLabel.wantsLayer = true
+        statusLabel.wantsLayer = true
         timeLabel.translatesAutoresizingMaskIntoConstraints = false
         lcd.addSubview(timeLabel)
         lcd.setAccessibilityElement(true)
@@ -57,10 +87,31 @@ final class TransportBar: NSView {
         rewind.target = self; rewind.action = #selector(rewindTapped)
         playButton.target = self; playButton.action = #selector(playTapped)
         recordButton.target = self; recordButton.action = #selector(recordTapped)
+        metronomeButton.target = self; metronomeButton.action = #selector(metronomeTapped)
         recordButton.contentTintColor = Theme.recordOn.withAlphaComponent(0.75)
         paletteButton.target = self; paletteButton.action = #selector(paletteTapped)
         importButton.target = self; importButton.action = #selector(importTapped)
-        let transport = NSStackView(views: [rewind, playButton, recordButton, lcd])
+        tempoField.font = Theme.mono(13, .medium)
+        tempoField.textColor = Theme.text
+        tempoField.alignment = .right
+        tempoField.isBordered = false
+        tempoField.drawsBackground = false
+        tempoField.focusRingType = .none
+        tempoField.toolTip = "Tempo in BPM (type and press Return)"
+        tempoField.setAccessibilityLabel("Tempo, beats per minute")
+        let bpmLabel = NSTextField(labelWithString: "BPM")
+        bpmLabel.font = Theme.mono(9, .medium)
+        bpmLabel.textColor = Theme.textDim
+        meterPopup.addItems(withTitles: ["2/4", "3/4", "4/4", "5/4", "6/8", "7/8", "12/8"])
+        meterPopup.isBordered = false
+        meterPopup.font = Theme.mono(12, .medium)
+        meterPopup.toolTip = "Time signature"
+        meterPopup.setAccessibilityLabel("Time signature")
+        let tempo = NSStackView(views: [tempoField, bpmLabel, meterPopup, metronomeButton])
+        tempo.spacing = 3
+        tempo.edgeInsets = NSEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
+        tempoField.widthAnchor.constraint(equalToConstant: 44).isActive = true
+        let transport = NSStackView(views: [rewind, playButton, recordButton, lcd, tempo])
         transport.spacing = 6
 
         masterMeter.toolTip = "Output level (click to reset the clip indicator)"
@@ -102,19 +153,33 @@ final class TransportBar: NSView {
     override var mouseDownCanMoveWindow: Bool { true }
 
     func setPlaying(_ playing: Bool) {
+        Motion.fadeNextChange(playButton.layer)
         playButton.setSymbol(playing ? "pause.fill" : "play.fill", tint: playing ? Theme.accent : Theme.text)
     }
 
     @objc private func playTapped() { onPlayPause?() }
     @objc private func recordTapped() { onRecord?() }
+    @objc private func metronomeTapped() { onMetronome?() }
 
     /// Recording: red record symbol and position display; otherwise the normal look.
     func setRecording(_ recording: Bool) {
+        guard recording != isRecordingShown else { return }
+        isRecordingShown = recording
+        Motion.fadeNextChange(recordButton.layer)
         recordButton.setSymbol(recording ? "record.circle.fill" : "circle.fill",
                                tint: recording ? Theme.recordOn : Theme.recordOn.withAlphaComponent(0.75))
         recordButton.setAccessibilityValue(recording ? "recording" : "stopped")
+        if recording { Motion.pulse(recordButton.layer, from: 1, to: 0.4, period: 1.0) } else { Motion.stopPulse(recordButton.layer) }
+        Motion.fadeNextChange(timeLabel.layer, duration: Motion.standard)
         timeLabel.textColor = recording ? Theme.recordOn : Theme.accent
+        // The position display's well glows red while recording.
+        Motion.layers(Motion.gentle) {
+            lcdWell.layer?.borderColor = (recording ? Theme.recordOn.withAlphaComponent(0.7) : Theme.hairline).cgColor
+            lcdWell.layer?.shadowColor = Theme.recordOn.cgColor
+            lcdWell.layer?.shadowOpacity = recording ? 0.6 : 0
+        }
     }
+    private var isRecordingShown = false
     @objc private func rewindTapped() { onRewind?() }
     @objc private func importTapped() { onImport?() }
     @objc private func paletteTapped() { onPalette?() }
@@ -127,7 +192,20 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
     let trackId: DalnokTrackId
     let session: Session
     weak var column: TrackHeaderColumn?
-    var isSelected = false { didSet { needsDisplay = true } }
+    var isSelected = false {
+        didSet {
+            guard isSelected != oldValue else { return }
+            Motion.layers(Motion.standard) {
+                selectionLayer.opacity = isSelected ? 1 : 0
+                strip.frame.size.width = isSelected ? 5 : 3
+            }
+        }
+    }
+    /// Selected-row tint and the color strip are layers so selection slides in instead of jumping.
+    private let selectionLayer = CALayer(), strip = CALayer()
+    private var hasShown = false
+    /// While recording, an armed row's R chip breathes.
+    func setRecording(_ recording: Bool) { arm.pulsing = recording && arm.isOn }
     private var color = Theme.gradientColor(step: 0)
     private var muted = false
     private let number = NSTextField(labelWithString: "")
@@ -150,6 +228,10 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
         self.session = session
         super.init(frame: .zero)
         wantsLayer = true
+        selectionLayer.backgroundColor = Theme.selectedHeader.cgColor
+        selectionLayer.opacity = 0
+        layer?.addSublayer(selectionLayer)
+        layer?.addSublayer(strip)
 
         number.font = Theme.mono(11)
         number.textColor = Theme.textFaint
@@ -218,6 +300,9 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
             meter.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
             meter.widthAnchor.constraint(equalToConstant: 7),
         ])
+        // Long names truncate; the chips never shrink.
+        nameLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        for chip in [arm, mute, solo] { chip.setContentCompressionResistancePriority(.required, for: .horizontal) }
         update(track, index: index)
     }
 
@@ -231,6 +316,8 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
         number.stringValue = "\(index + 1)"
         if !nameLabel.isEditable { nameLabel.stringValue = t.name }
         nameLabel.textColor = t.muted ? Theme.textDim : Theme.text
+        // Color strip: the track's identity, full height; desaturated (animated) when muted.
+        Motion.layers(Motion.gentle) { strip.backgroundColor = (t.muted ? TrackTint(base: t.color).muted : t.color).cgColor }
         mute.isOn = t.muted
         solo.isOn = t.solo
         arm.isOn = t.armed
@@ -241,8 +328,11 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
         arm.setAccessibilityLabel("Record enable \(t.name)")
         gain.tint = t.muted ? Theme.textFaint : t.color
         pan.tint = t.color
-        if !gain.tracking { gain.db = t.gainDb.isFinite ? t.gainDb : -.infinity }
-        if !pan.tracking { pan.pan = t.pan }
+        // First display is instant; later changes from undo or scripts glide and light the ring.
+        let db: Float = t.gainDb.isFinite ? t.gainDb : -.infinity
+        if !gain.tracking { if hasShown { gain.glide(toDb: db) } else { gain.db = db } }
+        if !pan.tracking { if hasShown { pan.glide(toPan: t.pan) } else { pan.pan = t.pan } }
+        hasShown = true
         gain.setAccessibilityLabel("Volume, \(t.name)")
         pan.setAccessibilityLabel("Pan, \(t.name)")
         mute.setAccessibilityLabel("Mute \(t.name)")
@@ -251,12 +341,18 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
         needsDisplay = true
     }
 
+    override func layout() {
+        super.layout()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        selectionLayer.frame = CGRect(x: 0, y: 1, width: bounds.width, height: bounds.height - 2)
+        strip.frame = CGRect(x: 0, y: 0, width: isSelected ? 5 : 3, height: bounds.height - 1)
+        CATransaction.commit()
+    }
+
     override func draw(_ dirtyRect: NSRect) {
-        (isSelected ? Theme.selectedHeader : Theme.panelRaised).setFill()
+        Theme.panelRaised.setFill()
         bounds.fill()
-        // Color strip: the track's identity, full height; desaturated when muted.
-        (muted ? TrackTint(base: color).muted : color).setFill()
-        NSRect(x: 0, y: 0, width: isSelected ? 5 : 3, height: bounds.height - 1).fill()
         Theme.separator.setFill()
         NSRect(x: 0, y: bounds.height - 1, width: bounds.width, height: 1).fill()
         Theme.hairline.setFill()
@@ -322,6 +418,7 @@ final class TrackHeaderColumn: NSView {
     private let insertLine = CALayer()
     private let addButton = IconButton("plus", help: "New Track (⌥⌘N)", size: 12)
     private var dropIndex: Int?
+    private var hasSynced = false
     var scrollY: CGFloat = 0 { didSet { needsLayout = true } }
     var selectedTrack: DalnokTrackId? { didSet { rows.forEach { $0.isSelected = $0.trackId == selectedTrack }; onSelect?(selectedTrack) } }
     var onSelect: ((DalnokTrackId?) -> Void)?
@@ -379,8 +476,36 @@ final class TrackHeaderColumn: NSView {
         let tracks = session.tracks
         if rows.map(\.trackId) != tracks.map(\.id) {
             var byId = Dictionary(uniqueKeysWithValues: rows.map { ($0.trackId, $0) })
-            rows = tracks.enumerated().map { i, t in byId.removeValue(forKey: t.id) ?? TrackHeaderRow(track: t, index: i, session: session) }
-            byId.values.forEach { $0.removeFromSuperview() }
+            var added: [TrackHeaderRow] = []
+            rows = tracks.enumerated().map { i, t in
+                if let row = byId.removeValue(forKey: t.id) { return row }
+                let row = TrackHeaderRow(track: t, index: i, session: session)
+                added.append(row)
+                return row
+            }
+            // Removed rows fade out; rows added after the first load fade and slide in (not on project open).
+            for gone in byId.values {
+                Motion.views(Motion.quick, { gone.animator().alphaValue = 0 }, completion: {
+                    DispatchQueue.main.async { gone.removeFromSuperview() }
+                })
+            }
+            if hasSynced && added.count <= 4 {
+                for row in added {
+                    row.alphaValue = 0
+                    DispatchQueue.main.async {
+                        Motion.layers(Motion.gentle) {
+                            let slide = CABasicAnimation(keyPath: "transform.translation.x")
+                            slide.fromValue = -24
+                            slide.toValue = 0
+                            slide.duration = Motion.reduced ? 0 : Motion.gentle
+                            slide.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                            row.layer?.add(slide, forKey: "slideIn")
+                        }
+                        Motion.views(Motion.gentle) { row.animator().alphaValue = 1 }
+                    }
+                }
+            }
+            hasSynced = true
             rows.forEach { if $0.superview == nil { rowClip.addSubview($0) } }
             rows.forEach { $0.column = self; $0.isSelected = $0.trackId == selectedTrack; $0.onInputMenu = { [weak self] r in self?.onInputMenu?(r) } }
             if let sel = selectedTrack, !tracks.contains(where: { $0.id == sel }) { selectedTrack = nil }

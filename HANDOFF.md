@@ -32,11 +32,16 @@ ADRs (especially ADR-0008 recording and ADR-0009 plugin hosting) before engine w
 - Not run: ASan on the app self-test this session; full `DALNOK_SANITIZE=1 scripts/check.sh` (only the targeted
   TSan suites above).
 
+## M9 additions (same day)
+Piano roll (`PianoRoll.swift`), bars-and-beats ruler and snapping (`TimelineView`), tempo/meter controls and a
+metronome (engine `renderClick`, C API `dalnok_metronome_set`), `Motion.swift` animations, and
+`scripts/make-test-project.sh`. 92 tests; self-test 185 checks in both themes; RT effects and TSan clean.
+
 ## Not verified / open
 - Latency compensation uses device-reported latency only (no loopback). Monitoring not checked by ear.
 - No power-loss test; kill-during-finalization was not targeted (the kill script hits journal creation and mid-take).
 - MiniLab not played into a recording. MIDI timing is block-accurate.
-- No piano roll editor, tempo map, metronome, bars-and-beats ruler, plugin loading, live theme switching.
+- No tempo map, count-in, plugin loading, live theme switching. Animations not judged by eye.
 - VoiceOver, keyboard-only and musician usability testing.
 - "Copy audio on save" may have been forced on by older self-test runs; the owner should check that setting.
 

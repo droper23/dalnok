@@ -107,7 +107,7 @@ enum PaletteIndex {
 
 @MainActor
 final class CommandPalette: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate {
-    private let panel: KeyPanel
+    private(set) var panel: KeyPanel
     private let field = NSTextField()
     private let table = NSTableView()
     private var all: [PaletteEntry] = []
@@ -182,19 +182,35 @@ final class CommandPalette: NSObject, NSTableViewDataSource, NSTableViewDelegate
     var onOpenGuide: (@MainActor (Concept) -> Void)?
     private(set) var matchedVia: [String?] = []
 
+    private var generation = 0
     func show(over window: NSWindow) {
+        generation += 1
         all = PaletteIndex.allEntries(openGuide: { [weak self] c in self?.onOpenGuide?(c) })
         field.stringValue = ""
         filter("")
         let f = window.frame
-        panel.setFrameOrigin(NSPoint(x: f.midX - panel.frame.width / 2, y: f.maxY - f.height * 0.18 - panel.frame.height))
+        let origin = NSPoint(x: f.midX - panel.frame.width / 2, y: f.maxY - f.height * 0.18 - panel.frame.height)
+        panel.setFrameOrigin(Motion.reduced ? origin : NSPoint(x: origin.x, y: origin.y + 8))
+        panel.alphaValue = Motion.reduced ? 1 : 0
         panel.makeKeyAndOrderFront(nil)
         panel.makeFirstResponder(field)
+        Motion.views(Motion.standard) {
+            panel.animator().alphaValue = 1
+            panel.animator().setFrameOrigin(origin)
+        }
     }
 
     func close() {
         guard panel.isVisible else { return }
-        panel.orderOut(nil)
+        generation += 1
+        if Motion.reduced { return panel.orderOut(nil) }
+        let p = panel, closing = generation
+        Motion.views(Motion.quick) { p.animator().alphaValue = 0 }
+        // Order out after the fade unless the palette was reopened meanwhile.
+        DispatchQueue.main.asyncAfter(deadline: .now() + Motion.quick + 0.03) { [weak self] in
+            guard let self, self.generation == closing else { return }
+            p.orderOut(nil)
+        }
     }
 
     func filter(_ query: String) {

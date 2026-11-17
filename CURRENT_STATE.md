@@ -5,7 +5,12 @@ milestone: M8 recording and MIDI integration done; plugin hosting (ADR-0009) nex
 ---
 # Current State
 
-## Latest session (M8: recording and MIDI integration)
+## Latest session (M9: piano roll, bars and beats, metronome, motion)
+- Piano roll (P or double-click a MIDI clip), bars-and-beats ruler/grid/snap/LCD, tempo and meter in the control bar, metronome (K), and app-wide motion that respects Reduce Motion. `scripts/make-test-project.sh` generates test projects.
+- Verified: 92 tests, GUI self-test 185 checks (both themes), RT effects and TSan clean. Animations are checked by state, not by eye.
+- Fixed a launch bug where the tempo field stole keyboard focus and disabled Space, R and Delete.
+
+## Previous session (M8: recording and MIDI integration)
 - **Recording to tracks works** on one duplex device: R chip / ⌃R arms a track, the header's input button picks the channel, Transport ▸ Record (R) records, and the take is placed as one undo step, shifted by the device-reported latency. Takes go to the project's `Audio Files` (unsaved projects: Application Support/Dalnok/Recordings). A take begins when the transport rolls; pausing or seeking ends it as failed, and a failed take is never placed (its valid part is saved as `… (recovered).wav`).
 - **Journals and crash recovery:** each take has a journal; File ▸ Recover Recordings… and `dalnok-cli recover-takes` convert unfinished takes without touching the capture file. `scripts/ci/record-crash.sh` kills real-time takes at three points; every recovered sample was exact. Power loss is untested.
 - **Hardware:** Scarlett Solo 4th Gen at 44.1 kHz, `dalnok-cli record`: 10 s and 120 s takes, 0 dropped frames. Latency compensation uses the device's own figures (1,186 frames ≈ 27 ms round trip) and has **not** been checked with a loopback measurement. Input monitoring is opt-in and was not checked by ear.
@@ -17,7 +22,7 @@ milestone: M8 recording and MIDI integration done; plugin hosting (ADR-0009) nex
 ## Latest verified build
 - `main`, 2026-11-16. macOS 27.3, Xcode 27.2, Swift 6.4.2, Apple clang 21, M3 Max.
 - `swift build` and release build: 0 warnings. `swift test --disable-sandbox`: 90 tests pass. `scripts/check.sh` passes (tests, capture/MIDI harnesses, record-crash, live smoke, GUI self-test).
-- GUI self-test: 154 checks, both Graphite and Warm Analog.
+- GUI self-test: 185 checks, both Graphite and Warm Analog. `swift test`: 92 tests.
 - TSan: recording, MIDI, plugin, live-path and capture suites clean; hardware capture test under TSan passed with the Scarlett. RT effect analysis (`scripts/ci/rt-effects.sh` with Xcode clang) clean, including the negative check.
 - Phase 1 exit review: [[Phase 1 Exit Review]]. UI audits: [[UI Audit 2026-11-16]], [[UI Audit 2026-11-16 follow-up]].
 - **Public parity page:** https://droper23.github.io/dalnok-status/ (source in `site/`, published by `scripts/publish-site.sh`).
@@ -77,7 +82,7 @@ slot, and retired ones come back through an SPSC queue. See [[System Overview]],
 
 ## Not yet / incomplete
 - Loopback latency measurement, power-loss validation, punch in/out, multiple armed audio tracks, separate input/output devices (built-in mic + speakers is refused with an explanation).
-- Piano roll editor, tempo changes, bars-and-beats ruler, metronome, sample-accurate MIDI input timing.
+- Tempo changes, count-in, piano roll marquee selection, sample-accurate MIDI input timing.
 - Plugin loading and processing (ADR-0009 stage 2 onward). Most VST3/CLAP kinds show as unknown until the sandboxed scan.
 - Automatic project-recovery prompting and retention controls; live theme switching.
 - Disk streaming. Media is fully decoded into RAM, about 23 MB per stereo minute at 48 kHz.
@@ -96,7 +101,7 @@ Finish validating recording (loopback latency, power loss, real keyboard), then 
 ## Next recommended action
 1. With a cable from the Scarlett's output to input 1, add and run a loopback latency measurement (`dalnok-cli`), then decide whether reported latency is trustworthy.
 2. Owner: play the MiniLab with `dalnok-cli midi-play <id> 20 --record`, and try recording in the app.
-3. Piano roll editor and a bars-and-beats ruler; metronome.
+3. Piano roll marquee selection and keyboard note entry; tempo map; count-in.
 4. ADR-0009 stage 2: `dalnok-scan` helper process, then the VST3 adapter.
 
 ## Open migration items

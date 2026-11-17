@@ -1,7 +1,7 @@
 {
   "product": "Dalnok",
   "updated": "2026-11-16",
-  "milestone": "Recording and MIDI integration (M8)",
+  "milestone": "Recording, MIDI editing and motion (M8–M9)",
   "rubric": "Each feature is split into concrete steps. A verified step (backed by an automated test, the app's end-to-end self-test, or a measured benchmark) counts 1. An implemented-but-unverified step counts 0.5. Planned steps count 0. Feature % = step score ÷ steps. Overall parity weights features by priority (P0 = 3, P1 = 2, P2 = 1). A reference DAW's parity covers only the features that DAW has.",
   "references": {
     "logic": "Logic Pro",
@@ -31,6 +31,10 @@
     {
       "file": "screenshots/recording-midi.png",
       "caption": "Recording and MIDI: R chips arm tracks, each header shows its input (IN 1 or MIDI), the record button sits next to Play, and MIDI clips show their notes."
+    },
+    {
+      "file": "screenshots/piano-roll.png",
+      "caption": "Piano roll: notes shaded by velocity, a velocity lane, bars-and-beats grid; every gesture is one undo step."
     },
     {
       "file": "screenshots/warm-analog.png",
@@ -1232,11 +1236,15 @@
           "implemented"
         ],
         [
-          "Piano roll editor",
-          "todo"
+          "Piano roll: add, move, resize, delete, transpose and nudge notes; one undo step per gesture",
+          "verified"
         ],
         [
-          "Velocity editing in an editor",
+          "Velocity lane editing",
+          "verified"
+        ],
+        [
+          "Marquee selection, note preview while stopped for unarmed tracks, scale and chord tools",
           "todo"
         ],
         [
@@ -1248,7 +1256,7 @@
           "todo"
         ]
       ],
-      "evidence": "MidiTests: recording, quantize, persistence, split rendering, and a Core MIDI virtual source driving the instrument through a real input port (TSan clean). The app self-test plays live MIDI through the running device, records a note through the menus and quantizes. Input events are stamped at the start of the audio callback that receives them, so timing is up to one buffer late. The Arturia MiniLab has not been played into a recording yet."
+      "evidence": "MidiTests: recording, quantize, persistence, split rendering, and a Core MIDI virtual source driving the instrument through a real input port (TSan clean). The app self-test plays live MIDI through the running device, records a note through the menus and quantizes. Input events are stamped at the start of the audio callback that receives them, so timing is up to one buffer late. The Arturia MiniLab has not been played into a recording yet. The piano roll is driven by the GUI self-test with synthesized mouse and key events (add, drag, resize, velocity, transpose, nudge, delete, undo, select all)."
     },
     {
       "id": "tempo",
@@ -1263,7 +1271,15 @@
       "why": "Bars and beats, click track, tempo changes.",
       "steps": [
         [
-          "Project tempo and meter (saved; drives quantize and new clip length)",
+          "Project tempo and meter, edited in the control bar (saved; drives quantize, ruler and grid)",
+          "verified"
+        ],
+        [
+          "Bars-and-beats ruler, grid, snapping and position display",
+          "verified"
+        ],
+        [
+          "Metronome (accented downbeats; never in exports)",
           "verified"
         ],
         [
@@ -1275,15 +1291,11 @@
           "todo"
         ],
         [
-          "Bars-and-beats ruler",
-          "todo"
-        ],
-        [
-          "Metronome",
+          "Count-in",
           "todo"
         ]
       ],
-      "evidence": "MidiTests (tempo validation, persistence and quantize grid). One constant tempo only."
+      "evidence": "MidiTests (tempo validation, persistence, quantize grid) and Metronome tests (click on the exact beat sample, 1.6 kHz accent / 1 kHz beat, silent in offline renders). The self-test edits tempo and meter in the control bar, checks the bars-and-beats position display and toggles the metronome, confirming it reaches the output past the end of the session. One constant tempo only."
     },
     {
       "id": "palette",
@@ -1400,6 +1412,10 @@
           "verified"
         ],
         [
+          "Motion: lit chip glow and press, knob glide on undo, record pulse, metronome tick, selection glide, fades (respects Reduce Motion)",
+          "verified"
+        ],
+        [
           "Live theme switching",
           "todo"
         ],
@@ -1412,7 +1428,7 @@
           "todo"
         ]
       ],
-      "evidence": "UI audit, reviewed screenshots, and app self-tests in both themes. Theme changes require reopening; VoiceOver and all auxiliary windows are not yet verified.",
+      "evidence": "UI audit, reviewed screenshots, and app self-tests in both themes. Theme changes require reopening; VoiceOver and all auxiliary windows are not yet verified. Motion: the self-test checks that knobs glide after undo, the record button pulses and the palette fades, and that all of it is instant with Reduce Motion.",
       "screenshot": "screenshots/warm-analog.png"
     },
     {

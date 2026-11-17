@@ -32,6 +32,8 @@ usage:
   dalnok-cli simulate-record <folder> <seconds>                         record generated input in real time (crash tests)
   dalnok-cli recover-takes <folder>                                      recover unfinished takes from their journals
   dalnok-cli midi-play <source-id> <seconds> [--record]                  play (and record) the built-in synth from MIDI
+  dalnok-cli make-test-project <folder> [--preset demo|band|midi|states|large] [--rate R] [--bpm B] [--tracks N] [--seconds S]
+                                                                         generate a deterministic test project (no external files)
   dalnok-cli plugins [--no-au] [--folder F]                              list VST3, CLAP and Audio Unit plugins (no code loaded)
   dalnok-cli bench [--tracks N] [--seconds S]                          render-cost benchmark (no device)
   dalnok-cli import <project.rpp|.als|.logicx|.fcpxml|stems-folder> [--save out.dalnok] [--render out.wav] [--quiet]
@@ -177,6 +179,16 @@ case "midi-play":
         print("recorded \(result.notes) notes on track \(track); dropped \(dalnok_midi_dropped(engine)) events")
         if status != DALNOK_OK { fail(cstr(err)) }
     }
+
+case "make-test-project":
+    let folder = URL(fileURLWithPath: args[1], isDirectory: true)
+    if FileManager.default.fileExists(atPath: folder.appendingPathComponent("Audio Files").path) {
+        fail("\(folder.path) already contains a project; choose an empty folder")
+    }
+    let project = try TestProject.make(folder: folder, preset: opt("--preset") ?? "demo",
+                                       rate: Double(opt("--rate") ?? "48000") ?? 48_000, bpm: Double(opt("--bpm") ?? "120") ?? 120,
+                                       tracks: Int(opt("--tracks") ?? "64") ?? 64, seconds: Double(opt("--seconds") ?? "30") ?? 30)
+    print(project.path)
 
 case "plugins":
     let folder = opt("--folder")

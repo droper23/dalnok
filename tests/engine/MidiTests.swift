@@ -224,3 +224,40 @@ func oneNoteSession(pitch: UInt8 = 69, velocity: UInt8 = 127) -> (OpaquePointer,
         #expect(l.allSatisfy { abs($0) < 1e-6 })
     }
 }
+
+@Suite struct Metronome {
+    /// Pumps `frames` of live output with the transport rolling from 0.
+    func live(_ e: OpaquePointer, _ frames: Int) -> [Float] {
+        var out: [Float] = [], l = [Float](repeating: 0, count: 512), r = l
+        dalnok_transport_play(e)
+        while out.count < frames { dalnok_engine_pump(e, &l, &r, 512); out += l }
+        return Array(out.prefix(frames))
+    }
+
+    @Test func clicksOnEveryBeatWithAccentedBars() {
+        let e = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(e) }
+        dalnok_tempo_set(e, 120, 3, 4) // 24,000 frames per beat, 3 beats per bar
+        dalnok_metronome_set(e, true, 0.5)
+        let out = live(e, 24_000 * 4)
+        for beat in 0..<4 {
+            let at = beat * 24_000
+            #expect(out[at] != 0 && (at == 0 || out[at - 1] == 0), "click starts exactly on beat \(beat)")
+            #expect(out[(at + 4_000)..<(at + 23_000)].allSatisfy { $0 == 0 }, "silence between clicks after beat \(beat)")
+        }
+        // Accent: bar starts (beats 0 and 3) are higher and louder than beats 1 and 2.
+        let accent = frequency(out[0..<2_000][...]), normal = frequency(out[24_000..<26_000][...])
+        #expect(abs(accent - 1_600) < 40 && abs(normal - 1_000) < 40, "accent \(accent) Hz, beat \(normal) Hz")
+        #expect(abs(out[72_000 + 2]) > abs(out[24_000 + 2]) * 1.2) // bar 2 accented
+    }
+
+    @Test func neverInOfflineRendersAndSilentWhenOff() {
+        let e = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(e) }
+        dalnok_metronome_set(e, true, 1)
+        var l = [Float](repeating: 1, count: 48_000), r = l
+        dalnok_render_offline(e, 0, 48_000, &l, &r)
+        #expect(l.allSatisfy { $0 == 0 })
+        dalnok_metronome_set(e, false, 1)
+        #expect(live(e, 48_000).allSatisfy { $0 == 0 })
+        #expect(runCommand(e, "transport.setMetronome", #"{"on":true}"#).0 == DALNOK_OK && dalnok_metronome_enabled(e))
+    }
+}

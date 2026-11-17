@@ -59,6 +59,9 @@ Still open:
   MIDI work; a piano roll editor.
 - VoiceOver, keyboard-only use and musician usability testing remain untested. Record arm and input buttons have
   accessibility labels, but nobody has used them with VoiceOver.
+- Pass 3 added motion (see `Motion.swift`): short ease-out transitions (0.12–0.24 s) on state that changes, a
+  breathing pulse only for "recording now", and a beat tick on the metronome button. All of it is skipped with
+  Reduce Motion. The piano roll's keyboard was redrawn after its first screenshot looked like a barcode.
 - Recording with built-in microphone and speakers is refused (two devices, two clocks) with an explanation;
   supporting it needs aggregate devices or drift correction (ADR-0008).
 

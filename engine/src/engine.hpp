@@ -124,6 +124,13 @@ public:
     void setRecordLatencyOffset(int64_t frames) { latencyOffset_ = frames; }
     int64_t recordLatency() const; // device-reported round trip + offset
     void setMonitoring(bool on) { monitoring_.store(on, std::memory_order_relaxed); }
+    // Metronome: a click on every beat (accented on the bar) while the transport rolls. Live path only;
+    // offline renders and exports never contain it.
+    void setMetronome(bool on, float level) {
+        metronomeLevel_.store(std::clamp(level, 0.0f, 1.0f), std::memory_order_relaxed);
+        metronome_.store(on, std::memory_order_relaxed);
+    }
+    bool metronome() const { return metronome_.load(std::memory_order_relaxed); }
     bool monitoring() const { return monitoring_.load(std::memory_order_relaxed); }
     void setSimulatedLatency(int64_t frames) { simulatedLatency_ = frames; }
     // Runs one duplex cycle on the simulated input device (tests and simulation).
@@ -256,6 +263,7 @@ private:
     static void duplexCallback(void *ctx, float *left, float *right, const float *input, int frames) DALNOK_NONBLOCKING;
     void process(float *left, float *right, int frames) DALNOK_NONBLOCKING;
     void handleMidiInput(int64_t pos) DALNOK_NONBLOCKING;
+    void renderClick(float *left, float *right, int frames, int64_t pos) DALNOK_NONBLOCKING;
     void drainRecordedMidi();
     void waitForAudioCycles();
     bool validNotes(const std::vector<MidiNote> &notes, std::string &err) const;
@@ -318,6 +326,8 @@ private:
     int64_t rtRecordNext_ = -1;
     bool rtRecordingBlock_ = false;
     uint32_t rtTake_ = 0;
+    float clickY1_ = 0, clickY2_ = 0, clickCoefNow_ = 0, clickEnv_ = 0;
+    int clickLeft_ = 0;
     RecordedMidi rtMidiEvents_[256]{};
     int rtMidiCount_ = 0;
     std::atomic<float> masterPeakL_{0.0f}, masterPeakR_{0.0f};
@@ -325,6 +335,12 @@ private:
     // Shared atomics.
     std::atomic<bool> playing_{false};
     std::atomic<int32_t> soloCount_{0};
+    std::atomic<bool> metronome_{false};
+    std::atomic<float> metronomeLevel_{0.5f};
+    std::atomic<double> beatFrames_{24000};
+    std::atomic<int32_t> beatsPerBar_{4};
+    // Click oscillator coefficients (control thread computes them; see syncRuntimes).
+    std::atomic<float> clickCoef_{0}, clickAccentCoef_{0}, clickSin_{0}, clickAccentSin_{0}, clickDecay_{0};
     std::atomic<int64_t> seekRequest_{-1};
     std::atomic<int64_t> position_{0};
 

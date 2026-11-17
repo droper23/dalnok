@@ -1,6 +1,16 @@
 # Changelog
 
 ## [Unreleased]
+### Added (2026-11-16, MIDI editing, tempo and motion, M9)
+- Piano roll (Clip ▸ Piano Roll, P, or double-click a MIDI clip): add, move, resize, delete, transpose and nudge notes, a velocity lane, quantize the selection; each gesture is one undo step.
+- Bars-and-beats ruler, grid, snapping and position display (View ▸ Bars and Beats Ruler, ⌥⌘B); tempo and meter in the control bar (⌥⌘T edits the tempo).
+- Metronome (Transport ▸ Metronome, K; control-bar button) with accented downbeats; never in exports.
+- Motion: chips light up with a glow and press in, knobs glide and show their ring when undo or scripts change them, the record button and armed chips pulse while recording, the metronome button ticks on the beat, the selection halo glides between clips, and rows, the palette, the empty state and status text fade. Everything is instant with Reduce Motion.
+- `scripts/make-test-project.sh` and `dalnok-cli make-test-project`: deterministic generated projects (demo, band, midi, states, large) with optional screenshots in both themes.
+### Fixed
+- At launch the tempo field took keyboard focus, so Space, R and Delete counted as typing and did nothing.
+- Long track names squeezed the R/M/S chips.
+- Delete in the piano roll could have deleted the selected timeline clip; it now removes notes.
 ### Added (2026-11-16, recording and MIDI integration, M8)
 - Recording to tracks: R chip and ⌃R record-arm, per-track input channel, Transport ▸ Record (R) and a record button. A take starts when the transport rolls and is placed on the armed track as one undo step ("Record"), shifted by the device-reported latency. Takes are saved in the project's `Audio Files` (or Application Support/Dalnok/Recordings for unsaved projects).
 - Take journals and File ▸ Recover Recordings…: unfinished takes (after a crash) are converted to `<name> (recovered).wav` without touching the capture file. Interrupted takes (transport paused or moved) are never placed; their valid part is saved and reported.

@@ -18,7 +18,12 @@ final class TimelineView: NSView {
     var onSeek: (() -> Void)?
     var onSelectionChange: (() -> Void)?
 
-    var selectedClip: DalnokClipId? { didSet { needsDisplay = true; onSelectionChange?() } }
+    var selectedClip: DalnokClipId? {
+        didSet { if oldValue != selectedClip { animateSelection = true }; needsDisplay = true; onSelectionChange?() }
+    }
+    /// A soft halo in the clip's color that glides from the old selection to the new one.
+    private let selectionGlow = CAShapeLayer()
+    private var animateSelection = false
     var onClipSelected: ((ClipView) -> Void)?
     private var hoveredClip: DalnokClipId? { didSet { if hoveredClip != oldValue { needsDisplay = true } } }
 
@@ -57,6 +62,67 @@ final class TimelineView: NSView {
         playheadCap.shadowRadius = 2
         playheadCap.shadowOffset = .zero
         layer?.addSublayer(playheadCap)
+        selectionGlow.fillColor = nil
+        selectionGlow.lineWidth = 1.5
+        selectionGlow.strokeColor = Theme.selection.withAlphaComponent(0.9).cgColor
+        selectionGlow.shadowRadius = 7
+        selectionGlow.shadowOpacity = 0.85
+        selectionGlow.shadowOffset = .zero
+        selectionGlow.opacity = 0
+        selectionGlow.zPosition = 5
+        layer?.addSublayer(selectionGlow)
+    }
+
+    /// The playhead glows while the transport runs (red while recording).
+    func setTransportState(playing: Bool, recording: Bool) {
+        Motion.layers(Motion.gentle) {
+            let color = recording ? Theme.recordOn : Theme.playhead
+            playheadCap.fillColor = color.cgColor
+            playheadLayer.backgroundColor = color.withAlphaComponent(0.9).cgColor
+            playheadCap.shadowColor = color.cgColor
+            playheadCap.shadowRadius = playing ? 6 : 2
+            playheadCap.shadowOpacity = playing ? 0.9 : 0.5
+        }
+    }
+
+    private func updateSelectionGlow() {
+        var target: (rect: CGRect, color: NSColor)?
+        if let id = selectedClip {
+            for (i, t) in session.tracks.enumerated() {
+                if let c = t.clips.first(where: { $0.id == id }) {
+                    target = (clipRect(c, laneY: laneY(i)).insetBy(dx: -0.5, dy: -0.5), t.color)
+                    break
+                }
+            }
+        }
+        let animate = animateSelection && !Motion.reduced
+        animateSelection = false
+        guard let target, target.rect.maxY > Theme.rulerHeight else {
+            Motion.layers(animate ? Motion.quick : 0) { selectionGlow.opacity = 0 }
+            return
+        }
+        let path = CGPath(roundedRect: target.rect, cornerWidth: 3.5, cornerHeight: 3.5, transform: nil)
+        if animate, selectionGlow.opacity > 0.5, let from = selectionGlow.path {
+            let a = CABasicAnimation(keyPath: "path")
+            a.fromValue = from
+            a.toValue = path
+            a.duration = Motion.gentle
+            a.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            selectionGlow.add(a, forKey: "glide")
+        } else if animate {
+            let a = CABasicAnimation(keyPath: "opacity")
+            a.fromValue = 0
+            a.toValue = 1
+            a.duration = Motion.standard
+            selectionGlow.add(a, forKey: "appear")
+        }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        selectionGlow.frame = bounds
+        selectionGlow.path = path
+        selectionGlow.opacity = 1
+        selectionGlow.shadowColor = target.color.cgColor
+        CATransaction.commit()
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -110,11 +176,43 @@ final class TimelineView: NSView {
         return steps.first { $0 >= target } ?? 600
     }
 
+    // MARK: Bars and beats
+
+    /// Ruler and grid in bars and beats (default, as in Logic) or minutes and seconds.
+    static var barsAndBeats: Bool {
+        get { UserDefaults.standard.object(forKey: "rulerBarsAndBeats") as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: "rulerBarsAndBeats") }
+    }
+    var framesPerBeat: Double { sampleRate * 60 / session.bpm }
+    var beatsPerBar: Double { let m = session.meter; return Double(m.0) * 4 / Double(m.1) }
+
+    /// Ruler step in frames for the current zoom (about 90 points apart).
+    func gridStepFrames() -> Double {
+        guard Self.barsAndBeats else { return gridStep() * sampleRate }
+        let target = framesPerPoint * 90 / framesPerBeat
+        let bar = beatsPerBar
+        let steps = [0.0625, 0.125, 0.25, 0.5, 1] + [1.0, 2, 4, 8, 16, 32, 64, 128, 256].map { $0 * bar }
+        return (steps.first { $0 >= target } ?? steps.last!) * framesPerBeat
+    }
+
+    /// Snapping unit: a quarter of the ruler step (a 16th note when the ruler shows beats).
+    func snapQuantum() -> Double { gridStepFrames() / 4 }
+
+    /// "bar.beat.sixteenth" (1-based) for a frame, or the bar alone for whole-bar steps.
+    func barsLabel(_ frame: Double, wholeBars: Bool) -> String {
+        let beats = (frame / framesPerBeat * 4).rounded() / 4
+        let bar = Int((beats / beatsPerBar + 1e-9).rounded(.down))
+        let inBar = beats - Double(bar) * beatsPerBar
+        if wholeBars || inBar < 1e-9 { return "\(bar + 1)" }
+        let beat = Int(inBar + 1e-9), sixteenth = Int(((inBar - Double(beat)) * 4).rounded())
+        return sixteenth == 0 ? "\(bar + 1).\(beat + 1)" : "\(bar + 1).\(beat + 1).\(sixteenth + 1)"
+    }
+
     /// Snaps to the minor grid (a quarter of the ruler step). Hold Control to bypass.
     func snap(_ frame: Double, bypass: Bool) -> Int64 {
         let f = max(0, frame)
         guard !bypass else { return Int64(f.rounded()) }
-        let q = gridStep() / 4 * sampleRate
+        let q = snapQuantum()
         return Int64((f / q).rounded() * q)
     }
 
@@ -132,6 +230,7 @@ final class TimelineView: NSView {
             if let rec = recording, rec.tracks.contains(track.id) { drawRecording(ctx, rec, laneY: y) }
         }
         drawRuler(ctx, scale: scale)
+        updateSelectionGlow()
 
     }
 
@@ -185,6 +284,11 @@ final class TimelineView: NSView {
         }
     }
 
+    /// Double-click on a MIDI clip (opens the piano roll).
+    var onOpenClip: ((ClipView) -> Void)?
+    /// Any click in the arrangement (returns editing commands to it).
+    var onActivate: (() -> Void)?
+
     var highlightedTrack: DalnokTrackId? { didSet { if oldValue != highlightedTrack { needsDisplay = true } } }
 
     private func drawLanes(_ ctx: CGContext) {
@@ -200,15 +304,18 @@ final class TimelineView: NSView {
     }
 
     private func drawGrid(_ ctx: CGContext, scale: CGFloat) {
-        let step = gridStep()
-        var t = floor(frame(forX: 0) / sampleRate / step) * step
-        let endT = frame(forX: bounds.width) / sampleRate
+        let step = gridStepFrames()
+        var t = floor(frame(forX: 0) / step) * step
+        let endT = frame(forX: bounds.width)
         let px = 1 / scale
+        let barFrames = beatsPerBar * framesPerBeat
         while t <= endT {
-            let x = (xPos(forFrame: t * sampleRate) * scale).rounded() / scale
-            ctx.setFillColor(Theme.gridMajor.cgColor)
+            let x = (xPos(forFrame: t) * scale).rounded() / scale
+            // Bar lines are stronger than beat lines when the grid shows beats.
+            let isBar = !Self.barsAndBeats || step >= barFrames || abs((t / barFrames).rounded() * barFrames - t) < 1
+            ctx.setFillColor((isBar ? Theme.gridMajor : Theme.gridMinor.withAlphaComponent(0.06)).cgColor)
             ctx.fill(CGRect(x: x, y: Theme.rulerHeight, width: px, height: bounds.height))
-            let mx = xPos(forFrame: (t + step / 2) * sampleRate)
+            let mx = xPos(forFrame: t + step / 2)
             ctx.setFillColor(Theme.gridMinor.cgColor)
             ctx.fill(CGRect(x: (mx * scale).rounded() / scale, y: Theme.rulerHeight, width: px, height: bounds.height))
             t += step
@@ -221,23 +328,37 @@ final class TimelineView: NSView {
         ctx.setFillColor(Theme.separator.cgColor)
         ctx.fill(CGRect(x: 0, y: Theme.rulerHeight - 1, width: bounds.width, height: 1))
 
-        let step = gridStep()
-        var t = floor(frame(forX: 0) / sampleRate / step) * step
-        let endT = frame(forX: bounds.width) / sampleRate
+        let step = gridStepFrames()
+        var t = floor(frame(forX: 0) / step) * step
+        let endT = frame(forX: bounds.width)
         let attrs: [NSAttributedString.Key: Any] = [.font: Theme.mono(10), .foregroundColor: Theme.textDim]
         let px = 1 / scale
+        let wholeBars = step >= beatsPerBar * framesPerBeat - 1
         while t <= endT + step {
-            let x = (xPos(forFrame: t * sampleRate) * scale).rounded() / scale
+            let x = (xPos(forFrame: t) * scale).rounded() / scale
             ctx.setFillColor(Theme.textFaint.cgColor)
             ctx.fill(CGRect(x: x, y: 4, width: px, height: Theme.rulerHeight - 5))
             ctx.setFillColor(Theme.hex(0xFFFFFF, 0.12).cgColor)
             for k in 1..<4 {
-                let tx = (xPos(forFrame: (t + step * Double(k) / 4) * sampleRate) * scale).rounded() / scale
+                let tx = (xPos(forFrame: t + step * Double(k) / 4) * scale).rounded() / scale
                 ctx.fill(CGRect(x: tx, y: Theme.rulerHeight - (k == 2 ? 8 : 5), width: px, height: k == 2 ? 7 : 4))
             }
-            if t >= 0 { (Self.formatTime(t, step: step) as NSString).draw(at: CGPoint(x: x + 4, y: 5), withAttributes: attrs) }
+            if t >= 0 {
+                let label = Self.barsAndBeats ? barsLabel(t, wholeBars: wholeBars) : Self.formatTime(t / sampleRate, step: step / sampleRate)
+                (label as NSString).draw(at: CGPoint(x: x + 4, y: 5), withAttributes: attrs)
+            }
             t += step
         }
+    }
+
+    /// Position display text: "bar.beat.sixteenth.tick" (240 ticks per 16th) or minutes and seconds.
+    func positionText(_ frame: Int64) -> String {
+        guard Self.barsAndBeats else { return Self.formatTime(Double(frame) / sampleRate) }
+        let sixteenths = Double(frame) / framesPerBeat * 4
+        let whole = Int(sixteenths.rounded(.down)), ticks = Int((sixteenths - Double(whole)) * 240)
+        let perBar = Int((beatsPerBar * 4).rounded())
+        let bar = whole / max(perBar, 1), inBar = whole % max(perBar, 1)
+        return String(format: "%d.%d.%d.%03d", bar + 1, inBar / 4 + 1, inBar % 4 + 1, ticks)
     }
 
     static func formatTime(_ t: Double, step: Double = 0.001) -> String {
@@ -446,6 +567,7 @@ final class TimelineView: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
+        onActivate?()
         let p = convert(event.locationInWindow, from: nil)
         if p.y < Theme.rulerHeight { seek(toX: p.x); return }
         guard let (clip, zone) = hit(p) else {
@@ -455,6 +577,7 @@ final class TimelineView: NSView {
         }
         selectedClip = clip.id
         onClipSelected?(clip)
+        if event.clickCount == 2 && clip.isMidi { onOpenClip?(clip); return }
         let stretch = zone == .rightEdge && event.modifierFlags.contains(.option)
         drag = Drag(clip: clip, zone: zone, startX: p.x, stretch: stretch)
         session.engine.beginGroup(stretch ? "Time Stretch" : zone == .body ? "Move Clip"

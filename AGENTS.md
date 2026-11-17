@@ -30,6 +30,11 @@ Swift/AppKit front end on macOS. GPL-3.0-or-later. This repo is also the project
 - `dalnok-cli record <device> <ch> <s> <folder>` records an armed track on real hardware; `simulate-record`,
   `recover-takes`, `midi-play`, and `plugins` cover crash tests, recovery, MIDI input and plugin discovery.
   `scripts/ci/record-crash.sh` kills real-time takes and checks every recovered sample.
+- `scripts/make-test-project.sh <folder> [demo|band|midi|states|large] [--screenshots] [--open]` generates
+  deterministic projects (synthesized audio and MIDI) and optional both-theme snapshots. Use these, never the
+  owner's material, for screenshots, UI checks and bug repros.
+- Animations go through `app/macos/Dalnok/Motion.swift` (respects Reduce Motion; off during snapshots and tests
+  unless a test turns it on).
 - Tests record through `DALNOK_SIMULATED_INPUT` + `dalnok_engine_pump_input`, which runs the real duplex callback.
 - Time-stretch is rendered off the audio thread (`stretch_cache.*`, `engine/dsp`, ADR-0007). The audio
   thread must only ever copy finished Media.

@@ -450,6 +450,11 @@ void dalnok_transport_seek(DalnokEngine *engine, int64_t frame);
 bool dalnok_transport_is_playing(const DalnokEngine *engine);   /* [any thread] */
 int64_t dalnok_transport_position(const DalnokEngine *engine);  /* [any thread] */
 
+/* Metronome: a click on each beat (accented on bar starts) while the transport
+ * rolls, also while recording. Live output only; never in offline renders or exports. */
+void dalnok_metronome_set(DalnokEngine *engine, bool on, float level);
+bool dalnok_metronome_enabled(const DalnokEngine *engine);
+
 /* ---- Offline rendering ----------------------------------------------- */
 
 /* Renders the current model (ignoring the live transport) into caller-provided
