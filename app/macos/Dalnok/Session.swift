@@ -289,6 +289,12 @@ final class Session {
     }
     func removePlugin(_ t: DalnokTrackId, _ slot: Int32) { dalnok_plugin_remove(h, t, slot); refresh() }
     func pluginBypassed(_ t: DalnokTrackId, _ slot: Int32) -> Bool { dalnok_plugin_bypassed(h, t, slot) }
+    /// Moves a plug-in to `index` in the track's chain (one undo step).
+    @discardableResult func movePlugin(_ t: DalnokTrackId, _ slot: Int32, to index: Int) -> Bool {
+        let ok = dalnok_plugin_move(h, t, slot, Int32(index)) == DALNOK_OK
+        refresh()
+        return ok
+    }
     /// Bypass (footswitch / power button): one undo step.
     func setPluginBypassed(_ t: DalnokTrackId, _ slot: Int32, _ bypassed: Bool) { dalnok_plugin_set_bypassed(h, t, slot, bypassed); refresh() }
     func setPluginControls(_ t: DalnokTrackId, _ slot: Int32, _ ids: [UInt32]) {

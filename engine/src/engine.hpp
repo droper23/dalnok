@@ -278,6 +278,8 @@ public:
     bool setSidechain(DalnokTrackId track, int32_t slot, DalnokTrackId source, std::string &err);
     // Bypass: a bypassed effect is left out of the insert chain (and its latency); a bypassed instrument is silent.
     bool setPluginBypassed(DalnokTrackId track, int32_t slot, bool bypassed, std::string &err);
+    // Moves a plug-in to `index` in the track's list (insert order = processing order). Undoable.
+    bool movePlugin(DalnokTrackId track, int32_t slot, int32_t index, std::string &err);
     bool pluginHasSidechain(int32_t slot) const { auto it = plugins_.find(slot); return it != plugins_.end() && it->second && it->second->hasSidechain(); }
     // Summing stacks: a stack bus placed above its members, which are routed into it. One undo step each.
     DalnokTrackId makeStack(const std::vector<DalnokTrackId> &members, const std::string &name, std::string &err);
@@ -335,6 +337,15 @@ public:
     bool moveClip(DalnokClipId id, DalnokTrackId track, int64_t start, std::string &err);
     bool setClipRegion(DalnokClipId id, int64_t start, int64_t offset, int64_t length, std::string &err);
     DalnokClipId splitClip(DalnokClipId id, int64_t at, std::string &err);
+    // Copies clips with every attribute (fades, gain, stretch, MIDI notes shared copy-on-write) as one undo step.
+    // The earliest clip lands at `start`; tracks shift by `trackShift` places in arrangement order (0 = same tracks).
+    // Returns the new ids in the order given, or empty on failure (nothing changes).
+    std::vector<DalnokClipId> copyClips(const std::vector<DalnokClipId> &ids, int64_t start, int32_t trackShift, std::string &err);
+    // Clipboard: copies of clips held outside the model (not undoable), so Cut then Paste works after the source is
+    // gone. Paste puts the topmost source track's clips on `track`, the rest the same number of tracks below.
+    bool copyToClipboard(const std::vector<DalnokClipId> &ids, std::string &err);
+    std::vector<DalnokClipId> pasteClipboard(DalnokTrackId track, int64_t start, std::string &err);
+    size_t clipboardCount() const { return clipboard_.size(); }
     bool setClipFades(DalnokClipId id, int64_t fadeIn, int64_t fadeOut, int32_t curve, std::string &err);
     bool setClipGain(DalnokClipId id, float gainDb, std::string &err);
     // Time-stretch: new timeline length and speed (source span = length × rate), pitch, mode.
@@ -437,6 +448,8 @@ private:
     uint64_t revision_ = 1, savedRevision_ = 1;
     DalnokTrackId nextTrack_ = 1;
     DalnokClipId nextClip_ = 1;
+    struct ClipboardEntry { ClipState clip; int32_t row = 0; };
+    std::vector<ClipboardEntry> clipboard_;
     DalnokMediaId nextMedia_ = 1;
     int32_t nextColor_ = 0;
     std::unique_ptr<CaptureSpool> captureSpool_;

@@ -508,7 +508,6 @@ final class PianoRollView: NSView {
 
     override func keyDown(with event: NSEvent) {
         guard let c = clip else { return super.keyDown(with: event) }
-        let chars = event.charactersIgnoringModifiers ?? ""
         let shift = event.modifierFlags.contains(.shift)
         if event.modifierFlags.contains(.option), (123...126).contains(event.keyCode) {
             let f = entryFrame ?? Double(c.start)
@@ -521,8 +520,11 @@ final class PianoRollView: NSView {
             }
             return
         }
-        switch event.keyCode {
-        case 36, 76: // Return / keypad Enter: step entry inside the clip
+        if event.keyCode == 51 || event.keyCode == 117 { deleteSelection(); return } // usually arrives through Edit ▸ Delete
+        // Editing keys come from the shortcut registry (piano-roll context), so they can be reassigned.
+        let action = KeyCombo(event: event).flatMap { ShortcutRegistry.shared.resolve($0, context: .pianoRoll) }
+        switch action?.id {
+        case "midi.step_insert":
             let f = entryFrame ?? Double(c.start)
             let rel = Int64(f.rounded()) - c.start + c.offset
             guard rel >= c.offset, rel < c.offset + c.length else { return }
@@ -530,20 +532,17 @@ final class PianoRollView: NSView {
             commit(c.notes.filter { key($0) != key(n) } + [n], select: [key(n)])
             previewNote(n.pitch, n.velocity)
             entryFrame = min(Double(c.end), f + snapFrames)
-        case 51, 117: // delete, forward delete (usually arrives through Edit ▸ Delete)
-            deleteSelection()
-        case 126, 125: // up, down
-            transpose(by: (event.keyCode == 126 ? 1 : -1) * (shift ? 12 : 1))
-        case 123, 124: // left, right
-            nudge(by: Int64((event.keyCode == 124 ? 1 : -1) * snapFrames))
+        case "midi.transpose_up": transpose(by: 1)
+        case "midi.transpose_down": transpose(by: -1)
+        case "midi.transpose_octave_up": transpose(by: 12)
+        case "midi.transpose_octave_down": transpose(by: -12)
+        case "midi.nudge_left": nudge(by: -Int64(snapFrames))
+        case "midi.nudge_right": nudge(by: Int64(snapFrames))
+        case "midi.select_all": selection = Set(visibleNotes(c).map(key))
+        case "midi.quantize": quantizeSelection()
         default:
-            if chars == "a" && event.modifierFlags.contains(.command) {
-                selection = Set(visibleNotes(c).map(key))
-            } else if chars == "q" {
-                quantizeSelection()
-            } else {
-                super.keyDown(with: event)
-            }
+            if action?.item != nil, ShortcutRegistry.shared.perform(action!) { return } // a global command (e.g. Play)
+            super.keyDown(with: event)
         }
     }
 

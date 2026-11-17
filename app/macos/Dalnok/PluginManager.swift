@@ -1,29 +1,90 @@
-// Audio ▸ Plug-ins…: every VST3, CLAP and Audio Unit plugin Dalnok can see, with its scan status.
-// Opening the window reads metadata only. "Scan Plug-ins" loads each plugin in a separate dalnok-scan
-// process (ADR-0009), so a plugin that crashes or hangs is listed as such instead of crashing Dalnok.
-// Hosting (loading a plugin onto a track) is later Phase 4 work.
+// Audio ▸ Plug-ins… (⌥⌘P): the plug-in browser. Every VST3, CLAP and Audio Unit plug-in Dalnok can see, organised by
+// what it does (Instruments, Audio Effects, MIDI Effects and their categories), with fuzzy search, format and vendor
+// filters, favourites, recently and frequently used plug-ins, your own collections and tags, and scan status.
+// Double-click (or Return) inserts on the selected track; drag a plug-in onto a track header or the device panel.
+// Opening the window reads metadata only. "Scan Plug-ins" loads each plug-in in a separate dalnok-scan process
+// (ADR-0009), so a plug-in that crashes or hangs is listed as such instead of crashing Dalnok.
 // SPDX-License-Identifier: GPL-3.0-or-later
 import AppKit
 import DalnokEngine
+
+extension NSPasteboard.PasteboardType {
+    /// A plug-in being dragged from the browser: its add path ("au:…", a .vst3 or .clap bundle).
+    static let dalnokPlugin = NSPasteboard.PasteboardType("org.dalnok.plugin")
+    /// A device-panel unit being dragged to a new place in its chain: its slot id.
+    static let dalnokSlot = NSPasteboard.PasteboardType("org.dalnok.slot")
+}
+
+/// Favourites, recents, use counts, collections and tags: the owner's library data (user defaults, by add path).
+enum PluginLibrary {
+    private static var d: UserDefaults { .standard }
+    static var favorites: Set<String> {
+        get { Set(d.stringArray(forKey: "plugins.favorites") ?? []) }
+        set { d.set(Array(newValue).sorted(), forKey: "plugins.favorites") }
+    }
+    static var recent: [String] {
+        get { d.stringArray(forKey: "plugins.recent") ?? [] }
+        set { d.set(Array(newValue.prefix(20)), forKey: "plugins.recent") }
+    }
+    static var useCount: [String: Int] {
+        get { d.dictionary(forKey: "plugins.useCount") as? [String: Int] ?? [:] }
+        set { d.set(newValue, forKey: "plugins.useCount") }
+    }
+    static var collections: [String: [String]] {
+        get { d.dictionary(forKey: "plugins.collections") as? [String: [String]] ?? [:] }
+        set { d.set(newValue, forKey: "plugins.collections") }
+    }
+    static var tags: [String: [String]] {
+        get { d.dictionary(forKey: "plugins.tags") as? [String: [String]] ?? [:] }
+        set { d.set(newValue, forKey: "plugins.tags") }
+    }
+    static let keys = ["plugins.favorites", "plugins.recent", "plugins.useCount", "plugins.collections", "plugins.tags"]
+    /// Called after a plug-in was inserted.
+    static func used(_ path: String) {
+        recent = [path] + recent.filter { $0 != path }
+        var c = useCount; c[path, default: 0] += 1; useCount = c
+    }
+}
 
 @MainActor
 final class PluginManagerController: NSWindowController, NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate {
     struct Plugin {
         let name, vendor, format, kind, version, status, error, path: String
         let cached: Bool
+        var categories: [String] = []
+        var group: PluginGroup = .effects
+        var category = "Other Effects"
+        /// What Dalnok's engine is given to load it.
+        var addPath: String { format == "AU" ? "au:" + path : path }
+        var failed: Bool { ["failed", "crashed", "timeout"].contains(status) }
     }
+    /// Sidebar entries.
+    enum Source: Equatable {
+        case all, favorites, recent, mostUsed, collection(String), group(PluginGroup), category(PluginGroup, String), problems
+    }
+    private enum SideRow { case header(String), source(Source, String, Int) }
+
     private(set) var all: [Plugin] = []
     private(set) var rows: [Plugin] = []
     let table = NSTableView()
+    let sidebar = NSTableView()
     let search = NSSearchField()
     let summary = NSTextField(labelWithString: "")
+    let detail = NSTextField(wrappingLabelWithString: "")
+    let tagsField = NSTextField()
+    let formatControl = NSSegmentedControl(labels: ["All", "VST3", "AU", "CLAP"], trackingMode: .selectOne, target: nil, action: nil)
+    let vendorPopup = NSPopUpButton()
+    let sortPopup = NSPopUpButton()
+    let collectionPopup = NSPopUpButton(frame: .zero, pullsDown: true)
     let scanButton = NSButton(title: "Scan Plug-ins", target: nil, action: nil)
-    let addButton = NSButton(title: "Add to Selected Track", target: nil, action: nil)
-    /// Adds the plug-in at a VST3 path to the selected track; returns an error message on failure.
+    let addButton = NSButton(title: "Insert on Track", target: nil, action: nil)
+    /// Adds the plug-in at an add path to the selected track; returns an error message on failure.
     var onAdd: ((String) -> String?)?
     var selectedTrackName: (() -> String?)?
     let spinner = NSProgressIndicator()
     private(set) var scanning = false
+    private var sideRows: [SideRow] = []
+    private(set) var source: Source = .all
 
     static var scannerPath: String {
         (Bundle.main.executableURL ?? URL(fileURLWithPath: CommandLine.arguments[0]))
@@ -35,73 +96,111 @@ final class PluginManagerController: NSWindowController, NSTableViewDataSource, 
     }
 
     init() {
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 820, height: 560),
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1000, height: 640),
                               styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
         window.title = "Plug-ins"
         window.appearance = NSAppearance(named: .darkAqua)
         window.isReleasedWhenClosed = false
-        window.minSize = NSSize(width: 560, height: 320)
+        window.minSize = NSSize(width: 720, height: 420)
         super.init(window: window)
-
-        for (id, title, width) in [("name", "Name", 230.0), ("kind", "Type", 90.0), ("format", "Format", 60.0),
-                                   ("vendor", "Vendor", 170.0), ("status", "Status", 220.0)] {
-            let c = NSTableColumn(identifier: .init(id))
-            c.title = title
-            c.width = width
-            c.sortDescriptorPrototype = NSSortDescriptor(key: id, ascending: true)
-            table.addTableColumn(c)
-        }
-        table.dataSource = self
-        table.delegate = self
-        table.usesAlternatingRowBackgroundColors = true
-        table.rowHeight = 22
-        table.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
-        let scroll = NSScrollView()
-        scroll.documentView = table
-        scroll.hasVerticalScroller = true
-        search.placeholderString = "Search plug-ins, vendors, types"
-        search.delegate = self
-        scanButton.target = self
-        scanButton.action = #selector(scan(_:))
-        scanButton.toolTip = "Loads each plug-in in a separate process to read what it is. A plug-in that crashes or hangs is listed, not fatal."
-        spinner.style = .spinning
-        spinner.controlSize = .small
-        spinner.isDisplayedWhenStopped = false
-        summary.font = Theme.ui(11)
-        summary.textColor = Theme.textDim
-        summary.maximumNumberOfLines = 2
-        summary.lineBreakMode = .byWordWrapping
-        addButton.target = self
-        addButton.action = #selector(addSelected(_:))
-        addButton.isEnabled = false
-        let bar = NSStackView(views: [search, spinner, scanButton, addButton])
-        bar.spacing = 8
-        let stack = NSStackView(views: [bar, scroll, summary])
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 8
-        stack.edgeInsets = NSEdgeInsets(top: 14, left: 14, bottom: 12, right: 14)
-        for v in [bar, scroll, summary] { v.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -28).isActive = true }
-        summary.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        summary.toolTip = "Scan status and what Dalnok can host"
-        search.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        let content = NSView()
-        content.wantsLayer = true
-        content.layer?.backgroundColor = Theme.panel.cgColor
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        content.addSubview(stack)
-        NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: content.leadingAnchor), stack.trailingAnchor.constraint(equalTo: content.trailingAnchor),
-            stack.topAnchor.constraint(equalTo: content.topAnchor), stack.bottomAnchor.constraint(equalTo: content.bottomAnchor),
-        ])
-        window.contentView = content
+        build()
     }
     required init?(coder: NSCoder) { fatalError() }
 
+    private func build() {
+        guard let window else { return }
+        // Sidebar
+        let sc = NSTableColumn(identifier: .init("side")); sc.width = 200
+        sidebar.addTableColumn(sc)
+        sidebar.headerView = nil
+        sidebar.dataSource = self; sidebar.delegate = self
+        sidebar.rowHeight = 22
+        sidebar.style = .sourceList
+        sidebar.setAccessibilityLabel("Plug-in categories")
+        sidebar.menu = sidebarMenu()
+        let sideScroll = NSScrollView(); sideScroll.documentView = sidebar; sideScroll.hasVerticalScroller = true; sideScroll.drawsBackground = false
+        sideScroll.widthAnchor.constraint(equalToConstant: 220).isActive = true
+        // Main table
+        for (id, title, width) in [("fav", "", 26.0), ("name", "Name", 240.0), ("category", "Category", 170.0), ("vendor", "Vendor", 150.0),
+                                   ("format", "Format", 56.0), ("status", "Status", 190.0)] {
+            let c = NSTableColumn(identifier: .init(id))
+            c.title = title
+            c.width = width
+            if id != "fav" { c.sortDescriptorPrototype = NSSortDescriptor(key: id, ascending: true) }
+            table.addTableColumn(c)
+        }
+        table.dataSource = self; table.delegate = self
+        table.usesAlternatingRowBackgroundColors = true
+        table.rowHeight = 22
+        table.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
+        table.doubleAction = #selector(addSelected(_:))
+        table.target = self
+        table.setDraggingSourceOperationMask(.copy, forLocal: false)
+        table.setAccessibilityLabel("Plug-ins")
+        table.menu = rowMenu()
+        let scroll = NSScrollView(); scroll.documentView = table; scroll.hasVerticalScroller = true
+
+        search.placeholderString = "Search name, vendor, category, tag or capability (fuzzy)"
+        search.delegate = self
+        search.setAccessibilityLabel("Search plug-ins")
+        formatControl.selectedSegment = 0
+        formatControl.target = self; formatControl.action = #selector(filtersChanged)
+        formatControl.setToolTip("Only this plug-in format", forSegment: 1)
+        vendorPopup.target = self; vendorPopup.action = #selector(filtersChanged)
+        vendorPopup.setAccessibilityLabel("Vendor")
+        sortPopup.addItems(withTitles: ["Sort by Name", "Sort by Category", "Sort by Vendor", "Sort by Most Used"])
+        sortPopup.target = self; sortPopup.action = #selector(filtersChanged)
+        scanButton.target = self; scanButton.action = #selector(scan(_:))
+        scanButton.toolTip = "Loads each plug-in in a separate process to read what it is. A plug-in that crashes or hangs is listed, not fatal."
+        spinner.style = .spinning; spinner.controlSize = .small; spinner.isDisplayedWhenStopped = false
+        let bar = NSStackView(views: [search, formatControl, vendorPopup, sortPopup, spinner, scanButton])
+        bar.spacing = 8
+        search.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
+        summary.font = Theme.ui(11); summary.textColor = Theme.textDim
+        summary.lineBreakMode = .byTruncatingTail
+        detail.font = Theme.ui(11.5); detail.textColor = Theme.text
+        tagsField.placeholderString = "Tags (comma separated)"
+        tagsField.target = self; tagsField.action = #selector(tagsEdited)
+        tagsField.toolTip = "Your own tags for this plug-in; search finds them"
+        tagsField.setAccessibilityLabel("Tags")
+        tagsField.widthAnchor.constraint(equalToConstant: 220).isActive = true
+        collectionPopup.addItem(withTitle: "Add to Collection")
+        collectionPopup.target = self
+        collectionPopup.toolTip = "Put the selected plug-in in one of your collections"
+        addButton.target = self; addButton.action = #selector(addSelected(_:))
+        addButton.keyEquivalent = "\r"
+        addButton.isEnabled = false
+        let actions = NSStackView(views: [detail, NSView(), tagsField, collectionPopup, addButton])
+        actions.spacing = 8
+        detail.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        let right = NSStackView(views: [bar, scroll, actions, summary])
+        right.orientation = .vertical; right.alignment = .leading; right.spacing = 8
+        for v in [bar, scroll, actions, summary] { v.widthAnchor.constraint(equalTo: right.widthAnchor).isActive = true }
+        scroll.setContentHuggingPriority(.defaultLow, for: .vertical)
+        let split = NSStackView(views: [sideScroll, right])
+        split.spacing = 12
+        split.alignment = .top
+        sideScroll.heightAnchor.constraint(equalTo: split.heightAnchor).isActive = true
+        right.heightAnchor.constraint(equalTo: split.heightAnchor).isActive = true
+        let content = NSView()
+        content.wantsLayer = true
+        content.layer?.backgroundColor = Theme.panel.cgColor
+        split.translatesAutoresizingMaskIntoConstraints = false
+        content.addSubview(split)
+        NSLayoutConstraint.activate([
+            split.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 12), split.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -14),
+            split.topAnchor.constraint(equalTo: content.topAnchor, constant: 12), split.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -12),
+        ])
+        window.contentView = content
+    }
+
     func show() {
         if all.isEmpty { loadMetadata() }
-        window?.center()
+        if window?.isVisible != true { window?.center() }
         window?.makeKeyAndOrderFront(nil)
+        window?.makeFirstResponder(search)
     }
 
     /// Fast: metadata and the AU registry only, merged with any cached scan results.
@@ -110,6 +209,7 @@ final class PluginManagerController: NSWindowController, NSTableViewDataSource, 
         var buf = [CChar](repeating: 0, count: n + 1)
         dalnok_plugins_scan(nil, true, &buf, buf.count)
         all = Self.parse(cString(buf), cache: Self.cachedStatuses())
+        reloadSidebar()
         apply()
     }
 
@@ -134,6 +234,7 @@ final class PluginManagerController: NSWindowController, NSTableViewDataSource, 
                 self.scanning = false
                 self.scanButton.isEnabled = true
                 self.spinner.stopAnimation(nil)
+                self.reloadSidebar()
                 self.apply()
             }
         }
@@ -143,12 +244,18 @@ final class PluginManagerController: NSWindowController, NSTableViewDataSource, 
         let list = (try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [[String: Any]] ?? []
         return list.map { p in
             let scan = p["scan"] as? [String: Any]
-            let key = "\(p["format"] as? String ?? ""):\(p["path"] as? String ?? "")"
+            let format = (p["format"] as? String ?? "").uppercased(), path = p["path"] as? String ?? ""
+            let key = "\(p["format"] as? String ?? ""):\(path)"
             let status = scan?["status"] as? String ?? cache[key]?.0 ?? "not scanned"
-            return Plugin(name: p["name"] as? String ?? "?", vendor: p["vendor"] as? String ?? "", format: (p["format"] as? String ?? "").uppercased(),
-                          kind: p["kind"] as? String ?? "unknown", version: p["version"] as? String ?? "", status: status,
-                          error: scan?["error"] as? String ?? cache[key]?.1 ?? "", path: p["path"] as? String ?? "",
-                          cached: scan?["cached"] as? Bool ?? false)
+            var plugin = Plugin(name: p["name"] as? String ?? "?", vendor: p["vendor"] as? String ?? "", format: format,
+                                kind: p["kind"] as? String ?? "unknown", version: p["version"] as? String ?? "", status: status,
+                                error: scan?["error"] as? String ?? cache[key]?.1 ?? "", path: path,
+                                cached: scan?["cached"] as? Bool ?? false)
+            plugin.categories = p["categories"] as? [String] ?? []
+            let c = PluginTaxonomy.classify(name: plugin.name, kind: plugin.kind, format: format, path: path, categories: plugin.categories)
+            plugin.group = c.group
+            plugin.category = c.category
+            return plugin
         }
     }
 
@@ -162,63 +269,185 @@ final class PluginManagerController: NSWindowController, NSTableViewDataSource, 
         }
     }
 
-    private func apply() {
-        let q = search.stringValue.lowercased()
-        rows = all.filter { q.isEmpty || "\($0.name) \($0.vendor) \($0.kind) \($0.format)".lowercased().contains(q) }
-        if let sort = table.sortDescriptors.first, let key = sort.key {
-            rows.sort { a, b in
-                let x = value(a, key), y = value(b, key)
-                return sort.ascending ? x.localizedStandardCompare(y) == .orderedAscending : x.localizedStandardCompare(y) == .orderedDescending
-            }
+    // MARK: Sidebar
+
+    private func count(_ s: Source) -> Int { all.filter { inSource($0, s) }.count }
+    func inSource(_ p: Plugin, _ s: Source) -> Bool {
+        switch s {
+        case .all: true
+        case .favorites: PluginLibrary.favorites.contains(p.addPath)
+        case .recent: PluginLibrary.recent.contains(p.addPath)
+        case .mostUsed: (PluginLibrary.useCount[p.addPath] ?? 0) > 0
+        case .collection(let n): PluginLibrary.collections[n]?.contains(p.addPath) == true
+        case .group(let g): p.group == g
+        case .category(let g, let c): p.group == g && p.category == c
+        case .problems: p.failed
         }
+    }
+    func reloadSidebar() {
+        var r: [SideRow] = [.header("LIBRARY")]
+        for (s, t) in [(Source.all, "All Plug-ins"), (.favorites, "Favorites"), (.recent, "Recently Used"), (.mostUsed, "Most Used")] {
+            r.append(.source(s, t, count(s)))
+        }
+        let cols = PluginLibrary.collections.keys.sorted()
+        r.append(.header("COLLECTIONS"))
+        for c in cols { r.append(.source(.collection(c), c, count(.collection(c)))) }
+        for g in PluginGroup.allCases {
+            let n = count(.group(g))
+            guard n > 0 else { continue }
+            r.append(.header(g.rawValue.uppercased()))
+            r.append(.source(.group(g), "All \(g.rawValue)", n))
+            for c in g.categories { let k = count(.category(g, c)); if k > 0 { r.append(.source(.category(g, c), c, k)) } }
+        }
+        let bad = count(.problems)
+        if bad > 0 { r.append(.header("PROBLEMS")); r.append(.source(.problems, "Failed Validation", bad)) }
+        sideRows = r
+        sidebar.reloadData()
+        if let i = sideRows.firstIndex(where: { if case .source(let s, _, _) = $0 { return s == source }; return false }) {
+            sidebar.selectRowIndexes([i], byExtendingSelection: false)
+        }
+        // Vendor filter and collections menu follow the library.
+        let vendor = vendorPopup.titleOfSelectedItem
+        vendorPopup.removeAllItems()
+        vendorPopup.addItem(withTitle: "All Vendors")
+        vendorPopup.addItems(withTitles: Set(all.map(\.vendor).filter { !$0.isEmpty }).sorted { $0.localizedStandardCompare($1) == .orderedAscending })
+        if let vendor, vendorPopup.itemTitles.contains(vendor) { vendorPopup.selectItem(withTitle: vendor) }
+        collectionPopup.removeAllItems()
+        collectionPopup.addItem(withTitle: "Add to Collection")
+        for c in cols { let it = NSMenuItem(title: c, action: #selector(addToCollection(_:)), keyEquivalent: ""); it.target = self; collectionPopup.menu?.addItem(it) }
+        let new = NSMenuItem(title: "New Collection…", action: #selector(newCollection), keyEquivalent: ""); new.target = self
+        collectionPopup.menu?.addItem(.separator()); collectionPopup.menu?.addItem(new)
+    }
+    func select(source s: Source) {
+        source = s
+        if let i = sideRows.firstIndex(where: { if case .source(let x, _, _) = $0 { return x == s }; return false }) {
+            sidebar.selectRowIndexes([i], byExtendingSelection: false)
+        }
+        apply()
+    }
+    private func sidebarMenu() -> NSMenu {
+        let m = NSMenu()
+        let new = NSMenuItem(title: "New Collection…", action: #selector(newCollection), keyEquivalent: ""); new.target = self
+        let del = NSMenuItem(title: "Delete Collection", action: #selector(deleteCollection), keyEquivalent: ""); del.target = self
+        m.addItem(new); m.addItem(del)
+        return m
+    }
+
+    // MARK: Filtering, fuzzy search and sorting
+
+    /// Fuzzy score: every word of the query must appear in the plug-in's text, as a substring (best) or, for the
+    /// name, as letters in order ("vtl" finds "Vital"). Nil = no match.
+    func score(_ p: Plugin, _ query: String) -> Int? {
+        let q = query.lowercased().split(separator: " ").map(String.init)
+        guard !q.isEmpty else { return 0 }
+        let name = p.name.lowercased()
+        let tags = PluginLibrary.tags[p.addPath] ?? []
+        let hay = ([p.name, p.vendor, p.category, p.group.rawValue, p.format, p.kind] + p.categories + tags).joined(separator: " ").lowercased()
+        var total = 0
+        for t in q {
+            if name.hasPrefix(t) { total += 100 }
+            else if name.contains(t) { total += 60 }
+            else if hay.contains(t) { total += 30 }
+            else if Self.subsequence(t, of: name) { total += 10 }
+            else { return nil }
+        }
+        return total
+    }
+    static func subsequence(_ needle: String, of hay: String) -> Bool {
+        var it = hay.makeIterator()
+        for c in needle { while true { guard let h = it.next() else { return false }; if h == c { break } } }
+        return true
+    }
+
+    private func apply() {
+        let q = search.stringValue.trimmingCharacters(in: .whitespaces)
+        let format = formatControl.selectedSegment > 0 ? formatControl.label(forSegment: formatControl.selectedSegment) : nil
+        let vendor = vendorPopup.indexOfSelectedItem > 0 ? vendorPopup.titleOfSelectedItem : nil
+        var scored: [(Plugin, Int)] = all.compactMap { p in
+            guard inSource(p, source), format.map({ p.format == $0 }) ?? true, vendor.map({ p.vendor == $0 }) ?? true,
+                  let s = score(p, q) else { return nil }
+            return (p, s)
+        }
+        let uses = PluginLibrary.useCount
+        let byName: (Plugin, Plugin) -> Bool = { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        if let sort = table.sortDescriptors.first, let key = sort.key {
+            scored.sort { a, b in
+                let x = value(a.0, key), y = value(b.0, key)
+                let r = x.localizedStandardCompare(y)
+                return r == .orderedSame ? byName(a.0, b.0) : (sort.ascending ? r == .orderedAscending : r == .orderedDescending)
+            }
+        } else if source == .recent {
+            let order = PluginLibrary.recent
+            scored.sort { (order.firstIndex(of: $0.0.addPath) ?? 99) < (order.firstIndex(of: $1.0.addPath) ?? 99) }
+        } else {
+            switch sortPopup.indexOfSelectedItem {
+            case 1: scored.sort { ($0.0.group.rawValue, $0.0.category, $0.0.name.lowercased()) < ($1.0.group.rawValue, $1.0.category, $1.0.name.lowercased()) }
+            case 2: scored.sort { ($0.0.vendor.lowercased(), $0.0.name.lowercased()) < ($1.0.vendor.lowercased(), $1.0.name.lowercased()) }
+            case 3: scored.sort { (uses[$0.0.addPath] ?? 0, $1.0.name.lowercased()) > (uses[$1.0.addPath] ?? 0, $0.0.name.lowercased()) }
+            default: scored.sort { byName($0.0, $1.0) }
+            }
+            if !q.isEmpty { scored.sort { $0.1 > $1.1 } } // stable: best matches first, then the chosen order
+        }
+        rows = scored.map(\.0)
         table.reloadData()
-        let count = { (s: String) in self.all.filter { $0.status == s }.count }
-        let instruments = all.filter { $0.kind == "instrument" }.count, effects = all.filter { $0.kind == "effect" }.count
-        var text = "\(all.count) plug-ins: \(instruments) instruments, \(effects) effects"
-        let scanned = count("ok") + count("failed") + count("crashed") + count("timeout")
-        if scanned > 0 { text += " · scanned: \(count("ok")) ok, \(count("failed")) failed, \(count("crashed")) crashed, \(count("timeout")) timed out" }
-        else { text += " · not scanned yet (types come from metadata only)" }
-        text += " · VST3 and Audio Unit plug-ins can be added to tracks; CLAP comes later."
+        let st = { (s: String) in self.all.filter { $0.status == s }.count }
+        var text = "\(rows.count) of \(all.count) plug-ins"
+        let scanned = st("ok") + st("failed") + st("crashed") + st("timeout")
+        if scanned > 0 { text += " · scanned: \(st("ok")) ok, \(st("failed")) failed, \(st("crashed")) crashed, \(st("timeout")) timed out" }
+        else { text += " · not scanned yet (categories come from metadata and names)" }
+        text += " · VST3, Audio Unit and CLAP plug-ins can be added to tracks. Double-click or drag onto a track."
         summary.stringValue = text
+        updateAddButton()
     }
     private func value(_ p: Plugin, _ key: String) -> String {
-        switch key { case "kind": p.kind; case "format": p.format; case "vendor": p.vendor; case "status": p.status; default: p.name }
+        switch key { case "category": "\(p.group.rawValue) \(p.category)"; case "format": p.format; case "vendor": p.vendor; case "status": p.status; default: p.name }
     }
-
-    func tableViewSelectionDidChange(_ notification: Notification) { updateAddButton() }
-    func updateAddButton() {
-        let row = table.selectedRow >= 0 && table.selectedRow < rows.count ? rows[table.selectedRow] : nil
-        let track = selectedTrackName?()
-        let loadable = row?.format == "VST3" || row?.format == "AU"
-        addButton.isEnabled = loadable && track != nil
-        addButton.toolTip = row == nil ? "Select a plug-in" : !loadable ? "CLAP plug-ins can't be loaded yet"
-            : track == nil ? "Select a track in the arrangement first" : "Add \(row!.name) to \(track!)"
-    }
-    @objc func addSelected(_ sender: Any?) {
-        guard table.selectedRow >= 0, table.selectedRow < rows.count else { return }
-        let p = rows[table.selectedRow]
-        if let error = onAdd?(p.format == "AU" ? "au:" + p.path : p.path) { summary.stringValue = "Couldn’t add \(p.name): \(error)" }
-        else { summary.stringValue = "Added \(p.name) to \(selectedTrackName?() ?? "the track")." }
-    }
-    /// Selects the first row whose name matches (tests and keyboard users).
-    func selectRow(named name: String) {
-        if let i = rows.firstIndex(where: { $0.name == name }) { table.selectRowIndexes([i], byExtendingSelection: false); updateAddButton() }
-    }
-
-    func controlTextDidChange(_ obj: Notification) { apply() }
+    @objc func filtersChanged() { apply() }
+    func controlTextDidChange(_ obj: Notification) { if (obj.object as? NSSearchField) === search { apply() } }
     func filter(_ text: String) { search.stringValue = text; apply() }
     func tableView(_ tableView: NSTableView, sortDescriptorsDidChange oldDescriptors: [NSSortDescriptor]) { apply() }
-    func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
+
+    // MARK: Table
+
+    func numberOfRows(in tableView: NSTableView) -> Int { tableView === sidebar ? sideRows.count : rows.count }
+    func tableView(_ tableView: NSTableView, isGroupRow row: Int) -> Bool {
+        guard tableView === sidebar else { return false }
+        if case .header = sideRows[row] { return true }; return false
+    }
+    func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool {
+        guard tableView === sidebar else { return true }
+        if case .header = sideRows[row] { return false }; return true
+    }
     func tableView(_ tableView: NSTableView, viewFor col: NSTableColumn?, row: Int) -> NSView? {
+        if tableView === sidebar {
+            switch sideRows[row] {
+            case .header(let t):
+                let l = NSTextField(labelWithString: t); l.font = Theme.ui(10, .semibold); l.textColor = Theme.textDim; return l
+            case .source(_, let t, let n):
+                let l = NSTextField(labelWithString: "\(t)  \(n)")
+                l.font = Theme.ui(12); l.textColor = Theme.text; l.lineBreakMode = .byTruncatingTail
+                return l
+            }
+        }
         let p = rows[row]
+        if col?.identifier.rawValue == "fav" {
+            let fav = PluginLibrary.favorites.contains(p.addPath)
+            let b = NSButton(image: NSImage(systemSymbolName: fav ? "star.fill" : "star", accessibilityDescription: fav ? "Favorite" : "Not a favorite")!,
+                             target: self, action: #selector(favoriteButton(_:)))
+            b.isBordered = false
+            b.contentTintColor = fav ? Theme.hex(0xE8B64A) : Theme.textFaint
+            b.tag = row
+            b.toolTip = fav ? "Remove from Favorites" : "Add to Favorites"
+            return b
+        }
         var color = Theme.text
         let text: String
         switch col?.identifier.rawValue {
-        case "kind": text = p.kind; color = p.kind == "unknown" ? Theme.textFaint : Theme.textDim
+        case "category": text = p.category; color = Theme.textDim
         case "format": text = p.format; color = Theme.textDim
         case "vendor": text = p.vendor; color = Theme.textDim
         case "status":
-            text = p.status + (p.error.isEmpty ? "" : " — \(p.error)")
+            text = p.status == "ok" ? "Installed" : p.status == "not scanned" ? "Not scanned" : "Failed: \(p.status)" + (p.error.isEmpty ? "" : " — \(p.error)")
             color = p.status == "ok" ? Theme.hex(0x5FB39B) : p.status == "not scanned" ? Theme.textFaint : Theme.clipRed
         default: text = p.name + (p.version.isEmpty ? "" : "  \(p.version)")
         }
@@ -228,5 +457,127 @@ final class PluginManagerController: NSWindowController, NSTableViewDataSource, 
         l.lineBreakMode = .byTruncatingTail
         l.toolTip = text
         return l
+    }
+    func tableViewSelectionDidChange(_ notification: Notification) {
+        if (notification.object as? NSTableView) === sidebar {
+            let r = sidebar.selectedRow
+            if r >= 0, case .source(let s, _, _) = sideRows[r] { source = s; apply() }
+            return
+        }
+        updateAddButton()
+    }
+    /// Drag a plug-in onto a track header or the device panel to insert it there.
+    func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> NSPasteboardWriting? {
+        guard tableView === table, row < rows.count, !rows[row].failed else { return nil }
+        let item = NSPasteboardItem()
+        item.setString(rows[row].addPath, forType: .dalnokPlugin)
+        item.setString(rows[row].name, forType: .string)
+        return item
+    }
+
+    var selected: Plugin? { table.selectedRow >= 0 && table.selectedRow < rows.count ? rows[table.selectedRow] : nil }
+    func updateAddButton() {
+        let row = selected
+        let track = selectedTrackName?()
+        addButton.isEnabled = row != nil && !row!.failed && track != nil
+        addButton.title = track.map { "Insert on \($0)" } ?? "Insert on Track"
+        addButton.toolTip = row == nil ? "Select a plug-in" : row!.failed ? "\(row!.name) failed validation, so Dalnok won't load it"
+            : track == nil ? "Select a track in the arrangement first" : "Add \(row!.name) to \(track!)"
+        tagsField.isEnabled = row != nil
+        collectionPopup.isEnabled = row != nil
+        if let p = row {
+            detail.stringValue = "\(p.name) · \(p.vendor.isEmpty ? "unknown vendor" : p.vendor) · \(p.format)\(p.version.isEmpty ? "" : " \(p.version)") · \(p.group.rawValue) ▸ \(p.category)"
+                + (p.categories.isEmpty ? "" : " · declares: " + p.categories.joined(separator: ", "))
+                + (sameElsewhere(p).isEmpty ? "" : " · also as " + sameElsewhere(p).joined(separator: ", "))
+            tagsField.stringValue = (PluginLibrary.tags[p.addPath] ?? []).joined(separator: ", ")
+        } else { detail.stringValue = ""; tagsField.stringValue = "" }
+    }
+    /// The same plug-in in other formats (duplicates are listed once per format).
+    private func sameElsewhere(_ p: Plugin) -> [String] {
+        all.filter { $0.name == p.name && $0.vendor == p.vendor && $0.format != p.format }.map(\.format)
+    }
+    @objc func addSelected(_ sender: Any?) {
+        guard let p = selected else { return }
+        if p.failed { summary.stringValue = "\(p.name) failed validation (\(p.status)); rescan after updating it."; return }
+        if let error = onAdd?(p.addPath) { summary.stringValue = "Couldn’t add \(p.name): \(error)"; NSSound.beep() }
+        else {
+            PluginLibrary.used(p.addPath)
+            summary.stringValue = "Added \(p.name) to \(selectedTrackName?() ?? "the track")."
+            reloadSidebar()
+        }
+    }
+    /// Selects the first row whose name matches (tests and keyboard users).
+    func selectRow(named name: String) {
+        if let i = rows.firstIndex(where: { $0.name == name }) { table.selectRowIndexes([i], byExtendingSelection: false); updateAddButton() }
+    }
+
+    // MARK: Favourites, collections, tags
+
+    @objc func favoriteButton(_ sender: NSButton) {
+        guard sender.tag < rows.count else { return }
+        toggleFavorite(rows[sender.tag])
+    }
+    func toggleFavorite(_ p: Plugin) {
+        var f = PluginLibrary.favorites
+        if f.contains(p.addPath) { f.remove(p.addPath) } else { f.insert(p.addPath) }
+        PluginLibrary.favorites = f
+        reloadSidebar(); apply()
+    }
+    @objc func tagsEdited() {
+        guard let p = selected else { return }
+        let tags = tagsField.stringValue.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        var t = PluginLibrary.tags
+        t[p.addPath] = tags.isEmpty ? nil : tags
+        PluginLibrary.tags = t
+    }
+    func addToCollection(_ name: String, _ p: Plugin) {
+        var c = PluginLibrary.collections
+        if !(c[name] ?? []).contains(p.addPath) { c[name, default: []].append(p.addPath) }
+        PluginLibrary.collections = c
+        reloadSidebar()
+    }
+    @objc func addToCollection(_ sender: NSMenuItem) { if let p = selected { addToCollection(sender.title, p); summary.stringValue = "Added \(p.name) to \(sender.title)." } }
+    @objc func newCollection() {
+        guard let window else { return }
+        let alert = NSAlert()
+        alert.messageText = "New Collection"
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 22))
+        field.placeholderString = "Collection name"
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Create"); alert.addButton(withTitle: "Cancel")
+        alert.window.initialFirstResponder = field
+        alert.beginSheetModal(for: window) { [weak self] r in
+            let name = field.stringValue.trimmingCharacters(in: .whitespaces)
+            guard r == .alertFirstButtonReturn, !name.isEmpty, let self else { return }
+            var c = PluginLibrary.collections
+            if c[name] == nil { c[name] = [] }
+            PluginLibrary.collections = c
+            if let p = self.selected { self.addToCollection(name, p) } else { self.reloadSidebar() }
+        }
+    }
+    @objc func deleteCollection() {
+        let r = sidebar.clickedRow >= 0 ? sidebar.clickedRow : sidebar.selectedRow
+        guard r >= 0, case .source(.collection(let name), _, _) = sideRows[r] else { return NSSound.beep() }
+        var c = PluginLibrary.collections; c[name] = nil; PluginLibrary.collections = c
+        if source == .collection(name) { source = .all }
+        reloadSidebar(); apply()
+    }
+    private func rowMenu() -> NSMenu {
+        let m = NSMenu()
+        for (t, s) in [("Insert on Selected Track", #selector(addSelected(_:))), ("Toggle Favorite", #selector(favoriteClicked)),
+                       ("Remove from This Collection", #selector(removeFromCollection))] {
+            let it = NSMenuItem(title: t, action: s, keyEquivalent: ""); it.target = self; m.addItem(it)
+        }
+        return m
+    }
+    @objc private func favoriteClicked() {
+        let r = table.clickedRow >= 0 ? table.clickedRow : table.selectedRow
+        if r >= 0, r < rows.count { toggleFavorite(rows[r]) }
+    }
+    @objc private func removeFromCollection() {
+        let r = table.clickedRow >= 0 ? table.clickedRow : table.selectedRow
+        guard r >= 0, r < rows.count, case .collection(let name) = source else { return NSSound.beep() }
+        var c = PluginLibrary.collections; c[name]?.removeAll { $0 == rows[r].addPath }; PluginLibrary.collections = c
+        reloadSidebar(); apply()
     }
 }

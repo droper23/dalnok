@@ -181,51 +181,15 @@ enum Migration {
 
     // MARK: Keyboard shortcut presets
 
-    struct Key { let key: String; let mods: NSEvent.ModifierFlags }
-    /// Overrides keyed by menu action selector name. Unlisted actions keep Dalnok defaults.
-    static func keymap(_ daw: SourceDAW?) -> [String: Key] {
-        switch daw {
-        case .logic?: [
-            "toggleMuteTrack:": Key(key: "m", mods: []),
-            "toggleSoloTrack:": Key(key: "s", mods: []),
-            "importAudio": Key(key: "i", mods: [.command, .shift]),
-        ]
-        case .ableton?: [
-            "splitAtPlayhead": Key(key: "e", mods: [.command]),
-            "exportMix:": Key(key: "r", mods: [.command, .shift]),
-            "newTrack:": Key(key: "t", mods: [.command]),
-            "toggleMuteTrack:": Key(key: "0", mods: []),
-        ]
-        case .reaper?: [
-            "splitAtPlayhead": Key(key: "s", mods: []),
-            "exportMix:": Key(key: "r", mods: [.command, .option]),
-            "newTrack:": Key(key: "t", mods: [.command]),
-            "toggleMuteTrack:": Key(key: "m", mods: [.control]),
-        ]
-        case nil: [:]
-        }
-    }
-
-    /// Applies a preset to the main menu, restoring Dalnok defaults for unlisted actions.
+    /// Applies a DAW's shortcut preset (onboarding's choice). The registry owns shortcuts; this selects its preset.
     @MainActor
     static func applyKeymap(_ daw: SourceDAW?, to menu: NSMenu?) {
-        let map = keymap(daw)
-        func visit(_ m: NSMenu) {
-            for it in m.items {
-                if let sub = it.submenu { visit(sub); continue }
-                guard let action = it.action, it.target is MainWindowController else { continue }
-                let name = NSStringFromSelector(action)
-                let id = ObjectIdentifier(it)
-                if defaults[id] == nil { defaults[id] = Key(key: it.keyEquivalent, mods: it.keyEquivalentModifierMask) }
-                // Presets only re-key items that have a shortcut by default (e.g. not the Help copy of an item).
-                let k = (defaults[id]!.key.isEmpty ? nil : map[name]) ?? defaults[id]!
-                it.keyEquivalent = k.key
-                it.keyEquivalentModifierMask = k.mods
-            }
+        let r = ShortcutRegistry.shared
+        if r.actions.isEmpty || r.actions.first?.item?.menu.map({ m in sequence(first: m, next: { $0.supermenu }).contains { $0 === menu } }) == false {
+            r.attach(menu)
         }
-        if let menu { visit(menu) }
+        r.selectPreset(daw?.presetId ?? "dalnok")
     }
-    @MainActor private static var defaults: [ObjectIdentifier: Key] = [:]
 
     /// Shortcut collisions in a menu (same key + modifiers on two items).
     @MainActor

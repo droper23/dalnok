@@ -1,7 +1,7 @@
 // Posts real OS-level mouse and keyboard events (needs Accessibility access; the screen must be unlocked).
 // Build: swiftc -O scripts/dev/drive.swift -o .build/drive. Pair with DALNOK_WINDOW_DUMP to see the result.
 // SPDX-License-Identifier: GPL-3.0-or-later
-// drive <cmd> ...: click x y [mods] | dclick x y | rclick x y | drag x1 y1 x2 y2 [mods] | key code [mods] | type text | scroll x y dy
+// drive <cmd> ...: click x y [mods] | hold x y seconds | dclick x y | rclick x y | drag x1 y1 x2 y2 [mods] | key code [mods] | type text | scroll x y dy
 // mods: comma list of cmd,shift,opt,ctrl. Coordinates are global screen points (top-left origin).
 import CoreGraphics
 import Foundation
@@ -25,6 +25,9 @@ switch a.first ?? "" {
 case "click":
     let p = pt(1), f = flags(a.count > 3 ? a[3] : nil)
     mouse(.mouseMoved, p); mouse(.leftMouseDown, p, .left, f); mouse(.leftMouseUp, p, .left, f)
+case "hold": // hold x y seconds: press, keep the button down, release
+    let p = pt(1), secs = Double(a[3]) ?? 1
+    mouse(.mouseMoved, p); mouse(.leftMouseDown, p); usleep(useconds_t(secs * 1_000_000)); mouse(.leftMouseUp, p)
 case "dclick":
     let p = pt(1); mouse(.mouseMoved, p)
     mouse(.leftMouseDown, p); mouse(.leftMouseUp, p); mouse(.leftMouseDown, p, clicks: 2); mouse(.leftMouseUp, p, clicks: 2)

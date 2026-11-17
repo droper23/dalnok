@@ -172,6 +172,11 @@ const CommandDef kCommands[] = {
          if (!needInt(a, "track", t, err) || !needInt(a, "slot", slot, err) || !needInt(a, "source", src, err)) return DALNOK_ERR_INVALID_ARG;
          return status(e.setSidechain(t, slot, src, err), err);
      }},
+    {"plugin.move", "Move Plug-in", "{track, slot, index}", [](ARGS) {
+         DalnokTrackId t; int32_t slot, index;
+         if (!needInt(a, "track", t, err) || !needInt(a, "slot", slot, err) || !needInt(a, "index", index, err)) return DALNOK_ERR_INVALID_ARG;
+         return status(e.movePlugin(t, slot, index, err), err);
+     }},
     {"plugin.setBypassed", "Bypass Plug-in", "{track, slot, bypassed}", [](ARGS) {
          DalnokTrackId t; int32_t slot;
          if (!needInt(a, "track", t, err) || !needInt(a, "slot", slot, err)) return DALNOK_ERR_INVALID_ARG;
@@ -399,6 +404,25 @@ const CommandDef kCommands[] = {
          if (!cs) return err = "no such clip", DALNOK_ERR_NOT_FOUND;
          const auto track = static_cast<DalnokTrackId>(a.getNumber("track", cs->track));
          return status(e.moveClip(c, track, start, err), err);
+     }},
+    {"clips.copy", "Paste Clips", "{clips: [id, ...], start: frame, trackShift?: places}", [](ARGS) {
+         std::vector<DalnokClipId> ids;
+         double start;
+         if (!clipIds(a, ids, err) || !needNumber(a, "start", start, err) || !std::isfinite(start) || start < 0)
+             return err = "clips must be a nonempty array and start a frame >= 0", DALNOK_ERR_INVALID_ARG;
+         const auto shift = static_cast<int32_t>(a.getNumber("trackShift", 0));
+         return e.copyClips(ids, static_cast<int64_t>(start), shift, err).empty() ? DALNOK_ERR_INVALID_ARG : DALNOK_OK;
+     }},
+    {"clipboard.copy", "Copy Clips", "{clips: [id, ...]}", [](ARGS) {
+         std::vector<DalnokClipId> ids;
+         if (!clipIds(a, ids, err)) return DALNOK_ERR_INVALID_ARG;
+         return status(e.copyToClipboard(ids, err), err);
+     }},
+    {"clipboard.paste", "Paste Clips", "{track, start: frame}", [](ARGS) {
+         DalnokTrackId t; double start;
+         if (!needInt(a, "track", t, err) || !needNumber(a, "start", start, err) || !std::isfinite(start) || start < 0)
+             return err = "track and start (frame >= 0) are required", DALNOK_ERR_INVALID_ARG;
+         return e.pasteClipboard(t, static_cast<int64_t>(start), err).empty() ? DALNOK_ERR_INVALID_ARG : DALNOK_OK;
      }},
     {"clips.nudge", "Nudge Clips", "{clips: [id, ...], delta: frames}", [](ARGS) {
          std::vector<DalnokClipId> ids;

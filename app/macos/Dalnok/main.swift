@@ -18,7 +18,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if args0.contains("--snapshot") || args0.contains("--screenshots") || args0.contains("--selftest") { Motion.override = false }
         main = MainWindowController(session: session)
         NSApp.mainMenu = buildMenu(target: main)
-        Migration.applyKeymap(SourceDAW.preferred, to: NSApp.mainMenu)
+        ShortcutRegistry.shared.attach(NSApp.mainMenu)
         main.showWindow(nil)
         main.window?.center()
         // Open filling the screen's usable area (like double-clicking the title bar), not in full-screen mode.
@@ -138,7 +138,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         next.openedMidiSources = old.openedMidiSources
         main = next
         NSApp.mainMenu = buildMenu(target: next)
-        Migration.applyKeymap(SourceDAW.preferred, to: NSApp.mainMenu)
+        ShortcutRegistry.shared.attach(NSApp.mainMenu)
         if let frame { next.window?.setFrame(frame, display: false) }
         next.showWindow(nil)
         old.window?.delegate = nil
@@ -185,9 +185,21 @@ final class MainMenu: NSMenu {
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         let mods = event.modifierFlags.intersection([.command, .control, .option])
         if mods.isEmpty, MainActor.assumeIsolated({ MainWindowController.isTyping }) { return false }
-        if mods.isEmpty, (event.keyCode == 123 || event.keyCode == 124),
-           MainActor.assumeIsolated({ (NSApp.delegate as? AppDelegate)?.main?.pianoRollIsKey == true }) { return false }
-        return super.performKeyEquivalent(with: event)
+        // The registry decides: it runs the command bound in the active context, leaves piano-roll keys to the
+        // piano roll, and never lets a menu item fire a key that belongs to another context.
+        nonisolated(unsafe) let e = event
+        let verdict: Bool? = MainActor.assumeIsolated {
+            let r = ShortcutRegistry.shared
+            if ShortcutRegistry.capturing { return false }
+            if r.handle(e) { return true }
+            if let k = KeyCombo(event: e), r.isBound(k) { return false }
+            // Unbound keys: only ⌘/⌃ combinations go on to AppKit (for the items macOS adds, like Emoji & Symbols).
+            // AppKit's own matching is looser than ours (a plain K can match a ⇧K item), so nothing else may reach it.
+            if !r.actions.isEmpty, e.modifierFlags.intersection([.command, .control]).isEmpty { return false }
+            return nil
+        }
+        if let verdict { return verdict }
+        return super.performKeyEquivalent(with: event) // system items (Emoji & Symbols, Dictation)
     }
 }
 
@@ -210,9 +222,17 @@ func buildMenu(target: MainWindowController) -> NSMenu {
         return it
     }
     typealias W = MainWindowController
+    /// Commands for whichever window is key (responder chain, no fixed target).
+    func windowItem(_ title: String, _ action: Selector, _ key: String, _ mods: NSEvent.ModifierFlags = .command) -> NSMenuItem {
+        let it = NSMenuItem(title: title, action: action, keyEquivalent: key)
+        it.keyEquivalentModifierMask = mods
+        return it
+    }
+    let fullScreen = windowItem("Enter Full Screen", #selector(NSWindow.toggleFullScreen(_:)), "f", [.command, .control])
     menu("Dalnok", [
         item("About Dalnok", #selector(NSApplication.orderFrontStandardAboutPanel(_:)), ""),
         item("Settings…", #selector(W.showSettings(_:)), ","),
+        item("Keyboard Shortcuts…", #selector(W.showKeyboardShortcuts(_:)), "k", [.command, .option]),
         .separator(),
         item("Hide Dalnok", #selector(NSApplication.hide(_:)), "h"),
         item("Quit Dalnok", #selector(NSApplication.terminate(_:)), "q"),
@@ -237,6 +257,12 @@ func buildMenu(target: MainWindowController) -> NSMenu {
         item("Undo", #selector(W.undo(_:)), "z"),
         item("Redo", #selector(W.redo(_:)), "z", [.command, .shift]),
         .separator(),
+        windowItem("Cut", #selector(NSText.cut(_:)), "x"),
+        windowItem("Copy", #selector(NSText.copy(_:)), "c"),
+        windowItem("Paste", #selector(NSText.paste(_:)), "v"),
+        item("Duplicate", #selector(W.duplicateClips(_:)), "d"),
+        windowItem("Select All", #selector(NSText.selectAll(_:)), "a"),
+        .separator(),
         item("Delete", #selector(W.delete(_:)), "\u{8}", []),
         item("Split at Playhead", #selector(W.splitAtPlayhead), "t"),
         item("Nudge Clips Left", #selector(W.nudgeClipsLeft(_:)), String(UnicodeScalar(NSLeftArrowFunctionKey)!), []),
@@ -260,9 +286,13 @@ func buildMenu(target: MainWindowController) -> NSMenu {
         item("Move Track Up", #selector(W.moveTrackUp(_:)), String(UnicodeScalar(NSUpArrowFunctionKey)!), [.command, .option]),
         item("Move Track Down", #selector(W.moveTrackDown(_:)), String(UnicodeScalar(NSDownArrowFunctionKey)!), [.command, .option]),
         .separator(),
+        item("Select Previous Track", #selector(W.selectPreviousTrack(_:)), String(UnicodeScalar(NSUpArrowFunctionKey)!), []),
+        item("Select Next Track", #selector(W.selectNextTrack(_:)), String(UnicodeScalar(NSDownArrowFunctionKey)!), []),
+        .separator(),
         item("Mute Track", #selector(W.toggleMuteTrack(_:)), "m", [.control]),
         item("Solo Track", #selector(W.toggleSoloTrack(_:)), "s", [.control]),
         item("Record Enable Track", #selector(W.toggleArmTrack(_:)), "r", [.control]),
+        item("Bypass Plug-ins", #selector(W.toggleTrackBypass(_:)), "b", [.control]),
         .separator(),
         colorItem,
         item("Recolor Tracks as Gradient", #selector(W.recolorTracksAsGradient(_:)), ""),
@@ -346,8 +376,13 @@ func buildMenu(target: MainWindowController) -> NSMenu {
         item("Show Automation", #selector(W.toggleAutomation(_:)), "a", []),
         item("Automate Volume", #selector(W.automateVolume(_:)), ""),
         item("Automate Pan", #selector(W.automatePan(_:)), ""),
+        .separator(),
+        item("Warm Analog Style", #selector(W.toggleAnalogStyle(_:)), "a", [.command, .option]),
+        item("Tape Machine", #selector(W.showTapeDeck(_:)), "t", [.command, .shift]),
+        fullScreen,
     ])
     menu("Window", [
+        windowItem("Close Window", #selector(NSWindow.performClose(_:)), "w"),
         item("Minimize", #selector(NSWindow.performMiniaturize(_:)), "m"),
     ])
     menu("Help", [

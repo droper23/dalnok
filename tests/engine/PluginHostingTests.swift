@@ -186,4 +186,21 @@ struct PluginHosting {
         #expect(dalnok_undo(e))
         #expect(!dalnok_plugin_bypassed(e, t, slot) && renderStereo(e, 4_800).0 == dry.0.map { $0 * 0.5 })
     }
+
+    @Test func reorderingTheChainChangesProcessingOrderAndUndoes() throws {
+        // Two gain inserts: order doesn't change a product, so check the list order, undo and the render.
+        let (e, t) = audioSession(); defer { dalnok_engine_destroy(e) }
+        let dry = renderStereo(e, 4_800)
+        let a = dalnok_plugin_add(e, t, testVst3, gainClass, nil, 0), b = dalnok_plugin_add(e, t, testVst3, gainClass, nil, 0)
+        dalnok_plugin_set_state(e, a, floatState(0.5)); dalnok_plugin_set_state(e, b, floatState(0.25))
+        #expect(dalnok_plugin_move(e, t, b, 0) == DALNOK_OK && undoName(e) == "Move Plug-in")
+        var info = DalnokPluginSlotInfo()
+        dalnok_track_plugin_info(e, t, 0, &info)
+        #expect(info.id == b)
+        #expect(renderStereo(e, 4_800).0 == dry.0.map { $0 * 0.25 * 0.5 }, "both still process after the move")
+        #expect(dalnok_plugin_move(e, t, b, 5) != DALNOK_OK, "out-of-range index refused")
+        #expect(dalnok_undo(e))
+        dalnok_track_plugin_info(e, t, 0, &info)
+        #expect(info.id == a)
+    }
 }

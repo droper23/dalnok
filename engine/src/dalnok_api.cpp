@@ -407,6 +407,10 @@ DalnokTrackId dalnok_plugin_sidechain(const DalnokEngine *e, DalnokTrackId t, in
     for (const auto &p : tr->plugins) if (p.id == slot) return p.sidechain;
     return 0;
 }
+DalnokStatus dalnok_plugin_move(DalnokEngine *e, DalnokTrackId t, int32_t slot, int32_t index) {
+    std::string err;
+    return e ? statusFor(e->impl.movePlugin(t, slot, index, err), err) : DALNOK_ERR_INVALID_ARG;
+}
 DalnokStatus dalnok_plugin_set_bypassed(DalnokEngine *e, DalnokTrackId t, int32_t slot, bool bypassed) {
     std::string err;
     return e ? statusFor(e->impl.setPluginBypassed(t, slot, bypassed, err), err) : DALNOK_ERR_INVALID_ARG;
@@ -878,6 +882,27 @@ DalnokStatus dalnok_clips_nudge(DalnokEngine *e, const DalnokClipId *clips, int3
     if (!e || !clips || count <= 0) return DALNOK_ERR_INVALID_ARG;
     std::string err;
     return statusFor(e->impl.nudgeClips(std::vector<DalnokClipId>(clips, clips + count), delta, err), err);
+}
+int32_t dalnok_clips_copy(DalnokEngine *e, const DalnokClipId *clips, int32_t count, int64_t start, int32_t track_shift,
+                          DalnokClipId *out, int32_t capacity) {
+    if (!e || !clips || count <= 0) return 0;
+    std::string err;
+    auto ids = e->impl.copyClips(std::vector<DalnokClipId>(clips, clips + count), start, track_shift, err);
+    for (int32_t i = 0; out && i < capacity && i < static_cast<int32_t>(ids.size()); ++i) out[i] = ids[static_cast<size_t>(i)];
+    return static_cast<int32_t>(ids.size());
+}
+DalnokStatus dalnok_clipboard_copy(DalnokEngine *e, const DalnokClipId *clips, int32_t count) {
+    if (!e || !clips || count <= 0) return DALNOK_ERR_INVALID_ARG;
+    std::string err;
+    return statusFor(e->impl.copyToClipboard(std::vector<DalnokClipId>(clips, clips + count), err), err);
+}
+int32_t dalnok_clipboard_count(const DalnokEngine *e) { return e ? static_cast<int32_t>(e->impl.clipboardCount()) : 0; }
+int32_t dalnok_clipboard_paste(DalnokEngine *e, DalnokTrackId track, int64_t start, DalnokClipId *out, int32_t capacity) {
+    if (!e) return 0;
+    std::string err;
+    auto ids = e->impl.pasteClipboard(track, start, err);
+    for (int32_t i = 0; out && i < capacity && i < static_cast<int32_t>(ids.size()); ++i) out[i] = ids[static_cast<size_t>(i)];
+    return static_cast<int32_t>(ids.size());
 }
 DalnokStatus dalnok_clips_remove(DalnokEngine *e, const DalnokClipId *clips, int32_t count) {
     if (!e || !clips || count <= 0) return DALNOK_ERR_INVALID_ARG;

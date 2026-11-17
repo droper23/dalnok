@@ -362,6 +362,7 @@ void Engine::endGroup() {
 
 void Engine::resetModel() {
     model_ = Model{};
+    clipboard_.clear(); // clips refer to this project's media
     plugins_.clear(); // snapshots still holding instances release them on this thread
     pluginErrors_.clear();
     pool_.clear();
@@ -1309,6 +1310,23 @@ bool Engine::setPluginBypassed(DalnokTrackId track, int32_t slot, bool bypassed,
     });
 }
 
+bool Engine::movePlugin(DalnokTrackId track, int32_t slot, int32_t index, std::string &err) {
+    const TrackState *t0 = model_.track(track);
+    if (!t0) return fail(err, "no such track");
+    const auto from = std::find_if(t0->plugins.begin(), t0->plugins.end(), [slot](const PluginSlot &p) { return p.id == slot; });
+    if (from == t0->plugins.end()) return fail(err, "that plug-in isn't on this track");
+    if (index < 0 || index >= static_cast<int32_t>(t0->plugins.size())) return fail(err, "position out of range");
+    if (from - t0->plugins.begin() == index) return true;
+    return edit("Move Plug-in", true, [&](Model &m) {
+        auto &list = m.track(track)->plugins;
+        auto it = std::find_if(list.begin(), list.end(), [slot](const PluginSlot &p) { return p.id == slot; });
+        PluginSlot p = std::move(*it);
+        list.erase(it);
+        list.insert(list.begin() + index, std::move(p));
+        return true;
+    });
+}
+
 bool Engine::removeSend(DalnokTrackId track, DalnokTrackId bus, std::string &err) {
     return edit("Remove Send", true, [&](Model &m) {
         TrackState *t = m.track(track);
@@ -1578,6 +1596,106 @@ DalnokClipId Engine::splitClip(DalnokClipId id, int64_t at, std::string &err) {
     if (!ok) return 0;
     ++nextClip_;
     return rightId;
+}
+
+std::vector<DalnokClipId> Engine::copyClips(const std::vector<DalnokClipId> &ids, int64_t start, int32_t trackShift, std::string &err) {
+    if (ids.empty()) { fail(err, "no clips selected"); return {}; }
+    if (start < 0) { fail(err, "start must be >= 0"); return {}; }
+    std::set<DalnokClipId> unique;
+    int64_t earliest = INT64_MAX;
+    for (auto id : ids) {
+        const ClipState *c = model_.clip(id);
+        if (!c) { fail(err, "no such clip"); return {}; }
+        if (c->slot >= 0 || c->alt) { fail(err, "only arrangement clips can be copied"); return {}; }
+        if (!unique.insert(id).second) { fail(err, "duplicate clip id"); return {}; }
+        earliest = std::min(earliest, c->start);
+    }
+    std::vector<DalnokClipId> out;
+    const auto first = nextClip_;
+    const bool ok = edit(ids.size() == 1 ? "Paste Clip" : "Paste Clips", true, [&](Model &m) {
+        std::vector<DalnokTrackId> order;
+        for (const auto &t : m.tracks) order.push_back(t.id);
+        DalnokClipId next = first;
+        for (auto id : ids) {
+            ClipState c = *m.clip(id);
+            const auto at = std::find(order.begin(), order.end(), c.track);
+            const auto idx = static_cast<int64_t>(at - order.begin()) + trackShift;
+            if (at == order.end() || idx < 0 || idx >= static_cast<int64_t>(order.size())) return fail(err, "there is no track there to paste onto");
+            const TrackState *t = m.track(order[static_cast<size_t>(idx)]);
+            if (t->kind == kTrackBus) return fail(err, "buses don't hold clips");
+            if ((t->kind == kTrackInstrument) != c.midi())
+                return fail(err, c.midi() ? "MIDI clips go on instrument tracks" : "audio clips go on audio tracks");
+            const int64_t rel = c.start - earliest;
+            if (rel > INT64_MAX - start - c.length) return fail(err, "paste exceeds the supported timeline");
+            c.id = next++;
+            c.track = t->id;
+            c.start = start + rel;
+            c.folder = 0;
+            m.clips.push_back(std::move(c)); // copies come to the top
+        }
+        return true;
+    });
+    if (!ok) return {};
+    nextClip_ = first + static_cast<DalnokClipId>(ids.size());
+    out.clear();
+    for (size_t i = 0; i < ids.size(); ++i) out.push_back(first + static_cast<DalnokClipId>(i));
+    return out;
+}
+
+bool Engine::copyToClipboard(const std::vector<DalnokClipId> &ids, std::string &err) {
+    if (ids.empty()) return fail(err, "no clips selected");
+    std::vector<DalnokTrackId> order;
+    for (const auto &t : model_.tracks) order.push_back(t.id);
+    std::vector<ClipboardEntry> out;
+    std::set<DalnokClipId> unique;
+    int32_t top = INT32_MAX;
+    int64_t earliest = INT64_MAX;
+    for (auto id : ids) {
+        const ClipState *c = model_.clip(id);
+        if (!c) return fail(err, "no such clip");
+        if (c->slot >= 0 || c->alt) return fail(err, "only arrangement clips can be copied");
+        if (!unique.insert(id).second) return fail(err, "duplicate clip id");
+        const auto row = static_cast<int32_t>(std::find(order.begin(), order.end(), c->track) - order.begin());
+        out.push_back({*c, row});
+        top = std::min(top, row);
+        earliest = std::min(earliest, c->start);
+    }
+    for (auto &e : out) { e.row -= top; e.clip.start -= earliest; e.clip.folder = 0; }
+    clipboard_ = std::move(out);
+    return true;
+}
+
+std::vector<DalnokClipId> Engine::pasteClipboard(DalnokTrackId track, int64_t start, std::string &err) {
+    if (clipboard_.empty()) { fail(err, "nothing to paste"); return {}; }
+    if (start < 0) { fail(err, "start must be >= 0"); return {}; }
+    const auto first = nextClip_;
+    const bool ok = edit(clipboard_.size() == 1 ? "Paste Clip" : "Paste Clips", true, [&](Model &m) {
+        std::vector<DalnokTrackId> order;
+        for (const auto &t : m.tracks) order.push_back(t.id);
+        const auto base = std::find(order.begin(), order.end(), track);
+        if (base == order.end()) return fail(err, "no such track");
+        DalnokClipId next = first;
+        for (const auto &e : clipboard_) {
+            const auto idx = static_cast<size_t>(base - order.begin()) + static_cast<size_t>(e.row);
+            if (idx >= order.size()) return fail(err, "there is no track there to paste onto");
+            const TrackState *t = m.track(order[idx]);
+            if (t->kind == kTrackBus) return fail(err, "buses don't hold clips");
+            if ((t->kind == kTrackInstrument) != e.clip.midi())
+                return fail(err, e.clip.midi() ? "MIDI clips go on instrument tracks" : "audio clips go on audio tracks");
+            if (e.clip.start > INT64_MAX - start - e.clip.length) return fail(err, "paste exceeds the supported timeline");
+            ClipState c = e.clip;
+            c.id = next++;
+            c.track = t->id;
+            c.start += start;
+            m.clips.push_back(std::move(c));
+        }
+        return true;
+    });
+    if (!ok) return {};
+    nextClip_ = first + static_cast<DalnokClipId>(clipboard_.size());
+    std::vector<DalnokClipId> out;
+    for (size_t i = 0; i < clipboard_.size(); ++i) out.push_back(first + static_cast<DalnokClipId>(i));
+    return out;
 }
 
 // ---- Snapshot compilation -------------------------------------------------

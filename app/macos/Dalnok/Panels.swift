@@ -527,6 +527,24 @@ final class TrackHeaderColumn: NSView, TrackScrollHost {
     var onScroll: ((NSEvent) -> Void)?
     func scrollTracks(with event: NSEvent) { onScroll?(event) }
     override func scrollWheel(with event: NSEvent) { scrollTracks(with: event) }
+    /// A plug-in dragged from the browser onto a track header is inserted on that track.
+    var onDropPlugin: ((String, DalnokTrackId) -> Void)?
+    private var dropRow: TrackHeaderRow? { didSet { oldValue?.layer?.borderWidth = 0; dropRow?.layer?.borderWidth = 2; dropRow?.layer?.borderColor = Theme.selection.cgColor } }
+    private func row(atWindow p: NSPoint) -> TrackHeaderRow? { rows.first { $0.convert($0.bounds, to: nil).contains(p) } }
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation { draggingUpdated(sender) }
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        guard sender.draggingPasteboard.string(forType: .dalnokPlugin) != nil, let r = row(atWindow: sender.draggingLocation),
+              session.track(r.trackId)?.isBus == false || session.track(r.trackId)?.plugins != nil else { dropRow = nil; return [] }
+        dropRow = r
+        return .copy
+    }
+    override func draggingExited(_ sender: NSDraggingInfo?) { dropRow = nil }
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        defer { dropRow = nil }
+        guard let path = sender.draggingPasteboard.string(forType: .dalnokPlugin), let r = row(atWindow: sender.draggingLocation) else { return false }
+        onDropPlugin?(path, r.trackId)
+        return true
+    }
     var onToggleStack: ((DalnokTrackId, Bool) -> Void)?
     let session: Session
     private(set) var rows: [TrackHeaderRow] = []
@@ -560,6 +578,7 @@ final class TrackHeaderColumn: NSView, TrackScrollHost {
         addButton.target = self
         addButton.action = #selector(addTapped)
         addSubview(addButton)
+        registerForDraggedTypes([.dalnokPlugin])
     }
 
     required init?(coder: NSCoder) { fatalError() }

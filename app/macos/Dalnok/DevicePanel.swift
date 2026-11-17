@@ -36,12 +36,58 @@ final class DevicePanel: NSView {
     }()
     var onOpen: ((DalnokTrackId, Int32) -> Void)?
     var onAdd: (() -> Void)?
+    /// A plug-in dropped from the browser: (add path, track, chain position).
+    var onDropPlugin: ((String, DalnokTrackId, Int) -> Void)?
+    private let dropLine = CALayer()
+
+    /// The chain position for a drop at this window point (between the units).
+    func chainIndex(atWindow p: NSPoint) -> Int {
+        let x = convert(p, from: nil).x
+        for (i, d) in devices.enumerated() where x < d.convert(d.bounds, to: self).midX { return i }
+        return devices.count
+    }
+    private func showDropLine(_ index: Int?) {
+        guard let index, let doc = scroll.documentView else { dropLine.isHidden = true; return }
+        let frames = devices.map { $0.convert($0.bounds, to: doc) }
+        let x = index < frames.count ? frames[index].minX - (Analog.on ? 20 : 5) : (frames.last.map { $0.maxX + (Analog.on ? 20 : 5) } ?? 12)
+        if dropLine.superlayer == nil { doc.wantsLayer = true; doc.layer?.addSublayer(dropLine) }
+        dropLine.backgroundColor = Theme.selection.cgColor
+        dropLine.zPosition = 50
+        dropLine.frame = CGRect(x: x - 1.5, y: 8, width: 3, height: DevicePanel.height - 16)
+        dropLine.isHidden = false
+    }
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation { draggingUpdated(sender) }
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        let pb = sender.draggingPasteboard
+        guard track != nil, pb.string(forType: .dalnokPlugin) != nil || pb.string(forType: .dalnokSlot) != nil else { showDropLine(nil); return [] }
+        showDropLine(chainIndex(atWindow: sender.draggingLocation))
+        return pb.string(forType: .dalnokSlot) != nil ? .move : .copy
+    }
+    override func draggingExited(_ sender: NSDraggingInfo?) { showDropLine(nil) }
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        showDropLine(nil)
+        guard let t = track else { return false }
+        let index = chainIndex(atWindow: sender.draggingLocation)
+        if let path = sender.draggingPasteboard.string(forType: .dalnokPlugin) { onDropPlugin?(path, t, index); return true }
+        if let s = sender.draggingPasteboard.string(forType: .dalnokSlot), let slot = Int32(s) { return move(slot, toDropIndex: index) }
+        return false
+    }
+    /// Moves a unit so it lands before the unit now at `drop` (a drop past its own position counts the gap it leaves).
+    @discardableResult func move(_ slot: Int32, toDropIndex drop: Int) -> Bool {
+        guard let t = track, let from = devices.firstIndex(where: { $0.slot == slot }) else { return false }
+        let to = drop > from ? drop - 1 : drop
+        guard to != from else { return false }
+        let ok = session.movePlugin(t, slot, to: to)
+        rebuild()
+        return ok
+    }
 
     init(session: Session) {
         self.session = session
         super.init(frame: .zero)
         wantsLayer = true
         layer?.backgroundColor = Theme.panel.cgColor
+        registerForDraggedTypes([.dalnokPlugin, .dalnokSlot])
         stack.orientation = .horizontal
         stack.alignment = .top
         stack.spacing = Analog.on ? 40 : 10 // analog: room for the patch cables between units
@@ -111,6 +157,10 @@ final class DevicePanel: NSView {
             devices = plugins.map { p in
                 let d = DeviceView(session: session, track: t!.id, slot: p.id, name: p.name, loaded: p.loaded, color: t!.color, vendor: p.vendor)
                 d.onOpen = { [weak self] in self?.onOpen?(t!.id, p.id) }
+                d.onMove = { [weak self] delta in
+                    guard let self, let from = self.devices.firstIndex(where: { $0.slot == p.id }) else { return }
+                    self.move(p.id, toDropIndex: delta > 0 ? from + 2 : from - 1)
+                }
                 return d
             }
             devices.forEach { stack.addArrangedSubview($0) }
@@ -231,7 +281,8 @@ final class DevicePanel: NSView {
 }
 
 @MainActor
-final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate {
+final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate, NSDraggingSource {
+    func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation { .move }
     let session: Session
     let trackId: DalnokTrackId
     let slot: Int32
@@ -310,7 +361,7 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
             p.vendor = vendor
             p.footswitch.onStomp = { [weak self] in self?.toggleBypass() }
             p.footswitch.isEnabled = loaded
-            p.menuProvider = { [weak self] in self?.pedalMenu() }
+            p.menuProvider = { [weak self] in self?.deviceMenu() }
             pedal = p
         }
         // Knobs sit in the middle of the unit, so a one-row controller doesn't leave the bottom half empty.
@@ -535,17 +586,52 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         pedal.setControls(controls, labels: names)
     }
 
-    /// Right-click on the pedal: bypass, the plug-in's window, controls, and the look (re-roll or pick each part).
-    func pedalMenu() -> NSMenu? {
-        guard let pedal else { return nil }
+    /// Right-click a device: bypass, window, controls, chain order and removal (and, on a pedal, its look).
+    func deviceMenu() -> NSMenu {
         let m = NSMenu()
+        func item(_ t: String, _ f: @escaping () -> Void, on: Bool = false, enabled: Bool = true) -> NSMenuItem {
+            let i = ClosureMenuItem(title: t, action: f); i.state = on ? .on : .off; i.isEnabled = enabled; return i
+        }
+        m.autoenablesItems = false
+        let chain = session.track(trackId)?.plugins.map(\.id) ?? []
+        let i = chain.firstIndex(of: slot) ?? 0
+        m.addItem(item(bypassed ? "Turn On" : "Bypass", { [weak self] in self?.toggleBypass() }, enabled: loaded))
+        m.addItem(item("Open Plug-in Window", { [weak self] in self?.onOpen?() }, enabled: loaded))
+        m.addItem(item("Edit Controls…", { [weak self] in self?.editTapped(self?.editButton) }, enabled: loaded))
+        m.addItem(.separator())
+        m.addItem(item("Move Left (Earlier in Chain)", { [weak self] in self?.onMove?(-1) }, enabled: i > 0))
+        m.addItem(item("Move Right (Later in Chain)", { [weak self] in self?.onMove?(1) }, enabled: i < chain.count - 1))
+        m.addItem(item("Remove Plug-in", { [weak self] in guard let self else { return }; self.session.removePlugin(self.trackId, self.slot) }))
+        if pedal != nil { m.addItem(.separator()); pedalLookItems(m) }
+        return m
+    }
+    override func menu(for event: NSEvent) -> NSMenu? { deviceMenu() }
+    /// Moves this unit by `delta` places in the chain (menu and keyboard alternative to dragging).
+    var onMove: ((Int) -> Void)?
+
+    // Dragging a unit by its empty surface reorders the chain.
+    private var dragStart: NSPoint?
+    override func mouseDown(with event: NSEvent) { dragStart = event.locationInWindow }
+    override func mouseDragged(with event: NSEvent) {
+        guard let s = dragStart, hypot(event.locationInWindow.x - s.x, event.locationInWindow.y - s.y) > 6 else { return }
+        dragStart = nil
+        let item = NSPasteboardItem()
+        item.setString(String(slot), forType: .dalnokSlot)
+        let dragItem = NSDraggingItem(pasteboardWriter: item)
+        let image = bitmapImageRepForCachingDisplay(in: bounds).map { rep -> NSImage in
+            cacheDisplay(in: bounds, to: rep); let i = NSImage(size: bounds.size); i.addRepresentation(rep); return i
+        }
+        dragItem.setDraggingFrame(bounds, contents: image)
+        beginDraggingSession(with: [dragItem], event: event, source: self)
+    }
+    override func mouseUp(with event: NSEvent) { dragStart = nil }
+
+    /// The pedal's look entries (Warm Analog).
+    private func pedalLookItems(_ m: NSMenu) {
+        guard let pedal else { return }
         func item(_ t: String, _ f: @escaping () -> Void, on: Bool = false) -> NSMenuItem {
             let i = ClosureMenuItem(title: t, action: f); i.state = on ? .on : .off; return i
         }
-        m.addItem(item(bypassed ? "Turn On" : "Bypass", { [weak self] in self?.toggleBypass() }))
-        m.addItem(item("Open Plug-in Window", { [weak self] in self?.onOpen?() }))
-        m.addItem(item("Edit Controls…", { [weak self] in self?.editTapped(self?.editButton) }))
-        m.addItem(.separator())
         let name = pedal.name
         let apply = { [weak self, weak pedal] in pedal?.look = PedalStore.look(name); self?.needsDisplay = true }
         m.addItem(item("New Random Look", { PedalStore.reroll(name); apply() }))
@@ -562,7 +648,6 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         sub("LED", PedalLook.leds.enumerated().map { ($0.element.0, String($0.offset)) }, field: "led", current: String(l.led))
         sub("Footswitch", PedalLook.Switch.allCases.map { ($0.title, $0.rawValue) }, field: "footswitch", current: l.footswitch.rawValue)
         m.addItem(item("Reset Look", { PedalStore.reset(name); apply() }))
-        return m
     }
 
     // MARK: Edit Controls (searchable list; checked parameters are on the controller, in order)

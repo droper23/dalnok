@@ -272,56 +272,74 @@ final class NeedleMeter: NSView {
     }
 }
 
-/// Warm Analog: two tape reels beside the position display. The tape moves with the playhead (each reel turns at
-/// the speed its pack radius needs), the packs trade size across the project, and a jump winds fast to the new
-/// spot. With Reduce Motion the reels never turn; the packs still show where you are.
-@MainActor
-final class TapeReels: NSView {
-    private var shown: Double = 0 // seconds of tape on the take-up reel (eases toward the playhead after a jump)
-    private var angles: (CGFloat, CGFloat) = (0, 0)
-    private var last = CACurrentMediaTime()
-    /// Project length in seconds (sets how full each reel is).
-    var length: Double = 120 { didSet { needsDisplay = true } }
-
-    override var isFlipped: Bool { true }
-    override var intrinsicContentSize: NSSize { NSSize(width: 84, height: 34) }
-
-    var tapeFraction: CGFloat { fraction } // for tests
-    var reelAngles: (CGFloat, CGFloat) { angles } // for tests
+/// Tape transport physics shared by the small reels beside the counter and the tape machine window.
+/// Units are the small reels' points (hub 5, full pack 15); angles are scale-free, so any drawing size turns at the
+/// same, physically right rate. ω = v / r, integrated exactly: a spiral pack of thickness h gives dθ = 2π·dr / h, so
+/// each reel turns by 2π·Δr / h as tape moves (the take-up pack grows, the supply pack shrinks; both turn the same
+/// way). Driven by tape position, not elapsed time, so dropped frames never desynchronise the reels.
+struct ReelModel {
     static let hub: CGFloat = 5, full: CGFloat = 15
     /// Linear tape speed in points per second of audio: 15 ips on a 10.5-inch reel scaled to these 15 pt packs
     /// (a full reel turns about 0.5 rev/s, an empty hub about 1.4 rev/s, like the real machine).
     static let speed: CGFloat = 43
     /// Tape thickness that makes the whole project fit on one reel: π(full² − hub²) = h · speed · length.
-    static func thickness(length: Double) -> CGFloat { .pi * (full * full - hub * hub) / (speed * CGFloat(max(1, length))) }
-    private var fraction: CGFloat { CGFloat(max(0, min(1, shown / max(1, length)))) }
-    private var radii: (CGFloat, CGFloat) {
-        let hub = Self.hub, full = Self.full
-        // Tape area is conserved: r² goes linearly from hub² to full² as tape moves across.
-        let f = fraction
+    static func thickness(length: Double, speed: CGFloat = speed) -> CGFloat {
+        .pi * (full * full - hub * hub) / (speed * CGFloat(max(1, length)))
+    }
+    /// Project length in seconds (sets how full each reel is).
+    var length: Double = 120
+    /// Tape speed multiplier (1 = 15 ips; 0.5 = 7½ ips; 2 = 30 ips). Faster tape: the same music uses more tape.
+    var speedFactor: CGFloat = 1
+    /// Seconds of tape on the take-up reel (eases toward the playhead after a jump: a fast wind).
+    private(set) var shown: Double = 0
+    private(set) var angles: (CGFloat, CGFloat) = (0, 0)
+    var fraction: CGFloat { CGFloat(max(0, min(1, shown / max(1, length)))) }
+    /// Pack radii (supply, take-up). Tape area is conserved: r² goes linearly from hub² to full² across the reel.
+    var radii: (CGFloat, CGFloat) {
+        let hub = Self.hub, full = Self.full, f = fraction
         return (sqrt(hub * hub + (full * full - hub * hub) * (1 - f)), sqrt(hub * hub + (full * full - hub * hub) * f))
     }
+    /// Moves the tape to `seconds`; jumps of more than a second wind there at `windRate` per second. Returns whether
+    /// anything moved.
+    mutating func advance(to seconds: Double, dt: Double, reduced: Bool, windRate: Double = 9) -> Bool {
+        let target = max(0, seconds)
+        var next = target
+        if abs(target - shown) > 1, !reduced { next = shown + (target - shown) * min(1, dt * windRate) }
+        guard abs(next - shown) > 1e-4 else { return false }
+        if reduced { shown = next; return true } // the packs show where you are; the reels don't turn
+        let before = radii
+        shown = next
+        let after = radii
+        let h = Self.thickness(length: length, speed: Self.speed * speedFactor)
+        angles = (angles.0 + 2 * .pi * (before.0 - after.0) / h, angles.1 + 2 * .pi * (after.1 - before.1) / h)
+        return true
+    }
+}
+
+/// Warm Analog: two tape reels beside the position display. The tape moves with the playhead (each reel turns at
+/// the speed its pack radius needs), the packs trade size across the project, and a jump winds fast to the new
+/// spot. With Reduce Motion the reels never turn; the packs still show where you are.
+@MainActor
+final class TapeReels: NSView {
+    private var model = ReelModel()
+    private var last = CACurrentMediaTime()
+    /// Project length in seconds (sets how full each reel is).
+    var length: Double { get { model.length } set { model.length = newValue; needsDisplay = true } }
+
+    override var isFlipped: Bool { true }
+    override var intrinsicContentSize: NSSize { NSSize(width: 84, height: 34) }
+
+    var tapeFraction: CGFloat { model.fraction } // for tests
+    var reelAngles: (CGFloat, CGFloat) { model.angles } // for tests
+    static let hub = ReelModel.hub, full = ReelModel.full, speed = ReelModel.speed
+    static func thickness(length: Double) -> CGFloat { ReelModel.thickness(length: length) }
+    private var radii: (CGFloat, CGFloat) { model.radii }
+    private var angles: (CGFloat, CGFloat) { model.angles }
 
     func update(seconds: Double) {
         let now = CACurrentMediaTime(), dt = min(0.1, now - last)
         last = now
-        let target = max(0, seconds)
-        var next = target
-        if abs(target - shown) > 1, !Motion.reduced { next = shown + (target - shown) * min(1, dt * 9) } // fast wind
-        let moved = next - shown
-        guard abs(moved) > 1e-4 else { return }
-        if !Motion.reduced {
-            // ω = v / r, integrated exactly over the move: a spiral pack of thickness h gives dθ = 2π·dr / h, so
-            // each reel turns by 2π·Δr / h (the take-up pack grows, the supply pack shrinks; both turn the same way).
-            // Driven by tape position, not elapsed time, so dropped frames never desynchronise the reels.
-            let before = radii
-            shown = next
-            let after = radii
-            let h = TapeReels.thickness(length: length)
-            angles = (angles.0 + 2 * .pi * (before.0 - after.0) / h, angles.1 + 2 * .pi * (after.1 - before.1) / h)
-        }
-        shown = next
-        needsDisplay = true
+        if model.advance(to: seconds, dt: dt, reduced: Motion.reduced) { needsDisplay = true }
     }
 
     override func draw(_ dirtyRect: NSRect) {

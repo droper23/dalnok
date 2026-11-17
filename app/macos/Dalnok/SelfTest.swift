@@ -13,7 +13,7 @@ final class SelfTest {
     let workdir: URL
     private var failures = 0
     /// Preferences the test changes; all are restored at the end so a run never alters the owner's settings.
-    private static let restoredKeys = ["copyAudioOnSave", "comingFrom", "onboardingDone", "recordingInputUID", "rulerBarsAndBeats", "metronome", "showDevicePanel", "countIn", "showMixer", "showLauncher", "automationMode", "pedal.AUDelay"]
+    private static let restoredKeys = ["copyAudioOnSave", "comingFrom", "onboardingDone", "recordingInputUID", "rulerBarsAndBeats", "metronome", "showDevicePanel", "countIn", "showMixer", "showLauncher", "automationMode", "pedal.AUDelay", "shortcuts.preset", "shortcuts.overrides", "shortcuts.userPresets"] + PluginLibrary.keys + ["tapeSpeed"]
     private let previousPreferences: [String: Any]
     private var w: MainWindowController { app.main }
     private var s: Session { app.session }
@@ -471,6 +471,10 @@ final class SelfTest {
         }
 
         await trackHeaderScrolling()
+        if ProcessInfo.processInfo.environment["DALNOK_SKIP_SHORTCUT_TEST"] == nil { await shortcutSystem() }
+        await clipEditing()
+        deadControls()
+        await tapeMachine()
         try? w.snapshot(to: workdir.appendingPathComponent("selftest.png"))
         await migrationSteps()
         // Settings: exercise the menu, appearance selection, and project preference.
@@ -551,6 +555,225 @@ final class SelfTest {
         check(w.timeline.scrollY <= w.timeline.maxScrollY && w.headers.scrollY == w.timeline.scrollY,
               "removing tracks keeps the viewport valid and aligned (\(w.timeline.scrollY))")
         w.timeline.scrollY = 0
+    }
+
+    // MARK: Keyboard shortcuts (registry, presets, conflicts, dispatch, editor)
+
+    private func keyEvent(_ chars: String, code: UInt16, _ mods: NSEvent.ModifierFlags = []) -> NSEvent {
+        NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: mods, timestamp: ProcessInfo.processInfo.systemUptime,
+                         windowNumber: w.window!.windowNumber, context: nil, characters: chars, charactersIgnoringModifiers: chars,
+                         isARepeat: false, keyCode: code)!
+    }
+
+    private func shortcutSystem() async {
+        let r = ShortcutRegistry.shared
+        w.window?.makeKeyAndOrderFront(nil)
+        r.selectPreset("dalnok")
+        // Parsing and text forms.
+        let samples = ["cmd+shift+t", "kp*", "ctrl+space", "f9", "opt+x", "cmd+=", "shift+up", "cmd+["]
+        let parsed = samples.compactMap(KeyCombo.init(parsing:))
+        check(parsed.count == samples.count && parsed.allSatisfy { KeyCombo(parsing: $0.storage) == $0 },
+              "shortcut text round-trips (\(parsed.map(\.description).joined(separator: " ")))")
+        check(KeyCombo(parsing: "⇧⌘T") == KeyCombo(parsing: "cmd+shift+t") && KeyCombo(parsing: "Cmd Shift Z")?.description == "⇧⌘Z",
+              "symbol and word forms parse to the same shortcut")
+        // Every command is registered once, with a category; the brief's named commands exist.
+        let ids = r.actions.map(\.id)
+        check(Set(ids).count == ids.count && r.actions.count > 70 && r.actions.allSatisfy { !$0.category.isEmpty },
+              "registry: \(r.actions.count) commands, unique ids, all categorized")
+        let named = ["transport.play_pause", "transport.record", "track.create_audio", "track.create_midi", "track.delete",
+                     "edit.split_at_playhead", "mixer.toggle", "plugin.open_browser", "plugin.bypass_track", "view.toggle_analog_mode",
+                     "midi.quantize", "edit.undo", "view.full_screen", "app.keyboard_shortcuts"]
+        check(named.allSatisfy { r.action($0) != nil }, "named commands are registered (\(named.filter { r.action($0) == nil }))")
+        // No preset has conflicts; presets change the menu.
+        for p in ShortcutPreset.all {
+            r.selectPreset(p.id)
+            let c = r.allConflicts()
+            check(c.isEmpty, "\(p.title) preset has no conflicts \(c.map { "\($0.0): \($0.1.map(\.id))" })")
+        }
+        r.selectPreset("ableton")
+        check(menuItem("Split at Playhead")?.keyEquivalent == "e" && r.keys("view.clip_launcher") == [KeyCombo("tab")],
+              "Ableton preset: Split ⌘E, launcher Tab")
+        r.selectPreset("cubase")
+        check(r.keys("transport.record").contains(KeyCombo("kp*")) && r.action("transport.record")?.item?.keyEquivalent == "",
+              "Cubase preset: Record on keypad * (dispatched by the registry, not the menu)")
+        r.selectPreset("dalnok")
+        // Owner override: shown in the menu, persisted, dispatched by a real key event; the old key is free.
+        let combo = KeyCombo("y", [.command, .option, .shift])
+        r.setKeys("transport.metronome", [combo])
+        check(menuItem("Metronome")?.keyEquivalent == "y" && menuItem("Metronome")?.keyEquivalentModifierMask == [.command, .option, .shift],
+              "a changed shortcut appears in the menu")
+        let stored = UserDefaults.standard.dictionary(forKey: ShortcutRegistry.overridesKey) as? [String: [String]]
+        check(stored?["transport.metronome"] == ["opt+shift+cmd+y"], "the change is saved (\(stored ?? [:]))")
+        r.attach(NSApp.mainMenu)
+        check(r.keys("transport.metronome") == [combo], "it survives re-reading the menu (as after a relaunch)")
+        let m0 = MainWindowController.metronomeOn
+        _ = NSApp.mainMenu?.performKeyEquivalent(with: keyEvent("y", code: 16, [.command, .option, .shift]))
+        check(MainWindowController.metronomeOn != m0, "⌥⇧⌘Y toggles the metronome")
+        _ = NSApp.mainMenu?.performKeyEquivalent(with: keyEvent("k", code: 40))
+        check(MainWindowController.metronomeOn != m0, "K no longer toggles it")
+        r.add(KeyCombo("f8"), to: "transport.metronome")
+        _ = NSApp.mainMenu?.performKeyEquivalent(with: keyEvent(String(UnicodeScalar(NSF8FunctionKey)!), code: 100))
+        check(MainWindowController.metronomeOn == m0, "a second shortcut (F8) runs the same command")
+        // Conflicts: detected, then resolved by reassigning.
+        r.add(combo, to: "transport.loop")
+        check(r.conflicts(for: combo, in: .global).count == 2 && !r.allConflicts().isEmpty, "giving the key to Cycle too is reported as a conflict")
+        r.reassign(combo, to: "transport.loop")
+        check(r.keys("transport.loop").contains(combo) && !r.keys("transport.metronome").contains(combo) && r.allConflicts().isEmpty,
+              "reassigning moves the key and clears the conflict")
+        // Context: ↑ selects the previous track in the arrangement and transposes in the piano roll; not a conflict.
+        check(r.resolve(KeyCombo("up"), context: .arrangement)?.id == "track.select_previous" &&
+              r.resolve(KeyCombo("up"), context: .pianoRoll)?.id == "midi.transpose_up" && r.allConflicts().isEmpty,
+              "the same key does different things in the arrangement and the piano roll")
+        check(ShortcutRegistry.reservedBySystem(KeyCombo("space", .command)) != nil, "⌘Space is flagged as belonging to macOS")
+        // Export and import round-trip.
+        if let data = r.exportData() {
+            r.restoreAll()
+            let res = try? r.importData(data)
+            check(res?.skipped == 0 && r.keys("transport.loop").contains(combo) && r.keys("transport.metronome").contains(KeyCombo("f8")),
+                  "export then import restores the changes (\(res.map { "\($0.applied) applied" } ?? "failed"))")
+        } else { check(false, "shortcuts export") }
+        // Track navigation commands.
+        if s.tracks.count >= 2 {
+            w.headers.select(s.tracks[0].id)
+            check(perform("Select Next Track") && w.selectedTrack == s.tracks[1].id, "Track ▸ Select Next Track")
+            check(perform("Select Previous Track") && w.selectedTrack == s.tracks[0].id, "Track ▸ Select Previous Track")
+        }
+        // The editor: search by name and by key, record, resolve a conflict, restore.
+        check(perform("Keyboard Shortcuts…") && w.shortcutsEditor.window?.isVisible == true, "Dalnok ▸ Keyboard Shortcuts… opens the editor")
+        let ed = w.shortcutsEditor
+        ed.search.stringValue = "split"; ed.reload()
+        check(ed.visibleActionIds.contains("edit.split_at_playhead") && !ed.visibleActionIds.contains("transport.play_pause"), "editor search by name")
+        ed.search.stringValue = combo.description; ed.reload()
+        check(ed.visibleActionIds == ["transport.loop"], "editor search by key (\(combo.description) → \(ed.visibleActionIds))")
+        ed.search.stringValue = ""; ed.reload()
+        if let metro = r.action("transport.metronome") {
+            ed.select(metro)
+            ed.beginRecording(replacing: true)
+            check(ShortcutRegistry.capturing && ed.window?.firstResponder === ed.recorder, "recording captures the keyboard")
+            let m1 = MainWindowController.metronomeOn
+            _ = ed.recorder.performKeyEquivalent(with: keyEvent("j", code: 38, [.command, .option]))
+            check(r.keys("transport.metronome") == [KeyCombo("j", [.command, .option])] && MainWindowController.metronomeOn == m1 && !ShortcutRegistry.capturing,
+                  "a recorded ⌥⌘J replaces the shortcut and runs nothing")
+            ed.select(metro)
+            ed.beginRecording(replacing: false)
+            _ = ed.recorder.performKeyEquivalent(with: keyEvent("k", code: 40, [.command, .option])) // ⌥⌘K: Keyboard Shortcuts…
+            check(ed.pending == KeyCombo("k", [.command, .option]) && !r.keys("transport.metronome").contains(ed.pending!),
+                  "recording a key in use asks before taking it")
+            ed.resolveTake()
+            check(r.keys("transport.metronome").contains(KeyCombo("k", [.command, .option])) && r.keys("app.keyboard_shortcuts").isEmpty,
+                  "Use It Here takes the key from the other command")
+        }
+        ed.restoreAll()
+        check(r.overrides.isEmpty && r.action("transport.metronome")?.item?.keyEquivalent == "k" && r.action("app.keyboard_shortcuts")?.item?.keyEquivalent == "k",
+              "Restore All Defaults brings back the preset (\(r.overrides.keys.sorted()), metronome \(r.display("transport.metronome")), shortcuts \(r.display("app.keyboard_shortcuts")))")
+        ed.window?.close()
+        if MainWindowController.metronomeOn != m0 { _ = perform("Metronome", exact: true) } // through the command, so the engine follows
+        check(MainWindowController.metronomeOn == m0, "metronome back to where it was")
+    }
+
+    // MARK: Dead controls: nothing may look usable while doing nothing
+
+    private func deadControls() {
+        var dead: [String] = []
+        for a in ShortcutRegistry.shared.actions {
+            guard let it = a.item, let sel = it.action else { continue }
+            let target: AnyObject? = it.target ?? (NSApp.target(forAction: sel, to: nil, from: it) as AnyObject?) ?? (w.responds(to: sel) ? w : nil)
+                ?? (w.window?.responds(to: sel) == true ? w.window : nil) ?? (NSApp.responds(to: sel) ? NSApp : nil)
+            if target?.responds(to: sel) != true { dead.append(a.title) }
+        }
+        check(dead.isEmpty, "every menu command has a handler (\(dead))")
+        var buttons: [String] = []
+        func walk(_ v: NSView) {
+            if !v.isHidden, let b = v as? NSButton, type(of: b) == NSButton.self, b.isEnabled, b.action == nil, b.target == nil {
+                buttons.append(b.title.isEmpty ? (b.accessibilityLabel() ?? "untitled") : b.title)
+            }
+            v.subviews.forEach(walk)
+        }
+        for win in [w.window, w.pluginManager.window, w.shortcutsEditor.window].compactMap({ $0 }) { if let c = win.contentView { walk(c) } }
+        check(buttons.isEmpty, "no enabled button without an action (\(buttons))")
+    }
+
+    // MARK: Tape machine (Analog Mode transport)
+
+    private func tapeMachine() async {
+        let e = s.engine
+        e.pause(); e.seek(0); await wait(0.15)
+        check(perform("Tape Machine", exact: true) && w.tapeDeck?.window?.isVisible == true, "View ▸ Tape Machine opens the deck")
+        guard let deck = w.tapeDeck?.deck else { return }
+        let saved = Motion.override; Motion.override = true; defer { Motion.override = saved }
+        deck.step(dt: 0.016)
+        let a0 = deck.model.angles
+        deck.play.onPress?()
+        await wait(0.6)
+        deck.step(dt: 0.016)
+        check(e.isPlaying && deck.play.lit, "PLAY starts the shared transport and lights")
+        check(deck.model.angles.0 > a0.0 && deck.model.angles.1 > a0.1, "both reels turn forward while playing (\(a0) → \(deck.model.angles))")
+        let start = e.position
+        deck.pause.onPress?(); await wait(0.15); deck.step(dt: 0.016)
+        let held = deck.model.angles
+        await wait(0.2); deck.step(dt: 0.016)
+        check(!e.isPlaying && deck.model.angles == held, "PAUSE stops the reels where they are")
+        deck.wind(1, seconds: 1)
+        await wait(0.15); deck.step(dt: 0.016)
+        let wound = Double(e.position - start) / e.sampleRate
+        check(abs(wound - TapeDeckView.windSpeed) < 1.5 && deck.model.angles.1 > held.1, "F.FWD winds the playhead forward at \(TapeDeckView.windSpeed)× (\(wound) s)")
+        let before = deck.model.angles
+        deck.wind(-1, seconds: 0.5)
+        await wait(0.15); deck.step(dt: 0.016)
+        check(deck.model.angles.1 < before.1, "REWIND turns the reels backwards")
+        deck.play.onPress?(); await wait(0.3)
+        deck.stop.onPress?(); await wait(0.15)
+        check(!e.isPlaying && abs(e.position - deck.playStartForTests) < Int64(e.sampleRate * 0.05), "STOP returns to where playback started")
+        deck.rtz.onPress?(); await wait(0.15)
+        check(e.position == 0, "RTZ returns to zero")
+        let cycle = s.cycle.on
+        deck.loop.onPress?(); deck.step(dt: 0.016)
+        check(s.cycle.on != cycle && deck.loop.lit == s.cycle.on, "LOOP toggles the same cycle as the main window")
+        deck.loop.onPress?()
+        // The tape speed changes the drawing only.
+        deck.speedSwitch.selectedSegment = 2; _ = deck.speedSwitch.target?.perform(deck.speedSwitch.action, with: deck.speedSwitch)
+        check(deck.model.speedFactor == 2, "the 30 ips switch doubles the tape speed of the drawing")
+        deck.speedSwitch.selectedSegment = 1; _ = deck.speedSwitch.target?.perform(deck.speedSwitch.action, with: deck.speedSwitch)
+        if let v = w.tapeDeck?.window?.contentView, let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) {
+            v.cacheDisplay(in: v.bounds, to: rep)
+            try? rep.representation(using: .png, properties: [:])?.write(to: workdir.appendingPathComponent("tape-machine.png"))
+        }
+        w.tapeDeck?.window?.close()
+        e.seek(0); await wait(0.1)
+    }
+
+    // MARK: Cut / copy / paste / duplicate / select all
+
+    private func clipEditing() async {
+        let e = s.engine
+        guard let t0 = s.tracks.first, let c = t0.clips.first else { return check(false, "a clip exists for clip editing") }
+        w.window?.makeKeyAndOrderFront(nil)
+        check(menuItem("Copy", exact: true)?.target == nil && menuItem("Paste", exact: true)?.target == nil,
+              "Cut/Copy/Paste go through the responder chain (text fields keep ⌘C/⌘V)")
+        let before = t0.clips.count
+        w.timeline.selectClips([c.id])
+        check(perform("Duplicate", exact: true) && s.track(t0.id)?.clips.count == before + 1, "Edit ▸ Duplicate adds a copy")
+        let dup = w.timeline.selectedClip.flatMap { s.clip($0) }
+        check(dup?.start == c.end && dup?.length == c.length && dup?.offset == c.offset && e.undoName == "Duplicate",
+              "the copy starts where the clip ends, same region (\(dup?.start ?? -1) vs \(c.end))")
+        check(perform("Undo") && s.track(t0.id)?.clips.count == before, "undo removes the duplicate")
+        // Cut and paste with real key events.
+        w.timeline.selectClips([c.id])
+        e.seek(c.end + 24_000); await wait(0.15)
+        let at = e.position
+        _ = NSApp.mainMenu?.performKeyEquivalent(with: keyEvent("x", code: 7, .command))
+        check(s.clip(c.id) == nil && e.undoName.hasPrefix("Cut"), "⌘X cuts the clip (\(e.undoName))")
+        w.headers.select(t0.id)
+        _ = NSApp.mainMenu?.performKeyEquivalent(with: keyEvent("v", code: 9, .command))
+        let pasted = w.timeline.selectedClip.flatMap { s.clip($0) }
+        check(pasted?.track == t0.id && pasted?.start == at && pasted?.length == c.length && pasted?.offset == c.offset,
+              "⌘V pastes the cut clip at the playhead (\(pasted?.start ?? -1) vs \(at))")
+        _ = perform("Undo"); _ = perform("Undo")
+        check(s.clip(c.id)?.start == c.start && s.track(t0.id)?.clips.count == before, "undo twice puts the clip back")
+        let all = s.tracks.flatMap(\.clips).count
+        check(ShortcutRegistry.shared.action("edit.select_all").map { ShortcutRegistry.shared.perform($0) } == true && w.timeline.selectedClips.count == all, "Edit ▸ Select All selects \(all) clips")
+        w.timeline.selectClips([])
+        e.seek(0); await wait(0.1)
     }
 
     // MARK: Migration & onboarding
@@ -656,6 +879,7 @@ final class SelfTest {
         dalnok_engine_stop_device(e.handle) // the simulated input replaces the device during the take
         MainWindowController.simulatedInput = true
         defer { MainWindowController.simulatedInput = false }
+        print("STATE countIn=\(UserDefaults.standard.bool(forKey: "countIn")) metronome=\(MainWindowController.metronomeOn) playing=\(e.isPlaying) recording=\(e.isRecording) tracks=\(s.tracks.map(\.name)) armed=\(s.tracks.filter(\.armed).map(\.name)) key=\(NSApp.keyWindow?.title ?? "nil")")
         guard let track = s.tracks.first?.id else { return check(false, "an audio track exists for recording") }
         w.headers.select(track)
         check(perform("Record Enable Track") && s.track(track)?.armed == true, "menu Track > Record Enable Track arms the track")
@@ -969,9 +1193,56 @@ final class SelfTest {
         let pm = w.pluginManager
         check(pm.all.count > 0 && pm.all.contains { $0.format == "AU" && $0.vendor == "Apple" }, "plug-in list shows \(pm.all.count) plug-ins including Apple's Audio Units")
         pm.filter("apple")
-        check(!pm.rows.isEmpty && pm.rows.allSatisfy { "\($0.name) \($0.vendor)".lowercased().contains("apple") }, "search narrows the list (\(pm.rows.count))")
-        check(pm.summary.stringValue.contains("VST3 and Audio Unit plug-ins can be added"), "the list says which formats can be added")
+        let exact = pm.all.filter { "\($0.name) \($0.vendor)".lowercased().contains("apple") }.count
+        check(exact > 0 && pm.rows.count < pm.all.count && pm.rows.prefix(exact).allSatisfy { "\($0.name) \($0.vendor)".lowercased().contains("apple") },
+              "search narrows the list; exact matches come before fuzzy ones (\(pm.rows.count))")
+        check(pm.summary.stringValue.contains("VST3, Audio Unit and CLAP plug-ins can be added"), "the list says which formats can be added")
         pm.filter("")
+        // Taxonomy: Apple's Audio Units by subtype, and declared VST3 subcategories / CLAP features.
+        let cls = { (n: String, k: String, f: String, p: String, c: [String]) in PluginTaxonomy.classify(name: n, kind: k, format: f, path: p, categories: c) }
+        let cases: [((PluginGroup, String), (PluginGroup, String))] = [
+            (cls("AUDelay", "effect", "AU", "aufx:dely:appl", []), (.effects, "Delay / Echo")),
+            (cls("AUPeakLimiter", "effect", "AU", "aufx:lmtr:appl", []), (.effects, "Limiting")),
+            (cls("AUMatrixReverb", "effect", "AU", "aufx:mrev:appl", []), (.effects, "Reverb")),
+            (cls("DLSMusicDevice", "instrument", "AU", "aumu:dls :appl", []), (.instruments, "Synthesizers")),
+            (cls("Squash", "effect", "VST3", "/x.vst3", ["Fx", "Dynamics", "Stereo"]), (.effects, "Compression")),
+            (cls("Wide", "effect", "VST3", "/x.vst3", ["Fx", "Stereo"]), (.effects, "Other Effects")),
+            (cls("Lead", "instrument", "CLAP", "/x.clap", ["instrument", "synthesizer", "stereo"]), (.instruments, "Synthesizers")),
+            (cls("Arp", "unknown", "CLAP", "/x.clap", ["note-effect", "arpeggiator"]), (.midi, "Arpeggiators")),
+            (cls("Grand Piano", "instrument", "VST3", "/x.vst3", ["Instrument"]), (.instruments, "Pianos")),
+            (cls("Clean Sample Trim", "effect", "VST3", "/x.vst3", ["Fx"]), (.effects, "Utility / Gain")),
+        ]
+        let wrong = cases.filter { $0.0 != $0.1 }.map { "\($0.0) ≠ \($0.1)" }
+        check(wrong.isEmpty, "plug-in categories come from what plug-ins declare (\(wrong))")
+        // Sidebar categories and fuzzy search.
+        pm.select(source: .category(.effects, "Delay / Echo"))
+        check(!pm.rows.isEmpty && pm.rows.allSatisfy { $0.category == "Delay / Echo" } && pm.rows.contains { $0.name == "AUDelay" },
+              "the Delay / Echo category lists AUDelay (\(pm.rows.map(\.name)))")
+        pm.select(source: .all)
+        pm.filter("audly")
+        check(pm.rows.first?.name == "AUDelay", "fuzzy search: 'audly' finds AUDelay first (\(pm.rows.prefix(3).map(\.name)))")
+        pm.filter("reverb apple")
+        check(!pm.rows.isEmpty && pm.rows.allSatisfy { $0.category == "Reverb" || $0.name.lowercased().contains("reverb") }, "search by capability and vendor")
+        pm.filter("")
+        // Favourites, collections, tags, format filter.
+        if let delay = pm.all.first(where: { $0.name == "AUDelay" }) {
+            pm.toggleFavorite(delay)
+            pm.select(source: .favorites)
+            check(pm.rows.map(\.name) == ["AUDelay"], "a starred plug-in appears in Favorites")
+            pm.toggleFavorite(delay)
+            check(pm.rows.isEmpty, "unstarring removes it")
+            var c = PluginLibrary.collections; c["Mix Bus"] = []; PluginLibrary.collections = c
+            pm.addToCollection("Mix Bus", delay)
+            pm.select(source: .collection("Mix Bus"))
+            check(pm.rows.map(\.name) == ["AUDelay"], "collections hold the plug-ins you put in them")
+            var t = PluginLibrary.tags; t[delay.addPath] = ["slapback"]; PluginLibrary.tags = t
+            pm.select(source: .all); pm.filter("slapback")
+            check(pm.rows.map(\.name) == ["AUDelay"], "your tags are searchable")
+            pm.filter("")
+        }
+        pm.formatControl.selectedSegment = 2; pm.filtersChanged()
+        check(!pm.rows.isEmpty && pm.rows.allSatisfy { $0.format == "AU" }, "the format filter shows only Audio Units")
+        pm.formatControl.selectedSegment = 0; pm.filtersChanged()
         pm.window?.orderOut(nil)
     }
 
@@ -1102,6 +1373,20 @@ final class SelfTest {
         dalnok_plugin_set_parameter(s.engine.handle, slot, mix.id, 0.9)
         panel.refreshValues()
         check(abs((panel.devices.first?.knobs.first?.knob.value ?? 0) - 0.9) < 1e-4, "knob follows changes made elsewhere")
+        // Chain order: Move Right from the device menu, then undo; a browser drop inserts at the drop position.
+        let order0 = s.track(track)?.plugins.map(\.id) ?? []
+        guard let delay = panel.devices.first else { return check(false, "devices for chain order") }
+        delay.onMove?(1)
+        check(s.track(track)?.plugins.map(\.id) == [order0[1], order0[0]] && s.engine.undoName == "Move Plug-in", "Move Right reorders the chain (one undo step)")
+        _ = perform("Undo"); panel.rebuild()
+        check(s.track(track)?.plugins.map(\.id) == order0, "undo restores the order")
+        check(delay.deviceMenu().items.contains { $0.title.hasPrefix("Move Left") && !$0.isEnabled }, "the first unit can't move left")
+        panel.onDropPlugin?("au:aufx:dist:appl", track, 1)
+        let afterDrop = s.track(track)?.plugins ?? []
+        check(afterDrop.count == 3 && afterDrop[1].name == "AUDistortion" && s.engine.undoName == "Add Plug-in",
+              "dropping a plug-in between two units inserts it there (\(afterDrop.map(\.name)))")
+        _ = perform("Undo"); panel.rebuild()
+        check(s.track(track)?.plugins.map(\.id) == order0, "undo removes the dropped plug-in")
         check(perform("Device Panel") && w.devicePanel.isHidden, "View > Device Panel hides it")
         _ = perform("Device Panel")
         s.removePlugin(track, limiter)

@@ -18,6 +18,11 @@ final class TimelineView: NSView {
     var maxScrollY: CGFloat {
         max(0, CGFloat(session.tracks.count) * Theme.trackHeight - max(0, bounds.height - Theme.rulerHeight))
     }
+    /// Scrolls just enough to show the track at `index` (keyboard navigation).
+    func revealTrack(at index: Int) {
+        let top = CGFloat(index) * Theme.trackHeight, visible = max(0, bounds.height - Theme.rulerHeight)
+        if top < scrollY { scrollY = top } else if top + Theme.trackHeight > scrollY + visible { scrollY = min(maxScrollY, top + Theme.trackHeight - visible) }
+    }
     /// Keeps the shared vertical offset valid after tracks are removed, collapsed or the view shrinks.
     func clampScrollY() { scrollY = min(max(0, scrollY), maxScrollY) }
     var onVerticalScroll: ((CGFloat) -> Void)?
@@ -37,6 +42,8 @@ final class TimelineView: NSView {
         selectedClips = ids; selectedClip = primary
         changingSelection = false
     }
+    /// Selects these clips (the first is the primary selection).
+    func selectClips(_ ids: [DalnokClipId]) { select(Set(ids), primary: ids.first) }
     func pruneSelection() {
         let remaining = selectedClips.filter { session.clip($0) != nil }
         let primary = selectedClip.flatMap { remaining.contains($0) ? $0 : nil } ?? remaining.sorted().first

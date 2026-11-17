@@ -41,6 +41,10 @@ On load, the relative path is tried first, so moving a project folder together w
   first values. Version 3 is still written when there are no changes, so older builds open constant-tempo projects;
   a version 3 reader rejects a project with changes instead of playing it at the wrong tempo. A damaged map is an
   error, not a silent fallback.
+- **Versions 5–9** (routing, automation, take folders, plug-in automation, launcher slots) are described in the CHANGELOG.
+- **Version 10** adds `"bypassed": true` on a plug-in. It is written only when a plug-in is bypassed, so older builds
+  keep opening every other project; a version 9 reader rejects a project with a bypassed plug-in instead of playing
+  the effect.
 - MIDI is stored in frames. Any tempo edit remaps every MIDI clip and note frame → beat (old map) → frame (new map),
   so MIDI keeps its beats while audio stays time-locked. Clips sharing a note source and origin (split pieces) keep
   sharing it. Each tempo edit can round positions by up to one frame.

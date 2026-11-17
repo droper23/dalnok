@@ -44,6 +44,20 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         guard let (track, slot) = sender.representedObject as? (DalnokTrackId, Int32) else { return }
         openPluginWindow(track: track, slot: slot)
     }
+    /// Inserts a plug-in (browser add path) on a track, optionally at a position in its chain. Returns an error message.
+    @discardableResult func insertPlugin(_ path: String, on track: DalnokTrackId, at index: Int? = nil) -> String? {
+        session.engine.beginGroup("Add Plug-in") // the add and the move undo together
+        defer { session.engine.endGroup(); session.refresh() }
+        do {
+            let slot = try session.addPlugin(track, path: path)
+            if let index, let count = session.track(track)?.plugins.count, index < count - 1 {
+                session.movePlugin(track, slot, to: index)
+            }
+            PluginLibrary.used(path)
+            headers.select(track)
+            return nil
+        } catch { return "\(error)" }
+    }
     @objc func showPlugins(_ sender: Any?) {
         pluginManager.onAdd = { [weak self] path in
             guard let self, let track = self.selectedTrack else { return "no track selected" }
@@ -229,6 +243,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         mixer.onAddPlugin = { [weak self] t in self?.headers.select(t); self?.showPlugins(nil) }
         devicePanel.onOpen = { [weak self] track, slot in self?.openPluginWindow(track: track, slot: slot) }
         devicePanel.onAdd = { [weak self] in self?.showPlugins(nil) }
+        devicePanel.onDropPlugin = { [weak self] path, track, index in
+            if let err = self?.insertPlugin(path, on: track, at: index) { self?.flash("Couldn’t add the plug-in: \(err)") }
+        }
+        headers.onDropPlugin = { [weak self] path, track in
+            if let err = self?.insertPlugin(path, on: track) { self?.flash("Couldn’t add the plug-in: \(err)") }
+        }
         emptyState.onImportAudio = { [weak self] in self?.importAudio() }
         emptyState.onOpen = { [weak self] in self?.openDocument(nil) }
         emptyState.onMigrate = { [weak self] in self?.showMigrationAssistant(nil) }
@@ -559,6 +579,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         }
         if e.isRecording { updateRecording() }
         transport.masterMeter.push(ml0, mr0)
+        tapeDeck?.pushMaster(ml0, mr0)
         tickCount += 1
         if tickCount % 1800 == 0 && !SelfTest.running, let directory = recoveryDirectory {
             do { _ = try writeRecoverySnapshot(in: directory) }
@@ -1189,6 +1210,106 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     }
     @objc func stopAllClips(_ sender: Any?) { dalnok_launcher_stop_all(session.engine.handle); launcher.needsDisplay = true }
 
+    // MARK: Cut, copy, paste, duplicate, select all (clips)
+    // Cut/Copy/Paste/Select All have no fixed target: a text field being edited gets them first through the
+    // responder chain; otherwise they reach this controller and act on arrangement clips.
+
+    private var selectedClipIds: [DalnokClipId] {
+        timeline.selectedClips.compactMap { session.clip($0) }.sorted { ($0.start, $0.id) < ($1.start, $1.id) }.map(\.id)
+    }
+    @objc func copy(_ sender: Any?) {
+        let ids = selectedClipIds
+        guard !ids.isEmpty, dalnok_clipboard_copy(session.engine.handle, ids, Int32(ids.count)) == DALNOK_OK else { return NSSound.beep() }
+        flash(ids.count == 1 ? "Copied 1 clip" : "Copied \(ids.count) clips")
+    }
+    @objc func cut(_ sender: Any?) {
+        let ids = selectedClipIds
+        guard !ids.isEmpty, dalnok_clipboard_copy(session.engine.handle, ids, Int32(ids.count)) == DALNOK_OK else { return NSSound.beep() }
+        session.engine.beginGroup(ids.count == 1 ? "Cut Clip" : "Cut Clips")
+        dalnok_clips_remove(session.engine.handle, ids, Int32(ids.count))
+        session.engine.endGroup()
+        session.refresh()
+        timeline.pruneSelection()
+    }
+    /// Pastes at the playhead on the selected track (copies from several tracks keep their spacing below it).
+    @objc func paste(_ sender: Any?) {
+        guard let track = selectedTrack ?? session.tracks.first?.id else { return NSSound.beep() }
+        var out = [DalnokClipId](repeating: 0, count: 256)
+        let n = Int(dalnok_clipboard_paste(session.engine.handle, track, max(0, session.engine.position), &out, 256))
+        session.refresh()
+        guard n > 0 else {
+            let midi = session.track(track)?.isInstrument == true
+            flash(midi ? "Audio clips can't go on an instrument track" : "Those clips don't fit here (MIDI clips need instrument tracks)")
+            return NSSound.beep()
+        }
+        timeline.selectClips(Array(out.prefix(n)))
+    }
+    /// Edit ▸ Duplicate (⌘D): a copy of the selection placed right after it, on the same tracks.
+    @objc func duplicateClips(_ sender: Any?) {
+        let ids = selectedClipIds
+        let clips = ids.compactMap { session.clip($0) }
+        guard let end = clips.map(\.end).max() else { return NSSound.beep() }
+        var out = [DalnokClipId](repeating: 0, count: ids.count)
+        session.engine.beginGroup("Duplicate")
+        let n = Int(dalnok_clips_copy(session.engine.handle, ids, Int32(ids.count), end, 0, &out, Int32(ids.count)))
+        session.engine.endGroup()
+        session.refresh()
+        if n > 0 { timeline.selectClips(out) } else { NSSound.beep() }
+    }
+    @objc override func selectAll(_ sender: Any?) {
+        let ids = session.tracks.flatMap(\.clips).map(\.id)
+        timeline.selectClips(ids)
+    }
+
+    // MARK: Tape machine (Analog Mode transport)
+
+    private(set) var tapeDeck: TapeDeckController?
+    @objc func showTapeDeck(_ sender: Any?) {
+        if tapeDeck == nil { tapeDeck = TapeDeckController(main: self) }
+        tapeDeck?.showWindow(nil)
+        tapeDeck?.window?.makeKeyAndOrderFront(nil)
+    }
+
+    // MARK: Shortcut editor, track navigation, bypass, style
+
+    lazy var shortcutsEditor = ShortcutEditorController()
+    @objc func showKeyboardShortcuts(_ sender: Any?) { shortcutsEditor.showWindow(nil); shortcutsEditor.window?.makeKeyAndOrderFront(nil) }
+
+    /// Track ▸ Select Previous/Next Track (↑ / ↓ in the arrangement).
+    @objc func selectPreviousTrack(_ sender: Any?) { selectAdjacentTrack(-1) }
+    @objc func selectNextTrack(_ sender: Any?) { selectAdjacentTrack(1) }
+    private func selectAdjacentTrack(_ d: Int) {
+        let ids = session.tracks.map(\.id)
+        guard !ids.isEmpty else { return }
+        let i = selectedTrack.flatMap { ids.firstIndex(of: $0) }.map { min(max(0, $0 + d), ids.count - 1) } ?? (d > 0 ? 0 : ids.count - 1)
+        headers.select(ids[i])
+        timeline.revealTrack(at: i)
+    }
+
+    /// Track ▸ Bypass Plug-ins: bypasses every plug-in on the selected track, or turns them all back on (one undo step).
+    @objc func toggleTrackBypass(_ sender: Any?) {
+        guard let t = selectedTrack.flatMap({ session.track($0) }), !t.plugins.isEmpty else { return }
+        let bypass = t.plugins.contains { !$0.bypassed }
+        session.engine.beginGroup(bypass ? "Bypass Plug-ins" : "Enable Plug-ins")
+        for p in t.plugins where p.bypassed != bypass { dalnok_plugin_set_bypassed(session.engine.handle, t.id, p.id, bypass) }
+        session.engine.endGroup()
+        session.refresh()
+        devicePanel.refreshValues()
+        flash(bypass ? "\(t.name): plug-ins bypassed" : "\(t.name): plug-ins on")
+    }
+
+    /// View ▸ Warm Analog Style: switches the appearance live (same as Settings ▸ Appearance).
+    @objc func toggleAnalogStyle(_ sender: Any?) {
+        let next: Theme.Style = Theme.activeStyle == .warmAnalog ? .graphite : .warmAnalog
+        guard let app = NSApp.delegate as? AppDelegate else { return }
+        let old = Theme.preferredStyle
+        Theme.preferredStyle = next
+        if !app.switchTheme(to: next) {
+            Theme.preferredStyle = old
+            flash("Finish recording before changing the style")
+        }
+    }
+
     /// View ▸ Mixer (X): channel strips for every track and bus above the device panel.
     @objc func toggleMixer(_ sender: Any?) {
         Self.showMixer.toggle()
@@ -1463,6 +1584,21 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         case #selector(toggleMixer(_:)):
             item.state = Self.showMixer ? .on : .off
             return true
+        case #selector(copy(_:)), #selector(cut(_:)), #selector(duplicateClips(_:)):
+            return !pianoRollIsKey && !timeline.selectedClips.isEmpty
+        case #selector(paste(_:)):
+            return !pianoRollIsKey && dalnok_clipboard_count(session.engine.handle) > 0 && !session.tracks.isEmpty
+        case #selector(selectAll(_:)):
+            return !pianoRollIsKey && session.tracks.contains { !$0.clips.isEmpty }
+        case #selector(toggleAnalogStyle(_:)):
+            item.state = Theme.activeStyle == .warmAnalog ? .on : .off
+            return !session.engine.isRecording
+        case #selector(selectPreviousTrack(_:)), #selector(selectNextTrack(_:)):
+            return !session.tracks.isEmpty && !pianoRollIsKey
+        case #selector(toggleTrackBypass(_:)):
+            let t = selectedTrack.flatMap { session.track($0) }
+            item.title = t?.plugins.isEmpty == false && t!.plugins.allSatisfy(\.bypassed) ? "Turn Plug-ins On" : "Bypass Plug-ins"
+            return t?.plugins.contains { $0.loaded } == true
         case #selector(toggleCycle(_:)):
             item.state = session.cycle.on ? .on : .off
             return true

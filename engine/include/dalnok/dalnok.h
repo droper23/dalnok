@@ -28,7 +28,7 @@
 extern "C" {
 #endif
 
-#define DALNOK_API_VERSION 25
+#define DALNOK_API_VERSION 26
 
 typedef enum {
     DALNOK_OK = 0,
@@ -343,6 +343,8 @@ bool dalnok_plugin_has_sidechain(const DalnokEngine *engine, int32_t slot);
 /* Bypass (API 25): a bypassed effect passes audio through untouched (it leaves the insert chain and the
  * delay compensation); a bypassed instrument is silent. Saved with the project; undoable. */
 DalnokStatus dalnok_plugin_set_bypassed(DalnokEngine *engine, DalnokTrackId track, int32_t slot, bool bypassed);
+/* Reorders a track's plug-ins (API 26): moves `slot` to `index` (0 = first in the chain). Undoable. */
+DalnokStatus dalnok_plugin_move(DalnokEngine *engine, DalnokTrackId track, int32_t slot, int32_t index);
 bool dalnok_plugin_bypassed(const DalnokEngine *engine, DalnokTrackId track, int32_t slot);
 
 /* ---- Automation -------------------------------------------------------
@@ -428,6 +430,17 @@ DalnokClipId dalnok_clip_add(DalnokEngine *engine, DalnokTrackId track, DalnokMe
 DalnokStatus dalnok_clip_remove(DalnokEngine *engine, DalnokClipId clip);
 /* Delete selected clips atomically as one undo step. */
 DalnokStatus dalnok_clips_remove(DalnokEngine *engine, const DalnokClipId *clips, int32_t count);
+/* Copy / paste / duplicate (API 26): copies clips with fades, gain, stretch and MIDI notes, one undo step.
+ * The earliest clip lands at `start`; each clip moves `track_shift` tracks down (0 = same tracks). Returns the
+ * number of new clips (written to `out`, in the given order), 0 on failure with nothing changed. */
+int32_t dalnok_clips_copy(DalnokEngine *engine, const DalnokClipId *clips, int32_t count, int64_t start, int32_t track_shift,
+                          DalnokClipId *out, int32_t capacity);
+/* Clipboard (API 26): copies held by the engine (not undoable; cleared when another project loads), so a cut
+ * clip can still be pasted. Paste puts the topmost copied track's clips on `track` (the rest keep their spacing
+ * below it) with the earliest clip at `start`; one undo step. Returns the number of new clips, 0 on failure. */
+DalnokStatus dalnok_clipboard_copy(DalnokEngine *engine, const DalnokClipId *clips, int32_t count);
+int32_t dalnok_clipboard_count(const DalnokEngine *engine);
+int32_t dalnok_clipboard_paste(DalnokEngine *engine, DalnokTrackId track, int64_t start, DalnokClipId *out, int32_t capacity);
 /* Moves a clip (optionally to another track) and brings it to the top. */
 DalnokStatus dalnok_clip_move(DalnokEngine *engine, DalnokClipId clip, DalnokTrackId track,
                               int64_t timeline_start);
