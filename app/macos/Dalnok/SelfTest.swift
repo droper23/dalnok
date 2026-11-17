@@ -403,6 +403,7 @@ final class SelfTest {
 
         await recordingAndMidi()
         await motion()
+        pluginManager()
 
         // Import a REAPER project end to end (fixture built from this run's audio files).
         let media = workdir.appendingPathComponent("Media")
@@ -620,6 +621,18 @@ final class SelfTest {
         win.close()
         check(!w.pianoRollIsKey, "closing the piano roll returns Delete to the arrangement")
         w.window?.makeKey()
+    }
+
+    /// Audio > Plug-ins lists what is installed from metadata (no plug-in code is loaded by the self-test).
+    private func pluginManager() {
+        check(perform("Plug-ins"), "menu Audio > Plug-ins… opens the plug-in list")
+        let pm = w.pluginManager
+        check(pm.all.count > 0 && pm.all.contains { $0.format == "AU" && $0.vendor == "Apple" }, "plug-in list shows \(pm.all.count) plug-ins including Apple's Audio Units")
+        pm.filter("apple")
+        check(!pm.rows.isEmpty && pm.rows.allSatisfy { "\($0.name) \($0.vendor)".lowercased().contains("apple") }, "search narrows the list (\(pm.rows.count))")
+        check(pm.summary.stringValue.contains("not available yet"), "the list says hosting is not available yet")
+        pm.filter("")
+        pm.window?.orderOut(nil)
     }
 
     /// Animations run when motion is allowed and are skipped with Reduce Motion.

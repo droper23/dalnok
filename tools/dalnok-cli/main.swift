@@ -35,6 +35,8 @@ usage:
   dalnok-cli make-test-project <folder> [--preset demo|band|midi|states|large] [--rate R] [--bpm B] [--tracks N] [--seconds S]
                                                                          generate a deterministic test project (no external files)
   dalnok-cli plugins [--no-au] [--folder F]                              list VST3, CLAP and Audio Unit plugins (no code loaded)
+  dalnok-cli plugins --validate [--match NAME] [--folder F --only-folder] [--au] [--timeout S] [--rescan] [--cache FILE]
+                                                                         load each plugin in a separate scanner process
   dalnok-cli bench [--tracks N] [--seconds S]                          render-cost benchmark (no device)
   dalnok-cli import <project.rpp|.als|.logicx|.fcpxml|stems-folder> [--save out.dalnok] [--render out.wav] [--quiet]
 """
@@ -189,6 +191,32 @@ case "make-test-project":
                                        rate: Double(opt("--rate") ?? "48000") ?? 48_000, bpm: Double(opt("--bpm") ?? "120") ?? 120,
                                        tracks: Int(opt("--tracks") ?? "64") ?? 64, seconds: Double(opt("--seconds") ?? "30") ?? 30)
     print(project.path)
+
+case "plugins" where args.contains("--validate"):
+    let scanner = URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent().appendingPathComponent("dalnok-scan").path
+    guard FileManager.default.isExecutableFile(atPath: scanner) else { fail("dalnok-scan not found next to dalnok-cli (swift build --product dalnok-scan)") }
+    let cache = opt("--cache") ?? (FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        .appendingPathComponent("Dalnok/PluginCache.json").path)
+    let timeout = Int32((Double(opt("--timeout") ?? "10") ?? 10) * 1000)
+    let started = Date()
+    func run(_ buf: UnsafeMutablePointer<CChar>?, _ len: Int) -> Int {
+        dalnok_plugins_validate(scanner, cache, opt("--folder"), args.contains("--only-folder"), args.contains("--au"),
+                                opt("--match"), timeout, args.contains("--rescan"), buf, len)
+    }
+    var buf = [CChar](repeating: 0, count: 1 << 22)
+    _ = run(&buf, buf.count)
+    let list = (try? JSONSerialization.jsonObject(with: Data(cstr(buf).utf8))) as? [[String: Any]] ?? []
+    var counts: [String: Int] = [:]
+    for p in list {
+        let scan = p["scan"] as? [String: Any] ?? [:]
+        let status = scan["status"] as? String ?? "?"
+        counts[status, default: 0] += 1
+        let cached = scan["cached"] as? Bool == true ? " (cached)" : ""
+        let error = (scan["error"] as? String).map { " — \($0)" } ?? ""
+        print("\(status.padding(toLength: 8, withPad: " ", startingAt: 0)) \((p["format"] as? String ?? "").uppercased().padding(toLength: 5, withPad: " ", startingAt: 0)) \((p["kind"] as? String ?? "").padding(toLength: 10, withPad: " ", startingAt: 0)) \(p["name"] ?? "")\(cached)\(error)")
+    }
+    print(String(format: "%d plugins in %.1f s: ", list.count, Date().timeIntervalSince(started)) +
+          counts.sorted { $0.key < $1.key }.map { "\($0.value) \($0.key)" }.joined(separator: ", "))
 
 case "plugins":
     let folder = opt("--folder")

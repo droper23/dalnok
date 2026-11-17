@@ -220,7 +220,8 @@ func buildMenu(target: MainWindowController) -> NSMenu {
     midiMenu.submenu?.delegate = target
     menu("Audio", [outputMenu, inputMenu,
                    item("Input Monitoring", #selector(W.toggleInputMonitoring(_:)), ""),
-                   .separator(), midiMenu])
+                   .separator(), midiMenu,
+                   .separator(), item("Plug-ins…", #selector(W.showPlugins(_:)), "p", [.command, .option])])
     menu("View", [
         item("Command Palette…", #selector(W.showCommandPalette(_:)), "k"),
         .separator(),

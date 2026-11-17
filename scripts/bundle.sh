@@ -4,10 +4,12 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 swift build -c release --product Dalnok
+swift build -c release --product dalnok-scan
 APP=dist/Dalnok.app
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp .build/release/Dalnok "$APP/Contents/MacOS/Dalnok"
+cp .build/release/dalnok-scan "$APP/Contents/MacOS/dalnok-scan" # plugin scanner (ADR-0009)
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

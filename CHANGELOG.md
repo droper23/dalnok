@@ -1,6 +1,10 @@
 # Changelog
 
 ## [Unreleased]
+### Added (2026-11-16, plugin validation, ADR-0009 stage 2)
+- `dalnok-scan`: loads one VST3, CLAP or Audio Unit per process and reports what it declares; Dalnok runs it with a timeout, four at a time, and caches results until a bundle changes. Crashing, hanging and broken plugins are listed with their status instead of affecting Dalnok.
+- Audio ▸ Plug-ins… (⌥⌘P): searchable list of installed plugins with type, vendor and scan status, and a Scan button. Loading plugins onto tracks is not available yet.
+- `dalnok-cli plugins --validate`, C API `dalnok_plugins_validate`, `scripts/ci/plugin-scan.sh` (fake crashing/hanging plugins). VST3 interfaces 3.8.1 and CLAP 1.2.9 headers vendored (MIT).
 ### Added (2026-11-16, MIDI editing, tempo and motion, M9)
 - Piano roll (Clip ▸ Piano Roll, P, or double-click a MIDI clip): add, move, resize, delete, transpose and nudge notes, a velocity lane, quantize the selection; each gesture is one undo step.
 - Bars-and-beats ruler, grid, snapping and position display (View ▸ Bars and Beats Ruler, ⌥⌘B); tempo and meter in the control bar (⌥⌘T edits the tempo).

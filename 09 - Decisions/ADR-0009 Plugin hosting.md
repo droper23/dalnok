@@ -16,7 +16,7 @@ The VST3 SDK (MIT since 3.8) and CLAP (MIT) are permissive; Audio Units are a sy
   internal `Processor` interface (process block, parameters, state, latency, bus layout) with one adapter per format.
 - **Discovery is two-stage.** Stage 1 (implemented, `plugins.cpp`) reads only metadata: VST3 `moduleinfo.json`
   and bundle `Info.plist`, CLAP bundle metadata, and the Audio Unit component registry. It never loads plugin code.
-  Stage 2 (next) loads each unknown bundle in a separate `dalnok-scan` helper process with a timeout, caches the
+  Stage 2 (implemented, `tools/dalnok-scan`, `validatePlugins`) loads each bundle in a separate `dalnok-scan` helper process with a timeout, caches the
   result by path, modification time and version, and puts crashing or hanging plugins on a visible "failed" list.
   A scan crash must never affect the app.
 - **Processing starts in-process.** Plugins run on the audio thread inside an instrument slot or an insert chain,

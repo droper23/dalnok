@@ -63,6 +63,10 @@
     {
       "file": "screenshots/palette-other-daw-words.png",
       "caption": "⌘K understands other DAWs' words: 'bounce' finds Export Mix."
+    },
+    {
+      "file": "screenshots/plugins.png",
+      "caption": "Plug-ins: installed VST3, CLAP and Audio Unit plug-ins with type and scan status (shown filtered to Apple's built-in units). Loading them onto tracks comes next."
     }
   ],
   "features": [
@@ -1019,8 +1023,8 @@
           "verified"
         ],
         [
-          "Sandboxed validation scan (helper process)",
-          "todo"
+          "Validation scan in a separate process with timeout and cache (dalnok-scan)",
+          "verified"
         ],
         [
           "Load and process",
@@ -1035,7 +1039,7 @@
           "todo"
         ]
       ],
-      "evidence": "PluginDiscovery tests with generated bundles; on the development Mac dalnok-cli plugins finds 217 VST3/CLAP bundles. Only 6 ship moduleinfo.json, so most kinds stay unknown until the sandboxed scan exists. Plan: ADR-0009."
+      "evidence": "PluginDiscovery tests; scripts/ci/plugin-scan.sh builds fake VST3 and CLAP plugins (good, crashing, hanging, printing, no code) and checks that each is classified (ok, crashed, timeout, failed) without affecting the scan, and that results are cached until a bundle changes. On the development Mac, Vital's VST3, CLAP and AU all validate as instruments. Loading onto tracks is not implemented."
     },
     {
       "id": "genericui",
@@ -1081,6 +1085,10 @@
           "verified"
         ],
         [
+          "Instantiate and initialize in a separate process (latency, tail, parameter count)",
+          "implemented"
+        ],
+        [
           "Load and process",
           "todo"
         ],
@@ -1110,6 +1118,10 @@
           "verified"
         ],
         [
+          "Read plugin descriptors in a separate process",
+          "verified"
+        ],
+        [
           "Load and process",
           "todo"
         ],
@@ -1131,6 +1143,10 @@
       "why": "One bad plugin must not take down a session.",
       "steps": [
         [
+          "Crash- and hang-isolated scanning",
+          "verified"
+        ],
+        [
           "Out-of-process hosting",
           "todo"
         ],
@@ -1139,7 +1155,7 @@
           "todo"
         ]
       ],
-      "evidence": "Planned."
+      "evidence": "scripts/ci/plugin-scan.sh: a plugin that aborts is reported as crashed and one that never returns is killed after the timeout."
     },
     {
       "id": "stockfx",

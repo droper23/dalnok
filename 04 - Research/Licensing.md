@@ -19,8 +19,8 @@ Band are allowed only as optional, clearly isolated components after an ADR.
 ## Planned
 | Dependency | License | Use |
 |---|---|---|
-| VST3 SDK 3.8+ | MIT | Plugin hosting (Phase 4) |
-| CLAP | MIT | Plugin hosting |
+| VST3 plugin interfaces (`vst3_pluginterfaces` v3.8.1_build_84, vendored in `engine/third_party/vst3`) | MIT | Plugin scanning and hosting (Phase 4) |
+| CLAP headers 1.2.9 (vendored in `engine/third_party/clap`) | MIT | Plugin scanning and hosting |
 | Signalsmith Stretch | MIT | Time and pitch |
 | DAWproject | MIT | Interchange |
 

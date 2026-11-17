@@ -15,6 +15,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     let emptyState = EmptyStateView()
     lazy var settings = SettingsController()
     lazy var pianoRoll = PianoRollController(session: session)
+    lazy var pluginManager = PluginManagerController()
+    @objc func showPlugins(_ sender: Any?) { pluginManager.show() }
     /// True while the piano roll is the window the user is working in (it was opened or clicked last),
     /// so Edit ▸ Delete removes notes there instead of the selected timeline clip.
     var pianoRollIsKey: Bool { pianoRoll.window?.isVisible == true && pianoRoll.focused }

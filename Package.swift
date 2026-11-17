@@ -9,6 +9,7 @@ let package = Package(
     products: [
         .executable(name: "Dalnok", targets: ["Dalnok"]),
         .executable(name: "dalnok-cli", targets: ["dalnok-cli"]),
+        .executable(name: "dalnok-scan", targets: ["dalnok-scan"]),
     ],
     targets: [
         // Offline DSP (time-stretch). Always compiled optimized: the algorithm is
@@ -30,7 +31,7 @@ let package = Package(
             name: "DalnokEngine",
             dependencies: ["DalnokDSP"],
             path: "engine",
-            exclude: ["dsp", "third_party/signalsmith"],
+            exclude: ["dsp", "third_party/signalsmith", "third_party/vst3", "third_party/clap"],
             sources: ["src", "third_party/pugixml/pugixml.cpp"],
             publicHeadersPath: "include",
             cxxSettings: [
@@ -57,6 +58,16 @@ let package = Package(
             name: "dalnok-cli",
             dependencies: ["DalnokEngine"],
             path: "tools/dalnok-cli"
+        ),
+        // Out-of-process plugin scanner (ADR-0009): loads one plugin per run, so crashes stay contained.
+        .executableTarget(
+            name: "dalnok-scan",
+            path: "tools/dalnok-scan",
+            cxxSettings: [
+                .headerSearchPath("../../engine/third_party/vst3"),
+                .headerSearchPath("../../engine/third_party/clap/include"),
+            ],
+            linkerSettings: [.linkedFramework("CoreFoundation"), .linkedFramework("AudioToolbox")]
         ),
         .testTarget(
             name: "DalnokEngineTests",

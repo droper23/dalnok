@@ -88,6 +88,12 @@ enum Screenshots {
             try? await Task.sleep(for: .seconds(0.4))
             if let v = w.pianoRoll.window?.contentView { png(v, dir.appendingPathComponent("piano-roll.png")) }
             w.pianoRoll.window?.orderOut(nil)
+            // Filtered to Apple's built-in Audio Units so the image never lists the owner's installed plug-ins.
+            w.pluginManager.show()
+            w.pluginManager.filter("Apple")
+            try? await Task.sleep(for: .seconds(0.3))
+            if let v = w.pluginManager.window?.contentView { png(v, dir.appendingPathComponent("plugins.png")) }
+            w.pluginManager.window?.orderOut(nil)
             w.settings.show()
             try? await Task.sleep(for: .seconds(0.3))
             if let v = w.settings.window?.contentView { png(v, dir.appendingPathComponent("settings.png")) }

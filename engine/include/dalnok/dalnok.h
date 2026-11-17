@@ -344,6 +344,18 @@ DalnokStatus dalnok_clip_set_gain_db(DalnokEngine *engine, DalnokClipId clip, fl
  * kind is "instrument", "effect", "midi", or "unknown" when only a sandboxed
  * scan could tell. No plugin code is loaded. Returns full length. [any thread] */
 size_t dalnok_plugins_scan(const char *extra_folder, bool include_audio_units, char *json, size_t len);
+/* Stage 2: validates plugins in separate processes. Runs `scanner_path`
+ * (dalnok-scan) once per plugin with `timeout_ms`, four at a time, so a crash
+ * or hang only ends that process. Results are cached in `cache_path` (NULL: no
+ * cache) until the bundle or AU version changes; `rescan` ignores the cache.
+ * `only_extra_folder` limits bundles to `extra_folder`; `name_filter` (NULL =
+ * all) keeps names containing it, case-insensitively. Each plugin gets
+ * "scan": {"status": "ok"|"failed"|"crashed"|"timeout", "cached", "error"?} and
+ * its kind/vendor/version from what it declared. Loads plugin code (in the
+ * child processes only). Returns full length. [any thread; blocks] */
+size_t dalnok_plugins_validate(const char *scanner_path, const char *cache_path, const char *extra_folder,
+                               bool only_extra_folder, bool include_audio_units, const char *name_filter,
+                               int32_t timeout_ms, bool rescan, char *json, size_t len);
 
 /* ---- Instruments, MIDI clips, tempo --------------------------------- */
 

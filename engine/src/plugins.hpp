@@ -23,6 +23,12 @@ std::vector<PluginInfo> scanPluginBundles(const std::vector<std::string> &folder
 // Audio Units registered with the OS (platform; empty elsewhere).
 std::vector<PluginInfo> listAudioUnits();
 json::Value pluginsToJson(const std::vector<PluginInfo> &plugins);
+// Stage 2 (ADR-0009): runs `scanner` (dalnok-scan) once per plugin in its own process with a timeout,
+// up to `parallel` at a time, and caches results in `cachePath` keyed by bundle modification time or AU
+// version. Returns the plugins with "scan": {"status": ok|failed|crashed|timeout, "cached", "error"?,
+// "classes"?} and kind/vendor/version refined from what the plugin declared.
+json::Value validatePlugins(const std::vector<PluginInfo> &plugins, const std::string &scanner, const std::string &cachePath,
+                            int timeoutMs, bool rescan, int parallel = 4);
 // VST3 moduleinfo.json allows trailing commas; this strips them (outside strings) before strict parsing.
 std::string relaxJson(const std::string &text);
 

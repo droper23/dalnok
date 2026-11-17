@@ -10,6 +10,7 @@
 #include "import/import.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cstring>
 
 using namespace dalnok;
@@ -217,6 +218,24 @@ size_t dalnok_plugins_scan(const char *extra, bool au, char *out, size_t len) {
         list.insert(list.end(), units.begin(), units.end());
     }
     return copyOut(out, len, json::serialize(pluginsToJson(list)));
+}
+
+size_t dalnok_plugins_validate(const char *scanner, const char *cache, const char *extra, bool onlyExtra, bool au,
+                               const char *filter, int32_t timeoutMs, bool rescan, char *out, size_t len) {
+    if (!scanner || !*scanner) return copyOut(out, len, "[]");
+    std::vector<std::string> folders = onlyExtra ? std::vector<std::string>{} : pluginFolders();
+    if (extra && *extra) folders.push_back(extra);
+    auto list = scanPluginBundles(folders);
+    if (au) {
+        auto units = listAudioUnits();
+        list.insert(list.end(), units.begin(), units.end());
+    }
+    if (filter && *filter) {
+        auto lower = [](std::string s) { for (auto &c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c))); return s; };
+        const std::string f = lower(filter);
+        std::erase_if(list, [&](const PluginInfo &p) { return lower(p.name).find(f) == std::string::npos; });
+    }
+    return copyOut(out, len, json::serialize(validatePlugins(list, scanner, cache ? cache : "", std::max(500, timeoutMs), rescan)));
 }
 
 DalnokTrackId dalnok_track_add_instrument(DalnokEngine *e, const char *name) {
