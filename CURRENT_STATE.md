@@ -6,6 +6,7 @@ milestone: Phase 1 + Migration (M5) + Time stretch (M6) + UI pass 1 (M7) done; P
 # Current State
 
 ## Latest session
+- Added independently tested off-thread capture draining and an exclusive temporary PCM spool with read-only inspection of complete frames and partial tails. This is not yet a recorder, a project import path, or crash recovery. Normal and ThreadSanitizer native tests pass.
 - Scarlett recheck through AVFoundation: a short capture peaked at -29.2 dBFS on channels 1 and 2, with exactly identical samples; channels 3 and 4 were silent. The capture path may duplicate a channel, so independent inputs remain unverified.
 - Added an independent bounded SPSC audio capture buffer with all-or-nothing writes and dropped-frame accounting. Native tests pass normally and under ThreadSanitizer; it is not integrated into device capture or disk writing.
 - Open selects foreign projects and asks before import; Logic packages and stem folders are accepted. GUI self-test covers cancel and confirm.
@@ -91,7 +92,7 @@ Phase 2: recording. Recording integrity outranks everything else. Time-stretch l
 [[ADR-0007 Time stretch]]) because real imports needed it.
 
 ## Next recommended action
-Implement and test the disk writer described in [[ADR-0008 Recording architecture]], then integrate the tested capture buffer with same-device AUHAL input, record-arm, monitoring, and recovery. The Scarlett is needed for hardware and loopback validation.
+Extend the capture writer and temporary spool into durable recovery and finalization, then integrate the tested capture buffer with same-device AUHAL input, record-arm, monitoring, and the model. The Scarlett is needed for hardware and loopback validation.
 
 ## Open migration items
 - Verify Logic `.logicx` placement against a real Logic **Final Cut Pro XML export** of the same project

@@ -1,6 +1,9 @@
 # Changelog
 
 ## [Unreleased]
+### Added (2026-11-16, capture writer foundation)
+- Independently tested capture drain and exclusive temporary PCM spool, with failure reporting and read-only inspection of incomplete frames. These components are not yet integrated into recording.
+
 ### Added (2026-11-16, recording foundation)
 - A bounded capture buffer with dropped-frame accounting, tested in isolation and under ThreadSanitizer. Recording is not yet connected.
 
