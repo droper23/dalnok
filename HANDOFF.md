@@ -1,6 +1,13 @@
 # Handoff: Dalnok (latest: 2026-11-17, Phases 2–4 session)
 
-## 2026-11-17 session (read first)
+## 2026-11-17, later (read first)
+Added: master fader + mixer master strip and insert slots; track stacks; plug-in parameter automation; the clip
+launcher (Phase 5 start). Theme critique plan: `06 - Design/Theme Critique 2026-11-17.md` (top items done; the
+rest is ranked there). Format 9, C API 20. Launcher state is live-only (not undoable, not saved as "playing").
+Open: launcher recording and timeline↔slot drag, follow actions; sidechains; CLAP; automation write modes;
+disk streaming; separate in/out devices; nested stacks; theme material system and palette.
+
+## 2026-11-17 session
 Phase 3 closed (tempo/meter maps). Phase 2 recording workflow: cycle, punch/count-in, multi-input takes, crash
 recovery prompt. Phase 4: buses/outputs/sends + mixer (X), volume/pan automation (A), plug-in delay compensation,
 cycle recording into take folders + swipe comping (Takes window). UI review tooling: `--uiwalk`,
