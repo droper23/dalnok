@@ -28,7 +28,7 @@
 extern "C" {
 #endif
 
-#define DALNOK_API_VERSION 9
+#define DALNOK_API_VERSION 10
 
 typedef enum {
     DALNOK_OK = 0,
@@ -113,6 +113,65 @@ bool dalnok_capture_active(const DalnokEngine *engine);
 /* Read status while recording; error flags require the caller to stop capture. */
 DalnokStatus dalnok_capture_status(const DalnokEngine *engine, DalnokCaptureStats *stats);
 
+/* ---- Recording -------------------------------------------------------
+ * Records the armed audio track (at most one; from its input channel on
+ * `input_device_uid`, which must equal the explicitly selected output device,
+ * or DALNOK_SIMULATED_INPUT) and/or the armed instrument track (MIDI).
+ * Starts the transport; the take begins at the first block in which the
+ * transport rolls. Pausing or seeking during the take ends it with an error.
+ * Audio goes to "<directory>/<Track> Take N.wav" (32-bit float) with a
+ * journal; see dalnok_record_scan / dalnok_record_recover. On success the take
+ * is placed as one undo step ("Record"), shifted earlier by
+ * dalnok_record_latency. A failed take is never placed: its valid prefix is
+ * saved as "<name> (recovered).wav" and the spool and journal are kept.
+ * Control thread only. */
+#define DALNOK_SIMULATED_INPUT "dalnok:simulated-input"
+typedef struct {
+    DalnokClipId audio_clip, midi_clip; /* 0 if none placed */
+    DalnokMediaId media;
+    uint64_t frames;          /* audio frames in the finished (or recovered) file */
+    int64_t start_frame;      /* where the take began, before latency compensation (-1: never rolled) */
+    int64_t latency_frames;   /* subtracted when placing audio */
+    int32_t notes;
+    bool recovered;           /* failed take; `path` holds the recovered prefix */
+    char path[1024];
+    DalnokCaptureStats capture;
+} DalnokRecordResult;
+DalnokStatus dalnok_record_start(DalnokEngine *engine, const char *input_device_uid, const char *directory,
+                                 char *err, size_t err_len);
+/* Stops, finalizes, verifies and places the take. Returns DALNOK_OK only if
+ * everything succeeded; otherwise `err` explains what failed and what was kept. */
+DalnokStatus dalnok_record_stop(DalnokEngine *engine, DalnokRecordResult *result, char *err, size_t err_len);
+bool dalnok_record_active(const DalnokEngine *engine);
+/* True once the take can no longer succeed (transport paused or jumped); stop it. */
+bool dalnok_record_broken(const DalnokEngine *engine);
+/* Timeline frame where the current take began, or -1 before the transport rolls. */
+int64_t dalnok_record_start_frame(const DalnokEngine *engine);
+/* Device-reported round trip (input + output) plus the manual offset. Not loopback-measured. */
+int64_t dalnok_record_latency(const DalnokEngine *engine);
+void dalnok_record_set_latency_offset(DalnokEngine *engine, int64_t frames);
+/* Software input monitoring while recording audio (off by default; risk of feedback). */
+void dalnok_record_set_monitoring(DalnokEngine *engine, bool on);
+/* Simulated device only: the round trip it reports. Tests and simulation. */
+void dalnok_record_set_simulated_latency(DalnokEngine *engine, int64_t frames);
+/* One duplex cycle on DALNOK_SIMULATED_INPUT: `input` is mono, `frames` long. */
+DalnokStatus dalnok_engine_pump_input(DalnokEngine *engine, const float *input, float *left, float *right,
+                                      int32_t frames);
+/* Lists take journals in a folder as JSON [{"journal","state","wav",...}]; returns full length. [any thread] */
+size_t dalnok_record_scan(const char *directory, char *json, size_t len);
+/* Saves an unfinished take's valid prefix as "<name> (recovered).wav" (spool unchanged).
+ * Fills JSON with the journal plus "path". [any thread] */
+DalnokStatus dalnok_record_recover(const char *journal, char *json, size_t len, char *err, size_t err_len);
+
+/* ---- MIDI input -------------------------------------------------------
+ * Note messages from open inputs play the armed instrument track live (also
+ * while stopped) and are recorded while recording. Timing is quantized to the
+ * audio callback (at most one buffer late). */
+DalnokStatus dalnok_midi_open_input(DalnokEngine *engine, int32_t unique_id, char *err, size_t err_len);
+/* Feeds one channel message as if it came from a device. [control thread] */
+DalnokStatus dalnok_midi_inject(DalnokEngine *engine, uint8_t status, uint8_t data1, uint8_t data2);
+uint64_t dalnok_midi_dropped(const DalnokEngine *engine);
+
 /* Runs the live render path (transport fades, smoothing, meters) for `frames`
  * without a device. Fails if a device is running. For tests and simulation. */
 DalnokStatus dalnok_engine_pump(DalnokEngine *engine, float *left, float *right, int32_t frames);
@@ -189,7 +248,11 @@ typedef struct {
     bool muted;
     bool solo;
     int32_t clip_count;
+    int32_t kind;          /* DalnokTrackKind */
+    bool armed;            /* record-enabled */
+    int32_t input_channel; /* zero-based audio input (audio tracks) */
 } DalnokTrackInfo;
+typedef enum { DALNOK_TRACK_AUDIO = 0, DALNOK_TRACK_INSTRUMENT = 1 } DalnokTrackKind;
 DalnokStatus dalnok_track_info(const DalnokEngine *engine, DalnokTrackId track, DalnokTrackInfo *out);
 
 /* Clips of a track in z-order (later = on top; overlapping clips: top wins). */
@@ -213,6 +276,8 @@ typedef struct {
     bool preserve_pitch;  /* false = varispeed */
     bool processing;      /* stretched audio still rendering in the background (silent until ready) */
     char name[128];
+    bool midi;            /* MIDI clip (media = 0; see dalnok_midi_clip_notes) */
+    int32_t note_count;
 } DalnokClipInfo;
 DalnokStatus dalnok_clip_info(const DalnokEngine *engine, DalnokClipId clip, DalnokClipInfo *out);
 
@@ -271,6 +336,40 @@ int32_t dalnok_engine_poll_jobs(DalnokEngine *engine);
 
 /* Clip (region) gain in dB, applied before the track fader. Clamped to +24. */
 DalnokStatus dalnok_clip_set_gain_db(DalnokEngine *engine, DalnokClipId clip, float gain_db);
+
+/* ---- Plugins (discovery only; hosting is later Phase 4 work) ---------
+ * Lists VST3 and CLAP bundles in the standard folders (plus `extra_folder`,
+ * may be NULL) and registered Audio Units, as JSON
+ * [{"format","name","vendor","version","kind","path","categories"}].
+ * kind is "instrument", "effect", "midi", or "unknown" when only a sandboxed
+ * scan could tell. No plugin code is loaded. Returns full length. [any thread] */
+size_t dalnok_plugins_scan(const char *extra_folder, bool include_audio_units, char *json, size_t len);
+
+/* ---- Instruments, MIDI clips, tempo --------------------------------- */
+
+/* Adds a track that plays MIDI clips through the built-in Dalnok Poly synth.
+ * It becomes the armed instrument track (plays live MIDI input). */
+DalnokTrackId dalnok_track_add_instrument(DalnokEngine *engine, const char *name);
+/* Record-enable. Arming a track disarms other tracks of the same kind. */
+DalnokStatus dalnok_track_set_armed(DalnokEngine *engine, DalnokTrackId track, bool armed);
+DalnokStatus dalnok_track_set_input(DalnokEngine *engine, DalnokTrackId track, int32_t input_channel);
+
+/* A note in frames relative to the clip's source origin (timeline = clip start + start - clip offset). */
+typedef struct {
+    int64_t start, length;
+    uint8_t pitch, velocity; /* 0-127, 1-127 */
+} DalnokNote;
+DalnokClipId dalnok_midi_clip_add(DalnokEngine *engine, DalnokTrackId track, int64_t start, int64_t length);
+/* Replaces all notes (one undo step). */
+DalnokStatus dalnok_midi_clip_set_notes(DalnokEngine *engine, DalnokClipId clip, const DalnokNote *notes, int32_t count);
+/* Copies up to `capacity` notes sorted by start; returns the total count (-1 if not a MIDI clip). */
+int32_t dalnok_midi_clip_notes(const DalnokEngine *engine, DalnokClipId clip, DalnokNote *out, int32_t capacity);
+/* Moves note starts toward a grid of `grid_beats` anchored at frame 0 (strength 0-1). */
+DalnokStatus dalnok_midi_quantize(DalnokEngine *engine, DalnokClipId clip, double grid_beats, double strength);
+/* Constant tempo and meter (no tempo changes yet). */
+DalnokStatus dalnok_tempo_set(DalnokEngine *engine, double bpm, int32_t numerator, int32_t denominator);
+double dalnok_tempo_bpm(const DalnokEngine *engine);
+void dalnok_meter(const DalnokEngine *engine, int32_t *numerator, int32_t *denominator);
 
 /* ---- Undo ------------------------------------------------------------ */
 

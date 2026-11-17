@@ -1,7 +1,7 @@
 {
   "product": "Dalnok",
   "updated": "2026-11-16",
-  "milestone": "UI pass 1 (M7)",
+  "milestone": "Recording and MIDI integration (M8)",
   "rubric": "Each feature is split into concrete steps. A verified step (backed by an automated test, the app's end-to-end self-test, or a measured benchmark) counts 1. An implemented-but-unverified step counts 0.5. Planned steps count 0. Feature % = step score ÷ steps. Overall parity weights features by priority (P0 = 3, P1 = 2, P2 = 1). A reference DAW's parity covers only the features that DAW has.",
   "references": {
     "logic": "Logic Pro",
@@ -29,8 +29,12 @@
       "caption": "Arrangement: rainbow track colors from green, gain and pan knobs, M/S chips, vertical meters, control bar in the title bar."
     },
     {
+      "file": "screenshots/recording-midi.png",
+      "caption": "Recording and MIDI: R chips arm tracks, each header shows its input (IN 1 or MIDI), the record button sits next to Play, and MIDI clips show their notes."
+    },
+    {
       "file": "screenshots/warm-analog.png",
-      "caption": "Warm Analog theme: warmer studio surfaces and type; selected in Settings and applied on reopening."
+      "caption": "Warm Analog theme: warmer surfaces and its own amber-to-olive track palette; selected in Settings and applied on reopening."
     },
     {
       "file": "screenshots/settings.png",
@@ -112,6 +116,10 @@
         ],
         [
           "M/S chips with pro state colors; vertical stereo meters",
+          "verified"
+        ],
+        [
+          "Record-arm chip and input selector on every track",
           "verified"
         ],
         [
@@ -466,23 +474,35 @@
       "why": "Core of the owner's workflow. Recording integrity matters more than anything else.",
       "steps": [
         [
-          "Experimental headless same-device mono capture to a recoverable spool",
+          "Same-device capture to a recoverable spool (Scarlett Solo: 120 s take, 0 dropped frames)",
           "verified"
         ],
         [
-          "Recover a stopped mono or stereo capture spool to a new WAV via CLI",
+          "Record-arm tracks (R chip, ⌃R) and choose the input channel",
           "verified"
         ],
         [
-          "Input monitoring",
-          "todo"
+          "Record to the armed track: one undoable take, saved in the project and reopened",
+          "verified"
         ],
         [
-          "Record-arm tracks",
-          "todo"
+          "Take journal; process-kill recovery with every recovered sample exact",
+          "verified"
         ],
         [
-          "Crash-safe recording to disk",
+          "Interrupted takes are never placed; the valid part is saved and reported",
+          "verified"
+        ],
+        [
+          "Software input monitoring while recording (opt-in)",
+          "verified"
+        ],
+        [
+          "Latency-compensated placement (device-reported latency; loopback measurement pending)",
+          "implemented"
+        ],
+        [
+          "Power-loss durability",
           "todo"
         ],
         [
@@ -490,11 +510,11 @@
           "todo"
         ],
         [
-          "Latency-compensated takes",
+          "Separate input and output devices; multiple armed audio tracks",
           "todo"
         ]
       ],
-      "evidence": "Scarlett Solo: automated hardware capture test and a 30-second headless capture with zero reported dropped frames. The capture writer, timestamp checks, and WAV recovery have tests. Track recording UI, monitoring, alignment, and crash-safe finalization remain unfinished."
+      "evidence": "RecordingTests: bit-exact take contents, latency placement, undo/redo, save and reopen, interrupted takes, journal recovery and monitoring on the simulated input. scripts/ci/record-crash.sh kills a real-time take at three points and verifies every recovered sample. App self-test records through the real menus. Scarlett Solo 4th Gen at 44.1 kHz: 10 s and 120 s takes via dalnok-cli record, 0 dropped frames. Latency compensation uses the device's reported figures (1,186 frames on the Solo) and has not been checked with a loopback measurement; monitoring was not checked by ear."
     },
     {
       "id": "comping",
@@ -991,7 +1011,11 @@
       "why": "The first plugin format (owner's choice). The SDK is MIT-licensed.",
       "steps": [
         [
-          "Scan and validate",
+          "Discover bundles and read moduleinfo metadata without loading code",
+          "verified"
+        ],
+        [
+          "Sandboxed validation scan (helper process)",
           "todo"
         ],
         [
@@ -1007,7 +1031,7 @@
           "todo"
         ]
       ],
-      "evidence": "Planned for Phase 4."
+      "evidence": "PluginDiscovery tests with generated bundles; on the development Mac dalnok-cli plugins finds 217 VST3/CLAP bundles. Only 6 ship moduleinfo.json, so most kinds stay unknown until the sandboxed scan exists. Plan: ADR-0009."
     },
     {
       "id": "genericui",
@@ -1049,8 +1073,8 @@
       "why": "Logic users own AU plugins.",
       "steps": [
         [
-          "Scan",
-          "todo"
+          "List registered Audio Units by type (no instantiation)",
+          "verified"
         ],
         [
           "Load and process",
@@ -1065,7 +1089,7 @@
           "todo"
         ]
       ],
-      "evidence": "Planned for Phase 4."
+      "evidence": "PluginDiscovery test checks Apple's built-in units; 230 instrument and effect units listed on the development Mac."
     },
     {
       "id": "clap",
@@ -1078,6 +1102,10 @@
       "why": "Open standard with per-note modulation.",
       "steps": [
         [
+          "Bundle discovery (metadata only)",
+          "verified"
+        ],
+        [
           "Load and process",
           "todo"
         ],
@@ -1086,7 +1114,7 @@
           "todo"
         ]
       ],
-      "evidence": "Planned."
+      "evidence": "PluginDiscovery tests. CLAP descriptors require loading the plugin, so kinds are unknown until the sandboxed scan."
     },
     {
       "id": "sandbox",
@@ -1153,11 +1181,11 @@
       "why": "Composing needs sounds out of the box.",
       "steps": [
         [
-          "Sampler",
-          "todo"
+          "Dalnok Poly: basic polyphonic synth",
+          "verified"
         ],
         [
-          "Synth",
+          "Sampler",
           "todo"
         ],
         [
@@ -1165,7 +1193,7 @@
           "todo"
         ]
       ],
-      "evidence": "Planned for Phase 3."
+      "evidence": "MidiTests measure pitch (440 Hz within 0.5 Hz), onset, release and velocity scaling; a mutation check confirmed the pitch test catches a 2 Hz error. Most instruments are expected to come from plugins (ADR-0009), so the stock set stays small."
     },
     {
       "id": "midi",
@@ -1184,27 +1212,43 @@
           "verified"
         ],
         [
-          "MIDI tracks",
+          "Instrument tracks and MIDI clips (undo, split, trim, save and reopen)",
+          "verified"
+        ],
+        [
+          "Core MIDI input ports feed the armed instrument live (virtual-source test)",
+          "verified"
+        ],
+        [
+          "MIDI recording into a clip (block-accurate timing)",
+          "verified"
+        ],
+        [
+          "Quantize (grid and strength)",
+          "verified"
+        ],
+        [
+          "Notes drawn inside MIDI clips",
+          "implemented"
+        ],
+        [
+          "Piano roll editor",
           "todo"
         ],
         [
-          "Piano roll",
+          "Velocity editing in an editor",
           "todo"
         ],
         [
-          "Velocity editing",
+          "Recorded and checked with a real keyboard",
           "todo"
         ],
         [
-          "Quantize",
-          "todo"
-        ],
-        [
-          "MIDI recording from a keyboard",
+          "Sample-accurate MIDI input timing",
           "todo"
         ]
       ],
-      "evidence": "MIDI source enumeration tests and scripts/ci/midi-parser.sh; a separate Core MIDI probe observed MiniLab note events. Parser-to-device integration and all musical features remain unimplemented."
+      "evidence": "MidiTests: recording, quantize, persistence, split rendering, and a Core MIDI virtual source driving the instrument through a real input port (TSan clean). The app self-test plays live MIDI through the running device, records a note through the menus and quantizes. Input events are stamped at the start of the audio callback that receives them, so timing is up to one buffer late. The Arturia MiniLab has not been played into a recording yet."
     },
     {
       "id": "tempo",
@@ -1219,7 +1263,11 @@
       "why": "Bars and beats, click track, tempo changes.",
       "steps": [
         [
-          "Tempo map",
+          "Project tempo and meter (saved; drives quantize and new clip length)",
+          "verified"
+        ],
+        [
+          "Tempo changes (tempo map)",
           "todo"
         ],
         [
@@ -1227,11 +1275,15 @@
           "todo"
         ],
         [
+          "Bars-and-beats ruler",
+          "todo"
+        ],
+        [
           "Metronome",
           "todo"
         ]
       ],
-      "evidence": "Planned for Phase 3."
+      "evidence": "MidiTests (tempo validation, persistence and quantize grid). One constant tempo only."
     },
     {
       "id": "palette",
@@ -1344,8 +1396,12 @@
           "todo"
         ],
         [
-          "Warm Analog theme and Settings (applies on reopening)",
+          "Warm Analog theme with its own amber track palette (applies on reopening)",
           "verified"
+        ],
+        [
+          "Live theme switching",
+          "todo"
         ],
         [
           "Additional analog themes",

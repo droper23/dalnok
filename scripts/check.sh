@@ -10,6 +10,7 @@ swift test
 scripts/ci/capture-ring.sh
 scripts/ci/midi-parser.sh
 scripts/ci/duplex-probe.sh
+scripts/ci/record-crash.sh
 if [[ "${DALNOK_SANITIZE:-0}" == "1" ]]; then
   swift test --sanitize=address
   swift test --sanitize=thread

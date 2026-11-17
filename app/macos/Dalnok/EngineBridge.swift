@@ -140,6 +140,46 @@ final class Engine {
     }
     var outputDeviceUid: String { var b = [CChar](repeating: 0, count: 256); dalnok_engine_output_device(handle, &b, 256); return cString(b) }
     var deviceAlive: Bool { dalnok_engine_device_alive(handle) }
+
+    // MARK: Recording and MIDI input
+    struct InputDevice: Equatable {
+        let uid: String, name: String, sampleRate: Double, channels: Int
+    }
+    static func inputDevices() -> [InputDevice] {
+        var list = [DalnokInputDeviceInfo](repeating: DalnokInputDeviceInfo(), count: 64)
+        let n = min(Int(dalnok_input_devices(&list, 64)), 64)
+        return list.prefix(n).map { InputDevice(uid: fixedString($0.uid), name: fixedString($0.name),
+                                               sampleRate: $0.sample_rate, channels: Int($0.input_channels)) }
+    }
+    /// Devices that can record (they also have outputs, so one clock drives both).
+    static func recordingDevices() -> [InputDevice] {
+        let outputs = Set(outputDevices().map(\.uid))
+        return inputDevices().filter { outputs.contains($0.uid) }
+    }
+    struct MidiSource { let id: Int32, name: String }
+    static func midiSources() -> [MidiSource] {
+        var list = [DalnokMidiSourceInfo](repeating: DalnokMidiSourceInfo(), count: 64)
+        let n = min(Int(dalnok_midi_sources(&list, 64)), 64)
+        return list.prefix(n).map { MidiSource(id: $0.unique_id, name: fixedString($0.name)) }
+    }
+    func openMidiInput(_ id: Int32) throws {
+        var err = [CChar](repeating: 0, count: 256)
+        guard dalnok_midi_open_input(handle, id, &err, 256) == DALNOK_OK else { throw EngineError(description: cString(err)) }
+    }
+    var isRecording: Bool { dalnok_record_active(handle) }
+    var recordBroken: Bool { dalnok_record_broken(handle) }
+    var recordStartFrame: Int64 { dalnok_record_start_frame(handle) }
+    var recordLatency: Int64 { dalnok_record_latency(handle) }
+    func startRecording(input uid: String?, folder: URL?) throws {
+        var err = [CChar](repeating: 0, count: 1024)
+        guard dalnok_record_start(handle, uid, folder?.path, &err, 1024) == DALNOK_OK else { throw EngineError(description: cString(err)) }
+    }
+    func stopRecording() -> (DalnokRecordResult, String?) {
+        var r = DalnokRecordResult()
+        var err = [CChar](repeating: 0, count: 2048)
+        let ok = dalnok_record_stop(handle, &r, &err, 2048) == DALNOK_OK
+        return (r, ok ? nil : cString(err))
+    }
     var hardwareSampleRate: Double { dalnok_engine_hardware_sample_rate(handle) }
 
     // Meters (linear peaks since last read)

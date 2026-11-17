@@ -71,6 +71,10 @@ enum Screenshots {
             w.conceptGuide.show(daw: .logic)
             try? await Task.sleep(for: .seconds(0.3))
             if let v = w.conceptGuide.window.contentView { png(v, dir.appendingPathComponent("concept-guide.png")) }
+            w.conceptGuide.window.orderOut(nil)
+            w.settings.show()
+            try? await Task.sleep(for: .seconds(0.3))
+            if let v = w.settings.window?.contentView { png(v, dir.appendingPathComponent("settings.png")) }
             exit(0)
         }
     }

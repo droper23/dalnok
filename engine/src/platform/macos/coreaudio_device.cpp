@@ -249,6 +249,27 @@ public:
         return AudioObjectGetPropertyData(device_, &a, 0, nullptr, &size, &value) == noErr && value;
     }
     double hardwareSampleRate() const override { return nominalRate(device_); }
+    int64_t roundTripLatency() const override {
+        auto get = [](AudioObjectID object, AudioObjectPropertySelector sel, AudioObjectPropertyScope scope) {
+            auto a = addr(sel, scope);
+            UInt32 value = 0, size = sizeof(value);
+            return AudioObjectGetPropertyData(object, &a, 0, nullptr, &size, &value) == noErr ? int64_t(value) : int64_t(0);
+        };
+        auto firstStream = [this](AudioObjectPropertyScope scope) -> AudioObjectID {
+            auto a = addr(kAudioDevicePropertyStreams, scope);
+            UInt32 size = 0;
+            if (AudioObjectGetPropertyDataSize(device_, &a, 0, nullptr, &size) != noErr || size < sizeof(AudioStreamID)) return 0;
+            std::vector<AudioStreamID> streams(size / sizeof(AudioStreamID));
+            return AudioObjectGetPropertyData(device_, &a, 0, nullptr, &size, streams.data()) == noErr ? streams[0] : 0;
+        };
+        int64_t total = 0;
+        for (auto scope : {kAudioObjectPropertyScopeInput, kAudioObjectPropertyScopeOutput}) {
+            total += get(device_, kAudioDevicePropertyLatency, scope) + get(device_, kAudioDevicePropertySafetyOffset, scope) +
+                     get(device_, kAudioDevicePropertyBufferFrameSize, scope);
+            if (const AudioObjectID stream = firstStream(scope)) total += get(stream, kAudioStreamPropertyLatency, kAudioObjectPropertyScopeGlobal);
+        }
+        return total;
+    }
 
 private:
     bool fail(const char *what, OSStatus status, std::string &err) {

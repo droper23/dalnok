@@ -1,31 +1,29 @@
 ---
 updated: 2026-11-16
-phase: 2 (Recording and editing) — Phase 1 complete
-milestone: Phase 1 + Migration (M5) + Time stretch (M6) + UI pass 1 (M7) done; Phase 2 recording next
+phase: 2–4 in progress (recording, MIDI, plugin discovery) — Phase 1 complete
+milestone: M8 recording and MIDI integration done; plugin hosting (ADR-0009) next after recording validation
 ---
 # Current State
 
-## Latest session
-- Paused at the owner’s request; see `HANDOFF.md`. The optional full hardware ThreadSanitizer test was interrupted during its build and has no result. Site updates are local and have not been published.
-- Experimental headless mono capture uses one selected duplex device and requires matching engine and device rates. Scarlett Solo at 44.1 kHz: both inputs captured and recovered; a 30-second take wrote 1,323,520 frames with zero reported drops. The opt-in hardware test passes. No track recording UI, monitoring, clip placement, latency calibration, durable journal, or power-loss guarantee yet.
-- The capture writer's immediate-stop race was fixed; stress and ThreadSanitizer tests pass. Timestamp discontinuity and input failure are reported. `dalnok-cli inputs`, `capture-test`, and `recover-capture` are diagnostic paths, not a finished recording workflow.
-- C API v9 discovers MIDI sources. Dalnok lists the Arturia MiniLab mkII; a separate 15-second Core MIDI probe observed nine note-on and eight note-off events without saving them. The MIDI 1 byte parser has native and ThreadSanitizer tests but is not connected to a device, model, or playback.
-- Settings (⌘,) exposes appearance and copy-audio preference. Warm Analog and Graphite are available; theme changes apply on reopening. App self-tests and synthetic snapshots cover both themes. See [[UI Audit 2026-11-16 follow-up]] for the multi-perspective review and limitations.
-- Periodic recovery snapshots and File ▸ Recover Snapshot are implemented. The app self-test verifies manual restore as a new unsaved project; `scripts/ci/recovery-smoke.sh` verifies the timer and rendering after killing an isolated app process. Power-loss validation, automatic prompting, and retention controls remain open. Snapshots are retained in Application Support/Dalnok/Recovery.
-- Open accepts foreign projects and asks before import; the Logic package picker and experimental importer still need broader real-project validation. Exact Logic region placement remains unverified.
+## Latest session (M8: recording and MIDI integration)
+- **Recording to tracks works** on one duplex device: R chip / ⌃R arms a track, the header's input button picks the channel, Transport ▸ Record (R) records, and the take is placed as one undo step, shifted by the device-reported latency. Takes go to the project's `Audio Files` (unsaved projects: Application Support/Dalnok/Recordings). A take begins when the transport rolls; pausing or seeking ends it as failed, and a failed take is never placed (its valid part is saved as `… (recovered).wav`).
+- **Journals and crash recovery:** each take has a journal; File ▸ Recover Recordings… and `dalnok-cli recover-takes` convert unfinished takes without touching the capture file. `scripts/ci/record-crash.sh` kills real-time takes at three points; every recovered sample was exact. Power loss is untested.
+- **Hardware:** Scarlett Solo 4th Gen at 44.1 kHz, `dalnok-cli record`: 10 s and 120 s takes, 0 dropped frames. Latency compensation uses the device's own figures (1,186 frames ≈ 27 ms round trip) and has **not** been checked with a loopback measurement. Input monitoring is opt-in and was not checked by ear.
+- **MIDI:** instrument tracks (⌥⇧⌘N) with the built-in Dalnok Poly, MIDI clips with notes drawn in the clip, quantize, constant tempo and meter, Core MIDI input from all sources playing the armed instrument live, and MIDI recording. Timing is quantized to the audio callback. Tested with a Core MIDI virtual source and the GUI self-test; the MiniLab has not been played into a recording.
+- **Phase 4 start:** read-only plugin discovery (VST3/CLAP bundles, registered Audio Units; no plugin code loaded) and [[ADR-0009 Plugin hosting]]. The owner expects most instruments to be plugins, so the stock instrument set stays minimal.
+- **UI pass 2:** see [[UI Audit 2026-11-16 follow-up]] (Warm Analog track palette, theme tokens, Concept Guide wrapping, MIDI-clip menu states). VoiceOver and musician testing still not done; theme changes still apply on reopening.
+- Site updates (parity, screenshots) are local; the previous session's site changes were also unpublished. Publishing is the owner's call (`scripts/publish-site.sh`).
 
 ## Latest verified build
 - `main`, 2026-11-16. macOS 27.3, Xcode 27.2, Swift 6.4.2, Apple clang 21, M3 Max.
-- `swift build`: 0 warnings. `swift test`: 45 tests pass, including the mutation-checked click tests.
-  `scripts/check.sh` passes, including the live audio smoke test and the app self-test (69 checks).
-- Engine tests are clean under AddressSanitizer and ThreadSanitizer (CI job `sanitizers`). The app self-test is clean under ASan.
-- Phase 1 exit review: [[Phase 1 Exit Review]].
-- `swift test`: 64 tests (ASan/TSan clean). UI pass 1: [[UI Audit 2026-11-16]], [[Track Colors]]. Self-test passes, including migration, onboarding, and time stretch.
+- `swift build` and release build: 0 warnings. `swift test --disable-sandbox`: 90 tests pass. `scripts/check.sh` passes (tests, capture/MIDI harnesses, record-crash, live smoke, GUI self-test).
+- GUI self-test: 154 checks, both Graphite and Warm Analog.
+- TSan: recording, MIDI, plugin, live-path and capture suites clean; hardware capture test under TSan passed with the Scarlett. RT effect analysis (`scripts/ci/rt-effects.sh` with Xcode clang) clean, including the negative check.
+- Phase 1 exit review: [[Phase 1 Exit Review]]. UI audits: [[UI Audit 2026-11-16]], [[UI Audit 2026-11-16 follow-up]].
 - **Public parity page:** https://droper23.github.io/dalnok-status/ (source in `site/`, published by `scripts/publish-site.sh`).
-- CI has two jobs: build + test, and real-time effect analysis with Homebrew LLVM.
 
 ## Architecture (now)
-C++20 engine (`engine/`) → C API (`dalnok.h`, v9) → AppKit UI (`app/macos/`). The **engine owns the
+C++20 engine (`engine/`) → C API (`dalnok.h`, v10) → AppKit UI (`app/macos/`). The **engine owns the
 project model**: tracks, clips in z-order, and a media pool. Every edit is a named, undoable command with
 whole-model snapshot undo, also reachable as JSON through the command catalog. The UI is a read-only view
 that refreshes on `dalnok_model_revision`. Render snapshots reach the audio thread through an atomic
@@ -69,10 +67,19 @@ slot, and retired ones come back through an SPSC queue. See [[System Overview]],
 | Clip gain | `clip.setGain`, used by every importer |
 | Time stretch, pitch, and varispeed (Signalsmith; rendered in the background; ⌥-drag a clip's end; Clip menu) | `TimeStretch` tests measure pitch and level on output; mutation-checked; self-test |
 | Imports use stretch: REAPER playrate and pitch; Ableton warp markers (piecewise), Re-Pitch, transpose | `StretchImports` tests; a real set with 334 stretched clips imports in 1.7 s |
+| Record to an armed track (one undo step, latency-shifted, saved and reopened) | `RecordingTests` (bit-exact) + self-test through menus |
+| Take journal and process-kill recovery | `record-crash.sh` (every sample exact), `journalRecovery…` test, self-test |
+| Hardware recording, Scarlett Solo 44.1 kHz | `dalnok-cli record`: 120 s, 0 dropped frames |
+| Instrument tracks, MIDI clips, Dalnok Poly, quantize, tempo/meter | `MidiTests` (pitch ±0.5 Hz, onset, velocity, persistence) + self-test |
+| Live MIDI input and MIDI recording | Core MIDI virtual-source test (TSan clean), self-test via running device |
+| Plugin discovery (no code loaded) | `PluginDiscovery` tests; 217 bundles + 230 AUs on the dev Mac |
 | Onboarding: "Coming from…", shortcut presets, project finder with preview, import report, Concept Guide, old-DAW words in ⌘K | Self-test |
 
 ## Not yet / incomplete
-- Automatic recovery prompting, power-loss validation, and retention controls (Phase 2).
+- Loopback latency measurement, power-loss validation, punch in/out, multiple armed audio tracks, separate input/output devices (built-in mic + speakers is refused with an explanation).
+- Piano roll editor, tempo changes, bars-and-beats ruler, metronome, sample-accurate MIDI input timing.
+- Plugin loading and processing (ADR-0009 stage 2 onward). Most VST3/CLAP kinds show as unknown until the sandboxed scan.
+- Automatic project-recovery prompting and retention controls; live theme switching.
 - Disk streaming. Media is fully decoded into RAM, about 23 MB per stereo minute at 48 kHz.
 - Input selection in the UI and handling sample-rate changes; the engine rate is fixed at launch.
 
@@ -84,11 +91,13 @@ slot, and retired ones come back through an SPSC queue. See [[System Overview]],
 - Peak meters only. No LUFS or RMS yet.
 
 ## Active objective
-Phase 2: recording, with Phase 3 MIDI foundations underway. Recording integrity outranks everything else. Time-stretch landed first (M6,
-[[ADR-0007 Time stretch]]) because real imports needed it.
+Finish validating recording (loopback latency, power loss, real keyboard), then Phase 3 editing (piano roll, tempo map, metronome) and Phase 4 plugin hosting (sandboxed scan, then VST3). Recording integrity still outranks everything else.
 
 ## Next recommended action
-Connect experimental duplex capture to track arm, monitoring, take placement and the model; add a durable journal, latency calibration and power-loss testing. Connect the MIDI parser to a Core MIDI port, then implement a MIDI model, recording and playback. The Scarlett is needed for hardware and loopback validation.
+1. With a cable from the Scarlett's output to input 1, add and run a loopback latency measurement (`dalnok-cli`), then decide whether reported latency is trustworthy.
+2. Owner: play the MiniLab with `dalnok-cli midi-play <id> 20 --record`, and try recording in the app.
+3. Piano roll editor and a bars-and-beats ruler; metronome.
+4. ADR-0009 stage 2: `dalnok-scan` helper process, then the VST3 adapter.
 
 ## Open migration items
 - Verify Logic `.logicx` placement against a real Logic **Final Cut Pro XML export** of the same project

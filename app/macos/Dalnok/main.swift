@@ -13,6 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var main: MainWindowController!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        let args0 = CommandLine.arguments
         main = MainWindowController(session: session)
         NSApp.mainMenu = buildMenu(target: main)
         Migration.applyKeymap(SourceDAW.preferred, to: NSApp.mainMenu)
@@ -22,6 +23,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         do { try engine.startDevice() } catch {
             main.flash("Audio device unavailable: \(error)")
+        }
+        main.connectMidiInputs()
+        let unfinished = MainWindowController.unfinishedTakes(in: MainWindowController.scratchRecordingFolder)
+        if !unfinished.isEmpty && !args0.contains("--selftest") {
+            main.flash("\(unfinished.count) unfinished recording(s) found — choose File ▸ Recover Recordings…")
         }
 
         let args = Array(CommandLine.arguments.dropFirst())
@@ -127,6 +133,7 @@ func buildMenu(target: MainWindowController) -> NSMenu {
         item("New", #selector(W.newDocument(_:)), "n"),
         item("Open…", #selector(W.openDocument(_:)), "o"),
         item("Recover Snapshot…", #selector(W.recoverSnapshot(_:)), ""),
+        item("Recover Recordings…", #selector(W.recoverRecordings(_:)), ""),
         .separator(),
         item("Save", #selector(W.saveDocument(_:)), "s"),
         item("Save As…", #selector(W.saveDocumentAs(_:then:)), "s", [.command, .shift]),
@@ -148,6 +155,7 @@ func buildMenu(target: MainWindowController) -> NSMenu {
     colorItem.submenu = target.colorMenu()
     menu("Track", [
         item("New Track", #selector(W.newTrack(_:)), "n", [.command, .option]),
+        item("New Instrument Track", #selector(W.newInstrumentTrack(_:)), "n", [.command, .option, .shift]),
         item("Rename Track", #selector(W.renameTrack(_:)), ""),
         item("Delete Track", #selector(W.deleteTrack(_:)), "\u{8}", [.command]),
         .separator(),
@@ -156,6 +164,7 @@ func buildMenu(target: MainWindowController) -> NSMenu {
         .separator(),
         item("Mute Track", #selector(W.toggleMuteTrack(_:)), "m", [.control]),
         item("Solo Track", #selector(W.toggleSoloTrack(_:)), "s", [.control]),
+        item("Record Enable Track", #selector(W.toggleArmTrack(_:)), "r", [.control]),
         .separator(),
         colorItem,
         item("Recolor Tracks as Gradient", #selector(W.recolorTracksAsGradient(_:)), ""),
@@ -167,7 +176,18 @@ func buildMenu(target: MainWindowController) -> NSMenu {
         it.target = target
         curve.submenu?.addItem(it)
     }
+    let quantize = NSMenuItem(title: "Quantize", action: nil, keyEquivalent: "")
+    quantize.submenu = NSMenu(title: "Quantize")
+    for division in [4, 8, 16, 32] {
+        let it = NSMenuItem(title: "1/\(division) Notes", action: #selector(W.quantizeClip(_:)), keyEquivalent: "")
+        it.tag = division
+        it.target = target
+        quantize.submenu?.addItem(it)
+    }
     menu("Clip", [
+        item("New MIDI Clip", #selector(W.newMidiClip(_:)), "m", [.command, .shift]),
+        quantize,
+        .separator(),
         item("Add Short Fades", #selector(W.addShortFades(_:)), "f", [.control]),
         item("Remove Fades", #selector(W.removeFades(_:)), ""),
         curve,
@@ -182,11 +202,20 @@ func buildMenu(target: MainWindowController) -> NSMenu {
     menu("Transport", [
         item("Play / Pause", #selector(W.togglePlay), " ", []),
         item("Go to Start", #selector(W.goToStart), "\r", []),
+        item("Record", #selector(W.toggleRecord(_:)), "r", []),
     ])
     let outputMenu = NSMenuItem(title: "Output Device", action: nil, keyEquivalent: "")
     outputMenu.submenu = NSMenu(title: "Output Device")
     outputMenu.submenu?.delegate = target
-    menu("Audio", [outputMenu])
+    let inputMenu = NSMenuItem(title: "Recording Input", action: nil, keyEquivalent: "")
+    inputMenu.submenu = NSMenu(title: "Recording Input")
+    inputMenu.submenu?.delegate = target
+    let midiMenu = NSMenuItem(title: "MIDI Inputs", action: nil, keyEquivalent: "")
+    midiMenu.submenu = NSMenu(title: "MIDI Inputs")
+    midiMenu.submenu?.delegate = target
+    menu("Audio", [outputMenu, inputMenu,
+                   item("Input Monitoring", #selector(W.toggleInputMonitoring(_:)), ""),
+                   .separator(), midiMenu])
     menu("View", [
         item("Command Palette…", #selector(W.showCommandPalette(_:)), "k"),
         .separator(),

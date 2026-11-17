@@ -20,6 +20,7 @@
 #include <fstream>
 #include <set>
 #include <sstream>
+#include <fcntl.h>
 #include <unistd.h>
 #include <sys/stat.h>
 #include <vector>
@@ -29,7 +30,7 @@ namespace fs = std::filesystem;
 namespace dalnok {
 
 namespace {
-constexpr int kFormatVersion = 1;
+constexpr int kFormatVersion = 2; // 2: instrument tracks, MIDI clips, tempo and meter
 
 bool readFile(const std::string &path, std::string &out, std::string &err) {
     std::ifstream in(path, std::ios::binary);
@@ -87,10 +88,32 @@ int64_t toInt(const json::Value &v, std::string_view key, int64_t fallback = 0) 
 }
 } // namespace
 
+bool syncDirectory(const std::string &dir) {
+    const int fd = ::open(dir.c_str(), O_RDONLY);
+    if (fd < 0) return false;
+    const bool ok = ::fsync(fd) == 0;
+    ::close(fd);
+    return ok;
+}
+
+bool writeFileDurably(const std::string &path, const std::string &data, std::string &err) {
+    if (!writeFileAtomically(path, data, err)) return false;
+    const auto dir = fs::path(path).parent_path();
+    if (!syncDirectory(dir.empty() ? "." : dir.string())) { err = "cannot flush folder of " + path; return false; }
+    return true;
+}
+
 json::Value Engine::describe() const {
     using json::Value;
     Value root = Value::makeObject();
     root.set("sampleRate", sampleRate_);
+    root.set("tempo", model_.bpm);
+    {
+        json::Value meter = json::Value::makeArray();
+        meter.push(model_.meterNum);
+        meter.push(model_.meterDen);
+        root.set("meter", std::move(meter));
+    }
 
     std::set<DalnokMediaId> used;
     for (const auto &c : model_.clips) used.insert(c.media);
@@ -113,6 +136,9 @@ json::Value Engine::describe() const {
         Value tv = Value::makeObject();
         tv.set("id", t.id);
         tv.set("name", t.name);
+        if (t.kind == kTrackInstrument) { tv.set("kind", "instrument"); tv.set("instrument", "dalnok.poly"); }
+        if (t.armed) tv.set("armed", true);
+        if (t.inputChannel != 0) tv.set("input", t.inputChannel);
         tv.set("color", t.color);
         if (t.customColor >= 0) {
             char hex[8];
@@ -128,7 +154,18 @@ json::Value Engine::describe() const {
             if (c.track != t.id) continue;
             Value cv = Value::makeObject();
             cv.set("id", c.id);
-            cv.set("media", c.media);
+            if (c.midi()) {
+                cv.set("kind", "midi");
+                Value notes = Value::makeArray();
+                for (const auto &n : *c.notes) {
+                    Value nv = Value::makeArray();
+                    nv.push(n.start); nv.push(n.length); nv.push(static_cast<int>(n.pitch)); nv.push(static_cast<int>(n.velocity));
+                    notes.push(std::move(nv));
+                }
+                cv.set("notes", std::move(notes));
+            } else {
+                cv.set("media", c.media);
+            }
             cv.set("start", c.start);
             cv.set("offset", c.offset);
             cv.set("length", c.length);
@@ -313,6 +350,9 @@ std::unique_ptr<Engine::PreparedProject> Engine::prepareDocument(const json::Val
                 return nullptr;
             }
             t.name = tv.getString("name", "Track");
+            t.kind = tv.getString("kind", "audio") == "instrument" ? kTrackInstrument : kTrackAudio;
+            t.armed = tv.getBool("armed", false);
+            t.inputChannel = static_cast<int32_t>(std::clamp<int64_t>(toInt(tv, "input"), 0, 63));
             t.color = static_cast<int32_t>(toInt(tv, "color"));
             if (const auto hex = tv.getString("customColor", ""); hex.size() == 7 && hex[0] == '#')
                 t.customColor = static_cast<int32_t>(std::strtol(hex.c_str() + 1, nullptr, 16));
@@ -335,6 +375,35 @@ std::unique_ptr<Engine::PreparedProject> Engine::prepareDocument(const json::Val
                     c.offset = scale(toInt(cv, "offset"));
                     c.length = scale(toInt(cv, "length"));
                     c.name = cv.getString("name", "Audio");
+                    if (cv.getString("kind", "audio") == "midi") {
+                        std::vector<MidiNote> notes;
+                        if (const json::Value *nv = cv.get("notes"); nv && nv->isArray())
+                            for (const auto &n : nv->array) {
+                                if (!n.isArray() || n.array.size() < 4 || !n.array[0].isNumber() || !n.array[1].isNumber() ||
+                                    !n.array[2].isNumber() || !n.array[3].isNumber()) {
+                                    err = "invalid MIDI note";
+                                    return nullptr;
+                                }
+                                MidiNote note;
+                                note.start = scale(static_cast<int64_t>(std::llround(n.array[0].number)));
+                                note.length = std::max<int64_t>(1, scale(static_cast<int64_t>(std::llround(n.array[1].number))));
+                                note.pitch = static_cast<uint8_t>(std::clamp(n.array[2].number, 0.0, 127.0));
+                                note.velocity = static_cast<uint8_t>(std::clamp(n.array[3].number, 1.0, 127.0));
+                                if (note.start < 0) { err = "invalid MIDI note"; return nullptr; }
+                                notes.push_back(note);
+                            }
+                        std::stable_sort(notes.begin(), notes.end(), [](const MidiNote &a, const MidiNote &b) { return a.start < b.start; });
+                        c.media = 0;
+                        c.notes = std::make_shared<const std::vector<MidiNote>>(std::move(notes));
+                        if (c.id <= 0 || !clipIds.insert(c.id).second || t.kind != kTrackInstrument || c.start < 0 ||
+                            c.offset < 0 || c.length <= 0) {
+                            err = "invalid MIDI clip";
+                            return nullptr;
+                        }
+                        maxClip = std::max(maxClip, c.id);
+                        model.clips.push_back(std::move(c));
+                        continue;
+                    }
                     if (const json::Value *g = cv.get("gainDb"))
                         c.gainDb = g->isNumber() ? std::min(static_cast<float>(g->number), 24.0f) : -INFINITY;
                     if (c.gainDb <= -96.0f) c.gainDb = -INFINITY;
@@ -365,6 +434,13 @@ std::unique_ptr<Engine::PreparedProject> Engine::prepareDocument(const json::Val
         }
     }
 
+    model.bpm = std::clamp(doc.getNumber("tempo", 120), 20.0, 400.0);
+    if (const json::Value *meter = doc.get("meter"); meter && meter->isArray() && meter->array.size() == 2 &&
+        meter->array[0].isNumber() && meter->array[1].isNumber()) {
+        model.meterNum = static_cast<int32_t>(std::clamp(meter->array[0].number, 1.0, 32.0));
+        const int den = static_cast<int>(meter->array[1].number);
+        model.meterDen = (den == 1 || den == 2 || den == 4 || den == 8 || den == 16) ? den : 4;
+    }
     auto prepared = std::make_unique<PreparedProject>();
     // Render stretched clips now (we're off the main thread) so playback is ready on apply.
     for (const auto &c : model.clips) {

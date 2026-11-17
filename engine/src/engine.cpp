@@ -43,14 +43,35 @@ const ClipState *Model::clip(DalnokClipId id) const { return const_cast<Model *>
 
 // ---- Lifecycle ------------------------------------------------------------
 
+namespace {
+// Stands in for a duplex device in tests: the caller drives each cycle through pumpInput.
+class SimulatedDuplex final : public AudioDuplexDevice {
+public:
+    SimulatedDuplex(double rate, int64_t latency) : rate_(rate), latency_(latency) {}
+    bool start(Callback, void *, std::string &) override { return true; }
+    void stop() override {}
+    bool captureFailed() const override { return false; }
+    bool alive() const override { return true; }
+    double hardwareSampleRate() const override { return rate_; }
+    int64_t roundTripLatency() const override { return latency_; }
+private:
+    double rate_;
+    int64_t latency_;
+};
+} // namespace
+
 Engine::Engine(double sampleRate) : sampleRate_(sampleRate) {
     if (sampleRate_ <= 0) sampleRate_ = defaultOutputSampleRate();
     if (sampleRate_ <= 0) sampleRate_ = 48000.0;
+    midiParsers_[0] = std::make_unique<MidiParser>();
+    midiInputs_[0].store(midiParsers_[0].get(), std::memory_order_release);
     commit();
 }
 
 Engine::~Engine() {
+    if (recording_) { RecordResult ignored; std::string err; stopRecording(ignored, err); }
     stopDevice();
+    midiClient_.reset(); // closes Core MIDI ports before the parsers go away
     collectGarbage();
     delete current_;
     delete pending_.exchange(nullptr);
@@ -91,13 +112,27 @@ bool Engine::pump(float *left, float *right, int frames) {
     return true;
 }
 
+bool Engine::pumpInput(const float *input, float *left, float *right, int frames) {
+    if (!simulatedInput_ || !duplex_ || !left || !right || frames <= 0) return false;
+    duplexCallback(this, left, right, input, frames);
+    collectGarbage();
+    return true;
+}
+
 bool Engine::startCapture(const std::string &uid, int channel, const std::string &path, std::string &err) {
     if (duplex_ || captureWriter_) { err = "capture is already active"; return false; }
-    if (!device_ || uid.empty() || uid != outputUid_) { err = "select the same explicit input and output device before capture"; return false; }
+    const bool simulated = uid == kSimulatedInput;
+    if (simulated ? device_ != nullptr : (!device_ || uid.empty() || uid != outputUid_)) {
+        err = simulated ? "the simulated input requires the output device to be stopped"
+                        : "select the same explicit input and output device before capture";
+        return false;
+    }
     if (path.empty() || sampleRate_ != std::floor(sampleRate_) || sampleRate_ < 8000 || sampleRate_ > 384000) {
         err = "invalid capture path or sample rate"; return false;
     }
-    auto duplex = createDuplexDevice(uid, sampleRate_, channel, err);
+    std::unique_ptr<AudioDuplexDevice> duplex;
+    if (simulated) duplex = std::make_unique<SimulatedDuplex>(sampleRate_, simulatedLatency_);
+    else duplex = createDuplexDevice(uid, sampleRate_, channel, err);
     if (!duplex) return false;
     const int fd = CaptureSpool::create(path, static_cast<uint32_t>(sampleRate_), 1);
     if (fd < 0) { err = "cannot create new capture spool"; return false; }
@@ -114,15 +149,16 @@ bool Engine::startCapture(const std::string &uid, int channel, const std::string
     captureInputFailed_.store(false, std::memory_order_relaxed);
     captureMissingFrames_.store(0, std::memory_order_relaxed);
     captureRT_ = captureWriter_.get();
-    device_->stop(); device_.reset();
+    if (device_) { device_->stop(); device_.reset(); }
     if (!duplex->start(&Engine::duplexCallback, this, err)) {
         captureRT_ = nullptr;
         captureWriter_->stop(); captureWriter_.reset(); captureSpool_.reset();
         std::string restoreError;
-        if (!startDevice(restoreError)) err += "; output restart failed: " + restoreError;
+        if (!simulated && !startDevice(restoreError)) err += "; output restart failed: " + restoreError;
         return false;
     }
     duplex_ = std::move(duplex);
+    simulatedInput_ = simulated;
     return true;
 }
 
@@ -151,7 +187,9 @@ bool Engine::stopCapture(DalnokCaptureStats &stats, std::string &err, bool resto
     const bool valid = !stats.input_error && !stats.overflow && !stats.write_error && !stats.finalize_error &&
                        stats.captured_frames > 0 && stats.captured_frames == stats.written_frames;
     std::string outputError;
-    const bool outputOK = !restoreOutput || startDevice(outputError);
+    const bool restore = restoreOutput && !simulatedInput_;
+    simulatedInput_ = false;
+    const bool outputOK = !restore || startDevice(outputError);
     if (!valid) err = "capture failed; the original spool was retained";
     if (!outputOK) { if (!err.empty()) err += "; "; err += "output restart failed: " + outputError; }
     return valid && outputOK;
@@ -180,6 +218,7 @@ void Engine::stopDevice() {
 void Engine::collectGarbage() {
     RenderState *s = nullptr;
     while (retired_.pop(s)) delete s;
+    if (recording_) drainRecordedMidi();
 }
 
 // ---- Media pool -----------------------------------------------------------
@@ -336,6 +375,136 @@ DalnokTrackId Engine::addTrack(const std::string &name, std::string &err) {
     return id;
 }
 
+DalnokTrackId Engine::addInstrumentTrack(const std::string &name, std::string &err) {
+    const auto id = nextTrack_;
+    const bool ok = edit("New Instrument Track", true, [&](Model &m) {
+        TrackState t;
+        t.id = id;
+        t.kind = kTrackInstrument;
+        t.name = name.empty() ? "Instrument " + std::to_string(m.tracks.size() + 1) : name;
+        t.color = m.tracks.empty() ? 0 : m.tracks.back().color + 1;
+        t.runtime = std::make_shared<TrackRuntime>();
+        // A new instrument track plays live MIDI input right away (one armed instrument track).
+        for (auto &other : m.tracks) if (other.kind == kTrackInstrument) other.armed = false;
+        t.armed = true;
+        m.tracks.push_back(std::move(t));
+        return true;
+    });
+    if (!ok) return fail(err, "could not add track"), 0;
+    ++nextTrack_;
+    ++nextColor_;
+    return id;
+}
+
+bool Engine::setArmed(DalnokTrackId id, bool armed, std::string &err) {
+    if (recording_) return fail(err, "cannot change record arm while recording");
+    return edit(armed ? "Record Enable" : "Record Disable", true, [&](Model &m) {
+        TrackState *t = m.track(id);
+        if (!t) return fail(err, "no such track");
+        // One armed track per kind: the first recording release takes one input and one MIDI stream.
+        if (armed)
+            for (auto &other : m.tracks) if (other.kind == t->kind) other.armed = false;
+        t->armed = armed;
+        return true;
+    });
+}
+
+bool Engine::setInputChannel(DalnokTrackId id, int32_t channel, std::string &err) {
+    if (recording_) return fail(err, "cannot change input while recording");
+    return edit("Track Input", false, [&](Model &m) {
+        TrackState *t = m.track(id);
+        if (!t) return fail(err, "no such track");
+        if (t->kind != kTrackAudio) return fail(err, "only audio tracks have an audio input");
+        if (channel < 0 || channel > 63) return fail(err, "input channel must be 0-63");
+        t->inputChannel = channel;
+        return true;
+    });
+}
+
+bool Engine::setTempo(double bpm, int32_t num, int32_t den, std::string &err) {
+    return edit("Tempo", false, [&](Model &m) {
+        if (!(bpm >= 20 && bpm <= 400)) return fail(err, "tempo must be 20-400 BPM");
+        if (num < 1 || num > 32 || (den != 1 && den != 2 && den != 4 && den != 8 && den != 16))
+            return fail(err, "meter must be 1-32 over 1, 2, 4, 8 or 16");
+        m.bpm = bpm;
+        m.meterNum = num;
+        m.meterDen = den;
+        return true;
+    });
+}
+
+bool Engine::validNotes(const std::vector<MidiNote> &notes, std::string &err) const {
+    for (const auto &n : notes)
+        if (n.start < 0 || n.length <= 0 || n.pitch > 127 || n.velocity < 1 || n.velocity > 127)
+            return fail(err, "notes need start >= 0, length > 0, pitch 0-127, velocity 1-127");
+    return true;
+}
+
+namespace {
+NoteList sortedNotes(std::vector<MidiNote> notes) {
+    std::stable_sort(notes.begin(), notes.end(), [](const MidiNote &a, const MidiNote &b) {
+        return a.start < b.start || (a.start == b.start && a.pitch < b.pitch);
+    });
+    return std::make_shared<const std::vector<MidiNote>>(std::move(notes));
+}
+} // namespace
+
+DalnokClipId Engine::addMidiClip(DalnokTrackId track, int64_t start, int64_t length, std::string &err,
+                                 std::vector<MidiNote> notes, const char *undoName) {
+    if (!validNotes(notes, err)) return 0;
+    const auto id = nextClip_;
+    const bool ok = edit(undoName, true, [&](Model &m) {
+        const TrackState *t = m.track(track);
+        if (!t) return fail(err, "no such track");
+        if (t->kind != kTrackInstrument) return fail(err, "MIDI clips go on instrument tracks");
+        if (start < 0 || length <= 0) return fail(err, "start must be >= 0 and length > 0");
+        ClipState c;
+        c.id = id;
+        c.track = track;
+        c.start = start;
+        c.length = length;
+        c.notes = sortedNotes(std::move(notes));
+        c.name = "MIDI";
+        m.clips.push_back(std::move(c));
+        return true;
+    });
+    if (!ok) return 0;
+    ++nextClip_;
+    return id;
+}
+
+bool Engine::setNotes(DalnokClipId id, std::vector<MidiNote> notes, std::string &err) {
+    if (!validNotes(notes, err)) return false;
+    return edit("Edit Notes", true, [&](Model &m) {
+        ClipState *c = m.clip(id);
+        if (!c) return fail(err, "no such clip");
+        if (!c->midi()) return fail(err, "not a MIDI clip");
+        c->notes = sortedNotes(std::move(notes));
+        return true;
+    });
+}
+
+bool Engine::quantize(DalnokClipId id, double gridBeats, double strength, std::string &err) {
+    return edit("Quantize", true, [&](Model &m) {
+        ClipState *c = m.clip(id);
+        if (!c) return fail(err, "no such clip");
+        if (!c->midi()) return fail(err, "not a MIDI clip");
+        if (!(gridBeats >= 1.0 / 64 && gridBeats <= 16) || !(strength > 0 && strength <= 1))
+            return fail(err, "grid must be 1/64-16 beats and strength 0-1");
+        const double grid = gridBeats * sampleRate_ * 60.0 / m.bpm;
+        // The grid is anchored to the timeline (bar 1), not to the clip.
+        const auto origin = c->start - c->offset;
+        std::vector<MidiNote> notes = *c->notes;
+        for (auto &n : notes) {
+            const double at = static_cast<double>(origin + n.start);
+            const double snapped = std::round(at / grid) * grid;
+            n.start = std::max<int64_t>(0, static_cast<int64_t>(std::llround(at + (snapped - at) * strength)) - origin);
+        }
+        c->notes = sortedNotes(std::move(notes));
+        return true;
+    });
+}
+
 bool Engine::removeTrack(DalnokTrackId id, std::string &err) {
     return edit("Delete Track", true, [&](Model &m) {
         if (!m.track(id)) return fail(err, "no such track");
@@ -432,6 +601,7 @@ bool Engine::setClipFades(DalnokClipId id, int64_t fadeIn, int64_t fadeOut, int3
     return edit("Fade", true, [&](Model &m) {
         ClipState *c = m.clip(id);
         if (!c) return fail(err, "no such clip");
+        if (c->midi()) return fail(err, "not available for MIDI clips");
         if (fadeIn < 0 || fadeOut < 0) return fail(err, "fades must be >= 0");
         if (curve != kFadeLinear && curve != kFadeEqualPower) return fail(err, "unknown fade curve");
         c->fadeIn = fadeIn;
@@ -446,6 +616,7 @@ bool Engine::setClipStretch(DalnokClipId id, int64_t length, double rate, float 
     return edit("Time Stretch", true, [&](Model &m) {
         ClipState *c = m.clip(id);
         if (!c) return fail(err, "no such clip");
+        if (c->midi()) return fail(err, "not available for MIDI clips");
         if (!(rate >= 0.05 && rate <= 20) || !(pitch >= -48 && pitch <= 48) || length <= 0)
             return fail(err, "rate must be 0.05–20, pitch −48…48 semitones, length > 0");
         const PoolEntry *pe = poolEntry(c->media);
@@ -463,6 +634,7 @@ bool Engine::setClipGain(DalnokClipId id, float gainDb, std::string &err) {
     return edit("Clip Gain", true, [&](Model &m) {
         ClipState *c = m.clip(id);
         if (!c) return fail(err, "no such clip");
+        if (c->midi()) return fail(err, "not available for MIDI clips");
         if (std::isnan(gainDb)) return fail(err, "gain is NaN");
         c->gainDb = gainDb <= -96.0f ? -INFINITY : std::min(gainDb, 24.0f);
         return true;
@@ -490,6 +662,7 @@ DalnokClipId Engine::addClip(DalnokTrackId track, DalnokMediaId media, int64_t s
     const auto id = nextClip_;
     const bool ok = edit("Add Clip", true, [&](Model &m) {
         if (!m.track(track)) return fail(err, "no such track");
+        if (m.track(track)->kind != kTrackAudio) return fail(err, "audio clips go on audio tracks");
         if (!pe) return fail(err, "no such media");
         if (start < 0 || offset < 0 || offset >= pe->frames) return fail(err, "start/offset out of range");
         const int64_t avail = pe->frames - offset;
@@ -523,6 +696,8 @@ bool Engine::moveClip(DalnokClipId id, DalnokTrackId track, int64_t start, std::
         if (it == m.clips.end()) return fail(err, "no such clip");
         if (!m.track(track)) return fail(err, "no such track");
         if (start < 0) return fail(err, "start must be >= 0");
+        if ((m.track(track)->kind == kTrackInstrument) != it->midi())
+            return fail(err, it->midi() ? "MIDI clips go on instrument tracks" : "audio clips go on audio tracks");
         ClipState c = *it;
         c.track = track;
         c.start = start;
@@ -537,7 +712,7 @@ bool Engine::setClipRegion(DalnokClipId id, int64_t start, int64_t offset, int64
         ClipState *c = m.clip(id);
         if (!c) return fail(err, "no such clip");
         const PoolEntry *pe = poolEntry(c->media);
-        const int64_t frames = pe ? pe->frames : 0;
+        const int64_t frames = c->midi() ? INT64_MAX / 2 : (pe ? pe->frames : 0); // MIDI clips can extend freely
         const auto span = static_cast<int64_t>(std::llround(static_cast<double>(length) * c->rate));
         if (start < 0 || offset < 0 || length <= 0 || offset + span > frames)
             return fail(err, "region out of range");
@@ -585,11 +760,24 @@ bool Engine::clipProcessing(const ClipState &c) const {
 
 std::unique_ptr<RenderState> Engine::compile(std::vector<StretchJob> *needed) const {
     auto s = std::make_unique<RenderState>();
+    s->synth = SynthParams::make(sampleRate_);
     for (const auto &t : model_.tracks) {
         RenderTrack rt;
         rt.runtime = t.runtime;
+        rt.instrument = t.kind == kTrackInstrument;
+        if (rt.instrument && t.armed) s->liveTrack = static_cast<int32_t>(s->tracks.size());
         for (const auto &c : model_.clips) {
             if (c.track != t.id) continue;
+            if (c.midi()) {
+                if (!rt.instrument) continue;
+                for (const auto &n : *c.notes) {
+                    if (n.start < c.offset || n.start >= c.offset + c.length) continue; // outside the clip window
+                    const int64_t at = c.start + n.start - c.offset;
+                    const int64_t end = c.start + std::min(n.start + n.length, c.offset + c.length) - c.offset;
+                    rt.notes.push_back({at, end, n.pitch, n.velocity});
+                }
+                continue;
+            }
             const PoolEntry *pe = poolEntry(c.media);
             if (!pe || !pe->handle->impl) continue; // offline media renders silence
             std::shared_ptr<const Media> media = pe->handle->impl;
@@ -617,6 +805,8 @@ std::unique_ptr<RenderState> Engine::compile(std::vector<StretchJob> *needed) co
             rt.clips.push_back({media, c.start, offset, len, fi, fo, c.fadeCurve, dbToGain(c.gainDb)});
             if (media->channelCount() > 1) rt.monoSource = false;
         }
+        std::stable_sort(rt.notes.begin(), rt.notes.end(),
+                         [](const RenderNote &a, const RenderNote &b) { return a.start < b.start; });
         s->tracks.push_back(std::move(rt));
     }
     return s;
@@ -654,8 +844,39 @@ void Engine::duplexCallback(void *ctx, float *left, float *right, const float *i
     if (!input) {
         self->captureMissingFrames_.fetch_add(static_cast<uint64_t>(frames), std::memory_order_relaxed);
         self->captureInputFailed_.store(true, std::memory_order_release);
+        return;
     }
-    else if (self->captureRT_) self->captureRT_->push(input, static_cast<uint32_t>(frames));
+    // In a recording session only blocks where the transport rolled continuously belong to the take.
+    const bool take = !self->recordSession_.load(std::memory_order_acquire) || self->rtRecordingBlock_;
+    if (take && self->captureRT_) self->captureRT_->push(input, static_cast<uint32_t>(frames));
+    if (self->monitoring_.load(std::memory_order_relaxed))
+        for (int i = 0; i < frames; ++i) { left[i] += input[i]; right[i] += input[i]; }
+}
+
+void Engine::handleMidiInput(int64_t pos) DALNOK_NONBLOCKING {
+    constexpr int kMaxEvents = 256;
+    RecordedMidi events[kMaxEvents];
+    int count = 0;
+    const int32_t live = current_ ? current_->liveTrack : -1;
+    SynthState *synth = live >= 0 ? &current_->tracks[static_cast<size_t>(live)].runtime->live : nullptr;
+    for (auto &slot : midiInputs_) {
+        MidiParser *parser = slot.load(std::memory_order_acquire);
+        if (!parser) continue;
+        MidiMessage m;
+        while (parser->pop(m)) {
+            const uint8_t type = m.status & 0xf0;
+            const bool on = type == 0x90 && m.data2 > 0, off = type == 0x80 || (type == 0x90 && m.data2 == 0);
+            if (synth && on) synth->noteOn(current_->synth, m.data1, m.data2, -1);
+            else if (synth && off) synth->noteOff(current_->synth, m.data1);
+            else if (synth && type == 0xb0 && (m.data1 == 120 || m.data1 == 123)) synth->reset();
+            if (!on && !off) continue;
+            if (count < kMaxEvents) events[count++] = {pos, m.status, m.data1, m.data2};
+            else midiRecordDropped_.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    // Record after the block decided whether the transport rolled (see process).
+    rtMidiCount_ = 0;
+    for (int i = 0; i < count; ++i) rtMidiEvents_[rtMidiCount_++] = events[i];
 }
 
 void Engine::audioCallback(void *ctx, float *left, float *right, int frames) DALNOK_NONBLOCKING {
@@ -683,6 +904,9 @@ void Engine::process(float *left, float *right, int frames) DALNOK_NONBLOCKING {
             swaps_.fetch_add(1, std::memory_order_relaxed);
         }
     }
+    const int64_t before = rtPosition_;
+    handleMidiInput(before);
+    const bool anySolo = soloCount_.load(std::memory_order_relaxed) > 0;
     const int64_t seek = seekRequest_.exchange(-1, std::memory_order_relaxed);
     if (seek >= 0) pendingSeek_ = seek;
     const bool play = playing_.load(std::memory_order_relaxed);
@@ -701,10 +925,11 @@ void Engine::process(float *left, float *right, int frames) DALNOK_NONBLOCKING {
 
         if (transportGain_ == 0.0f && target == 0.0f) {
             for (int i = 0; i < n; ++i) l[i] = r[i] = 0.0f;
+            if (current_) renderLiveInput(*current_, n, l, r, scratch_, anySolo);
             continue;
         }
         if (current_) {
-            renderBlock(*current_, rtPosition_, n, l, r, scratch_, true, soloCount_.load(std::memory_order_relaxed) > 0);
+            renderBlock(*current_, rtPosition_, n, l, r, scratch_, true, anySolo);
         } else {
             for (int i = 0; i < n; ++i) l[i] = r[i] = 0.0f;
         }
@@ -717,6 +942,7 @@ void Engine::process(float *left, float *right, int frames) DALNOK_NONBLOCKING {
             }
             transportGain_ = g;
         }
+        if (current_) renderLiveInput(*current_, n, l, r, scratch_, anySolo);
         float pl = 0, pr = 0;
         for (int i = 0; i < n; ++i) {
             pl = std::max(pl, std::fabs(l[i]));
@@ -727,6 +953,30 @@ void Engine::process(float *left, float *right, int frames) DALNOK_NONBLOCKING {
         rtPosition_ += n;
     }
     position_.store(pendingSeek_ >= 0 ? pendingSeek_ : rtPosition_, std::memory_order_relaxed);
+
+    // Recording: a take covers the blocks where the transport advanced continuously.
+    const uint32_t take = recordTake_.load(std::memory_order_acquire);
+    if (take != rtTake_) { rtTake_ = take; rtRecordNext_ = -1; }
+    rtRecordingBlock_ = false;
+    if (recordArmed_.load(std::memory_order_acquire) && !recordBroken_.load(std::memory_order_relaxed)) {
+        if (rtPosition_ - before == frames) {
+            const int64_t blockStart = rtPosition_ - frames;
+            if (rtRecordNext_ < 0) recordStart_.store(blockStart, std::memory_order_release);
+            if (rtRecordNext_ >= 0 && blockStart != rtRecordNext_) recordBroken_.store(true, std::memory_order_release);
+            else { rtRecordingBlock_ = true; recordEnd_.store(rtPosition_, std::memory_order_release); }
+            rtRecordNext_ = rtPosition_;
+        } else if (rtRecordNext_ >= 0) {
+            recordBroken_.store(true, std::memory_order_release); // paused or sought during the take
+        }
+    }
+    if (rtRecordingBlock_ && recordMidi_.load(std::memory_order_acquire)) {
+        for (int i = 0; i < rtMidiCount_; ++i) {
+            RecordedMidi e = rtMidiEvents_[i];
+            e.pos = rtPosition_ - frames;
+            if (!midiRecordQueue_.push(e)) midiRecordDropped_.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    rtMidiCount_ = 0;
 }
 
 // ---- Offline ------------------------------------------------------------
@@ -737,9 +987,10 @@ bool Engine::renderOffline(int64_t start, int64_t frames, float *left, float *ri
     const auto state = compile();
     const bool anySolo = soloCount_.load() > 0;
     Scratch scratch{};
+    std::vector<SynthState> synths(state->tracks.size());
     for (int64_t done = 0; done < frames;) {
         const int n = static_cast<int>(std::min<int64_t>(kMaxBlock, frames - done));
-        renderBlock(*state, start + done, n, left + done, right + done, scratch, false, anySolo);
+        renderBlock(*state, start + done, n, left + done, right + done, scratch, false, anySolo, synths.data());
         done += n;
     }
     return true;
@@ -755,12 +1006,14 @@ bool Engine::renderToWav(const std::string &path, int64_t start, int64_t frames,
     renderPendingStretchesNow();
     const auto state = compile();
     Scratch scratch{};
+    std::vector<SynthState> synths(state->tracks.size());
     std::vector<float> l(kMaxBlock * 64), r(kMaxBlock * 64);
     for (int64_t done = 0; done < frames;) {
         const auto chunk = std::min<int64_t>(static_cast<int64_t>(l.size()), frames - done);
         for (int64_t o = 0; o < chunk;) {
             const int n = static_cast<int>(std::min<int64_t>(kMaxBlock, chunk - o));
-            renderBlock(*state, start + done + o, n, l.data() + o, r.data() + o, scratch, false, soloCount_.load() > 0);
+            renderBlock(*state, start + done + o, n, l.data() + o, r.data() + o, scratch, false, soloCount_.load() > 0,
+                        synths.data());
             o += n;
         }
         if (!w->write(l.data(), r.data(), chunk, err)) return false;

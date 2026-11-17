@@ -28,12 +28,17 @@ usage:
   dalnok-cli inputs                                                    list audio input devices
   dalnok-cli midi-inputs                                               list MIDI sources
   dalnok-cli capture-test <device-name> <channel> <seconds> <new-spool>  experimental duplex capture
+  dalnok-cli record <device-name> <channel> <seconds> <folder> [--save p.dalnok] [--monitor]  record an armed track
+  dalnok-cli simulate-record <folder> <seconds>                         record generated input in real time (crash tests)
+  dalnok-cli recover-takes <folder>                                      recover unfinished takes from their journals
+  dalnok-cli midi-play <source-id> <seconds> [--record]                  play (and record) the built-in synth from MIDI
+  dalnok-cli plugins [--no-au] [--folder F]                              list VST3, CLAP and Audio Unit plugins (no code loaded)
   dalnok-cli bench [--tracks N] [--seconds S]                          render-cost benchmark (no device)
   dalnok-cli import <project.rpp|.als|.logicx|.fcpxml|stems-folder> [--save out.dalnok] [--render out.wav] [--quiet]
 """
 
 let args = Array(CommandLine.arguments.dropFirst())
-guard let cmd = args.first, args.count >= 2 || cmd == "commands" || cmd == "bench" || cmd == "inputs" || cmd == "midi-inputs" else { print(usage); exit(2) }
+guard let cmd = args.first, args.count >= 2 || cmd == "commands" || cmd == "bench" || cmd == "inputs" || cmd == "midi-inputs" || cmd == "recover-takes" || cmd == "plugins" else { print(usage); exit(2) }
 
 func openProject(_ path: String) -> OpaquePointer {
     let engine = dalnok_engine_create(48_000)!
@@ -74,6 +79,118 @@ case "capture-test":
     print("captured \(stats.captured_frames), wrote \(stats.written_frames), dropped \(stats.dropped_frames) frames")
     guard result == DALNOK_OK, stats.captured_frames > 0 else { fail(cstr(err).isEmpty ? "no captured frames" : cstr(err)) }
     print("experimental capture: PASS; spool retained at \(args[4])")
+
+case "record", "simulate-record":
+    let simulated = cmd == "simulate-record"
+    guard simulated ? args.count == 3 : args.count >= 5 else { print(usage); exit(2) }
+    let channel = simulated ? 1 : (Int32(args[2]) ?? 0)
+    let seconds = Double(simulated ? args[2] : args[3]) ?? 0
+    let folder = simulated ? args[1] : args[4]
+    guard channel > 0, seconds > 0, seconds <= 3_600 else { print(usage); exit(2) }
+    var uid = DALNOK_SIMULATED_INPUT, rate = 48_000.0
+    if !simulated {
+        let count = dalnok_input_devices(nil, 0)
+        var devices = [DalnokInputDeviceInfo](repeating: DalnokInputDeviceInfo(), count: Int(max(count, 0)))
+        let current = devices.withUnsafeMutableBufferPointer { dalnok_input_devices($0.baseAddress, Int32($0.count)) }
+        guard let device = devices.prefix(Int(max(0, min(count, current)))).first(where: {
+            withUnsafeBytes(of: $0.name) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) } == args[1]
+        }) else { fail("input device not found") }
+        guard channel <= device.input_channels else { fail("input channel is out of range") }
+        uid = withUnsafeBytes(of: device.uid) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }
+        rate = device.sample_rate
+    }
+    guard let engine = dalnok_engine_create(rate) else { fail("engine creation failed") }
+    defer { dalnok_engine_destroy(engine) }
+    var err = [CChar](repeating: 0, count: 1_024)
+    if !simulated {
+        guard dalnok_engine_set_output_device(engine, uid, &err, err.count) == DALNOK_OK else { fail(cstr(err)) }
+    }
+    let track = dalnok_track_add(engine, "Input \(channel)")
+    _ = dalnok_track_set_input(engine, track, channel - 1)
+    _ = dalnok_track_set_armed(engine, track, true)
+    dalnok_record_set_monitoring(engine, args.contains("--monitor"))
+    guard dalnok_record_start(engine, uid, folder, &err, err.count) == DALNOK_OK else { fail(cstr(err)) }
+    print("recording (round-trip latency estimate \(dalnok_record_latency(engine)) frames)…")
+    setvbuf(stdout, nil, _IOLBF, 0)
+    let deadline = Date().addingTimeInterval(seconds)
+    var frame = 0
+    var l = [Float](repeating: 0, count: 512), r = l, input = l
+    while Date() < deadline && !dalnok_record_broken(engine) {
+        if simulated { // generated, exactly representable samples; real-time pace so a kill lands mid-take
+            for i in 0..<512 { input[i] = Float((frame + i) * 37 % 2_000 - 1_000) / 1_024 }
+            _ = dalnok_engine_pump_input(engine, input, &l, &r, 512)
+            frame += 512
+            if frame % 48_000 < 512 { print("written \(frame) frames") }
+            Thread.sleep(forTimeInterval: 512.0 / 48_000)
+        } else {
+            Thread.sleep(forTimeInterval: 0.02)
+            dalnok_engine_collect_garbage(engine)
+        }
+    }
+    var result = DalnokRecordResult()
+    let status = dalnok_record_stop(engine, &result, &err, err.count)
+    let path = withUnsafeBytes(of: result.path) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }
+    print("captured \(result.capture.captured_frames), wrote \(result.capture.written_frames), dropped \(result.capture.dropped_frames); file \(result.frames) frames at \(path)")
+    print("take began at frame \(result.start_frame); placed at \(clipStart(engine, result.audio_clip)) after \(result.latency_frames) frames of latency compensation")
+    if let project = opt("--save") {
+        guard dalnok_project_save(engine, project, &err, err.count) == DALNOK_OK else { fail(cstr(err)) }
+        print("saved \(project)")
+    }
+    guard status == DALNOK_OK else { fail(cstr(err)) }
+    print("record: PASS")
+
+case "recover-takes":
+    var buf = [CChar](repeating: 0, count: 1 << 20)
+    dalnok_record_scan(args[1], &buf, buf.count)
+    let takes = (try? JSONSerialization.jsonObject(with: Data(cstr(buf).utf8))) as? [[String: Any]] ?? []
+    if takes.isEmpty { print("no take journals in \(args[1])") }
+    var failures = 0
+    for take in takes {
+        let journal = take["journal"] as? String ?? ""
+        var out = [CChar](repeating: 0, count: 65_536), err = [CChar](repeating: 0, count: 512)
+        if dalnok_record_recover(journal, &out, out.count, &err, err.count) == DALNOK_OK {
+            let r = (try? JSONSerialization.jsonObject(with: Data(cstr(out).utf8))) as? [String: Any] ?? [:]
+            print("\((journal as NSString).lastPathComponent): \(r["frames"] ?? "?") frames -> \(r["path"] ?? "?")")
+        } else {
+            failures += 1
+            print("\((journal as NSString).lastPathComponent): \(cstr(err))")
+        }
+    }
+    if failures > 0 { exit(1) }
+
+case "midi-play":
+    guard args.count >= 3, let source = Int32(args[1]), let seconds = Double(args[2]) else { print(usage); exit(2) }
+    let engine = dalnok_engine_create(0)!
+    defer { dalnok_engine_destroy(engine) }
+    var err = [CChar](repeating: 0, count: 512)
+    let track = dalnok_track_add_instrument(engine, "Keys")
+    guard dalnok_engine_start_device(engine, &err, err.count) == DALNOK_OK else { fail(cstr(err)) }
+    guard dalnok_midi_open_input(engine, source, &err, err.count) == DALNOK_OK else { fail(cstr(err)) }
+    let recording = args.contains("--record")
+    if recording { guard dalnok_record_start(engine, nil, nil, &err, err.count) == DALNOK_OK else { fail(cstr(err)) } }
+    print("play the keyboard for \(Int(seconds)) s…")
+    let deadline = Date().addingTimeInterval(seconds)
+    while Date() < deadline { Thread.sleep(forTimeInterval: 0.02); dalnok_engine_collect_garbage(engine) }
+    if recording {
+        var result = DalnokRecordResult()
+        let status = dalnok_record_stop(engine, &result, &err, err.count)
+        print("recorded \(result.notes) notes on track \(track); dropped \(dalnok_midi_dropped(engine)) events")
+        if status != DALNOK_OK { fail(cstr(err)) }
+    }
+
+case "plugins":
+    let folder = opt("--folder")
+    let n = dalnok_plugins_scan(folder, !args.contains("--no-au"), nil, 0)
+    var buf = [CChar](repeating: 0, count: n + 1)
+    dalnok_plugins_scan(folder, !args.contains("--no-au"), &buf, buf.count)
+    let list = (try? JSONSerialization.jsonObject(with: Data(cstr(buf).utf8))) as? [[String: Any]] ?? []
+    var counts: [String: Int] = [:]
+    for p in list {
+        let format = p["format"] as? String ?? "?", kind = p["kind"] as? String ?? "?"
+        counts["\(format) \(kind)", default: 0] += 1
+        print("\(format.uppercased().padding(toLength: 5, withPad: " ", startingAt: 0)) \(kind.padding(toLength: 10, withPad: " ", startingAt: 0)) \(p["name"] ?? "")\((p["vendor"] as? String ?? "").isEmpty ? "" : " — \(p["vendor"]!)")")
+    }
+    print("\(list.count) plugins: " + counts.sorted { $0.key < $1.key }.map { "\($0.value) \($0.key)" }.joined(separator: ", "))
 
 case "midi-inputs":
     let count = dalnok_midi_sources(nil, 0)
@@ -274,4 +391,9 @@ case "bench":
 default:
     print(usage)
     exit(2)
+}
+
+func clipStart(_ e: OpaquePointer, _ clip: DalnokClipId) -> Int64 {
+    var info = DalnokClipInfo()
+    return dalnok_clip_info(e, clip, &info) == DALNOK_OK ? info.start : -1
 }

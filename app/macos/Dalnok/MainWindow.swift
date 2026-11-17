@@ -24,6 +24,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     let timeline: TimelineView
     private var timer: Timer?
     private var wasPlaying = false
+    /// Self-test only: record from DALNOK_SIMULATED_INPUT instead of a device.
+    static var simulatedInput = false
+    static var inputMonitoring = false
+    var openedMidiSources = Set<Int32>()
+    var lastRecordingProblem: String?
+    var lastRecoveredTakes: [URL] = []
     var fitOnNextChange = true
 
     init(session: Session) {
@@ -80,6 +86,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         emptyState.onMigrate = { [weak self] in self?.showMigrationAssistant(nil) }
 
         transport.onPlayPause = { [weak self] in self?.togglePlay() }
+        transport.onRecord = { [weak self] in self?.toggleRecord(nil) }
+        headers.onInputMenu = { [weak self] row in self?.showInputMenu(for: row) }
         transport.onRewind = { [weak self] in self?.goToStart() }
         transport.onImport = { [weak self] in self?.importAudio() }
         transport.onPalette = { [weak self] in self?.showCommandPalette(nil) }
@@ -218,6 +226,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             row.meter.push(l, r)
             row.gain.updateMeter(max(row.meter.levelDb.0, row.meter.levelDb.1))
         }
+        if e.isRecording { updateRecording() }
         let (ml, mr) = e.masterMeter()
         transport.masterMeter.push(ml, mr)
         tickCount += 1
@@ -236,10 +245,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
     @objc func togglePlay() {
         let e = session.engine
+        if e.isRecording { return finishRecording() } // Space stops a take cleanly
         e.isPlaying ? e.pause() : e.play()
     }
 
     @objc func goToStart() {
+        if session.engine.isRecording { return } // a jump would end the take
         session.engine.seek(0)
         timeline.scrollFrame = 0
     }
@@ -269,6 +280,19 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     /// Rebuilds the Output Device submenu each time it opens (devices come and go).
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
+        if menu.title == "Recording Input" { return buildRecordingInputMenu(menu) }
+        if menu.title == "MIDI Inputs" {
+            connectMidiInputs()
+            let sources = Engine.midiSources()
+            for s in sources {
+                let it = NSMenuItem(title: s.name, action: nil, keyEquivalent: "")
+                it.state = openedMidiSources.contains(s.id) ? .on : .off
+                it.isEnabled = false
+                menu.addItem(it)
+            }
+            if sources.isEmpty { menu.addItem(withTitle: "No MIDI inputs connected", action: nil, keyEquivalent: "").isEnabled = false }
+            return
+        }
         let current = session.engine.outputDeviceUid
         let devices = Engine.outputDevices()
         let def = devices.first(where: \.isDefault)?.name
@@ -306,6 +330,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             it.target = self
             m.addItem(it)
         }
+        let arm = NSMenuItem(title: "Record Enable", action: #selector(toggleArmTrack(_:)), keyEquivalent: "")
+        arm.target = self
+        m.addItem(arm)
         let color = NSMenuItem(title: "Color", action: nil, keyEquivalent: "")
         color.submenu = colorMenu()
         m.addItem(color)
@@ -731,10 +758,23 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             return selectedClipView.map { $0.fadeIn > 0 || $0.fadeOut > 0 } ?? false
         case #selector(addShortFades(_:)), #selector(doubleSpeed(_:)), #selector(halfSpeed(_:)),
              #selector(transposeUp(_:)), #selector(transposeDown(_:)):
-            return selectedClipView != nil
+            return selectedClipView.map { !$0.isMidi } ?? false
         case #selector(togglePreservePitch(_:)):
             item.state = selectedClipView?.preservePitch == false ? .off : .on
-            return selectedClipView != nil
+            return selectedClipView.map { !$0.isMidi } ?? false
+        case #selector(quantizeClip(_:)):
+            return selectedClipView?.isMidi == true
+        case #selector(newMidiClip(_:)):
+            return selectedTrack.flatMap { session.track($0) }?.isInstrument == true
+        case #selector(toggleArmTrack(_:)):
+            item.state = selectedTrack.flatMap { session.track($0) }?.armed == true ? .on : .off
+            return selectedTrack != nil && !session.engine.isRecording
+        case #selector(toggleRecord(_:)):
+            item.title = session.engine.isRecording ? "Stop Recording" : "Record"
+            return true
+        case #selector(toggleInputMonitoring(_:)):
+            item.state = Self.inputMonitoring ? .on : .off
+            return true
         case #selector(resetSpeedAndPitch(_:)):
             return selectedClipView?.isStretched == true
         case #selector(setTrackColor(_:)):

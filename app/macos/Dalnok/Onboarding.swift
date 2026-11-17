@@ -153,15 +153,16 @@ final class ConceptGuideController: NSObject, NSTableViewDataSource, NSTableView
         picker.selectedSegment = SourceDAW.allCases.firstIndex(of: SourceDAW.preferred ?? .logic) ?? 0
         search.placeholderString = "Search terms"
         search.delegate = self
-        for (id, title, w) in [("term", "Their term", 220.0), ("dalnok", "In Dalnok", 230.0), ("status", "Status", 260.0)] {
+        for (id, title, w) in [("term", "Their term", 190.0), ("dalnok", "In Dalnok", 270.0), ("status", "Status", 210.0)] {
             let c = NSTableColumn(identifier: .init(id))
             c.title = title
             c.width = w
+            c.minWidth = 120
             table.addTableColumn(c)
         }
         table.dataSource = self
         table.delegate = self
-        table.rowHeight = 26
+        table.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
         table.usesAlternatingRowBackgroundColors = true
         let scroll = NSScrollView()
         scroll.documentView = table
@@ -195,6 +196,28 @@ final class ConceptGuideController: NSObject, NSTableViewDataSource, NSTableView
     func controlTextDidChange(_ obj: Notification) { reload() }
     func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
 
+    private static let cellFont = Theme.ui(12.5)
+    private func cellText(_ c: Concept, _ column: String) -> String {
+        switch column {
+        case "term": c.term
+        case "dalnok": c.dalnok + (c.note.isEmpty ? "" : "  ·  \(c.note)")
+        default: c.status.label
+        }
+    }
+    /// Long entries wrap: each row is as tall as its tallest cell.
+    func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
+        let c = rows[row]
+        let tallest = tableView.tableColumns.map { col -> CGFloat in
+            (cellText(c, col.identifier.rawValue) as NSString).boundingRect(
+                with: NSSize(width: max(40, col.width - 10), height: 400), options: [.usesLineFragmentOrigin],
+                attributes: [.font: Self.cellFont]).height
+        }.max() ?? 16
+        return ceil(tallest) + 9
+    }
+    func tableViewColumnDidResize(_ notification: Notification) {
+        table.noteHeightOfRows(withIndexesChanged: IndexSet(integersIn: 0..<rows.count))
+    }
+
     func tableView(_ tableView: NSTableView, viewFor col: NSTableColumn?, row: Int) -> NSView? {
         let c = rows[row]
         let text: String
@@ -206,11 +229,21 @@ final class ConceptGuideController: NSObject, NSTableViewDataSource, NSTableView
             text = c.status.label
             color = c.status == .available ? Theme.hex(0x5FB39B) : { if case .partial = c.status { return Theme.accent } else { return Theme.textDim } }()
         }
-        let l = NSTextField(labelWithString: text)
+        let l = NSTextField(wrappingLabelWithString: text)
         l.textColor = color
-        l.lineBreakMode = .byTruncatingTail
+        l.font = Self.cellFont
         l.toolTip = text
-        return l
+        l.preferredMaxLayoutWidth = max(40, (col?.width ?? 200) - 10)
+        l.translatesAutoresizingMaskIntoConstraints = false
+        let cell = NSView()
+        cell.addSubview(l)
+        NSLayoutConstraint.activate([
+            l.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 2),
+            l.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -4),
+            l.topAnchor.constraint(equalTo: cell.topAnchor, constant: 4),
+            l.bottomAnchor.constraint(equalTo: cell.bottomAnchor, constant: -4),
+        ])
+        return cell
     }
 }
 

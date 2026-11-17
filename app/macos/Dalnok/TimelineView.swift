@@ -129,6 +129,7 @@ final class TimelineView: NSView {
             let y = laneY(i)
             guard y + Theme.trackHeight > Theme.rulerHeight, y < bounds.height else { continue }
             for clip in track.clips { drawClip(ctx, clip, track: track, laneY: y, scale: scale) }
+            if let rec = recording, rec.tracks.contains(track.id) { drawRecording(ctx, rec, laneY: y) }
         }
         drawRuler(ctx, scale: scale)
 
@@ -147,6 +148,43 @@ final class TimelineView: NSView {
             .draw(in: CGRect(x: 0, y: mid + 4, width: bounds.width, height: 18), withAttributes: sub)
     }
 
+    /// The take in progress: drawn as a growing red region on its armed tracks.
+    struct RecordingRegion: Equatable { var start: Int64; var end: Int64; var tracks: Set<DalnokTrackId> }
+    var recording: RecordingRegion? { didSet { if oldValue != recording { needsDisplay = true } } }
+
+    private func drawRecording(_ ctx: CGContext, _ rec: RecordingRegion, laneY: CGFloat) {
+        let x0 = xPos(forFrame: Double(rec.start)), x1 = xPos(forFrame: Double(max(rec.start, rec.end)))
+        let rect = CGRect(x: x0, y: laneY + 3, width: max(2, x1 - x0), height: Theme.trackHeight - 7)
+        let path = CGPath(roundedRect: rect, cornerWidth: 3, cornerHeight: 3, transform: nil)
+        ctx.addPath(path)
+        ctx.setFillColor(Theme.recordOn.withAlphaComponent(0.22).cgColor)
+        ctx.fillPath()
+        ctx.addPath(path)
+        ctx.setStrokeColor(Theme.recordOn.withAlphaComponent(0.85).cgColor)
+        ctx.setLineWidth(1)
+        ctx.strokePath()
+        let attrs: [NSAttributedString.Key: Any] = [.font: Theme.ui(10.5, .semibold), .foregroundColor: Theme.text]
+        ("● Recording" as NSString).draw(at: CGPoint(x: max(rect.minX, 0) + 6, y: rect.minY + 1.5), withAttributes: attrs)
+    }
+
+    /// MIDI clips: notes as bars, vertical position by pitch within the clip's own range.
+    private func drawNotes(_ ctx: CGContext, _ clip: ClipView, rect: CGRect, color: NSColor, dim: Bool) {
+        let visible = clip.notes.filter { $0.start >= clip.offset && $0.start < clip.offset + clip.length }
+        guard let lo = visible.map(\.pitch).min(), let hi = visible.map(\.pitch).max() else { return }
+        let top = rect.minY + titleH + 4, height = rect.maxY - 4 - top
+        let span = CGFloat(max(Int(hi) - Int(lo), 11)) + 1
+        let row = max(2, min(6, height / span))
+        let base = top + (height - row * span) / 2
+        ctx.setFillColor(color.withAlphaComponent(dim ? 0.45 : 0.95).cgColor)
+        for n in visible {
+            let x0 = xPos(forFrame: Double(clip.start + n.start - clip.offset))
+            let end = min(n.start + n.length, clip.offset + clip.length)
+            let x1 = xPos(forFrame: Double(clip.start + end - clip.offset))
+            let y = base + (CGFloat(hi) - CGFloat(n.pitch) + CGFloat(span - CGFloat(Int(hi) - Int(lo)) - 1) / 2) * row
+            ctx.fill(CGRect(x: x0, y: y, width: max(1.5, x1 - x0 - 0.5), height: max(1.5, row - 1)))
+        }
+    }
+
     var highlightedTrack: DalnokTrackId? { didSet { if oldValue != highlightedTrack { needsDisplay = true } } }
 
     private func drawLanes(_ ctx: CGContext) {
@@ -154,7 +192,7 @@ final class TimelineView: NSView {
         ctx.fill(bounds)
         for (i, t) in session.tracks.enumerated() {
             let y = laneY(i)
-            ctx.setFillColor((t.id == highlightedTrack ? Theme.hex(0x1C1E22) : (i % 2 == 0 ? Theme.laneA : Theme.laneB)).cgColor)
+            ctx.setFillColor((t.id == highlightedTrack ? Theme.laneHighlight : (i % 2 == 0 ? Theme.laneA : Theme.laneB)).cgColor)
             ctx.fill(CGRect(x: 0, y: y, width: bounds.width, height: Theme.trackHeight))
             ctx.setFillColor(Theme.separator.cgColor)
             ctx.fill(CGRect(x: 0, y: y + Theme.trackHeight - 1, width: bounds.width, height: 1))
@@ -234,7 +272,9 @@ final class TimelineView: NSView {
         ctx.fill(CGRect(x: rect.minX, y: rect.minY, width: rect.width, height: titleH))
         if dim { drawHatch(ctx, rect) }
 
-        if let media = session.engine.poolMedia(clip.media) {
+        if clip.isMidi {
+            drawNotes(ctx, clip, rect: rect, color: tint.waveform, dim: dim)
+        } else if let media = session.engine.poolMedia(clip.media) {
             drawWaveform(ctx, media: media, clip: clip, rect: rect, top: rect.minY + titleH + 2, color: tint.waveform,
                          dim: dim || clip.processing, scale: scale)
         }
@@ -246,6 +286,7 @@ final class TimelineView: NSView {
         let tagAttrs: [NSAttributedString.Key: Any] = [.font: Theme.ui(10, .regular), .foregroundColor: fg.withAlphaComponent(0.7)]
         var tags: [String] = []
         if clip.offline { tags.append("offline") }
+        if clip.isMidi { tags.append(clip.notes.count == 1 ? "1 note" : "\(clip.notes.count) notes") }
         if abs(clip.rate - 1) > 1e-9 { tags.append(String(format: "%.0f%% speed", clip.rate * 100)) }
         if clip.pitch != 0 { tags.append(String(format: "%+g st", Double(clip.pitch))) }
         if !clip.preservePitch && abs(clip.rate - 1) > 1e-9 { tags.append("varispeed") }

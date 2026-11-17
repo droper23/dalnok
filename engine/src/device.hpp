@@ -4,6 +4,7 @@
 
 #include "rt.hpp"
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -36,6 +37,9 @@ public:
     virtual bool captureFailed() const = 0;
     virtual bool alive() const = 0;
     virtual double hardwareSampleRate() const = 0;
+    // Device-reported input + output latency in frames (device, safety offset, stream,
+    // and one buffer each way). An estimate until measured with a loopback.
+    virtual int64_t roundTripLatency() const = 0;
 };
 
 struct DeviceInfo {

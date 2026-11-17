@@ -1,6 +1,21 @@
 # Changelog
 
 ## [Unreleased]
+### Added (2026-11-16, recording and MIDI integration, M8)
+- Recording to tracks: R chip and ⌃R record-arm, per-track input channel, Transport ▸ Record (R) and a record button. A take starts when the transport rolls and is placed on the armed track as one undo step ("Record"), shifted by the device-reported latency. Takes are saved in the project's `Audio Files` (or Application Support/Dalnok/Recordings for unsaved projects).
+- Take journals and File ▸ Recover Recordings…: unfinished takes (after a crash) are converted to `<name> (recovered).wav` without touching the capture file. Interrupted takes (transport paused or moved) are never placed; their valid part is saved and reported.
+- Audio ▸ Recording Input and opt-in Audio ▸ Input Monitoring (while recording).
+- Instrument tracks (⌥⇧⌘N) with the built-in Dalnok Poly synth, MIDI clips (Clip ▸ New MIDI Clip), notes drawn in clips, Clip ▸ Quantize, and project tempo and meter.
+- Core MIDI input from every connected source plays the armed instrument live (also while stopped) and is recorded into MIDI clips. Timing is quantized to the audio callback.
+- Read-only plugin discovery (`dalnok-cli plugins`, `dalnok_plugins_scan`): VST3 and CLAP bundles and registered Audio Units, without loading plugin code. ADR-0009 plans hosting.
+- C API v10; project format version 2. CLI: `record`, `simulate-record`, `recover-takes`, `midi-play`, `plugins`. `scripts/ci/record-crash.sh` kills real-time takes and verifies every recovered sample.
+### Changed
+- Warm Analog has its own amber-to-olive track palette; the selected-lane and position-display colors now follow the theme.
+- The Concept Guide wraps long entries and lists recording, instrument tracks and quantize.
+### Fixed
+- Clip menu commands that only apply to audio are disabled for MIDI clips.
+- UI self-tests restore every preference they change (copy audio, coming-from DAW, onboarding, recording input).
+- Finished and recovered takes are ordinary readable files (0644) instead of owner-only.
 ### Added (2026-11-16, capture, MIDI, and appearance)
 - Experimental same-device mono capture to a retained spool through the C API and `dalnok-cli capture-test`; no track UI, monitoring, clip placement, or latency compensation yet. Device sample rates must match. Scarlett hardware and recovery tests passed.
 - MIDI source discovery and a separately tested MIDI 1 channel-message parser. Live MIDI recording, playback, and instruments are not implemented.

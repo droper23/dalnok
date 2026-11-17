@@ -13,10 +13,12 @@ final class TransportBar: NSView {
     let timeLabel = NSTextField(labelWithString: "0:00.000")
     let masterMeter = MeterView()
     let playButton = IconButton("play.fill", help: "Play / Pause (Space)")
+    let recordButton = IconButton("circle.fill", help: "Record (R)")
     private let rewind = IconButton("backward.end.fill", help: "Go to Start (Return)")
     private let paletteButton = IconButton("magnifyingglass", help: "Command Palette (⌘K)")
     private let importButton = IconButton("plus.rectangle.on.rectangle", help: "Import Audio… (⌘I)")
     var onPlayPause: (() -> Void)?
+    var onRecord: (() -> Void)?
     var onRewind: (() -> Void)?
     var onImport: (() -> Void)?
     var onPalette: (() -> Void)?
@@ -43,7 +45,7 @@ final class TransportBar: NSView {
         timeLabel.alignment = .center
         let lcd = NSView()
         lcd.wantsLayer = true
-        lcd.layer?.backgroundColor = Theme.hex(0x0B0C0E).cgColor
+        lcd.layer?.backgroundColor = Theme.lcd.cgColor
         lcd.layer?.cornerRadius = 6
         lcd.layer?.borderWidth = 1
         lcd.layer?.borderColor = Theme.hairline.cgColor
@@ -54,9 +56,11 @@ final class TransportBar: NSView {
 
         rewind.target = self; rewind.action = #selector(rewindTapped)
         playButton.target = self; playButton.action = #selector(playTapped)
+        recordButton.target = self; recordButton.action = #selector(recordTapped)
+        recordButton.contentTintColor = Theme.recordOn.withAlphaComponent(0.75)
         paletteButton.target = self; paletteButton.action = #selector(paletteTapped)
         importButton.target = self; importButton.action = #selector(importTapped)
-        let transport = NSStackView(views: [rewind, playButton, lcd])
+        let transport = NSStackView(views: [rewind, playButton, recordButton, lcd])
         transport.spacing = 6
 
         masterMeter.toolTip = "Output level (click to reset the clip indicator)"
@@ -102,6 +106,15 @@ final class TransportBar: NSView {
     }
 
     @objc private func playTapped() { onPlayPause?() }
+    @objc private func recordTapped() { onRecord?() }
+
+    /// Recording: red record symbol and position display; otherwise the normal look.
+    func setRecording(_ recording: Bool) {
+        recordButton.setSymbol(recording ? "record.circle.fill" : "circle.fill",
+                               tint: recording ? Theme.recordOn : Theme.recordOn.withAlphaComponent(0.75))
+        recordButton.setAccessibilityValue(recording ? "recording" : "stopped")
+        timeLabel.textColor = recording ? Theme.recordOn : Theme.accent
+    }
     @objc private func rewindTapped() { onRewind?() }
     @objc private func importTapped() { onImport?() }
     @objc private func paletteTapped() { onPalette?() }
@@ -121,6 +134,10 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
     let nameLabel = NSTextField(labelWithString: "")
     private let mute = ToggleChip("M", on: Theme.muteOn, onText: .white, help: "Mute (⌃M)")
     private let solo = ToggleChip("S", on: Theme.soloOn, onText: Theme.hex(0x1A1400), help: "Solo (⌃S)")
+    private let arm = ToggleChip("R", on: Theme.recordOn, onText: .white, help: "Record Enable (⌃R)")
+    /// Input source: "IN 1" for audio tracks, "MIDI" for instrument tracks. Click to choose.
+    let inputButton = NSButton(title: "IN 1", target: nil, action: nil)
+    var onInputMenu: ((TrackHeaderRow) -> Void)?
     let gain = GainKnob()
     private let gainLabel = NSTextField(labelWithString: "GAIN")
     private let panLabel = NSTextField(labelWithString: "PAN")
@@ -145,6 +162,12 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
 
         mute.onToggle = { [weak self] on in guard let self else { return }; self.session.setMute(self.trackId, on) }
         solo.onToggle = { [weak self] on in guard let self else { return }; self.session.setSolo(self.trackId, on) }
+        arm.onToggle = { [weak self] on in guard let self else { return }; self.session.setArmed(self.trackId, on) }
+        inputButton.isBordered = false
+        inputButton.font = Theme.mono(10, .medium)
+        inputButton.contentTintColor = Theme.textDim
+        inputButton.target = self
+        inputButton.action = #selector(inputTapped)
         gain.onBegin = { [weak self] in self?.session.engine.beginGroup("Volume") }
         gain.onGainChange = { [weak self] db in guard let self else { return }; self.session.setGain(self.trackId, db: db) }
         gain.onEnd = { [weak self] in self?.session.engine.endGroup() }
@@ -159,7 +182,7 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
         meter.vertical = true
         meter.toolTip = "Post-fader level (click to reset the clip indicator)"
 
-        for v in [number, nameLabel, mute, solo, gain, pan, gainLabel, panLabel, meter] as [NSView] {
+        for v in [number, nameLabel, arm, mute, solo, gain, pan, gainLabel, panLabel, meter, inputButton] as [NSView] {
             v.translatesAutoresizingMaskIntoConstraints = false
             addSubview(v)
         }
@@ -169,7 +192,11 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
             number.firstBaselineAnchor.constraint(equalTo: nameLabel.firstBaselineAnchor),
             nameLabel.leadingAnchor.constraint(equalTo: number.trailingAnchor, constant: 8),
             nameLabel.topAnchor.constraint(equalTo: topAnchor, constant: 12),
-            nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: mute.leadingAnchor, constant: -8),
+            nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: arm.leadingAnchor, constant: -8),
+            arm.trailingAnchor.constraint(equalTo: mute.leadingAnchor, constant: -4),
+            arm.centerYAnchor.constraint(equalTo: nameLabel.centerYAnchor),
+            inputButton.trailingAnchor.constraint(equalTo: solo.trailingAnchor),
+            inputButton.centerYAnchor.constraint(equalTo: pan.centerYAnchor),
             solo.trailingAnchor.constraint(equalTo: meter.leadingAnchor, constant: -10),
             solo.centerYAnchor.constraint(equalTo: nameLabel.centerYAnchor),
             mute.trailingAnchor.constraint(equalTo: solo.leadingAnchor, constant: -4),
@@ -206,6 +233,12 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
         nameLabel.textColor = t.muted ? Theme.textDim : Theme.text
         mute.isOn = t.muted
         solo.isOn = t.solo
+        arm.isOn = t.armed
+        inputButton.title = t.isInstrument ? "MIDI" : "IN \(t.inputChannel + 1)"
+        inputButton.toolTip = t.isInstrument ? "Plays the built-in Dalnok Poly from all MIDI inputs when armed"
+                                             : "Recording input channel (click to choose)"
+        inputButton.setAccessibilityLabel(t.isInstrument ? "Input, MIDI" : "Input channel \(t.inputChannel + 1), \(t.name)")
+        arm.setAccessibilityLabel("Record enable \(t.name)")
         gain.tint = t.muted ? Theme.textFaint : t.color
         pan.tint = t.color
         if !gain.tracking { gain.db = t.gainDb.isFinite ? t.gainDb : -.infinity }
@@ -231,6 +264,8 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
     }
 
     // MARK: Rename (double-click the name)
+
+    @objc private func inputTapped() { onInputMenu?(self) }
 
     func beginRename() {
         nameLabel.isEditable = true
@@ -291,6 +326,7 @@ final class TrackHeaderColumn: NSView {
     var selectedTrack: DalnokTrackId? { didSet { rows.forEach { $0.isSelected = $0.trackId == selectedTrack }; onSelect?(selectedTrack) } }
     var onSelect: ((DalnokTrackId?) -> Void)?
     var onAddTrack: (() -> Void)?
+    var onInputMenu: ((TrackHeaderRow) -> Void)?
     var contextMenu: NSMenu?
 
     func select(_ id: DalnokTrackId) { selectedTrack = id }
@@ -346,7 +382,7 @@ final class TrackHeaderColumn: NSView {
             rows = tracks.enumerated().map { i, t in byId.removeValue(forKey: t.id) ?? TrackHeaderRow(track: t, index: i, session: session) }
             byId.values.forEach { $0.removeFromSuperview() }
             rows.forEach { if $0.superview == nil { rowClip.addSubview($0) } }
-            rows.forEach { $0.column = self; $0.isSelected = $0.trackId == selectedTrack }
+            rows.forEach { $0.column = self; $0.isSelected = $0.trackId == selectedTrack; $0.onInputMenu = { [weak self] r in self?.onInputMenu?(r) } }
             if let sel = selectedTrack, !tracks.contains(where: { $0.id == sel }) { selectedTrack = nil }
             needsLayout = true
         }

@@ -79,16 +79,67 @@ void mixClip(const RenderClip &clip, int64_t pos, int frames, float *l, float *r
 
 } // namespace
 
+namespace {
+// Plays a track's notes for [pos, pos + frames) into out (mono, overwritten).
+// Returns false if nothing sounded.
+bool renderNotes(const RenderTrack &t, const SynthParams &p, SynthState &synth, int64_t pos, int frames,
+                 float *out) DALNOK_NONBLOCKING {
+    if (synth.expected != pos) synth.reset(); // seek: notes are not chased
+    synth.expected = pos + frames;
+    const auto first = std::lower_bound(t.notes.begin(), t.notes.end(), pos,
+                                        [](const RenderNote &n, int64_t at) DALNOK_NONBLOCKING { return n.start < at; });
+    if (!synth.active() && (first == t.notes.end() || first->start >= pos + frames)) return false;
+    clear(out, frames);
+    int done = 0;
+    for (auto it = first; it != t.notes.end() && it->start < pos + frames; ++it) {
+        const int at = static_cast<int>(it->start - pos);
+        if (at > done) { synth.render(p, out + done, at - done, pos + done); done = at; }
+        synth.noteOn(p, it->pitch, it->velocity, it->end);
+    }
+    if (frames > done) synth.render(p, out + done, frames - done, pos + done);
+    return true;
+}
+} // namespace
+
+void renderLiveInput(const RenderState &state, int frames, float *left, float *right, Scratch &s,
+                     bool anySolo) DALNOK_NONBLOCKING {
+    if (state.liveTrack < 0 || state.liveTrack >= static_cast<int32_t>(state.tracks.size())) return;
+    const RenderTrack &t = state.tracks[static_cast<size_t>(state.liveTrack)];
+    TrackRuntime &rt = *t.runtime;
+    if (!rt.live.active()) return;
+    clear(s.trackL, frames);
+    rt.live.render(state.synth, s.trackL, frames, -1);
+    float gl, gr;
+    panGains(rt, true, anySolo, gl, gr);
+    float pl = 0, pr = 0;
+    for (int i = 0; i < frames; ++i) {
+        const float vl = s.trackL[i] * gl, vr = s.trackL[i] * gr;
+        left[i] += vl;
+        right[i] += vr;
+        pl = std::max(pl, std::fabs(vl));
+        pr = std::max(pr, std::fabs(vr));
+    }
+    raisePeak(rt.peakL, pl);
+    raisePeak(rt.peakR, pr);
+}
+
 void renderBlock(const RenderState &state, int64_t pos, int frames, float *left, float *right,
-                 Scratch &s, bool smooth, bool anySolo) DALNOK_NONBLOCKING {
+                 Scratch &s, bool smooth, bool anySolo, SynthState *synths) DALNOK_NONBLOCKING {
     clear(left, frames);
     clear(right, frames);
+    size_t index = 0;
     for (const RenderTrack &t : state.tracks) {
         TrackRuntime &rt = *t.runtime;
+        SynthState &synth = synths ? synths[index] : rt.play;
+        ++index;
         float gl, gr;
         panGains(rt, t.monoSource, anySolo, gl, gr);
 
         bool any = false;
+        if (t.instrument && renderNotes(t, state.synth, synth, pos, frames, s.trackL)) {
+            for (int i = 0; i < frames; ++i) s.trackR[i] = s.trackL[i];
+            any = true;
+        }
         for (const RenderClip &c : t.clips) {
             if (c.start >= pos + frames || c.start + c.length <= pos) continue;
             if (!any) {

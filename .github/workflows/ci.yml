@@ -20,6 +20,8 @@ jobs:
         run: scripts/ci/midi-parser.sh
       - name: Duplex device validation
         run: scripts/ci/duplex-probe.sh
+      - name: Recording process-kill recovery
+        run: scripts/ci/record-crash.sh
       - name: Release build
         run: swift build -c release
       # No audio device or GUI session on CI: live smoke test and app self-test run locally (scripts/check.sh).

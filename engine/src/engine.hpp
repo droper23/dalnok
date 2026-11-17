@@ -6,10 +6,12 @@
 #include "device.hpp"
 #include "capture_spool.hpp"
 #include "json.hpp"
+#include "midi_parser.hpp"
 #include "render.hpp"
 #include "stretch_cache.hpp"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cmath>
 #include <filesystem>
@@ -22,8 +24,13 @@ namespace dalnok {
 
 // ---- Project model (value type; copied wholesale for undo) ----------------
 
+enum TrackKind : int32_t { kTrackAudio = 0, kTrackInstrument = 1 };
+
 struct TrackState {
     DalnokTrackId id = 0;
+    int32_t kind = kTrackAudio;
+    bool armed = false;       // record-enabled
+    int32_t inputChannel = 0; // zero-based input of the recording device (audio tracks)
     std::string name;
     int32_t color = 0;        // gradient step (see "06 - Design/Track Colors")
     int32_t customColor = -1; // 0xRRGGBB pinned by the user, or -1 = automatic
@@ -34,8 +41,17 @@ struct TrackState {
     std::shared_ptr<TrackRuntime> runtime; // shared across model copies
 };
 
+// MIDI note in frames, relative to the start of its clip's source (like an audio offset).
+struct MidiNote {
+    int64_t start = 0, length = 0;
+    uint8_t pitch = 60, velocity = 100;
+};
+using NoteList = std::shared_ptr<const std::vector<MidiNote>>; // immutable; shared across undo copies
+
 struct ClipState {
     DalnokClipId id = 0;
+    NoteList notes; // non-null: MIDI clip (media = 0)
+    bool midi() const { return notes != nullptr; }
     DalnokTrackId track = 0;
     DalnokMediaId media = 0;
     int64_t start = 0, offset = 0, length = 0;
@@ -53,6 +69,8 @@ struct ClipState {
 struct Model {
     std::vector<TrackState> tracks; // display order
     std::vector<ClipState> clips;   // z-order: later = on top
+    double bpm = 120;               // constant tempo (no tempo changes yet)
+    int32_t meterNum = 4, meterDen = 4;
 
     TrackState *track(DalnokTrackId id);
     const TrackState *track(DalnokTrackId id) const;
@@ -84,6 +102,37 @@ public:
     bool deviceAlive() const { return duplex_ ? duplex_->alive() : (!device_ || device_->alive()); }
     double hardwareSampleRate() const { return duplex_ ? duplex_->hardwareSampleRate() : (device_ ? device_->hardwareSampleRate() : 0); }
     bool startCapture(const std::string &uid, int channel, const std::string &path, std::string &err);
+    // Recording: one armed audio track (captured from `inputUid`, the explicit output device or
+    // kSimulatedInput) and/or one armed instrument track (MIDI). The take starts when the
+    // transport rolls; files go to `directory` with a journal (see record.cpp).
+    struct RecordResult {
+        DalnokClipId audioClip = 0, midiClip = 0;
+        DalnokMediaId media = 0;
+        uint64_t frames = 0;   // audio frames in the finished or recovered file
+        int64_t start = -1;    // timeline frame where the take began (before latency compensation)
+        int64_t latency = 0;   // frames subtracted when placing audio
+        int32_t notes = 0;
+        bool recovered = false; // failed take: the valid prefix was saved but not placed
+        std::string path, journal;
+        DalnokCaptureStats stats{};
+    };
+    bool startRecording(const std::string &inputUid, const std::string &directory, std::string &err);
+    bool stopRecording(RecordResult &result, std::string &err);
+    bool recording() const { return recording_; }
+    int64_t recordStart() const { return recordStart_.load(std::memory_order_acquire); }
+    bool recordBroken() const { return recordBroken_.load(std::memory_order_acquire); }
+    void setRecordLatencyOffset(int64_t frames) { latencyOffset_ = frames; }
+    int64_t recordLatency() const; // device-reported round trip + offset
+    void setMonitoring(bool on) { monitoring_.store(on, std::memory_order_relaxed); }
+    bool monitoring() const { return monitoring_.load(std::memory_order_relaxed); }
+    void setSimulatedLatency(int64_t frames) { simulatedLatency_ = frames; }
+    // Runs one duplex cycle on the simulated input device (tests and simulation).
+    bool pumpInput(const float *input, float *left, float *right, int frames);
+    // MIDI input
+    bool openMidiInput(int32_t uniqueId, std::string &err);
+    bool injectMidi(uint8_t status, uint8_t data1, uint8_t data2);
+    uint64_t midiDropped() const;
+    int32_t recordedMidiEvents() const { return static_cast<int32_t>(midiTake_.size()); }
     bool stopCapture(DalnokCaptureStats &stats, std::string &err, bool restoreOutput = true);
     bool captureActive() const { return duplex_ != nullptr; }
     bool captureStatus(DalnokCaptureStats &stats) const;
@@ -117,6 +166,16 @@ public:
     bool setSolo(DalnokTrackId id, bool solo, std::string &err);
     bool moveTrack(DalnokTrackId id, int32_t index, std::string &err);
     bool setTrackColor(DalnokTrackId id, int32_t customRgb, std::string &err); // -1 = automatic
+    DalnokTrackId addInstrumentTrack(const std::string &name, std::string &err);
+    bool setArmed(DalnokTrackId id, bool armed, std::string &err);
+    bool setInputChannel(DalnokTrackId id, int32_t channel, std::string &err);
+    bool setTempo(double bpm, int32_t num, int32_t den, std::string &err);
+    int64_t framesPerBeat() const { return static_cast<int64_t>(std::llround(sampleRate_ * 60.0 / model_.bpm)); }
+    // MIDI clips
+    DalnokClipId addMidiClip(DalnokTrackId track, int64_t start, int64_t length, std::string &err,
+                             std::vector<MidiNote> notes = {}, const char *undoName = "New MIDI Clip");
+    bool setNotes(DalnokClipId id, std::vector<MidiNote> notes, std::string &err);
+    bool quantize(DalnokClipId id, double gridBeats, double strength, std::string &err);
     bool recolorAsGradient(std::string &err); // automatic tracks get gradient steps in display order
     DalnokClipId addClip(DalnokTrackId track, DalnokMediaId media, int64_t start, int64_t offset, int64_t length,
                          std::string &err);
@@ -196,6 +255,10 @@ private:
     static void audioCallback(void *ctx, float *left, float *right, int frames) DALNOK_NONBLOCKING;
     static void duplexCallback(void *ctx, float *left, float *right, const float *input, int frames) DALNOK_NONBLOCKING;
     void process(float *left, float *right, int frames) DALNOK_NONBLOCKING;
+    void handleMidiInput(int64_t pos) DALNOK_NONBLOCKING;
+    void drainRecordedMidi();
+    void waitForAudioCycles();
+    bool validNotes(const std::vector<MidiNote> &notes, std::string &err) const;
 
     double sampleRate_;
 
@@ -219,6 +282,27 @@ private:
     std::atomic<uint64_t> captureMissingFrames_{0};
     std::unique_ptr<AudioDevice> device_;
     std::string outputUid_;
+    // Recording (control thread)
+    bool recording_ = false;
+    DalnokTrackId recordAudioTrack_ = 0, recordMidiTrack_ = 0;
+    std::string recordSpool_, recordWav_, recordJournal_;
+    int64_t latencyOffset_ = 0, simulatedLatency_ = 0;
+    bool simulatedInput_ = false;
+    struct RecordedMidi { int64_t pos; uint8_t status, data1, data2; };
+    std::vector<RecordedMidi> midiTake_;
+    // Recording (shared with the audio thread)
+    std::atomic<bool> recordArmed_{false}, recordMidi_{false}, recordBroken_{false}, monitoring_{false};
+    std::atomic<int64_t> recordStart_{-1}, recordEnd_{-1};
+    std::atomic<bool> recordSession_{false}; // capture is gated by the transport (audio take in progress)
+    std::atomic<uint32_t> recordTake_{0};
+    std::atomic<uint64_t> midiRecordDropped_{0};
+    SpscQueue<RecordedMidi, 4096> midiRecordQueue_;
+    // MIDI input: slot 0 is fed by injectMidi (control thread), others by Core MIDI ports.
+    static constexpr int kMidiInputs = 8;
+    std::array<std::unique_ptr<MidiParser>, kMidiInputs> midiParsers_;
+    std::array<std::atomic<MidiParser *>, kMidiInputs> midiInputs_{};
+    std::vector<std::unique_ptr<MidiParser>> retiredParsers_; // failed opens; freed with the engine
+    std::shared_ptr<void> midiClient_; // platform handle; closed after the device stops
     mutable StretchCache cache_;
 
     // Control -> audio handoff.
@@ -231,6 +315,11 @@ private:
     float transportGain_ = 0.0f;
     int64_t pendingSeek_ = -1;
     int64_t rtPosition_ = 0;
+    int64_t rtRecordNext_ = -1;
+    bool rtRecordingBlock_ = false;
+    uint32_t rtTake_ = 0;
+    RecordedMidi rtMidiEvents_[256]{};
+    int rtMidiCount_ = 0;
     std::atomic<float> masterPeakL_{0.0f}, masterPeakR_{0.0f};
 
     // Shared atomics.
@@ -257,5 +346,9 @@ struct Engine::PreparedProject {
 };
 
 float dbToGain(float db);
+// Atomic replace, then flush the containing folder so the rename survives power loss where supported.
+bool writeFileDurably(const std::string &path, const std::string &data, std::string &err);
+bool syncDirectory(const std::string &dir);
+constexpr const char *kSimulatedInput = "dalnok:simulated-input";
 
 } // namespace dalnok

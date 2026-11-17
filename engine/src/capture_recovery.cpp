@@ -7,6 +7,7 @@
 #include <cstring>
 #include <fcntl.h>
 #include <limits>
+#include <sys/stat.h>
 #include <unistd.h>
 #include <vector>
 
@@ -43,6 +44,7 @@ bool recoverCapture(const std::string &source, const std::string &destination,
     std::vector<char> temp(pattern.begin(), pattern.end()); temp.push_back('\0');
     const int output = ::mkstemp(temp.data());
     if (output < 0) { ::close(input); error = "cannot create recovery temporary file"; return false; }
+    ::fchmod(output, 0644); // an ordinary audio file, like any other in the project folder
     uint8_t header[44]{};
     std::memcpy(header, "RIFF", 4); put32(header + 4, static_cast<uint32_t>(bytes) + 36);
     std::memcpy(header + 8, "WAVEfmt ", 8); put32(header + 16, 16);

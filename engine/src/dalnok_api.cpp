@@ -5,6 +5,8 @@
 #include "capture_recovery.hpp"
 #include "engine.hpp"
 #include "midi.hpp"
+#include "record.hpp"
+#include "plugins.hpp"
 #include "import/import.hpp"
 
 #include <algorithm>
@@ -29,6 +31,11 @@ size_t copyOut(char *buf, size_t len, const std::string &s) {
         buf[n] = '\0';
     }
     return s.size();
+}
+std::vector<MidiNote> toNotes(const DalnokNote *notes, int32_t count) {
+    std::vector<MidiNote> v;
+    for (int32_t i = 0; notes && i < count; ++i) v.push_back({notes[i].start, notes[i].length, notes[i].pitch, notes[i].velocity});
+    return v;
 }
 DalnokStatus statusFor(bool ok, const std::string &err) {
     if (ok) return DALNOK_OK;
@@ -138,6 +145,125 @@ DalnokStatus dalnok_capture_status(const DalnokEngine *e, DalnokCaptureStats *st
     return e->impl.captureStatus(*stats) ? DALNOK_OK : DALNOK_ERR_DEVICE;
 }
 
+DalnokStatus dalnok_record_start(DalnokEngine *e, const char *uid, const char *dir, char *err, size_t err_len) {
+    if (!e) return DALNOK_ERR_INVALID_ARG;
+    std::string msg;
+    if (!e->impl.startRecording(uid ? uid : "", dir ? dir : "", msg)) {
+        copyOut(err, err_len, msg);
+        return e->impl.captureActive() ? DALNOK_ERR_INVALID_ARG : DALNOK_ERR_DEVICE;
+    }
+    return DALNOK_OK;
+}
+DalnokStatus dalnok_record_stop(DalnokEngine *e, DalnokRecordResult *out, char *err, size_t err_len) {
+    if (!e) return DALNOK_ERR_INVALID_ARG;
+    Engine::RecordResult r;
+    std::string msg;
+    const bool ok = e->impl.stopRecording(r, msg);
+    if (out) {
+        *out = DalnokRecordResult{};
+        out->audio_clip = r.audioClip;
+        out->midi_clip = r.midiClip;
+        out->media = r.media;
+        out->frames = r.frames;
+        out->start_frame = r.start;
+        out->latency_frames = r.latency;
+        out->notes = r.notes;
+        out->recovered = r.recovered;
+        copyOut(out->path, sizeof out->path, r.path);
+        out->capture = r.stats;
+    }
+    if (!ok) copyOut(err, err_len, msg);
+    return ok ? DALNOK_OK : DALNOK_ERR_IO;
+}
+bool dalnok_record_active(const DalnokEngine *e) { return e && e->impl.recording(); }
+bool dalnok_record_broken(const DalnokEngine *e) { return e && e->impl.recording() && e->impl.recordBroken(); }
+int64_t dalnok_record_start_frame(const DalnokEngine *e) { return e && e->impl.recording() ? e->impl.recordStart() : -1; }
+int64_t dalnok_record_latency(const DalnokEngine *e) { return e ? e->impl.recordLatency() : 0; }
+void dalnok_record_set_latency_offset(DalnokEngine *e, int64_t frames) { if (e) e->impl.setRecordLatencyOffset(frames); }
+void dalnok_record_set_monitoring(DalnokEngine *e, bool on) { if (e) e->impl.setMonitoring(on); }
+void dalnok_record_set_simulated_latency(DalnokEngine *e, int64_t frames) { if (e) e->impl.setSimulatedLatency(frames); }
+DalnokStatus dalnok_engine_pump_input(DalnokEngine *e, const float *in, float *l, float *r, int32_t frames) {
+    return e && in && e->impl.pumpInput(in, l, r, frames) ? DALNOK_OK : DALNOK_ERR_INVALID_ARG;
+}
+size_t dalnok_record_scan(const char *dir, char *out, size_t len) {
+    return copyOut(out, len, json::serialize(dir ? scanTakes(dir) : json::Value::makeArray()));
+}
+DalnokStatus dalnok_record_recover(const char *journal, char *out, size_t len, char *err, size_t err_len) {
+    if (!journal) return DALNOK_ERR_INVALID_ARG;
+    json::Value result;
+    std::string msg;
+    if (!recoverTake(journal, result, msg)) { copyOut(err, err_len, msg); return DALNOK_ERR_IO; }
+    copyOut(out, len, json::serialize(result));
+    return DALNOK_OK;
+}
+
+DalnokStatus dalnok_midi_open_input(DalnokEngine *e, int32_t uid, char *err, size_t err_len) {
+    if (!e) return DALNOK_ERR_INVALID_ARG;
+    std::string msg;
+    if (!e->impl.openMidiInput(uid, msg)) { copyOut(err, err_len, msg); return DALNOK_ERR_DEVICE; }
+    return DALNOK_OK;
+}
+DalnokStatus dalnok_midi_inject(DalnokEngine *e, uint8_t status, uint8_t d1, uint8_t d2) {
+    return e && e->impl.injectMidi(status, d1, d2) ? DALNOK_OK : DALNOK_ERR_INVALID_ARG;
+}
+uint64_t dalnok_midi_dropped(const DalnokEngine *e) { return e ? e->impl.midiDropped() : 0; }
+
+size_t dalnok_plugins_scan(const char *extra, bool au, char *out, size_t len) {
+    auto folders = pluginFolders();
+    if (extra && *extra) folders.push_back(extra);
+    auto list = scanPluginBundles(folders);
+    if (au) {
+        auto units = listAudioUnits();
+        list.insert(list.end(), units.begin(), units.end());
+    }
+    return copyOut(out, len, json::serialize(pluginsToJson(list)));
+}
+
+DalnokTrackId dalnok_track_add_instrument(DalnokEngine *e, const char *name) {
+    std::string err;
+    return e ? e->impl.addInstrumentTrack(name ? name : "", err) : 0;
+}
+DalnokStatus dalnok_track_set_armed(DalnokEngine *e, DalnokTrackId t, bool armed) {
+    std::string err;
+    return e ? statusFor(e->impl.setArmed(t, armed, err), err) : DALNOK_ERR_INVALID_ARG;
+}
+DalnokStatus dalnok_track_set_input(DalnokEngine *e, DalnokTrackId t, int32_t ch) {
+    std::string err;
+    return e ? statusFor(e->impl.setInputChannel(t, ch, err), err) : DALNOK_ERR_INVALID_ARG;
+}
+DalnokClipId dalnok_midi_clip_add(DalnokEngine *e, DalnokTrackId t, int64_t start, int64_t length) {
+    std::string err;
+    return e ? e->impl.addMidiClip(t, start, length, err) : 0;
+}
+DalnokStatus dalnok_midi_clip_set_notes(DalnokEngine *e, DalnokClipId c, const DalnokNote *notes, int32_t count) {
+    if (!e || count < 0 || (count > 0 && !notes)) return DALNOK_ERR_INVALID_ARG;
+    std::string err;
+    return statusFor(e->impl.setNotes(c, toNotes(notes, count), err), err);
+}
+int32_t dalnok_midi_clip_notes(const DalnokEngine *e, DalnokClipId c, DalnokNote *out, int32_t capacity) {
+    const ClipState *clip = e ? e->impl.model().clip(c) : nullptr;
+    if (!clip || !clip->midi()) return -1;
+    const auto &notes = *clip->notes;
+    for (int32_t i = 0; out && i < capacity && i < static_cast<int32_t>(notes.size()); ++i) {
+        const auto &n = notes[static_cast<size_t>(i)];
+        out[i] = DalnokNote{n.start, n.length, n.pitch, n.velocity};
+    }
+    return static_cast<int32_t>(notes.size());
+}
+DalnokStatus dalnok_midi_quantize(DalnokEngine *e, DalnokClipId c, double grid, double strength) {
+    std::string err;
+    return e ? statusFor(e->impl.quantize(c, grid, strength, err), err) : DALNOK_ERR_INVALID_ARG;
+}
+DalnokStatus dalnok_tempo_set(DalnokEngine *e, double bpm, int32_t num, int32_t den) {
+    std::string err;
+    return e ? statusFor(e->impl.setTempo(bpm, num, den, err), err) : DALNOK_ERR_INVALID_ARG;
+}
+double dalnok_tempo_bpm(const DalnokEngine *e) { return e ? e->impl.model().bpm : 120; }
+void dalnok_meter(const DalnokEngine *e, int32_t *num, int32_t *den) {
+    if (num) *num = e ? e->impl.model().meterNum : 4;
+    if (den) *den = e ? e->impl.model().meterDen : 4;
+}
+
 DalnokStatus dalnok_engine_pump(DalnokEngine *e, float *l, float *r, int32_t frames) {
     return e && e->impl.pump(l, r, frames) ? DALNOK_OK : DALNOK_ERR_INVALID_ARG;
 }
@@ -239,6 +365,9 @@ DalnokStatus dalnok_track_info(const DalnokEngine *e, DalnokTrackId id, DalnokTr
     out->pan = t->pan;
     out->muted = t->muted;
     out->solo = t->solo;
+    out->kind = t->kind;
+    out->armed = t->armed;
+    out->input_channel = t->inputChannel;
     for (const auto &c : e->impl.model().clips) out->clip_count += c.track == id;
     return DALNOK_OK;
 }
@@ -274,6 +403,11 @@ DalnokStatus dalnok_clip_info(const DalnokEngine *e, DalnokClipId id, DalnokClip
     out->preserve_pitch = c->preservePitch;
     out->processing = e->impl.clipProcessing(*c);
     copyOut(out->name, sizeof out->name, c->name);
+    out->midi = c->midi();
+    if (c->midi()) {
+        out->offline = false;
+        out->note_count = static_cast<int32_t>(c->notes->size());
+    }
     return DALNOK_OK;
 }
 

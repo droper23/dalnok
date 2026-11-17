@@ -60,7 +60,11 @@ enum Migration {
 
     static let concepts: [Concept] = [
         // Logic Pro
-        Concept(daw: .logic, term: "Region", dalnok: "Clip", status: .available, note: "Audio regions are clips; MIDI regions arrive with MIDI."),
+        Concept(daw: .logic, term: "Region", dalnok: "Clip", status: .available, note: "Audio and MIDI regions are both clips."),
+        Concept(daw: .logic, term: "Record / Record Enable", dalnok: "Record (R) · R button on the track", status: .available, note: "⌃R arms the selected track"),
+        Concept(daw: .logic, term: "Software Instrument Track", dalnok: "New Instrument Track", status: .partial("built-in Dalnok Poly; plugin instruments in Phase 4"), note: "⌥⇧⌘N"),
+        Concept(daw: .logic, term: "Quantize (Q)", dalnok: "Clip ▸ Quantize", status: .available, note: "MIDI clips"),
+        Concept(daw: .logic, term: "Input Monitoring", dalnok: "Audio ▸ Input Monitoring", status: .partial("while recording")),
         Concept(daw: .logic, term: "Bounce Project or Section", dalnok: "Export Mix…", status: .available),
         Concept(daw: .logic, term: "Split Regions at Playhead", dalnok: "Split at Playhead", status: .available, note: "Same shortcut: ⌘T"),
         Concept(daw: .logic, term: "New Tracks", dalnok: "New Track", status: .available, note: "⌥⌘N"),
@@ -75,7 +79,7 @@ enum Migration {
         Concept(daw: .logic, term: "Flex Pitch", dalnok: "Pitch editing", status: .planned("Phase 5")),
         Concept(daw: .logic, term: "Track Stacks", dalnok: "Groups", status: .planned("Phase 4")),
         Concept(daw: .logic, term: "Smart Controls", dalnok: "Generic plugin panel + macros", status: .planned("Phase 4–5")),
-        Concept(daw: .logic, term: "Piano Roll", dalnok: "Piano roll", status: .planned("Phase 3")),
+        Concept(daw: .logic, term: "Piano Roll", dalnok: "Notes shown in MIDI clips", status: .partial("note editor next; quantize available")),
         Concept(daw: .logic, term: "Live Loops", dalnok: "Clip launcher on every track", status: .planned("Phase 5")),
         Concept(daw: .logic, term: "Key Commands", dalnok: "Logic shortcut preset + ⌘K", status: .partial("preset, no editor yet")),
         // Ableton Live
@@ -83,6 +87,9 @@ enum Migration {
         Concept(daw: .ableton, term: "Export Audio/Video", dalnok: "Export Mix…", status: .available),
         Concept(daw: .ableton, term: "Split", dalnok: "Split at Playhead", status: .available, note: "Ableton preset maps it to ⌘E"),
         Concept(daw: .ableton, term: "Insert Audio Track", dalnok: "New Track", status: .available),
+        Concept(daw: .ableton, term: "Insert MIDI Track", dalnok: "New Instrument Track", status: .partial("built-in Dalnok Poly; plugin instruments in Phase 4")),
+        Concept(daw: .ableton, term: "Arm Recording / Arrangement Record", dalnok: "R button on the track · Record (R)", status: .available),
+        Concept(daw: .ableton, term: "Quantize (⌘U)", dalnok: "Clip ▸ Quantize", status: .available, note: "MIDI clips"),
         Concept(daw: .ableton, term: "Track Activator", dalnok: "Mute Track", status: .available),
         Concept(daw: .ableton, term: "Collect All and Save", dalnok: "Copy Audio into Project on Save", status: .available),
         Concept(daw: .ableton, term: "Session View", dalnok: "Clip launcher on every track", status: .planned("Phase 5")),
@@ -99,6 +106,9 @@ enum Migration {
         Concept(daw: .reaper, term: "Render", dalnok: "Export Mix…", status: .available),
         Concept(daw: .reaper, term: "Split items at cursor", dalnok: "Split at Playhead", status: .available, note: "REAPER preset maps it to S"),
         Concept(daw: .reaper, term: "Insert new track", dalnok: "New Track", status: .available),
+        Concept(daw: .reaper, term: "Record arm / Record", dalnok: "R button on the track · Record (R)", status: .available),
+        Concept(daw: .reaper, term: "Insert virtual instrument on new track", dalnok: "New Instrument Track", status: .partial("built-in Dalnok Poly; plugin instruments in Phase 4")),
+        Concept(daw: .reaper, term: "Quantize item positions/notes", dalnok: "Clip ▸ Quantize", status: .available, note: "MIDI clips"),
         Concept(daw: .reaper, term: "Item volume", dalnok: "Clip gain", status: .available),
         Concept(daw: .reaper, term: "Action List", dalnok: "Command Palette…", status: .available, note: "⌘K; scripting through the command catalog"),
         Concept(daw: .reaper, term: "ReaScript", dalnok: "Command catalog (JSON) + dalnok-cli", status: .partial("no embedded language yet")),
@@ -130,6 +140,13 @@ enum Migration {
         "Preserve Pitch When Stretching": ["varispeed", "re-pitch", "tape speed"],
         "Reset Speed and Pitch": ["unstretch", "original speed", "unwarp"],
         "Open…": ["open logic", "open ableton", "open reaper", "migrate", "convert"],
+        "Record": ["arm", "capture", "tracking", "overdub"],
+        "Record Enable Track": ["arm track", "record arm"],
+        "New Instrument Track": ["software instrument", "midi track", "virtual instrument", "synth", "instrument"],
+        "1/16 Notes": ["quantize", "snap notes", "fix timing"],
+        "1/8 Notes": ["quantize"],
+        "Recover Recordings…": ["crash", "lost take", "recover audio"],
+        "Input Monitoring": ["software monitoring", "hear input", "direct monitoring"],
     ]
 
     /// Their nouns -> ours, applied to palette queries.
@@ -140,8 +157,8 @@ enum Migration {
 
     static func explain(_ key: String) -> (title: String, detail: String) {
         switch key {
-        case "midiClips", "midiRegions": ("MIDI clips", "MIDI tracks and the piano roll arrive in Phase 3; these will import then.")
-        case "midiTracks": ("MIDI tracks", "Imported once MIDI support lands (Phase 3).")
+        case "midiClips", "midiRegions": ("MIDI clips", "Dalnok has MIDI clips now, but importing MIDI from other DAWs isn't done yet.")
+        case "midiTracks": ("MIDI tracks", "Importing MIDI tracks from other DAWs isn't done yet.")
         case "plugins", "devicesAndPlugins", "masterFx", "masterDevices": ("Plugins and devices", "Plugin hosting (VST3 first) arrives in Phase 4.")
         case "automationLanes": ("Automation", "Automation arrives in Phase 4.")
         case "sends", "returnTracks": ("Sends and return/bus tracks", "Buses and sends arrive in Phase 4.")

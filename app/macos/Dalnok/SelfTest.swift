@@ -11,7 +11,9 @@ final class SelfTest {
     let files: [URL]
     let workdir: URL
     private var failures = 0
-    private let previousCopyAudioPreference: Any?
+    /// Preferences the test changes; all are restored at the end so a run never alters the owner's settings.
+    private static let restoredKeys = ["copyAudioOnSave", "comingFrom", "onboardingDone", "recordingInputUID"]
+    private let previousPreferences: [String: Any]
     private var w: MainWindowController { app.main }
     private var s: Session { app.session }
 
@@ -19,7 +21,7 @@ final class SelfTest {
         self.app = app
         self.files = files
         self.workdir = workdir
-        previousCopyAudioPreference = UserDefaults.standard.object(forKey: "copyAudioOnSave")
+        previousPreferences = Self.restoredKeys.reduce(into: [:]) { $0[$1] = UserDefaults.standard.object(forKey: $1) }
     }
 
     private func check(_ ok: Bool, _ what: String) {
@@ -27,13 +29,13 @@ final class SelfTest {
         if !ok { failures += 1 }
     }
 
-    private func menuItem(_ title: String, in menu: NSMenu? = NSApp.mainMenu, submenuOnly: Bool = false) -> NSMenuItem? {
+    private func menuItem(_ title: String, in menu: NSMenu? = NSApp.mainMenu, submenuOnly: Bool = false, exact: Bool = false) -> NSMenuItem? {
         for it in menu?.items ?? [] {
             if let sub = it.submenu {
                 if submenuOnly && it.title == title { return it }
                 sub.update() // runs validateMenuItem, which sets dynamic titles
-                if let found = menuItem(title, in: sub, submenuOnly: submenuOnly) { return found }
-            } else if !submenuOnly && it.title.hasPrefix(title) {
+                if let found = menuItem(title, in: sub, submenuOnly: submenuOnly, exact: exact) { return found }
+            } else if !submenuOnly && (exact ? it.title == title : it.title.hasPrefix(title)) {
                 return it
             }
         }
@@ -41,8 +43,8 @@ final class SelfTest {
     }
 
     /// Fires a menu item exactly as a click would (validation + responder chain).
-    private func perform(_ title: String) -> Bool {
-        guard let it = menuItem(title), let m = it.menu else { return false }
+    private func perform(_ title: String, exact: Bool = false) -> Bool {
+        guard let it = menuItem(title, exact: exact), let m = it.menu else { return false }
         m.update()
         guard it.isEnabled else { return false }
         m.performActionForItem(at: m.index(of: it))
@@ -396,6 +398,8 @@ final class SelfTest {
         check(w.conceptGuide.rows.contains { $0.term == "Warping" }, "concept guide: Ableton 'Warping' → \(w.conceptGuide.rows.first?.dalnok ?? "-")")
         w.conceptGuide.window.orderOut(nil)
 
+        await recordingAndMidi()
+
         // Import a REAPER project end to end (fixture built from this run's audio files).
         let media = workdir.appendingPathComponent("Media")
         try? FileManager.default.createDirectory(at: media, withIntermediateDirectories: true)
@@ -443,9 +447,105 @@ final class SelfTest {
         w.welcome.window.orderOut(nil)
     }
 
+    /// Recording through the real menus on the simulated input, record arm, input labels,
+    /// a failed take, journal recovery, instrument tracks, MIDI clips, quantize, live MIDI and MIDI recording.
+    private func recordingAndMidi() async {
+        let e = s.engine
+        e.pause()
+        check(w.saveProject(to: workdir.appendingPathComponent("recording.dalnok")), "save so takes go to the project's Audio Files")
+        let audioFiles = workdir.appendingPathComponent("Audio Files")
+        dalnok_engine_stop_device(e.handle) // the simulated input replaces the device during the take
+        MainWindowController.simulatedInput = true
+        defer { MainWindowController.simulatedInput = false }
+        let track = s.tracks[0].id
+        w.headers.select(track)
+        check(perform("Record Enable Track") && s.track(track)?.armed == true, "menu Track > Record Enable Track arms the track")
+        check(w.headers.row(track)?.inputButton.title == "IN 1", "header shows the track input (IN 1)")
+        e.seek(0)
+        let clipsBefore = s.track(track)?.clips.count ?? 0
+        check(perform("Record", exact: true) && e.isRecording, "menu Transport > Record starts recording")
+        check(menuItem("Stop Recording") != nil, "record menu item becomes Stop Recording")
+        var l = [Float](repeating: 0, count: 512), r = l
+        let input = [Float](repeating: 0.25, count: 512)
+        for _ in 0..<20 { dalnok_engine_pump_input(e.handle, input, &l, &r, 512) }
+        w.updateRecording()
+        check(w.timeline.recording?.tracks.contains(track) == true, "timeline shows the take in progress")
+        check(perform("Stop Recording", exact: true) && !e.isRecording, "menu Transport > Stop Recording")
+        let take = s.track(track)?.clips.last
+        check(s.track(track)?.clips.count == clipsBefore + 1 && (take?.length ?? 0) >= 19 * 512,
+              "take placed on the armed track (\(take?.length ?? 0) frames)")
+        check(FileManager.default.fileExists(atPath: audioFiles.appendingPathComponent("\(s.track(track)?.name ?? "") Take 1.wav").path),
+              "take saved in the project's Audio Files")
+        check(e.undoName == "Record", "recording is one undo step")
+        check(perform("Undo") && s.track(track)?.clips.count == clipsBefore, "undo removes the take")
+        check(perform("Redo") && s.track(track)?.clips.count == clipsBefore + 1, "redo restores the take")
+
+        // Interrupted take: pausing ends it with an explanation; nothing is placed.
+        check(perform("Record", exact: true) && e.isRecording, "second take starts")
+        for _ in 0..<5 { dalnok_engine_pump_input(e.handle, input, &l, &r, 512) }
+        e.pause()
+        for _ in 0..<3 { dalnok_engine_pump_input(e.handle, input, &l, &r, 512) }
+        w.updateRecording()
+        check(!e.isRecording && w.lastRecordingProblem == "The take was interrupted", "interrupted take is reported (\(w.lastRecordingProblem ?? "-"))")
+        check(s.track(track)?.clips.count == clipsBefore + 1, "interrupted take is not placed")
+
+        // An unfinished take (as after a crash) is recovered through File > Recover Recordings.
+        var spool = Data("DLNCAP01".utf8)
+        withUnsafeBytes(of: UInt32(e.sampleRate).littleEndian) { spool.append(contentsOf: $0) }
+        withUnsafeBytes(of: UInt32(1).littleEndian) { spool.append(contentsOf: $0) }
+        for _ in 0..<4_800 { withUnsafeBytes(of: Float(0.1).bitPattern.littleEndian) { spool.append(contentsOf: $0) } }
+        try? spool.write(to: audioFiles.appendingPathComponent("Crash Take 1.dlncap"))
+        try? #"{"format":"dalnok-take","version":1,"state":"recording","spool":"Crash Take 1.dlncap","wav":"Crash Take 1.wav"}"#
+            .write(to: audioFiles.appendingPathComponent("Crash Take 1.dlntake"), atomically: true, encoding: .utf8)
+        check(perform("Recover Recordings") && w.lastRecoveredTakes.map(\.lastPathComponent) == ["Crash Take 1 (recovered).wav"],
+              "File > Recover Recordings recovers the unfinished take")
+        do { try e.startDevice() } catch { check(false, "device restarts after recording: \(error)") }
+        check(perform("Record Enable Track") && s.track(track)?.armed == false, "disarm the audio track")
+
+        // Instrument track and MIDI clip.
+        check(perform("New Instrument Track"), "menu Track > New Instrument Track")
+        guard let keys = s.tracks.last, keys.isInstrument, keys.armed else { return check(false, "instrument track is armed") }
+        check(w.headers.row(keys.id)?.inputButton.title == "MIDI", "instrument header shows MIDI input")
+        e.seek(0)
+        try? await Task.sleep(for: .milliseconds(100))
+        check(perform("New MIDI Clip"), "menu Clip > New MIDI Clip")
+        guard let clip = w.timeline.selectedClip, s.clip(clip)?.isMidi == true else { return check(false, "MIDI clip selected") }
+        let sixteenth = s.framesPerBeat / 4
+        s.setNotes(clip, [DalnokNote(start: sixteenth + 100, length: sixteenth, pitch: 60, velocity: 100),
+                          DalnokNote(start: 2 * sixteenth - 90, length: sixteenth, pitch: 64, velocity: 90)])
+        check(perform("1/16 Notes"), "menu Clip > Quantize > 1/16 Notes")
+        check(s.clip(clip)?.notes.map(\.start) == [sixteenth, 2 * sixteenth], "notes quantized to 16ths")
+        check(menuItem("Double Speed")?.isEnabled == false, "audio-only clip commands are disabled for MIDI clips")
+
+        // Live MIDI through the running device: the armed instrument meters while stopped.
+        dalnok_midi_inject(e.handle, 0x90, 69, 110)
+        try? await Task.sleep(for: .milliseconds(300))
+        let live = w.headers.row(keys.id)?.meter.levelDb.0 ?? -200
+        dalnok_midi_inject(e.handle, 0x80, 69, 0)
+        check(live > -40, String(format: "live MIDI plays the armed instrument (%.1f dBFS)", live))
+
+        // MIDI recording through the menu (device clock).
+        let before = s.track(keys.id)?.clips.count ?? 0
+        e.seek(Int64(e.sampleRate) * 8)
+        check(perform("Record", exact: true) && e.isRecording, "Record with only an instrument armed")
+        try? await Task.sleep(for: .milliseconds(150))
+        dalnok_midi_inject(e.handle, 0x90, 67, 100)
+        try? await Task.sleep(for: .milliseconds(250))
+        dalnok_midi_inject(e.handle, 0x80, 67, 0)
+        try? await Task.sleep(for: .milliseconds(100))
+        check(perform("Stop Recording", exact: true), "stop MIDI recording")
+        let recorded = s.track(keys.id)?.clips.last
+        check(s.track(keys.id)?.clips.count == before + 1 && recorded?.notes.count == 1 && recorded?.notes.first?.pitch == 67,
+              "recorded one MIDI note (\(recorded?.notes.count ?? 0))")
+        let ms = Double(recorded?.notes.first?.length ?? 0) / e.sampleRate * 1000
+        check(ms > 150 && ms < 400, String(format: "recorded note length %.0f ms (held ~250 ms)", ms))
+    }
+
     private func finish() {
-        if let previousCopyAudioPreference { UserDefaults.standard.set(previousCopyAudioPreference, forKey: "copyAudioOnSave") }
-        else { UserDefaults.standard.removeObject(forKey: "copyAudioOnSave") }
+        for key in Self.restoredKeys {
+            if let value = previousPreferences[key] { UserDefaults.standard.set(value, forKey: key) }
+            else { UserDefaults.standard.removeObject(forKey: key) }
+        }
         print(failures == 0 ? "SELFTEST: PASS" : "SELFTEST: FAIL (\(failures))")
         fflush(stdout)
         exit(failures == 0 ? 0 : 1)

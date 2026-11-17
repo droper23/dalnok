@@ -35,6 +35,8 @@ enum Theme {
     static let controlHi = tone(0x3A3E46, 0x584638)
     static let laneA = tone(0x141518, 0x1C1713)
     static let laneB = tone(0x16171A, 0x201A15)
+    static let laneHighlight = tone(0x1C1E22, 0x2A2019) // selected track's lane
+    static let lcd = tone(0x0B0C0E, 0x120D0A)           // position display well
     static let hairline = hex(0xFFFFFF, 0.07)
     static let separator = hex(0x000000, 0.55)
     static let gridMajor = hex(0xFFFFFF, 0.06)
@@ -50,6 +52,7 @@ enum Theme {
     static let muteOn = hex(0x5B9BFF)        // blue chip (Logic convention)
     static let soloOn = hex(0xF5C451)        // yellow chip
     static let clipRed = hex(0xFF5A4F)
+    static let recordOn = hex(0xE5484D)      // record arm / recording (always with an "R" or ● shape)
     static let selectedHeader = tone(0x262930, 0x3A2B21)
     static let knobHover = tone(0x44484F, 0x685344)
 
@@ -69,14 +72,16 @@ enum Theme {
     // MARK: Track colors
 
     static let gradientSteps = 12
-    /// Rainbow gradient starting at green: 12 steps of 30° in OKLCH, equal lightness/chroma,
+    /// Rainbow gradient starting at green (amber in Warm Analog): 12 steps of 30° in OKLCH, equal lightness/chroma,
     /// odd steps slightly lighter so adjacent tracks also differ in lightness (color-blind safety).
     static func gradientColor(step: Int) -> NSColor {
         let n = gradientSteps
         let i = ((step % n) + n) % n
-        let hue = 145.0 + 360.0 / Double(n) * Double(i)
-        let lightness = 0.70 + (i % 2 == 1 ? 0.05 : 0)
-        return OKLCH.color(l: lightness, c: 0.135, h: hue)
+        // Warm Analog starts at amber and uses softer chroma, like aged console scribble strips.
+        let warm = activeStyle == .warmAnalog
+        let hue = (warm ? 55.0 : 145.0) + 360.0 / Double(n) * Double(i)
+        let lightness = (warm ? 0.69 : 0.70) + (i % 2 == 1 ? 0.05 : 0)
+        return OKLCH.color(l: lightness, c: warm ? 0.105 : 0.135, h: hue)
     }
 
     static func trackColor(step: Int, custom: Int32) -> NSColor {

@@ -100,6 +100,62 @@ const CommandDef kCommands[] = {
          if (!needInt(a, "track", t, err) || !needInt(a, "index", i, err)) return DALNOK_ERR_INVALID_ARG;
          return status(e.moveTrack(t, i, err), err);
      }},
+    {"track.addInstrument", "New Instrument Track", "{name?}", [](ARGS) {
+         const auto id = e.addInstrumentTrack(a.getString("name", ""), err);
+         r.set("id", id);
+         return status(id != 0, err);
+     }},
+    {"track.setArmed", "Record Enable Track", "{track, armed}", [](ARGS) {
+         DalnokTrackId t;
+         if (!needInt(a, "track", t, err)) return DALNOK_ERR_INVALID_ARG;
+         return status(e.setArmed(t, a.getBool("armed", true), err), err);
+     }},
+    {"track.setInput", "Set Track Input", "{track, channel (zero-based)}", [](ARGS) {
+         DalnokTrackId t;
+         int32_t ch;
+         if (!needInt(a, "track", t, err) || !needInt(a, "channel", ch, err)) return DALNOK_ERR_INVALID_ARG;
+         return status(e.setInputChannel(t, ch, err), err);
+     }},
+    {"project.setTempo", "Set Tempo and Meter", "{bpm, numerator?, denominator?}", [](ARGS) {
+         double bpm;
+         if (!needNumber(a, "bpm", bpm, err)) return DALNOK_ERR_INVALID_ARG;
+         return status(e.setTempo(bpm, static_cast<int32_t>(a.getNumber("numerator", e.model().meterNum)),
+                                  static_cast<int32_t>(a.getNumber("denominator", e.model().meterDen)), err), err);
+     }},
+    {"midi.addClip", "New MIDI Clip", "{track, start, length}", [](ARGS) {
+         DalnokTrackId t;
+         int64_t start, length;
+         if (!needInt(a, "track", t, err) || !needInt(a, "start", start, err) || !needInt(a, "length", length, err))
+             return DALNOK_ERR_INVALID_ARG;
+         const auto id = e.addMidiClip(t, start, length, err);
+         r.set("id", id);
+         return status(id != 0, err);
+     }},
+    {"midi.setNotes", "Edit Notes", "{clip, notes: [[start, length, pitch, velocity], ...]}", [](ARGS) {
+         DalnokClipId c;
+         if (!needInt(a, "clip", c, err)) return DALNOK_ERR_INVALID_ARG;
+         const Value *list = a.get("notes");
+         if (!list || !list->isArray()) { err = "missing array argument 'notes'"; return DALNOK_ERR_INVALID_ARG; }
+         std::vector<MidiNote> notes;
+         for (const auto &n : list->array) {
+             if (!n.isArray() || n.array.size() != 4) { err = "each note is [start, length, pitch, velocity]"; return DALNOK_ERR_INVALID_ARG; }
+             for (const auto &x : n.array)
+                 if (!x.isNumber() || x.number != std::floor(x.number)) { err = "note values must be integers"; return DALNOK_ERR_INVALID_ARG; }
+             if (n.array[2].number < 0 || n.array[2].number > 127 || n.array[3].number < 1 || n.array[3].number > 127) {
+                 err = "pitch must be 0-127 and velocity 1-127";
+                 return DALNOK_ERR_INVALID_ARG;
+             }
+             notes.push_back({static_cast<int64_t>(n.array[0].number), static_cast<int64_t>(n.array[1].number),
+                              static_cast<uint8_t>(n.array[2].number), static_cast<uint8_t>(n.array[3].number)});
+         }
+         return status(e.setNotes(c, std::move(notes), err), err);
+     }},
+    {"midi.quantize", "Quantize Notes", "{clip, grid (beats, e.g. 0.25 = 16ths), strength? (0-1)}", [](ARGS) {
+         DalnokClipId c;
+         double grid;
+         if (!needInt(a, "clip", c, err) || !needNumber(a, "grid", grid, err)) return DALNOK_ERR_INVALID_ARG;
+         return status(e.quantize(c, grid, a.getNumber("strength", 1.0), err), err);
+     }},
     {"clip.setFades", "Set Clip Fades", "{clip, fadeIn, fadeOut, curve?: linear|equalPower}", [](ARGS) {
          DalnokClipId c;
          int64_t fi, fo;

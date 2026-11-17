@@ -22,6 +22,8 @@ struct ClipView {
     let preservePitch: Bool
     let processing: Bool
     let name: String
+    var notes: [DalnokNote] = [] // MIDI clips only
+    var isMidi = false
     var end: Int64 { start + length }
     var isStretched: Bool { abs(rate - 1) > 1e-9 || pitch != 0 }
     var sourceSpan: Int64 { Int64((Double(length) * rate).rounded()) }
@@ -37,6 +39,9 @@ struct TrackView {
     let muted: Bool
     let solo: Bool
     let clips: [ClipView] // z-order
+    var isInstrument = false
+    var armed = false
+    var inputChannel: Int32 = 0
 }
 
 @MainActor
@@ -72,15 +77,23 @@ final class Session {
             for k in 0..<ti.clip_count {
                 var ci = DalnokClipInfo()
                 guard dalnok_clip_info(h, dalnok_track_clip_at(h, tid, k), &ci) == DALNOK_OK else { continue }
-                clips.append(ClipView(id: ci.id, track: ci.track, media: ci.media, start: ci.start, offset: ci.offset,
-                                      length: ci.length, mediaFrames: ci.media_frames, offline: ci.offline,
-                                      fadeIn: ci.fade_in, fadeOut: ci.fade_out, fadeCurve: ci.fade_curve,
-                                      gainDb: ci.gain_db, rate: ci.rate, pitch: ci.pitch, preservePitch: ci.preserve_pitch,
-                                      processing: ci.processing, name: fixedString(ci.name)))
+                var clip = ClipView(id: ci.id, track: ci.track, media: ci.media, start: ci.start, offset: ci.offset,
+                                    length: ci.length, mediaFrames: ci.media_frames, offline: ci.offline,
+                                    fadeIn: ci.fade_in, fadeOut: ci.fade_out, fadeCurve: ci.fade_curve,
+                                    gainDb: ci.gain_db, rate: ci.rate, pitch: ci.pitch, preservePitch: ci.preserve_pitch,
+                                    processing: ci.processing, name: fixedString(ci.name))
+                if ci.midi {
+                    clip.isMidi = true
+                    clip.notes = [DalnokNote](repeating: DalnokNote(), count: Int(ci.note_count))
+                    _ = dalnok_midi_clip_notes(h, ci.id, &clip.notes, ci.note_count)
+                }
+                clips.append(clip)
             }
             out.append(TrackView(id: tid, name: fixedString(ti.name), color: Theme.trackColor(step: Int(ti.color), custom: ti.custom_color),
                                  customColor: ti.custom_color,
-                                 gainDb: ti.gain_db, pan: ti.pan, muted: ti.muted, solo: ti.solo, clips: clips))
+                                 gainDb: ti.gain_db, pan: ti.pan, muted: ti.muted, solo: ti.solo, clips: clips,
+                                 isInstrument: ti.kind == Int32(DALNOK_TRACK_INSTRUMENT.rawValue), armed: ti.armed,
+                                 inputChannel: ti.input_channel))
         }
         tracks = out
         onChange?()
@@ -106,6 +119,27 @@ final class Session {
     @discardableResult
     func addTrack(_ name: String = "") -> DalnokTrackId { let id = dalnok_track_add(h, name); refresh(); return id }
     func removeTrack(_ t: DalnokTrackId) { dalnok_track_remove(h, t); refresh() }
+    @discardableResult
+    func addInstrumentTrack(_ name: String = "") -> DalnokTrackId { let id = dalnok_track_add_instrument(h, name); refresh(); return id }
+    func setArmed(_ t: DalnokTrackId, _ on: Bool) {
+        if dalnok_track_set_armed(h, t, on) != DALNOK_OK { onMessage?("Can't change record arm while recording") }
+        refresh()
+    }
+    func setInput(_ t: DalnokTrackId, _ channel: Int32) { dalnok_track_set_input(h, t, channel); refresh() }
+    @discardableResult
+    func addMidiClip(_ t: DalnokTrackId, start: Int64, length: Int64) -> DalnokClipId {
+        let id = dalnok_midi_clip_add(h, t, start, length); refresh(); return id
+    }
+    func setNotes(_ c: DalnokClipId, _ notes: [DalnokNote]) {
+        var n = notes
+        dalnok_midi_clip_set_notes(h, c, &n, Int32(n.count)); refresh()
+    }
+    func quantize(_ c: DalnokClipId, grid: Double) {
+        if dalnok_midi_quantize(h, c, grid, 1) == DALNOK_OK { onMessage?("Quantized to 1/\(Int(4 / grid)) notes") }
+        refresh()
+    }
+    var bpm: Double { dalnok_tempo_bpm(h) }
+    var framesPerBeat: Int64 { Int64((engine.sampleRate * 60 / bpm).rounded()) }
     func setStretch(_ c: DalnokClipId, length: Int64, rate: Double, pitch: Float, preservePitch: Bool) {
         dalnok_clip_set_stretch(h, c, length, rate, pitch, preservePitch); refresh()
     }
