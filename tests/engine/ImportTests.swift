@@ -243,10 +243,11 @@ func skipped(_ r: [String: Any], _ key: String) -> Int { (r["skipped"] as? [Stri
 
 @Suite struct LogicImport {
     /// Builds a minimal ProjectData in the layout decoded from Logic 12.2 projects.
-    func chunk(_ tag: String, _ payload: Data, idx: UInt16 = 0) -> Data {
+    /// `id` lands at chunk offset +10 and `sub` at +14 (region id / leftover sub-index in AuRg headers).
+    func chunk(_ tag: String, _ payload: Data, id: UInt32 = 0, sub: UInt16 = 0) -> Data {
         var d = Data(tag.reversed().map { UInt8($0.asciiValue!) })
         var hdr = [UInt8](repeating: 0, count: 24) // tag(4) + 24 header bytes + u64 length = 36
-        hdr[10] = UInt8(idx & 0xff)
+        hdr.replaceSubrange(6..<10, with: le(id)); hdr.replaceSubrange(10..<12, with: le(sub))
         d.append(contentsOf: hdr)
         d.append(contentsOf: le(UInt64(payload.count)))
         d.append(payload)
@@ -291,6 +292,76 @@ func skipped(_ r: [String: Any], _ key: String) -> Int { (r["skipped"] as? [Stri
         // 2 bars at 120 BPM 4/4 = 4 s = 192000 frames.
         #expect(c.count == 1 && c[0].start == 192_000 && c[0].offset == 24_000 && c[0].length == 96_000 && !c[0].offline,
                 "\(c.map { ($0.start, $0.offset, $0.length) })")
+    }
+
+    /// Placements link to the region's header id, not its document position: a leftover split region
+    /// (same id, sub-index 1) sits between real regions.
+    @Test func linksPlacementsByRegionIdNotOrder() throws {
+        let pkg = tempDir().appendingPathComponent("Split.logicx")
+        let alt = pkg.appendingPathComponent("Alternatives/000"), media = pkg.appendingPathComponent("Media/Audio Files")
+        try FileManager.default.createDirectory(at: alt, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: media, withIntermediateDirectories: true)
+        var body = chunk("Song", Data(repeating: 0, count: 8))
+        func region(_ name: String, offset: UInt32, length: UInt32) -> Data {
+            var rg = Data(repeating: 0, count: 120)
+            rg.replaceSubrange(6..<10, with: le(offset)); rg.replaceSubrange(22..<26, with: le(length))
+            rg.replaceSubrange(74..<76, with: le(UInt16(name.count))); rg.replaceSubrange(76..<(76 + name.count), with: Array(name.utf8))
+            return rg
+        }
+        for (file, frames) in [("A.wav", 480_000), ("B.wav", 240_000)] {
+            try writeTestWav(media.appendingPathComponent(file), frames: frames)
+            var fl = Data(repeating: 0, count: 8)
+            fl.append(contentsOf: le(UInt16(file.utf16.count))); for u in file.utf16 { fl.append(contentsOf: le(u)) }
+            body.append(chunk("AuFl", fl))
+            if file == "A.wav" {
+                body.append(chunk("AuRg", region("A", offset: 0, length: 300_000), id: 0))
+                body.append(chunk("AuRg", region("A.1", offset: 300_000, length: 180_000), id: 0, sub: 1)) // leftover
+            } else {
+                body.append(chunk("AuRg", region("B", offset: 1_000, length: 200_000), id: 4))
+            }
+        }
+        // Mixer section: channel strips (Envi: id in the header, u16 name length @158, name @160).
+        for (id, name) in [(88, "Lead"), (92, "Rhythm"), (96, "Stack")] as [(UInt32, String)] {
+            var en = Data(repeating: 0, count: 200)
+            en.replaceSubrange(158..<160, with: le(UInt16(name.utf8.count))); en.replaceSubrange(160..<(160 + name.utf8.count), with: Array(name.utf8))
+            body.append(chunk("Envi", en, id: id))
+        }
+        // Arrange section: MSeq, then one 58-byte Trak per row pointing at its channel strip (@8).
+        body.append(chunk("MSeq", Data(repeating: 0, count: 8)))
+        for strip in [96, 88, 92, 92] as [UInt32] { // rows 1-4: a stack, then tracks
+            var tk = Data(repeating: 0, count: 58); tk.replaceSubrange(8..<12, with: le(strip))
+            body.append(chunk("Trak", tk))
+        }
+        var ev = Data()
+        // Stored in time order: row 4 ("Rhythm") plays first, row 2 ("Lead") second.
+        for (bars, track, link) in [(0, 4, 0), (4, 2, 4)] as [(UInt32, UInt8, UInt32)] {
+            var e = Data(repeating: 0, count: 80)
+            e.replaceSubrange(0..<4, with: le(UInt32(0x24))); e.replaceSubrange(4..<8, with: le(UInt32(34_560) + bars * 3_840))
+            e[0x14] = track; e.replaceSubrange(0x2c..<0x30, with: le(link))
+            ev.append(e)
+        }
+        var end = Data(repeating: 0, count: 16); end[0] = 0xf1
+        ev.append(end)
+        body.append(chunk("EvSq", ev))
+        var file = Data([0x23, 0x47, 0xc0, 0xab]); file.append(Data(repeating: 0, count: 12))
+        file.append(contentsOf: le(UInt64(body.count))); file.append(body)
+        try file.write(to: alt.appendingPathComponent("ProjectData"))
+        try PropertyListSerialization.data(fromPropertyList: ["BeatsPerMinute": 120, "SampleRate": 48_000] as [String: Any],
+                                           format: .binary, options: 0).write(to: alt.appendingPathComponent("MetaData.plist"))
+
+        let (e, r) = try importInto(pkg.path); defer { dalnok_engine_destroy(e) }
+        let c = clips(e).map(\.info).sorted { $0.start < $1.start }
+        // Tracks follow Logic's rows (row 2 "Lead" before row 4 "Rhythm") and take the channel strip names.
+        var names: [String] = []
+        for i in 0..<dalnok_track_count(e) {
+            var t = DalnokTrackInfo(); dalnok_track_info(e, dalnok_track_at(e, i), &t); names.append(name(t.name))
+        }
+        #expect(names == ["Lead", "Rhythm"], "\(names)")
+        // Link 4 is region "B" (offset 1000, length 200000) at bar 5 = 8 s at 120 BPM; document index 1 would be "A.1".
+        #expect(c.count == 2 && c[0].start == 0 && c[0].offset == 0 && c[0].length == 300_000 &&
+                c[1].start == 384_000 && c[1].offset == 1_000 && c[1].length == 200_000,
+                "\(c.map { ($0.start, $0.offset, $0.length) })")
+        #expect((r["skipped"] as? [String: Any])?["unplacedRegions"] as? Int == 1)
     }
 
     @Test func rejectsInvalidChunkAndNameLengths() throws {

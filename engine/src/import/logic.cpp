@@ -7,12 +7,13 @@
 // audio-file records (names), audio-region records (source offset/length in
 // samples — 2,667/2,667 regions fit inside their files), region-to-file
 // ownership (document order), project metadata (MetaData.plist).
-// NOT yet verified against ground truth: arrangement placement (event 0x24:
-// position/track/region link) and track naming. The report says so.
+// Arrangement (event 0x24: position, row, region link = AuRg header id) and track names (row -> Trak ->
+// Envi channel strip). Volume, pan, stacks and plug-ins are not decoded.
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "import/import.hpp"
 #include "media.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <filesystem>
@@ -67,8 +68,8 @@ std::string utf16le(const std::string &d, size_t off, size_t chars) {
     return out;
 }
 
-struct Region { std::string file; uint32_t offset, length; std::string name; };
-struct Placement { uint32_t pos; uint8_t track; uint32_t link; };
+struct Region { std::string file; uint32_t offset, length; std::string name; uint32_t id; uint16_t sub; };
+struct Placement { uint32_t pos; uint8_t track; uint32_t link; size_t section; };
 
 } // namespace
 
@@ -125,13 +126,27 @@ bool importLogic(const std::string &path, Result &out, std::string &err) {
         } else if (c.tag == "AuRg" && c.length > 76) {
             const auto nl = rd<uint16_t>(d, c.payload + 74);
             if (nl > c.length - 76) { err = "invalid Logic audio region name length"; return false; }
+            // Chunk header: +10 is the region's id (what arrangement events link to), +14 a sub-index
+            // (0 = the region itself; splits that Logic keeps as leftovers share the id with sub > 0).
             regions.push_back({currentFile, rd<uint32_t>(d, c.payload + 6), rd<uint32_t>(d, c.payload + 22),
-                               d.substr(c.payload + 76, nl)});
+                               d.substr(c.payload + 76, nl), rd<uint32_t>(d, c.pos + 10), rd<uint16_t>(d, c.pos + 14)});
         }
     }
+    // Channel strips (Envi): header id at +10, name as u16 length at +158 and bytes at +160.
+    std::map<uint32_t, std::string> channelName;
+    for (const auto &c : chunks) {
+        if (c.tag != "Envi" || c.length < 160) continue;
+        const auto n = rd<uint16_t>(d, c.payload + 158);
+        if (160 + size_t(n) <= c.length) channelName[rd<uint32_t>(d, c.pos + 10)] = d.substr(c.payload + 160, n);
+    }
+    // Each MSeq starts a section; its non-empty Trak chunks (58 bytes) are the arrange rows in order
+    // (row 1 first), each pointing at its channel strip at +8. Placements carry the row number.
+    std::vector<std::vector<uint32_t>> sectionRows;
     // Arrangement placements (event type 0x24, 80 bytes) inside event sequences.
     std::vector<Placement> placements;
     for (const auto &c : chunks) {
+        if (c.tag == "MSeq") { sectionRows.emplace_back(); continue; }
+        if (c.tag == "Trak" && c.length == 58 && !sectionRows.empty()) { sectionRows.back().push_back(rd<uint32_t>(d, c.payload + 8)); continue; }
         if (c.tag != "EvSq") continue;
         size_t i = 0;
         while (i + 16 <= c.length) {
@@ -139,7 +154,7 @@ bool importLogic(const std::string &path, Result &out, std::string &err) {
             if ((t & 0xff) == 0xf1) break;
             if (t == 0x24 && i + 80 <= c.length) {
                 placements.push_back({rd<uint32_t>(d, c.payload + i + 4), static_cast<uint8_t>(d[c.payload + i + 0x14]),
-                                      rd<uint32_t>(d, c.payload + i + 0x2c)});
+                                      rd<uint32_t>(d, c.payload + i + 0x2c), sectionRows.empty() ? 0 : sectionRows.size() - 1});
                 i += 80;
             } else if (t == 0x20 || t == 0x22 || t == 0x26 || t == 0x28) {
                 if (t == 0x20) ++midiRegions;
@@ -155,11 +170,25 @@ bool importLogic(const std::string &path, Result &out, std::string &err) {
     std::map<int, int32_t> tracks;
     int placed = 0, unresolved = 0;
     const double secPerTick = 60.0 / (bpm * kPpq);
+    // Placements link to a region's header id, not document order: leftover split regions
+    // can sit between real ones and shift later indices.
+    std::map<uint32_t, size_t> byId;
+    for (size_t i = 0; i < regions.size(); ++i)
+        if (regions[i].sub == 0) byId.emplace(regions[i].id, i);
+    // Tracks in Logic's row order (placements are stored in time order).
+    std::stable_sort(placements.begin(), placements.end(), [](const Placement &a, const Placement &b) { return a.track < b.track; });
     for (const auto &p : placements) {
-        const uint32_t idx = p.link / 4;
-        if (p.link % 4 != 0 || idx >= regions.size() || p.pos < kTickOrigin) { ++unresolved; continue; }
-        const Region &r = regions[idx];
-        if (!tracks.count(p.track)) tracks[p.track] = b.addTrack("Audio " + std::to_string(p.track), 0, 0, false, false);
+        const auto it = byId.find(p.link);
+        if (it == byId.end() || p.pos < kTickOrigin) { ++unresolved; continue; }
+        const Region &r = regions[it->second];
+        if (!tracks.count(p.track)) {
+            std::string name = "Audio " + std::to_string(p.track);
+            if (p.section < sectionRows.size() && p.track >= 1 && p.track <= sectionRows[p.section].size()) {
+                const auto it = channelName.find(sectionRows[p.section][p.track - 1]);
+                if (it != channelName.end() && !it->second.empty()) name = it->second;
+            }
+            tracks[p.track] = b.addTrack(name, 0, 0, false, false);
+        }
         const std::string file = (audioDir / r.file).string();
         const int32_t media = b.addMedia(fs::exists(file) ? file : locateMedia(r.file, pkg.parent_path().string()));
         b.addClip(tracks[p.track], media, (p.pos - kTickOrigin) * secPerTick, r.offset / rate, r.length / rate,
@@ -171,8 +200,9 @@ bool importLogic(const std::string &path, Result &out, std::string &err) {
     if (midiRegions > 0)
         rep.notes.push_back("Some event records may represent MIDI; MIDI regions are not imported and their count is not verified.");
     rep.notes.push_back("EXPERIMENTAL: Logic's project format is undocumented. Audio files and region trims are verified; "
-                        "region positions and track assignment are decoded but not yet verified, and track names, "
-                        "plug-ins, automation and take folders are not imported. Logic's File ▸ Export ▸ Project to Final Cut Pro XML "
+                        "region positions, track assignment and track names match Logic's own per-track renders on a test "
+                        "project. Track volume, pan, track stacks, plug-ins, automation and take folders are not imported, so "
+                        "levels differ from Logic. Logic's File ▸ Export ▸ Project to Final Cut Pro XML "
                         "is an alternative, but may render audio and change clip boundaries; compare the result with the original.");
     out.document = b.document();
     return true;

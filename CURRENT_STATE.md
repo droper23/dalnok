@@ -5,7 +5,11 @@ milestone: M11 VST3 hosting (ADR-0009 stage 3) done; editors, parameters and AU 
 ---
 # Current State
 
-## Latest session (M14: Warm Analog overhaul)
+## Latest session (Logic import)
+- Fixed region ID links and imported track names and order; generated LogicImport regression tests pass. Logic import remains experimental: volume, pan, stacks, routing, plug-ins, automation and take folders are missing.
+- GUI self-test has intermittently failed two timing checks and once crashed at launch with an index out of range; investigate.
+
+## Earlier (M14: Warm Analog overhaul)
 - Owner asked for a total visual overhaul of the analog theme with the same design language: done as a first pass (`Analog.swift`, `06 - Design/Warm Analog.md`). Self-test passes in both themes (211 checks with the test plug-in). Reviewed in still snapshots only; the cable plug-in animation and LED breathing were not watched.
 
 ## Earlier (M13: Audio Units, device panel, zoomed window)
@@ -83,7 +87,7 @@ slot, and retired ones come back through an SPSC queue. See [[System Overview]],
 | Import REAPER `.rpp` (tracks, items, fades, item gain, loops, Windows/moved paths) | `ReaperImport` tests; 6/6 of the owner's projects, all audio found |
 | Import Ableton `.als` (arrangement audio, beats→time, warp markers, loops, clip gain, Live path types) | `AbletonImport` tests; 493/495 real sets parse; 95% of 6,929 file references resolved |
 | Import Final Cut Pro XML (Logic's export) and stems folders | `FcpxmlImport`, `StemsImport` tests |
-| Import Logic `.logicx`: EXPERIMENTAL (metadata, files, region trims verified; placement unverified) | `LogicImport` test; 30/31 real projects parse |
+| Import Logic `.logicx`: EXPERIMENTAL (region links, placements, track names and order covered by generated tests) | `LogicImport` test; 30/31 real projects parse |
 | Clip gain | `clip.setGain`, used by every importer |
 | Time stretch, pitch, and varispeed (Signalsmith; rendered in the background; ⌥-drag a clip's end; Clip menu) | `TimeStretch` tests measure pitch and level on output; mutation-checked; self-test |
 | Imports use stretch: REAPER playrate and pitch; Ableton warp markers (piecewise), Re-Pitch, transpose | `StretchImports` tests; a real set with 334 stretched clips imports in 1.7 s |
@@ -120,8 +124,7 @@ Finish validating recording (loopback latency, power loss, real keyboard), then 
 4. Owner review of Warm Analog and the device panel; then automation lanes driving plug-in parameters, then latency compensation.
 
 ## Open migration items
-- Verify Logic `.logicx` placement against a real Logic **Final Cut Pro XML export** of the same project
-  (needs the owner to export one). Then decode track names and take folders.
+- Expand Logic `.logicx` validation and decode mixer settings, routing, track stacks and take folders.
 - Test the FCPXML importer on a real Logic export (only fixtures so far).
 
 ## Links

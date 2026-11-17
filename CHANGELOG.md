@@ -1,6 +1,9 @@
 # Changelog
 
 ## [Unreleased]
+### Fixed (2026-11-16, Logic import)
+- Resolve audio placements by region ID and use arrange rows and channel names for track order and names. Logic import remains experimental; mixer settings, routing, plug-ins and automation are not imported.
+
 ### Changed (2026-11-16, knob rings)
 - Gain dials put 0 dB at the top center (+6 dB at full, −∞ at zero); the dial face grows back in step with the falling level ring after stop, so there is no jump at the end.
 - Clicking a knob or fader no longer takes keyboard focus, and a focused one passes Space and other shortcuts to the menu (the real Space key previously did nothing).
