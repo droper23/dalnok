@@ -82,3 +82,29 @@ struct PluginAutomation {
         #expect(dalnok_undo(e) && dalnok_plugin_automation(e, t, slot, p.id, nil, 0) == 2)
     }
 }
+
+@Suite(.enabled(if: !testVst3.isEmpty, "set DALNOK_TEST_VST3 (scripts/ci/plugin-host.sh)"))
+struct Sidechain {
+    @Test func aDuckerListensToAnotherTrackAndLoopsAreRejected() {
+        let e = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(e) }
+        let bedM = makeMedia([[Float](repeating: 0.5, count: 48_000)])
+        var keyS = [Float](repeating: 0, count: 48_000); for i in 24_000..<48_000 { keyS[i] = 0.75 }
+        let keyM = makeMedia([keyS]); defer { dalnok_media_release(bedM); dalnok_media_release(keyM) }
+        // The listening track comes first in display order, so the engine must reorder.
+        let bed = dalnok_track_add(e, "Bed"), key = dalnok_track_add(e, "Key")
+        DalnokEngine.dalnok_clip_add(e, bed, dalnok_pool_add(e, bedM, ""), 0, 0, 0)
+        DalnokEngine.dalnok_clip_add(e, key, dalnok_pool_add(e, keyM, ""), 0, 0, 0)
+        #expect(dalnok_track_set_mute(e, key, true) == DALNOK_OK) // only the bed is heard; the key still feeds the sidechain
+        let slot = dalnok_plugin_add(e, bed, testVst3, classHex("DalnokTestDuck01"), nil, 0)
+        #expect(slot != 0 && dalnok_plugin_has_sidechain(e, slot))
+        #expect(abs(render(e, 30_000, 10)[5] - 0.5) < 1e-4, "no sidechain source: no ducking")
+        #expect(dalnok_plugin_set_sidechain(e, bed, slot, key) == DALNOK_OK && undoName(e) == "Sidechain")
+        let out = render(e, 0, 48_000)
+        #expect(abs(out[10_000] - 0.5) < 1e-4, "key silent: full level")
+        #expect(abs(out[30_000] - 0.125) < 1e-4, "key at 0.75: ducked to 0.25 of 0.5 (\(out[30_000]))")
+        // A loop (the key listening to the bed through a duck of its own) is rejected.
+        let slot2 = dalnok_plugin_add(e, key, testVst3, classHex("DalnokTestDuck01"), nil, 0)
+        #expect(dalnok_plugin_set_sidechain(e, key, slot2, bed) != DALNOK_OK)
+        #expect(dalnok_plugin_sidechain(e, bed, slot) == key)
+    }
+}

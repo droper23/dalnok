@@ -798,6 +798,8 @@ bool feedsBack(const Model &m, DalnokTrackId from, DalnokTrackId to) {
         if (!t) continue;
         if (t->output) stack.push_back(t->output);
         for (const auto &s : t->sends) stack.push_back(s.bus);
+        for (const auto &o : m.tracks) // a sidechain source feeds the track that listens to it
+            for (const auto &slot : o.plugins) if (slot.sidechain == id) stack.push_back(o.id);
     }
     return false;
 }
@@ -1214,6 +1216,21 @@ bool Engine::ungroupStack(DalnokTrackId stack, std::string &err) {
     });
 }
 
+bool Engine::setSidechain(DalnokTrackId track, int32_t slot, DalnokTrackId source, std::string &err) {
+    return edit("Sidechain", true, [&](Model &m) {
+        TrackState *t = m.track(track);
+        if (!t) return fail(err, "no such track");
+        auto it = std::find_if(t->plugins.begin(), t->plugins.end(), [slot](const PluginSlot &p) { return p.id == slot; });
+        if (it == t->plugins.end()) return fail(err, "that plug-in isn't on this track");
+        if (source) {
+            if (!m.track(source) || source == track) return fail(err, "choose another track as the sidechain source");
+            if (feedsBack(m, source, track)) return fail(err, "that sidechain would feed the track back into its source");
+        }
+        it->sidechain = source;
+        return true;
+    });
+}
+
 bool Engine::removeSend(DalnokTrackId track, DalnokTrackId bus, std::string &err) {
     return edit("Remove Send", true, [&](Model &m) {
         TrackState *t = m.track(track);
@@ -1505,26 +1522,27 @@ std::unique_ptr<RenderState> Engine::compile(std::vector<StretchJob> *needed, co
         s->clickTempo.push_back({seg.beat, static_cast<double>(seg.frame), static_cast<double>(seg.framesPerBeat)});
     for (const auto &m : model_.meters)
         s->clickMeter.push_back({barToBeat(model_.meters, m.bar), 4.0 / m.den, m.num});
-    // Processing order: every source track, then buses so that each bus runs after everything feeding it.
+    // Processing order: a topological order of the signal graph (outputs and sends into buses, sidechain
+    // sources into the tracks that listen to them), sources first and otherwise in display order.
     std::vector<const TrackState *> order;
-    for (const auto &t : model_.tracks) if (t.kind != kTrackBus) order.push_back(&t);
     {
-        std::vector<const TrackState *> buses;
-        for (const auto &t : model_.tracks) if (t.kind == kTrackBus) buses.push_back(&t);
-        std::set<DalnokTrackId> placed;
-        auto feeds = [](const TrackState &from, DalnokTrackId bus) {
-            if (from.output == bus) return true;
-            for (const auto &snd : from.sends) if (snd.bus == bus) return true;
+        auto feeds = [&](const TrackState &from, const TrackState &to) {
+            if (from.output == to.id) return true;
+            for (const auto &snd : from.sends) if (snd.bus == to.id) return true;
+            for (const auto &slot : to.plugins) if (slot.sidechain == from.id) return true;
             return false;
         };
-        while (!buses.empty()) { // Kahn's algorithm; edits keep routing acyclic, so this always progresses
-            auto ready = std::find_if(buses.begin(), buses.end(), [&](const TrackState *b) {
-                return std::none_of(buses.begin(), buses.end(), [&](const TrackState *o) { return o != b && feeds(*o, b->id); });
+        std::vector<const TrackState *> left;
+        // Non-bus tracks are listed first so plain projects keep their familiar order.
+        for (const auto &t : model_.tracks) if (t.kind != kTrackBus) left.push_back(&t);
+        for (const auto &t : model_.tracks) if (t.kind == kTrackBus) left.push_back(&t);
+        while (!left.empty()) { // Kahn's algorithm; edits keep the graph acyclic, so this always progresses
+            auto ready = std::find_if(left.begin(), left.end(), [&](const TrackState *b) {
+                return std::none_of(left.begin(), left.end(), [&](const TrackState *o) { return o != b && feeds(*o, *b); });
             });
-            if (ready == buses.end()) ready = buses.begin(); // defensive: never loop forever
+            if (ready == left.end()) ready = left.begin(); // defensive: never loop forever
             order.push_back(*ready);
-            placed.insert((*ready)->id);
-            buses.erase(ready);
+            left.erase(ready);
         }
     }
     std::map<DalnokTrackId, int32_t> indexOf;
@@ -1649,6 +1667,22 @@ std::unique_ptr<RenderState> Engine::compile(std::vector<StretchJob> *needed, co
         std::sort(rt.slots.begin(), rt.slots.end(), [](const RenderSlot &a, const RenderSlot &b) { return a.slot < b.slot; });
         for (size_t k = 0; k < rt.slots.size(); ++k) rt.slots[k].nextSlot = rt.slots[(k + 1) % rt.slots.size()].slot;
         s->tracks.push_back(std::move(rt));
+    }
+    // Sidechains: number the source tracks and point listening plug-ins at their buffers.
+    {
+        std::map<DalnokTrackId, int32_t> scIndex;
+        for (size_t i = 0; i < order.size(); ++i)
+            for (const auto &slot : order[i]->plugins) {
+                if (!slot.sidechain || !indexOf.count(slot.sidechain)) continue;
+                auto it = instances.find(slot.id);
+                if (it == instances.end() || !it->second || !it->second->hasSidechain()) continue;
+                auto [sc, fresh] = scIndex.try_emplace(slot.sidechain, static_cast<int32_t>(scIndex.size()));
+                s->tracks[static_cast<size_t>(indexOf[slot.sidechain])].scSlot = sc->second;
+                s->tracks[i].sidechainFeeds.push_back({it->second.get(), sc->second});
+                (void)fresh;
+            }
+        s->scL.assign(scIndex.size() * kMaxBlock, 0.0f);
+        s->scR.assign(scIndex.size() * kMaxBlock, 0.0f);
     }
     // Resolve outputs and sends to processing indices (a missing destination falls back to the master).
     int32_t buses = 0;

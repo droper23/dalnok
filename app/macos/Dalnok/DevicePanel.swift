@@ -258,7 +258,14 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         editButton.isEnabled = loaded
         grid.rowSpacing = 4
         grid.columnSpacing = 12
-        let header = NSStackView(views: [title, NSView(), editButton, openButton])
+        // Sidechain source (plug-ins with an auxiliary input only).
+        sidechain.controlSize = .small
+        sidechain.font = Theme.ui(10, .medium)
+        sidechain.target = self
+        sidechain.action = #selector(sidechainChosen)
+        sidechain.toolTip = "Sidechain: which track's signal this plug-in listens to (for ducking and keyed effects)"
+        sidechain.isHidden = !(loaded && dalnok_plugin_has_sidechain(session.engine.handle, slot))
+        let header = NSStackView(views: [title, NSView(), sidechain, editButton, openButton])
         header.spacing = 6
         // Knobs sit in the middle of the unit, so a one-row controller doesn't leave the bottom half empty.
         let above = NSView(), below = NSView()
@@ -333,7 +340,25 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
     }
 
     /// Rebuilds the knob grid from the controller's ids.
+    let sidechain = NSPopUpButton(frame: .zero, pullsDown: false)
+    private func refreshSidechain() {
+        guard !sidechain.isHidden else { return }
+        let others = session.allTracks.filter { $0.id != trackId }
+        let titles = ["SC: None"] + others.map { "SC: \($0.name)" }
+        if sidechain.itemTitles != titles { sidechain.removeAllItems(); sidechain.addItems(withTitles: titles) }
+        sidechain.item(at: 0)?.tag = 0
+        for (i, t) in others.enumerated() { sidechain.item(at: i + 1)?.tag = Int(t.id) }
+        sidechain.selectItem(withTag: Int(dalnok_plugin_sidechain(session.engine.handle, trackId, slot)))
+    }
+    @objc private func sidechainChosen() {
+        if dalnok_plugin_set_sidechain(session.engine.handle, trackId, slot, DalnokTrackId(sidechain.selectedTag())) != DALNOK_OK {
+            session.onMessage?("That sidechain would feed the track back into its source")
+        }
+        session.refresh()
+    }
+
     func refreshControls() {
+        refreshSidechain()
         let ids = controlIds
         if knobs.map(\.id) == ids { return refreshValues() }
         while grid.numberOfRows > 0 { grid.removeRow(at: 0) }

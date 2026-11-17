@@ -343,10 +343,17 @@ public:
         const int32 eventIn = component_->getBusCount(kEvent, kInput);
         if (audioOut < 1) { err = "the plugin has no audio output"; return false; }
         instrument_ = audioIn == 0 && eventIn > 0;
-        // Stereo main buses; other buses stay inactive.
+        // Stereo main buses; a second (auxiliary) input bus becomes the sidechain; other buses stay inactive.
         SpeakerArrangement stereo = SpeakerArr::kStereo;
-        processor_->setBusArrangements(audioIn > 0 ? &stereo : nullptr, audioIn > 0 ? 1 : 0, &stereo, 1);
+        BusInfo aux{};
+        sidechain_ = audioIn >= 2 && component_->getBusInfo(kAudio, kInput, 1, aux) == kResultOk && aux.busType == kAux;
+        SpeakerArrangement ins[2] = {SpeakerArr::kStereo, SpeakerArr::kStereo};
+        if (!sidechain_ || processor_->setBusArrangements(ins, 2, &stereo, 1) != kResultOk) {
+            sidechain_ = false;
+            processor_->setBusArrangements(audioIn > 0 ? &stereo : nullptr, audioIn > 0 ? 1 : 0, &stereo, 1);
+        }
         if (audioIn > 0) component_->activateBus(kAudio, kInput, 0, true);
+        if (sidechain_) component_->activateBus(kAudio, kInput, 1, true);
         component_->activateBus(kAudio, kOutput, 0, true);
         if (eventIn > 0) component_->activateBus(kEvent, kInput, 0, true);
         ProcessSetup setup{offline ? kOffline : kRealtime, kSample32, maxBlock, rate};
@@ -357,6 +364,7 @@ public:
         hasEvents_ = eventIn > 0;
         scratchL_.assign(static_cast<size_t>(maxBlock), 0.0f);
         scratchR_.assign(static_cast<size_t>(maxBlock), 0.0f);
+        silence_.assign(static_cast<size_t>(maxBlock), 0.0f);
         syncController();
         return true;
     }
@@ -400,18 +408,22 @@ public:
         autoCount_ = 0;
         float *inPtr[2] = {scratchL_.data(), scratchR_.data()};
         float *outPtr[2] = {left, right};
-        AudioBusBuffers in, out;
+        AudioBusBuffers ins[2], out;
+        AudioBusBuffers &in = ins[0];
         in.numChannels = 2;
         in.channelBuffers32 = inPtr;
+        float *scPtr[2] = {const_cast<float *>(scL_ ? scL_ : silence_.data()), const_cast<float *>(scR_ ? scR_ : silence_.data())};
+        ins[1].numChannels = 2;
+        ins[1].channelBuffers32 = scPtr;
         out.numChannels = 2;
         out.channelBuffers32 = outPtr;
         ProcessData data;
         data.processMode = kRealtime;
         data.symbolicSampleSize = kSample32;
         data.numSamples = frames;
-        data.numInputs = hasInput_ ? 1 : 0;
+        data.numInputs = hasInput_ ? (sidechain_ ? 2 : 1) : 0;
         data.numOutputs = 1;
-        data.inputs = hasInput_ ? &in : nullptr;
+        data.inputs = hasInput_ ? ins : nullptr;
         data.outputs = &out;
         data.inputEvents = hasEvents_ ? &events_ : nullptr;
         data.inputParameterChanges = paramChanges_.count ? &paramChanges_ : nullptr;
@@ -423,6 +435,8 @@ public:
         }
 #pragma clang diagnostic pop
     }
+
+    bool hasSidechain() const override { return sidechain_; }
 
     bool getState(std::string &bytes) override {
         MemoryStream s;
@@ -518,7 +532,8 @@ private:
     std::map<uint32_t, double> touched_;
     std::atomic<uint64_t> edits_{0}, dropped_{0};
     BlockEvents events_;
-    std::vector<float> scratchL_, scratchR_;
+    std::vector<float> scratchL_, scratchR_, silence_;
+    bool sidechain_ = false; // an auxiliary input bus is active and fed by setSidechain
     std::string name_, vendor_, classId_, subCategories_;
     bool instrument_ = false, hasInput_ = false, hasEvents_ = false;
 };

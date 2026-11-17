@@ -167,6 +167,11 @@ const CommandDef kCommands[] = {
          if (!needInt(a, "track", t, err)) return DALNOK_ERR_INVALID_ARG;
          return status(e.ungroupStack(t, err), err);
      }},
+    {"plugin.setSidechain", "Sidechain", "{track, slot, source (track, 0 = none)}", [](ARGS) {
+         DalnokTrackId t, src; int32_t slot;
+         if (!needInt(a, "track", t, err) || !needInt(a, "slot", slot, err) || !needInt(a, "source", src, err)) return DALNOK_ERR_INVALID_ARG;
+         return status(e.setSidechain(t, slot, src, err), err);
+     }},
     {"plugin.setAutomation", "Plug-in Automation", "{track, slot, param, points: [[frame, value 0-1], ...]}", [](ARGS) {
          DalnokTrackId t; int32_t slot; double param;
          if (!needInt(a, "track", t, err) || !needInt(a, "slot", slot, err) || !needNumber(a, "param", param, err)) return DALNOK_ERR_INVALID_ARG;

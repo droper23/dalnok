@@ -13,9 +13,11 @@
 #include "pluginterfaces/vst/ivstevents.h"
 #include "pluginterfaces/vst/ivsteditcontroller.h"
 #include "pluginterfaces/vst/ivstparameterchanges.h"
+#include <cmath>
 #include <cstdio>
 #include "pluginterfaces/vst/vstspeaker.h"
 #include <CoreFoundation/CoreFoundation.h>
+#include <cmath>
 #include <cstring>
 
 using namespace Steinberg;
@@ -35,6 +37,8 @@ const TUID kGainId = {'D', 'a', 'l', 'n', 'o', 'k', 'T', 'e', 's', 't', 'G', 'a'
 const TUID kSynthId = {'D', 'a', 'l', 'n', 'o', 'k', 'T', 'e', 's', 't', 'S', 'y', 'n', 't', 'h', '1'};
 // Delays its input by exactly the latency it reports (delay compensation tests).
 const TUID kDelayId = {'D', 'a', 'l', 'n', 'o', 'k', 'T', 'e', 's', 't', 'D', 'e', 'l', 'a', 'y', '1'};
+// Ducks its main input by its sidechain level: out = in * (1 - min(1, |sidechain|)) (sidechain tests).
+const TUID kDuckId = {'D', 'a', 'l', 'n', 'o', 'k', 'T', 'e', 's', 't', 'D', 'u', 'c', 'k', '0', '1'};
 constexpr int kTestDelay = 300;
 
 void setName(String128 out, const char *s) {
@@ -45,7 +49,7 @@ void setName(String128 out, const char *s) {
 
 class TestPlugin final : public IComponent, public IAudioProcessor, public IEditController {
 public:
-    explicit TestPlugin(bool synth, bool delay = false) : synth_(synth), delay_(delay) {}
+    explicit TestPlugin(bool synth, bool delay = false, bool duck = false) : synth_(synth), delay_(delay), duck_(duck) {}
     tresult PLUGIN_API queryInterface(const TUID iid, void **obj) override {
         if (FUnknownPrivate::iidEqual(iid, IAudioProcessor::iid)) { *obj = static_cast<IAudioProcessor *>(this); addRef(); return kResultOk; }
         if (FUnknownPrivate::iidEqual(iid, IEditController::iid)) { *obj = static_cast<IEditController *>(this); addRef(); return kResultOk; }
@@ -71,16 +75,16 @@ public:
     tresult PLUGIN_API getControllerClassId(TUID) override { return kResultFalse; }
     tresult PLUGIN_API setIoMode(IoMode) override { return kResultOk; }
     int32 PLUGIN_API getBusCount(MediaType type, BusDirection dir) override {
-        if (type == kAudio) return dir == kOutput ? 1 : (synth_ ? 0 : 1);
+        if (type == kAudio) return dir == kOutput ? 1 : synth_ ? 0 : duck_ ? 2 : 1; // the duck has a sidechain bus
         return type == kEvent && dir == kInput && synth_ ? 1 : 0;
     }
     tresult PLUGIN_API getBusInfo(MediaType type, BusDirection dir, int32 index, BusInfo &bus) override {
-        if (index != 0 || getBusCount(type, dir) == 0) return kInvalidArgument;
+        if (index < 0 || index >= getBusCount(type, dir)) return kInvalidArgument;
         bus.mediaType = type;
         bus.direction = dir;
         bus.channelCount = type == kAudio ? 2 : 16;
         setName(bus.name, type == kAudio ? "Main" : "Notes");
-        bus.busType = kMain;
+        bus.busType = index == 0 ? kMain : kAux;
         bus.flags = BusInfo::kDefaultActive;
         return kResultOk;
     }
@@ -102,7 +106,7 @@ public:
     tresult PLUGIN_API setBusArrangements(SpeakerArrangement *, int32, SpeakerArrangement *, int32) override { return kResultOk; }
     tresult PLUGIN_API getBusArrangement(BusDirection, int32, SpeakerArrangement &arr) override { arr = SpeakerArr::kStereo; return kResultOk; }
     tresult PLUGIN_API canProcessSampleSize(int32 size) override { return size == kSample32 ? kResultOk : kResultFalse; }
-    uint32 PLUGIN_API getLatencySamples() override { return synth_ ? 0 : delay_ ? kTestDelay : 7; } // and really delays by it
+    uint32 PLUGIN_API getLatencySamples() override { return synth_ || duck_ ? 0 : delay_ ? kTestDelay : 7; } // and really delays by it
     tresult PLUGIN_API setupProcessing(ProcessSetup &) override { return kResultOk; }
     tresult PLUGIN_API setProcessing(TBool) override { return kResultOk; }
     uint32 PLUGIN_API getTailSamples() override { return 0; }
@@ -151,6 +155,17 @@ public:
             }
         }
         Sample32 **out = data.outputs[0].channelBuffers32;
+        if (duck_) {
+            Sample32 **in = data.inputs[0].channelBuffers32;
+            Sample32 **sc = data.numInputs > 1 ? data.inputs[1].channelBuffers32 : nullptr;
+            for (int32 i = 0; i < data.numSamples; ++i) {
+                const float level = sc ? std::fabs(sc[0][i]) : 0.0f;
+                const float g = 1.0f - (level > 1.0f ? 1.0f : level);
+                out[0][i] = in[0][i] * g;
+                out[1][i] = in[1][i] * g;
+            }
+            return kResultOk;
+        }
         if (!synth_) {
             // Effects delay their output by exactly the latency they report (gain: 7 frames, delay: 300).
             const int latency = delay_ ? kTestDelay : 7;
@@ -180,7 +195,7 @@ public:
     }
 
 private:
-    bool synth_, delay_;
+    bool synth_, delay_, duck_;
     float line_[2][kTestDelay] = {};
     int pos_ = 0;
     float gain_ = 0.5f, level_ = 0;
@@ -202,17 +217,19 @@ public:
         *info = PFactoryInfo("Dalnok Tests", "", "", PFactoryInfo::kUnicode);
         return kResultOk;
     }
-    int32 PLUGIN_API countClasses() override { return 3; }
+    int32 PLUGIN_API countClasses() override { return 4; }
     tresult PLUGIN_API getClassInfo(int32 index, PClassInfo *info) override {
         if (index == 0) { *info = PClassInfo(kGainId, PClassInfo::kManyInstances, kVstAudioEffectClass, "Dalnok Test Gain"); return kResultOk; }
         if (index == 1) { *info = PClassInfo(kSynthId, PClassInfo::kManyInstances, kVstAudioEffectClass, "Dalnok Test Synth"); return kResultOk; }
         if (index == 2) { *info = PClassInfo(kDelayId, PClassInfo::kManyInstances, kVstAudioEffectClass, "Dalnok Test Delay"); return kResultOk; }
+        if (index == 3) { *info = PClassInfo(kDuckId, PClassInfo::kManyInstances, kVstAudioEffectClass, "Dalnok Test Duck"); return kResultOk; }
         return kInvalidArgument;
     }
     tresult PLUGIN_API createInstance(FIDString cid, FIDString iid, void **obj) override {
-        const bool synth = std::memcmp(cid, kSynthId, sizeof(TUID)) == 0, delay = std::memcmp(cid, kDelayId, sizeof(TUID)) == 0;
-        if (!synth && !delay && std::memcmp(cid, kGainId, sizeof(TUID)) != 0) { *obj = nullptr; return kInvalidArgument; }
-        auto *p = new TestPlugin(synth, delay);
+        const bool synth = std::memcmp(cid, kSynthId, sizeof(TUID)) == 0, delay = std::memcmp(cid, kDelayId, sizeof(TUID)) == 0,
+                   duck = std::memcmp(cid, kDuckId, sizeof(TUID)) == 0;
+        if (!synth && !delay && !duck && std::memcmp(cid, kGainId, sizeof(TUID)) != 0) { *obj = nullptr; return kInvalidArgument; }
+        auto *p = new TestPlugin(synth, delay, duck);
         const tresult r = p->queryInterface(iid, obj);
         p->release();
         return r;

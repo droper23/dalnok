@@ -115,6 +115,8 @@ struct RenderTrack {
     int32_t output = -1;   // destination bus slot, -1 = master
     std::vector<RenderSend> sends;
     DelayLine *outDelay = nullptr; // delay compensation on the output connection (null = none)
+    int32_t scSlot = -1;           // this track is a sidechain source: its pre-fader signal goes to this buffer
+    std::vector<std::pair<PluginProcessor *, int32_t>> sidechainFeeds; // plug-ins here that listen to a buffer
     int32_t latency = 0;           // frames added by this track's plug-ins
     std::vector<TrackRuntime *> soloLinks; // tracks upstream and downstream in the routing (solo follows them)
     // Automation (empty = none): volume as fader taper (amplitude^(1/4)), pan -1..1, linear between points.
@@ -142,6 +144,7 @@ struct RenderState {
     // Bus inputs, kMaxBlock frames per bus. Written only by the thread rendering this snapshot (the audio
     // thread for the live snapshot, the exporting thread for an offline one).
     mutable std::vector<float> busL, busR;
+    mutable std::vector<float> scL, scR; // sidechain source signals, kMaxBlock frames each
     // Plug-in delay compensation: every path to the master is delayed to this many frames, so the
     // timeline is rendered this far ahead of the playhead (and exports pre-roll by it).
     int32_t compensation = 0;

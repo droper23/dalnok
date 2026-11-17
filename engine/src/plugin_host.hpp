@@ -57,7 +57,12 @@ public:
     void automate(uint32_t id, double value) DALNOK_NONBLOCKING {
         if (autoCount_ < kMaxAuto) autoQueue_[autoCount_++] = {id, value};
     }
+    // Sidechain: plug-ins with an auxiliary input. `setSidechain` (audio thread, before process) points at
+    // this block's sidechain signal (frames long); nullptr feeds silence.
+    virtual bool hasSidechain() const { return false; }
+    void setSidechain(const float *l, const float *r) DALNOK_NONBLOCKING { scL_ = l; scR_ = r; }
 protected:
+    const float *scL_ = nullptr, *scR_ = nullptr;
     static constexpr int kMaxAuto = 64;
     struct AutoChange { uint32_t id; double value; };
     AutoChange autoQueue_[kMaxAuto]{};

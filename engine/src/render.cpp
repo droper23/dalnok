@@ -242,6 +242,9 @@ void renderBlock(const RenderState &state, int64_t pos, int frames, float *left,
         // plugin instruments and buses are stereo sources (balance).
         panGains(rt, t.monoSource && !t.instrumentPlugin, anySolo && !linkedSolo, gl, gr);
 
+        // Sidechain inputs for this block (their sources were rendered earlier in this block).
+        for (const auto &[plugin, idx] : t.sidechainFeeds)
+            plugin->setSidechain(state.scL.data() + static_cast<size_t>(idx) * kMaxBlock, state.scR.data() + static_cast<size_t>(idx) * kMaxBlock);
         // Plug-in parameter automation for this block (before the plug-ins run).
         for (const auto &lane : t.pluginAuto) {
             const float v = autoAt(lane.pts, pos);
@@ -311,6 +314,12 @@ void renderBlock(const RenderState &state, int64_t pos, int frames, float *left,
             runInserts(t, frames, s); // every block, so reverb and delay tails continue after clips end
         }
 
+        // A sidechain source publishes its post-insert, pre-fader signal (silence when it has none).
+        if (t.scSlot >= 0) {
+            float *dl = state.scL.data() + static_cast<size_t>(t.scSlot) * kMaxBlock, *dr = state.scR.data() + static_cast<size_t>(t.scSlot) * kMaxBlock;
+            if (any) for (int i = 0; i < frames; ++i) { dl[i] = s.trackL[i]; dr[i] = s.trackR[i]; }
+            else { clear(dl, frames); clear(dr, frames); }
+        }
         // A track with delay compensation keeps its delay lines running even while silent.
         bool delayed = t.outDelay != nullptr;
         for (const RenderSend &x : t.sends) delayed = delayed || x.delay != nullptr;

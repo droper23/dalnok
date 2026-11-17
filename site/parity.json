@@ -973,8 +973,8 @@
           "verified"
         ],
         [
-          "Sidechain inputs",
-          "todo"
+          "Sidechain inputs (VST3 auxiliary bus; source chosen on the device card)",
+          "verified"
         ],
         [
           "Plugin delay compensation (tracks, buses and sends; live and exports)",

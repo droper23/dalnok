@@ -222,6 +222,7 @@ json::Value Engine::describe() const {
                 pv.set("name", slot.name);
                 if (!slot.vendor.empty()) pv.set("vendor", slot.vendor);
                 if (slot.instrument) pv.set("instrument", true);
+                if (slot.sidechain) pv.set("sidechain", slot.sidechain);
                 if (!slot.controls.empty()) {
                     Value ids = Value::makeArray();
                     for (auto c : slot.controls) ids.push(static_cast<int64_t>(c));
@@ -353,7 +354,10 @@ bool Engine::saveProject(const std::string &path, std::string &err, bool copyMed
     doc.set("format", "dalnok-project");
     // The oldest version that holds everything in this project, so older builds open what they can play.
     bool routing = false;
-    for (const auto &t : model_.tracks) routing = routing || t.kind == kTrackBus || t.output || !t.sends.empty() || t.stack;
+    for (const auto &t : model_.tracks) {
+        routing = routing || t.kind == kTrackBus || t.output || !t.sends.empty() || t.stack;
+        for (const auto &slot : t.plugins) routing = routing || slot.sidechain;
+    }
     if (!model_.folders.empty()) {
         json::Value folders = json::Value::makeArray();
         for (const auto &f : model_.folders) {
@@ -534,6 +538,7 @@ std::unique_ptr<Engine::PreparedProject> Engine::prepareDocument(const json::Val
                     slot.name = pv.getString("name", "Plug-in");
                     slot.vendor = pv.getString("vendor", "");
                     slot.instrument = pv.getBool("instrument", false);
+                    slot.sidechain = static_cast<int32_t>(std::max<int64_t>(0, toInt(pv, "sidechain")));
                     if (const json::Value *ids = pv.get("controls"); ids && ids->isArray())
                         for (const auto &c : ids->array)
                             if (c.isNumber() && c.number >= 0 && c.number <= 4294967295.0) slot.controls.push_back(static_cast<uint32_t>(c.number));
@@ -669,6 +674,8 @@ std::unique_ptr<Engine::PreparedProject> Engine::prepareDocument(const json::Val
             model.folders.push_back(std::move(f));
         }
     }
+    for (auto &t : model.tracks) // a sidechain must name an existing other track; otherwise it's dropped
+        for (auto &slot : t.plugins) if (slot.sidechain && (slot.sidechain == t.id || !model.track(slot.sidechain))) slot.sidechain = 0;
     for (auto &t : model.tracks) // a stack membership must name a stack; otherwise it's dropped
         if (t.stack && !(model.track(t.stack) && model.track(t.stack)->isStack)) t.stack = 0;
     // Routing must name existing buses and never loop; a damaged file is an error, not a silent re-route.

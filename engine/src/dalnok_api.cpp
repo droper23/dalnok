@@ -397,6 +397,17 @@ void dalnok_track_automation_hold(DalnokEngine *e, DalnokTrackId t, int32_t targ
     if (!tr) return;
     (target == 1 ? tr->runtime->holdPan : tr->runtime->holdVolume).store(hold, std::memory_order_relaxed);
 }
+DalnokStatus dalnok_plugin_set_sidechain(DalnokEngine *e, DalnokTrackId t, int32_t slot, DalnokTrackId source) {
+    std::string err;
+    return e ? statusFor(e->impl.setSidechain(t, slot, source, err), err) : DALNOK_ERR_INVALID_ARG;
+}
+DalnokTrackId dalnok_plugin_sidechain(const DalnokEngine *e, DalnokTrackId t, int32_t slot) {
+    const auto *tr = e ? e->impl.model().track(t) : nullptr;
+    if (!tr) return 0;
+    for (const auto &p : tr->plugins) if (p.id == slot) return p.sidechain;
+    return 0;
+}
+bool dalnok_plugin_has_sidechain(const DalnokEngine *e, int32_t slot) { return e && e->impl.pluginHasSidechain(slot); }
 int32_t dalnok_launcher_scenes(const DalnokEngine *e) { return e ? e->impl.model().scenes : 0; }
 DalnokClipId dalnok_launcher_copy_clip(DalnokEngine *e, DalnokClipId clip, int32_t slot) {
     std::string err;

@@ -28,7 +28,7 @@
 extern "C" {
 #endif
 
-#define DALNOK_API_VERSION 21
+#define DALNOK_API_VERSION 22
 
 typedef enum {
     DALNOK_OK = 0,
@@ -330,6 +330,12 @@ bool dalnok_launcher_recording(const DalnokEngine *engine);
 DalnokTrackId dalnok_track_stack_create(DalnokEngine *engine, const DalnokTrackId *members, int32_t count, const char *name);
 DalnokStatus dalnok_track_stack_set_collapsed(DalnokEngine *engine, DalnokTrackId stack, bool collapsed);
 DalnokStatus dalnok_track_stack_ungroup(DalnokEngine *engine, DalnokTrackId stack);
+
+/* Sidechain: feeds `source`'s post-insert, pre-fader signal into the plug-in's sidechain input (0 = none).
+ * Only plug-ins with an auxiliary input bus use it (dalnok_plugin_has_sidechain). Undoable. */
+DalnokStatus dalnok_plugin_set_sidechain(DalnokEngine *engine, DalnokTrackId track, int32_t slot, DalnokTrackId source);
+DalnokTrackId dalnok_plugin_sidechain(const DalnokEngine *engine, DalnokTrackId track, int32_t slot);
+bool dalnok_plugin_has_sidechain(const DalnokEngine *engine, int32_t slot);
 
 /* ---- Automation -------------------------------------------------------
  * Breakpoints in timeline frames, linear between points and held before the first and after the last.
