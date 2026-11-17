@@ -40,8 +40,42 @@ final class MeterView: NSView {
         db >= 0 ? Theme.hex(0xE0574F) : db >= -6 ? Theme.hex(0xE3A857) : db >= -18 ? Theme.hex(0xB9C46A) : Theme.hex(0x5FB39B)
     }
 
+    /// Warm Analog: a ladder of LED segments (lit up to the level, peak segment held, unlit segments dim).
+    private func drawLadder(_ ctx: CGContext) {
+        ctx.setFillColor(NSColor(white: 0.04, alpha: 1).cgColor)
+        ctx.fill(bounds)
+        let gap: CGFloat = 1, pitch: CGFloat = vertical ? 3.5 : 4
+        let length = vertical ? bounds.height : bounds.width
+        let count = max(4, Int(length / pitch))
+        let bars = [(levelDb.0, holdDb.0), (levelDb.1, holdDb.1)]
+        for (i, (lv, hold)) in bars.enumerated() {
+            let level = fraction(lv), peak = fraction(hold)
+            for k in 0..<count {
+                let at = (CGFloat(k) + 0.5) / CGFloat(count)
+                let db = Self.floorDb + Float(at) * (Self.ceilDb - Self.floorDb) // segment position on the dB scale
+                let lit = at <= level || (abs(at - peak) < 0.5 / CGFloat(count) && hold > -60)
+                let base = clipped && k == count - 1 ? Theme.hex(0xE0574F) : color(db)
+                ctx.setFillColor((lit ? base : base.withAlphaComponent(0.13)).cgColor)
+                let r: CGRect
+                if vertical {
+                    let w = (bounds.width - gap) / 2
+                    r = CGRect(x: CGFloat(i) * (w + gap), y: CGFloat(k) * pitch, width: w, height: pitch - 1)
+                } else {
+                    let h = (bounds.height - gap) / 2
+                    r = CGRect(x: CGFloat(k) * pitch, y: CGFloat(i) * (h + gap), width: pitch - 1, height: h)
+                }
+                ctx.fill(r)
+                if lit { // a little bloom on lit segments
+                    ctx.setFillColor(base.withAlphaComponent(0.25).cgColor)
+                    ctx.fill(r.insetBy(dx: -0.5, dy: -0.5))
+                }
+            }
+        }
+    }
+
     override func draw(_ dirtyRect: NSRect) {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+        if Analog.on { return drawLadder(ctx) }
         ctx.setFillColor(Theme.window.cgColor)
         ctx.fill(bounds)
         let gap: CGFloat = 1

@@ -5,7 +5,10 @@ milestone: M11 VST3 hosting (ADR-0009 stage 3) done; editors, parameters and AU 
 ---
 # Current State
 
-## Latest session (M13: Audio Units, device panel, zoomed window)
+## Latest session (M14: Warm Analog overhaul)
+- Owner asked for a total visual overhaul of the analog theme with the same design language: done as a first pass (`Analog.swift`, `06 - Design/Warm Analog.md`). Self-test passes in both themes (211 checks with the test plug-in). Reviewed in still snapshots only; the cable plug-in animation and LED breathing were not watched.
+
+## Earlier (M13: Audio Units, device panel, zoomed window)
 - Audio Units host like VST3 (Apple delay/synth tests). Device panel with per-plug-in controllers (owner request: Ableton-style). Window opens zoomed to the screen. 98 tests; self-test 210 checks with the test plug-in (both themes pass). Next (owner request): a full Warm Analog visual overhaul (LEDs, cables, hardware surfaces) with the same layout.
 
 ## Earlier (M12: plug-in editors and the generic parameter panel)
@@ -114,7 +117,7 @@ Finish validating recording (loopback latency, power loss, real keyboard), then 
 1. With a cable from the Scarlett's output to input 1, add and run a loopback latency measurement (`dalnok-cli`), then decide whether reported latency is trustworthy.
 2. Owner: play the MiniLab with `dalnok-cli midi-play <id> 20 --record`, and try recording in the app.
 3. Piano roll marquee selection and keyboard note entry; tempo map; count-in.
-4. Warm Analog overhaul (owner request), then automation lanes driving plug-in parameters, then latency compensation.
+4. Owner review of Warm Analog and the device panel; then automation lanes driving plug-in parameters, then latency compensation.
 
 ## Open migration items
 - Verify Logic `.logicx` placement against a real Logic **Final Cut Pro XML export** of the same project

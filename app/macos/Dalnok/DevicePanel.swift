@@ -26,8 +26,8 @@ final class DevicePanel: NSView {
         layer?.backgroundColor = Theme.panel.cgColor
         stack.orientation = .horizontal
         stack.alignment = .top
-        stack.spacing = 10
-        stack.edgeInsets = NSEdgeInsets(top: 10, left: 12, bottom: 10, right: 12)
+        stack.spacing = Analog.on ? 40 : 10 // analog: room for the patch cables between units
+        stack.edgeInsets = NSEdgeInsets(top: 10, left: Analog.on ? 64 : 12, bottom: 10, right: Analog.on ? 64 : 12)
         let doc = FlippedView()
         stack.translatesAutoresizingMaskIntoConstraints = false
         doc.addSubview(stack)
@@ -56,7 +56,7 @@ final class DevicePanel: NSView {
     required init?(coder: NSCoder) { fatalError() }
 
     override func draw(_ dirtyRect: NSRect) {
-        Theme.panel.setFill(); bounds.fill()
+        (Analog.on ? Theme.hex(0x15100C) : Theme.panel).setFill(); bounds.fill()
         Theme.separator.setFill(); NSRect(x: 0, y: bounds.height - 1, width: bounds.width, height: 1).fill()
     }
 
@@ -70,6 +70,7 @@ final class DevicePanel: NSView {
             devices.forEach { $0.refreshControls() }
         } else {
             devices.forEach { $0.removeFromSuperview() }
+            if devices.first?.trackId != t?.id { knownCables = [] } // a different track: draw its cables fresh
             devices = plugins.map { p in
                 let d = DeviceView(session: session, track: t!.id, slot: p.id, name: p.name, loaded: p.loaded, color: t!.color)
                 d.onOpen = { [weak self] in self?.onOpen?(t!.id, p.id) }
@@ -81,6 +82,7 @@ final class DevicePanel: NSView {
                 Motion.views(Motion.gentle) { d.animator().alphaValue = 1 }
             }
         }
+        needsLayout = true
         empty.isHidden = !plugins.isEmpty
         addButton.isHidden = !plugins.isEmpty || t == nil
         empty.stringValue = t == nil ? "Select a track to see its plug-ins." :
@@ -89,6 +91,101 @@ final class DevicePanel: NSView {
 
     /// Picks up parameter changes made elsewhere (the plug-in's own editor, undo of controls).
     func refreshValues() { devices.forEach { $0.refreshValues() } }
+
+    // MARK: Patch cables (Warm Analog)
+
+    private var cableLayers: [CALayer] = []
+    /// Patch cables currently drawn (Warm Analog): track IN → units → track OUT.
+    var cableCount: Int { cableLayers.filter { ($0 as? CAShapeLayer)?.lineWidth == 4 }.count }
+    private static let jackImage: CGImage? = {
+        let ctx = CGContext(data: nil, width: 36, height: 36, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+                            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        ctx?.scaleBy(x: 2, y: 2)
+        if let ctx { Analog.jack(ctx, at: CGPoint(x: 9, y: 9), radius: 7) }
+        return ctx?.makeImage()
+    }()
+    private var knownCables = Set<String>()
+    override func layout() {
+        super.layout()
+        layoutCables()
+    }
+    /// The signal path drawn as patch cables: track → first unit → … → last unit → track output.
+    func layoutCables() {
+        guard Analog.on, let doc = scroll.documentView else { return }
+        doc.wantsLayer = true
+        doc.layoutSubtreeIfNeeded()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        cableLayers.forEach { $0.removeFromSuperlayer() }
+        cableLayers = []
+        CATransaction.commit()
+        guard !devices.isEmpty else { return }
+        let frames = devices.map { $0.convert($0.bounds, to: doc) }
+        var links: [(CGPoint, CGPoint, String)] = []
+        let first = frames[0], last = frames[frames.count - 1]
+        // The track's patch points: IN (left of the chain) and OUT (right of it).
+        let trackIn = CGPoint(x: 26, y: first.midY), trackOut = CGPoint(x: last.maxX + 38, y: last.midY)
+        for (p, label) in [(trackIn, "IN"), (trackOut, "OUT")] {
+            let jack = CALayer()
+            jack.frame = CGRect(x: p.x - 9, y: p.y - 9, width: 18, height: 18)
+            jack.contents = Self.jackImage
+            jack.zPosition = 19
+            let text = CATextLayer()
+            text.string = label
+            text.font = Theme.mono(9, .semibold)
+            text.fontSize = 9
+            text.foregroundColor = Theme.textDim.cgColor
+            text.alignmentMode = .center
+            text.contentsScale = 2
+            text.frame = CGRect(x: p.x - 16, y: p.y - 24, width: 32, height: 12)
+            doc.layer?.addSublayer(jack)
+            doc.layer?.addSublayer(text)
+            cableLayers += [jack, text]
+        }
+        links.append((trackIn, CGPoint(x: first.minX + DeviceView.ear / 2, y: first.midY), "in-\(devices[0].slot)"))
+        for i in 1..<max(1, frames.count) where frames.count > 1 {
+            links.append((CGPoint(x: frames[i - 1].maxX - DeviceView.ear / 2, y: frames[i - 1].midY),
+                          CGPoint(x: frames[i].minX + DeviceView.ear / 2, y: frames[i].midY), "\(devices[i - 1].slot)-\(devices[i].slot)"))
+        }
+        links.append((CGPoint(x: last.maxX - DeviceView.ear / 2, y: last.midY), trackOut, "\(devices[devices.count - 1].slot)-out"))
+        for (i, (a, b, key)) in links.enumerated() {
+            let color = Analog.cableColors[i % Analog.cableColors.count]
+            let cable = CAShapeLayer()
+            cable.path = Analog.cablePath(from: a, to: b, sag: 30)
+            cable.strokeColor = color.cgColor
+            cable.fillColor = nil
+            cable.lineWidth = 4
+            cable.lineCap = .round
+            cable.shadowColor = NSColor.black.cgColor
+            cable.shadowOpacity = 0.6
+            cable.shadowRadius = 2
+            cable.shadowOffset = CGSize(width: 0, height: 2)
+            cable.zPosition = 20
+            let plug = CAShapeLayer() // the plug barrel seated in the input jack
+            plug.path = CGPath(roundedRect: CGRect(x: b.x - 9, y: b.y - 3.5, width: 9, height: 7), cornerWidth: 2, cornerHeight: 2, transform: nil)
+            plug.fillColor = color.blended(withFraction: 0.35, of: .black)?.cgColor
+            plug.strokeColor = NSColor(white: 0, alpha: 0.6).cgColor
+            plug.zPosition = 21
+            doc.layer?.addSublayer(cable)
+            doc.layer?.addSublayer(plug)
+            cableLayers += [cable, plug]
+            if !knownCables.contains(key) && !Motion.reduced && window != nil {
+                // Plugging in: the cable draws toward the jack, then the plug seats with a small push.
+                let draw = CABasicAnimation(keyPath: "strokeEnd")
+                draw.fromValue = 0
+                draw.toValue = 1
+                draw.duration = 0.35
+                draw.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                cable.add(draw, forKey: "plug")
+                let seat = CAKeyframeAnimation(keyPath: "transform.translation.x")
+                seat.values = [-12, -12, 1.5, 0]
+                seat.keyTimes = [0, 0.6, 0.85, 1]
+                seat.duration = 0.5
+                plug.add(seat, forKey: "seat")
+            }
+            knownCables.insert(key)
+        }
+    }
 }
 
 @MainActor
@@ -107,6 +204,7 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
     private var indexOf: [UInt32: Int32] = [:]
     var onOpen: (() -> Void)?
     static let columns = 4, defaultCount = 8
+    static var ear: CGFloat { Analog.on ? 12 : 0 } // rack ear width
 
     init(session: Session, track: DalnokTrackId, slot: Int32, name: String, loaded: Bool, color: NSColor) {
         self.session = session
@@ -116,8 +214,8 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         self.color = color
         super.init(frame: .zero)
         wantsLayer = true
-        layer?.backgroundColor = Theme.panelRaised.cgColor
-        layer?.cornerRadius = 6
+        layer?.backgroundColor = Analog.on ? nil : Theme.panelRaised.cgColor
+        layer?.cornerRadius = Analog.on ? 2 : 6
         layer?.borderWidth = 1
         layer?.borderColor = Theme.hairline.cgColor
         title.stringValue = name
@@ -144,13 +242,13 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         body.orientation = .vertical
         body.alignment = .leading
         body.spacing = 8
-        body.edgeInsets = NSEdgeInsets(top: 8, left: 12, bottom: 8, right: 10)
+        body.edgeInsets = NSEdgeInsets(top: 8, left: 12 + Self.ear, bottom: 8, right: 10 + Self.ear)
         body.translatesAutoresizingMaskIntoConstraints = false
         addSubview(body)
         NSLayoutConstraint.activate([
             body.leadingAnchor.constraint(equalTo: leadingAnchor), body.trailingAnchor.constraint(equalTo: trailingAnchor),
             body.topAnchor.constraint(equalTo: topAnchor), body.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor),
-            header.widthAnchor.constraint(equalTo: body.widthAnchor, constant: -22),
+            header.widthAnchor.constraint(equalTo: body.widthAnchor, constant: -22 - 2 * Self.ear),
             widthAnchor.constraint(greaterThanOrEqualToConstant: 300),
             heightAnchor.constraint(equalToConstant: DevicePanel.height - 20),
         ])
@@ -163,8 +261,24 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
 
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
-        (loaded ? color : Theme.textFaint).setFill()
-        NSRect(x: 0, y: 0, width: 3, height: bounds.height).fill()
+        guard Analog.on, let ctx = NSGraphicsContext.current?.cgContext else {
+            (loaded ? color : Theme.textFaint).setFill()
+            NSRect(x: 0, y: 0, width: 3, height: bounds.height).fill()
+            return
+        }
+        // A rack unit: textured faceplate, darker rack ears with screws, IN and OUT jacks, and a power LED.
+        Analog.faceplate.setFill(); bounds.fill()
+        let ear = Self.ear
+        for x in [CGFloat(0), bounds.width - ear] {
+            NSColor(white: 0.10, alpha: 1).setFill()
+            NSRect(x: x, y: 0, width: ear, height: bounds.height).fill()
+            Analog.screw(ctx, at: CGPoint(x: x + ear / 2, y: 10), radius: 3)
+            Analog.screw(ctx, at: CGPoint(x: x + ear / 2, y: bounds.height - 10), radius: 3)
+            Analog.jack(ctx, at: CGPoint(x: x + ear / 2, y: bounds.midY), radius: 4.5)
+        }
+        NSColor(white: 1, alpha: 0.06).setFill(); NSRect(x: ear, y: bounds.height - 1, width: bounds.width - 2 * ear, height: 1).fill()
+        Analog.led(ctx, in: CGRect(x: ear + 6, y: bounds.height - 18, width: 6, height: 6),
+                   color: loaded ? Theme.hex(0x52D273) : Theme.recordOn, lit: true)
     }
 
     private func loadParameters() {

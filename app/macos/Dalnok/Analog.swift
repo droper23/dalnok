@@ -1,0 +1,175 @@
+// Warm Analog drawing kit: hardware surfaces for the analog theme. Controls keep their positions,
+// labels and colors in every theme; only their rendering changes (see "06 - Design/Warm Analog.md").
+// SPDX-License-Identifier: GPL-3.0-or-later
+import AppKit
+import QuartzCore
+
+@MainActor
+enum Analog {
+    static var on: Bool { Theme.activeStyle == .warmAnalog }
+
+    // MARK: Surfaces
+
+    /// A seamless faceplate texture (fine grain plus faint horizontal brushing), as a pattern color.
+    static let faceplate: NSColor = {
+        let size = 128
+        let image = NSImage(size: NSSize(width: size, height: size), flipped: false) { rect in
+            Theme.panel.setFill(); rect.fill()
+            var seed: UInt32 = 0x1234_5678
+            func rnd() -> CGFloat { seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5; return CGFloat(seed % 1000) / 1000 }
+            for y in 0..<size { // brushing
+                NSColor(white: rnd() > 0.5 ? 1 : 0, alpha: 0.012 + rnd() * 0.012).setFill()
+                NSRect(x: 0, y: CGFloat(y), width: CGFloat(size), height: 1).fill()
+            }
+            for _ in 0..<900 { // grain
+                NSColor(white: rnd() > 0.5 ? 1 : 0, alpha: 0.035).setFill()
+                NSRect(x: rnd() * CGFloat(size), y: rnd() * CGFloat(size), width: 1, height: 1).fill()
+            }
+            return true
+        }
+        return NSColor(patternImage: image)
+    }()
+
+    /// A slotted screw head, as on a rack ear or faceplate corner.
+    static func screw(_ ctx: CGContext, at c: CGPoint, radius r: CGFloat = 3.5, angle: CGFloat = 0.6) {
+        ctx.saveGState()
+        let rect = CGRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2)
+        ctx.addEllipse(in: rect)
+        ctx.clip()
+        let colors = [NSColor(white: 0.62, alpha: 1).cgColor, NSColor(white: 0.28, alpha: 1).cgColor] as CFArray
+        if let g = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors, locations: [0, 1]) {
+            ctx.drawLinearGradient(g, start: CGPoint(x: rect.minX, y: rect.minY), end: CGPoint(x: rect.maxX, y: rect.maxY), options: [])
+        }
+        ctx.setStrokeColor(NSColor(white: 0.1, alpha: 0.9).cgColor)
+        ctx.setLineWidth(1)
+        ctx.move(to: CGPoint(x: c.x - cos(angle) * r, y: c.y - sin(angle) * r))
+        ctx.addLine(to: CGPoint(x: c.x + cos(angle) * r, y: c.y + sin(angle) * r))
+        ctx.strokePath()
+        ctx.restoreGState()
+        ctx.setStrokeColor(NSColor(white: 0, alpha: 0.5).cgColor)
+        ctx.setLineWidth(0.5)
+        ctx.strokeEllipse(in: rect.insetBy(dx: -0.25, dy: -0.25))
+    }
+
+    /// Engraved label text: dark letters with a light lower edge, as if cut into the panel.
+    static func engraved(_ text: String, font: NSFont, color: NSColor = Theme.textDim) -> NSAttributedString {
+        let shadow = NSShadow()
+        shadow.shadowColor = NSColor(white: 1, alpha: 0.10)
+        shadow.shadowOffset = NSSize(width: 0, height: -1)
+        shadow.shadowBlurRadius = 0
+        return NSAttributedString(string: text, attributes: [.font: font, .foregroundColor: color, .shadow: shadow])
+    }
+
+    // MARK: LEDs
+
+    /// A round LED lens: dark tinted glass when off; bright core, hot-spot and halo when lit.
+    static func led(_ ctx: CGContext, in rect: CGRect, color: NSColor, lit: Bool, glow: Bool = true) {
+        let c = color.usingColorSpace(.sRGB) ?? color
+        ctx.saveGState()
+        if lit && glow {
+            ctx.setShadow(offset: .zero, blur: rect.width * 1.1, color: c.withAlphaComponent(0.85).cgColor)
+            ctx.setFillColor(c.cgColor)
+            ctx.fillEllipse(in: rect)
+        }
+        ctx.restoreGState()
+        ctx.saveGState()
+        ctx.addEllipse(in: rect)
+        ctx.clip()
+        let center = CGPoint(x: rect.midX - rect.width * 0.12, y: rect.midY - rect.height * 0.15)
+        let inner = lit ? NSColor(srgbRed: min(1, c.redComponent * 0.5 + 0.55), green: min(1, c.greenComponent * 0.5 + 0.55),
+                                  blue: min(1, c.blueComponent * 0.5 + 0.55), alpha: 1) : c.blended(withFraction: 0.72, of: .black) ?? c
+        let outer = lit ? c : (c.blended(withFraction: 0.86, of: .black) ?? c)
+        if let g = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: [inner.cgColor, outer.cgColor] as CFArray, locations: [0, 1]) {
+            ctx.drawRadialGradient(g, startCenter: center, startRadius: 0, endCenter: CGPoint(x: rect.midX, y: rect.midY),
+                                   endRadius: rect.width * 0.62, options: [.drawsAfterEndLocation])
+        }
+        // Specular hot-spot on the lens.
+        ctx.setFillColor(NSColor(white: 1, alpha: lit ? 0.55 : 0.18).cgColor)
+        ctx.fillEllipse(in: CGRect(x: rect.minX + rect.width * 0.22, y: rect.minY + rect.height * 0.16,
+                                   width: rect.width * 0.32, height: rect.height * 0.24))
+        ctx.restoreGState()
+        // Bezel.
+        ctx.setStrokeColor(NSColor(white: 0, alpha: 0.65).cgColor)
+        ctx.setLineWidth(0.75)
+        ctx.strokeEllipse(in: rect)
+    }
+
+    // MARK: Knobs
+
+    /// A knurled metal cap with a white pointer line; `angle` in radians (flipped view: −π/2 is up).
+    static func knobCap(_ ctx: CGContext, center c: CGPoint, radius r: CGFloat, angle: CGFloat, hover: Bool, pointer: Bool = true) {
+        ctx.saveGState()
+        // Drop shadow under the cap.
+        ctx.setShadow(offset: CGSize(width: 0, height: 1.5), blur: 3, color: NSColor(white: 0, alpha: 0.6).cgColor)
+        ctx.setFillColor(NSColor(white: 0.12, alpha: 1).cgColor)
+        ctx.fillEllipse(in: CGRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2))
+        ctx.restoreGState()
+        // Knurled skirt: fine radial ridges.
+        ctx.saveGState()
+        ctx.setStrokeColor(NSColor(white: 0.32, alpha: 1).cgColor)
+        ctx.setLineWidth(0.6)
+        for i in 0..<36 {
+            let a = CGFloat(i) / 36 * 2 * .pi
+            ctx.move(to: CGPoint(x: c.x + cos(a) * r * 0.78, y: c.y + sin(a) * r * 0.78))
+            ctx.addLine(to: CGPoint(x: c.x + cos(a) * r * 0.98, y: c.y + sin(a) * r * 0.98))
+        }
+        ctx.strokePath()
+        ctx.restoreGState()
+        // Brushed aluminium top.
+        let top = CGRect(x: c.x - r * 0.74, y: c.y - r * 0.74, width: r * 1.48, height: r * 1.48)
+        ctx.saveGState()
+        ctx.addEllipse(in: top)
+        ctx.clip()
+        let light = NSColor(white: hover ? 0.80 : 0.72, alpha: 1), dark = NSColor(white: hover ? 0.46 : 0.40, alpha: 1)
+        if let g = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: [light.cgColor, dark.cgColor] as CFArray, locations: [0, 1]) {
+            ctx.drawLinearGradient(g, start: CGPoint(x: top.minX, y: top.minY), end: CGPoint(x: top.maxX, y: top.maxY), options: [])
+        }
+        ctx.setStrokeColor(NSColor(white: 1, alpha: 0.10).cgColor) // concentric machining rings
+        ctx.setLineWidth(0.5)
+        for k in stride(from: 0.2, through: 0.9, by: 0.18) {
+            ctx.strokeEllipse(in: top.insetBy(dx: top.width * CGFloat(k) / 2, dy: top.height * CGFloat(k) / 2))
+        }
+        ctx.restoreGState()
+        guard pointer else { return }
+        ctx.setStrokeColor(NSColor(white: 0.08, alpha: 1).cgColor)
+        ctx.setLineWidth(2)
+        ctx.setLineCap(.round)
+        ctx.move(to: CGPoint(x: c.x + cos(angle) * r * 0.22, y: c.y + sin(angle) * r * 0.22))
+        ctx.addLine(to: CGPoint(x: c.x + cos(angle) * r * 0.70, y: c.y + sin(angle) * r * 0.70))
+        ctx.strokePath()
+    }
+
+    // MARK: Patch cables
+
+    /// A patch cable between two jacks, sagging under its own weight, with plug barrels at both ends.
+    static func cablePath(from a: CGPoint, to b: CGPoint, sag: CGFloat = 26) -> CGPath {
+        let p = CGMutablePath()
+        p.move(to: a)
+        let dx = b.x - a.x
+        p.addCurve(to: b, control1: CGPoint(x: a.x + dx * 0.25, y: max(a.y, b.y) + sag),
+                   control2: CGPoint(x: b.x - dx * 0.25, y: max(a.y, b.y) + sag))
+        return p
+    }
+
+    static let cableColors: [NSColor] = [Theme.hex(0xC8463B), Theme.hex(0xE0A43A), Theme.hex(0x3F7FBF), Theme.hex(0x4E9A5A), Theme.hex(0x9A5BB0)]
+
+    /// A jack socket (hex nut with a dark hole), as on a patch bay.
+    static func jack(_ ctx: CGContext, at c: CGPoint, radius r: CGFloat = 5) {
+        let hex = CGMutablePath()
+        for i in 0..<6 {
+            let a = CGFloat(i) / 6 * 2 * .pi + .pi / 6
+            let p = CGPoint(x: c.x + cos(a) * r, y: c.y + sin(a) * r)
+            i == 0 ? hex.move(to: p) : hex.addLine(to: p)
+        }
+        hex.closeSubpath()
+        ctx.addPath(hex)
+        ctx.setFillColor(NSColor(white: 0.55, alpha: 1).cgColor)
+        ctx.fillPath()
+        ctx.addPath(hex)
+        ctx.setStrokeColor(NSColor(white: 0.15, alpha: 1).cgColor)
+        ctx.setLineWidth(0.6)
+        ctx.strokePath()
+        ctx.setFillColor(NSColor(white: 0.05, alpha: 1).cgColor)
+        ctx.fillEllipse(in: CGRect(x: c.x - r * 0.45, y: c.y - r * 0.45, width: r * 0.9, height: r * 0.9))
+    }
+}

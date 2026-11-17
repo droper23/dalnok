@@ -228,6 +228,16 @@ class RotaryKnob: NSControl {
         pointer.lineCap = .round
         face.addSublayer(pointer)
         layer?.addSublayer(face)
+        if Analog.on {
+            // Discrete LED dots instead of a continuous ring (dash of zero length + round caps).
+            for l in [haloTrack, haloValue] { l.lineWidth = 2.6; l.lineDashPattern = [0, 4.6] }
+            haloTrack.strokeColor = Theme.hex(0xFFFFFF, 0.10).cgColor
+            pointer.strokeColor = NSColor(white: 0.08, alpha: 1).cgColor
+            face.fillColor = nil
+            face.strokeColor = nil
+            face.contentsGravity = .center
+            face.contentsScale = 2
+        }
         setAccessibilityElement(true)
         setAccessibilityRole(.slider)
         addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self))
@@ -275,6 +285,7 @@ class RotaryKnob: NSControl {
         face.position = c
         let faceR = r - 0.5
         face.path = CGPath(ellipseIn: CGRect(x: c.x - faceR, y: c.y - faceR, width: faceR * 2, height: faceR * 2), transform: nil)
+        if Analog.on { face.contents = Self.capImage(diameter: faceR * 2, hover: hovering || tracking) }
         let a = angle(value)
         let ptr = CGMutablePath()
         ptr.move(to: CGPoint(x: c.x + cos(a) * faceR * 0.28, y: c.y + sin(a) * faceR * 0.28))
@@ -283,7 +294,34 @@ class RotaryKnob: NSControl {
         CATransaction.commit()
     }
 
+    /// Knurled aluminium cap (Warm Analog), rendered once per size and hover state.
+    private static var caps: [String: CGImage] = [:]
+    static func capImage(diameter d: CGFloat, hover: Bool) -> CGImage? {
+        let key = "\(Int(d * 2))-\(hover)"
+        if let image = caps[key] { return image }
+        let px = Int(ceil(d * 2)) + 4
+        guard let ctx = CGContext(data: nil, width: px, height: px, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        ctx.scaleBy(x: 2, y: 2)
+        Analog.knobCap(ctx, center: CGPoint(x: CGFloat(px) / 4, y: CGFloat(px) / 4), radius: d / 2, angle: 0, hover: hover, pointer: false)
+        let image = ctx.makeImage()
+        caps[key] = image
+        return image
+    }
+
     private func setRevealed(_ on: Bool, animated: Bool) {
+        if Analog.on {
+            // Hardware: the cap never shrinks; its LED ring is always there, brighter while touched.
+            CATransaction.begin()
+            CATransaction.setDisableActions(!animated)
+            CATransaction.setAnimationDuration(Motion.standard)
+            face.setAffineTransform(CGAffineTransform(scaleX: 0.66, y: 0.66))
+            haloTrack.opacity = 1
+            haloValue.opacity = on ? 1 : 0.8
+            haloValue.shadowRadius = on ? 5 : 3
+            CATransaction.commit()
+            return
+        }
         CATransaction.begin()
         CATransaction.setDisableActions(!animated)
         CATransaction.setAnimationDuration(0.16)
@@ -469,7 +507,8 @@ final class ToggleChip: NSControl {
     var pulsing = false {
         didSet {
             guard pulsing != oldValue else { return }
-            if pulsing { Motion.pulse(glow, from: 0.9, to: 0.2, period: 1.1) } else { Motion.stopPulse(glow) }
+            let target = Analog.on ? led : glow // analog: the LED itself blinks softly
+            if pulsing { Motion.pulse(target, from: Analog.on ? 1 : 0.9, to: Analog.on ? 0.35 : 0.2, period: 1.1) } else { Motion.stopPulse(target) }
             applyState(animated: true)
         }
     }
@@ -477,6 +516,27 @@ final class ToggleChip: NSControl {
     private var pressed = false { didSet { applyState(animated: true) } }
     private var hovering = false { didSet { applyState(animated: true) } }
     private let face = CALayer(), glow = CALayer(), label = CATextLayer()
+    /// Warm Analog: the state lives in an LED lens on a dark cap (the letter stays engraved on the cap).
+    private let led = CALayer()
+    private static var ledImages: [String: (on: CGImage, off: CGImage)] = [:]
+    private static func ledImages(for color: NSColor) -> (on: CGImage, off: CGImage) {
+        let key = color.description
+        if let cached = ledImages[key] { return cached }
+        func render(_ lit: Bool) -> CGImage {
+            let size = 16
+            let ctx = CGContext(data: nil, width: size * 2, height: size * 2, bitsPerComponent: 8, bytesPerRow: 0,
+                                space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+            ctx.scaleBy(x: 2, y: 2)
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: false)
+            Analog.led(ctx, in: CGRect(x: 4, y: 4.5, width: 7.5, height: 7.5), color: color, lit: lit)
+            NSGraphicsContext.restoreGraphicsState()
+            return ctx.makeImage()!
+        }
+        let images = (render(true), render(false))
+        ledImages[key] = images
+        return images
+    }
 
     init(_ letter: String, on: NSColor, onText: NSColor, help: String) {
         self.letter = letter
@@ -505,12 +565,17 @@ final class ToggleChip: NSControl {
         layer?.addSublayer(glow)
         layer?.addSublayer(face)
         face.addSublayer(label)
+        if Analog.on {
+            face.addSublayer(led)
+            glow.isHidden = true
+            label.alignmentMode = .right
+        }
         layer?.masksToBounds = false
         addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self))
         applyState(animated: false)
     }
     required init?(coder: NSCoder) { fatalError() }
-    override var intrinsicContentSize: NSSize { NSSize(width: 22, height: 18) }
+    override var intrinsicContentSize: NSSize { NSSize(width: Analog.on ? 28 : 22, height: 18) }
     override var isFlipped: Bool { true }
     override var wantsUpdateLayer: Bool { true }
 
@@ -521,12 +586,31 @@ final class ToggleChip: NSControl {
         face.bounds = bounds
         face.position = CGPoint(x: bounds.midX, y: bounds.midY)
         glow.frame = bounds
-        label.frame = CGRect(x: 0, y: (bounds.height - 13) / 2, width: bounds.width, height: 13)
+        label.frame = Analog.on ? CGRect(x: 0, y: (bounds.height - 13) / 2, width: bounds.width - 5, height: 13)
+                                : CGRect(x: 0, y: (bounds.height - 13) / 2, width: bounds.width, height: 13)
+        led.frame = CGRect(x: -1, y: (bounds.height - 16) / 2, width: 16, height: 16)
         label.contentsScale = window?.backingScaleFactor ?? 2
         CATransaction.commit()
     }
 
     private func applyState(animated: Bool) {
+        if Analog.on {
+            let images = Self.ledImages(for: onColor)
+            let body = { [self] in
+                // Dark machined cap; the LED carries the state, so the cap never changes color.
+                face.backgroundColor = (pressed ? NSColor(white: 0.10, alpha: 1) : hovering ? NSColor(white: 0.20, alpha: 1) : NSColor(white: 0.15, alpha: 1)).cgColor
+                face.borderColor = NSColor(white: 0, alpha: 0.8).cgColor
+                face.shadowColor = NSColor.black.cgColor
+                face.shadowOpacity = pressed ? 0.1 : 0.6
+                face.shadowRadius = 1
+                face.shadowOffset = CGSize(width: 0, height: pressed ? -0.5 : -1.5)
+                label.foregroundColor = (isOn ? Theme.text : Theme.textDim).cgColor
+                led.contents = isOn ? images.on : images.off
+                face.transform = pressed ? CATransform3DMakeTranslation(0, 1, 0) : CATransform3DIdentity
+            }
+            if animated { Motion.layers(Motion.quick, body) } else { CATransaction.begin(); CATransaction.setDisableActions(true); body(); CATransaction.commit() }
+            return
+        }
         let body = { [self] in
             face.backgroundColor = (isOn ? onColor : (pressed ? Theme.controlHi : (hovering ? Theme.knobHover : Theme.control))).cgColor
             face.borderColor = (isOn ? NSColor.clear : Theme.hairline).cgColor

@@ -359,7 +359,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         } else {
             lastBeat = -1
         }
-        transport.timeLabel.stringValue = timeline.positionText(e.position)
+        let position = timeline.positionText(e.position)
+        transport.timeLabel.stringValue = position
+        if Analog.on { transport.ghost.stringValue = String(position.map { $0.isNumber ? "8" : $0 }) } // unlit segments
         timeline.followPlayhead()
         timeline.updatePlayhead()
         for row in headers.rows {

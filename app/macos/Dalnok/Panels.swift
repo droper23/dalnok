@@ -31,6 +31,8 @@ final class TransportBar: NSView {
     let statusLabel = NSTextField(labelWithString: "")
     let timeLabel = NSTextField(labelWithString: "0:00.000")
     let lcdWell = NSView()
+    /// Warm Analog: unlit display segments behind the digits, as on a vacuum-fluorescent display.
+    let ghost = NSTextField(labelWithString: "")
     let masterMeter = MeterView()
     let playButton = IconButton("play.fill", help: "Play / Pause (Space)")
     let recordButton = IconButton("circle.fill", help: "Record (R)")
@@ -80,6 +82,25 @@ final class TransportBar: NSView {
         timeLabel.wantsLayer = true
         statusLabel.wantsLayer = true
         timeLabel.translatesAutoresizingMaskIntoConstraints = false
+        if Analog.on {
+            let vfd = Theme.hex(0x7DF0D8)
+            timeLabel.textColor = vfd
+            let glow = NSShadow()
+            glow.shadowColor = vfd.withAlphaComponent(0.8)
+            glow.shadowBlurRadius = 6
+            timeLabel.shadow = glow
+            ghost.font = timeLabel.font
+            ghost.textColor = vfd.withAlphaComponent(0.07)
+            ghost.stringValue = "88.8.8.888"
+            ghost.alignment = .center
+            ghost.translatesAutoresizingMaskIntoConstraints = false
+            lcd.addSubview(ghost)
+            lcd.layer?.backgroundColor = Theme.hex(0x060B0A).cgColor
+            lcd.layer?.borderColor = NSColor(white: 0, alpha: 0.9).cgColor
+            lcd.layer?.borderWidth = 2
+            NSLayoutConstraint.activate([ghost.centerXAnchor.constraint(equalTo: lcd.centerXAnchor),
+                                         ghost.centerYAnchor.constraint(equalTo: lcd.centerYAnchor)])
+        }
         lcd.addSubview(timeLabel)
         lcd.setAccessibilityElement(true)
         lcd.setAccessibilityLabel("Position")
@@ -145,8 +166,15 @@ final class TransportBar: NSView {
     required init?(coder: NSCoder) { fatalError() }
 
     override func draw(_ dirtyRect: NSRect) {
-        Theme.panel.setFill(); bounds.fill()
+        (Analog.on ? Analog.faceplate : Theme.panel).setFill(); bounds.fill()
         Theme.separator.setFill(); NSRect(x: 0, y: 0, width: bounds.width, height: 1).fill()
+        if Analog.on, let ctx = NSGraphicsContext.current?.cgContext {
+            // A faceplate: bevel highlight and screws at the corners clear of the window buttons.
+            NSColor(white: 1, alpha: 0.06).setFill(); NSRect(x: 0, y: bounds.height - 1, width: bounds.width, height: 1).fill()
+            for p in [CGPoint(x: bounds.width - 7, y: 7), CGPoint(x: bounds.width - 7, y: bounds.height - 7), CGPoint(x: 7, y: 7)] {
+                Analog.screw(ctx, at: p, radius: 3)
+            }
+        }
     }
 
     /// Lets the window be dragged by the bar's empty space.
@@ -171,7 +199,8 @@ final class TransportBar: NSView {
         recordButton.setAccessibilityValue(recording ? "recording" : "stopped")
         if recording { Motion.pulse(recordButton.layer, from: 1, to: 0.4, period: 1.0) } else { Motion.stopPulse(recordButton.layer) }
         Motion.fadeNextChange(timeLabel.layer, duration: Motion.standard)
-        timeLabel.textColor = recording ? Theme.recordOn : Theme.accent
+        timeLabel.textColor = recording ? Theme.recordOn : (Analog.on ? Theme.hex(0x7DF0D8) : Theme.accent)
+        if Analog.on { timeLabel.shadow?.shadowColor = (recording ? Theme.recordOn : Theme.hex(0x7DF0D8)).withAlphaComponent(0.8) }
         // The position display's well glows red while recording.
         Motion.layers(Motion.gentle) {
             lcdWell.layer?.borderColor = (recording ? Theme.recordOn.withAlphaComponent(0.7) : Theme.hairline).cgColor
@@ -236,8 +265,19 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
         number.font = Theme.mono(11)
         number.textColor = Theme.textFaint
         number.alignment = .right
-        nameLabel.font = Theme.ui(13, .semibold)
+        nameLabel.font = Analog.on ? (NSFont(name: "Noteworthy-Bold", size: 14) ?? Theme.ui(13, .semibold)) : Theme.ui(13, .semibold)
         nameLabel.textColor = Theme.text
+        if Analog.on {
+            // A console scribble strip: the name written on masking tape.
+            nameLabel.drawsBackground = true
+            nameLabel.backgroundColor = Theme.hex(0xE6DAC0)
+            nameLabel.wantsLayer = true
+            nameLabel.layer?.cornerRadius = 1
+            nameLabel.layer?.shadowOpacity = 0.5
+            nameLabel.layer?.shadowRadius = 1
+            nameLabel.layer?.shadowOffset = CGSize(width: 0, height: -1)
+            nameLabel.layer?.masksToBounds = false
+        }
         nameLabel.lineBreakMode = .byTruncatingTail
         nameLabel.delegate = self
         nameLabel.toolTip = "Double-click to rename"
@@ -315,7 +355,7 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
         muted = t.muted
         number.stringValue = "\(index + 1)"
         if !nameLabel.isEditable { nameLabel.stringValue = t.name }
-        nameLabel.textColor = t.muted ? Theme.textDim : Theme.text
+        nameLabel.textColor = Analog.on ? Theme.hex(t.muted ? 0x6E6455 : 0x1E1A16) : (t.muted ? Theme.textDim : Theme.text)
         // Color strip: the track's identity, full height; desaturated (animated) when muted.
         Motion.layers(Motion.gentle) { strip.backgroundColor = (t.muted ? TrackTint(base: t.color).muted : t.color).cgColor }
         mute.isOn = t.muted
@@ -357,7 +397,7 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        Theme.panelRaised.setFill()
+        (Analog.on ? Analog.faceplate : Theme.panelRaised).setFill()
         bounds.fill()
         Theme.separator.setFill()
         NSRect(x: 0, y: bounds.height - 1, width: bounds.width, height: 1).fill()

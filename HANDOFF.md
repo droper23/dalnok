@@ -37,6 +37,12 @@ Piano roll (`PianoRoll.swift`), bars-and-beats ruler and snapping (`TimelineView
 metronome (engine `renderClick`, C API `dalnok_metronome_set`), `Motion.swift` animations, and
 `scripts/make-test-project.sh`. 92 tests; self-test 185 checks in both themes; RT effects and TSan clean.
 
+## M10–M14 (same day, continued)
+Plug-in validation (`dalnok-scan`), VST3 and Audio Unit hosting with editors, the generic parameter panel, the
+device panel with per-plug-in controllers, a zoomed main window at launch, and the Warm Analog hardware overhaul.
+`scripts/check.sh` runs everything (plugin scan containment and hosting included). Self-test: 211 checks with
+`DALNOK_TEST_VST3` set, in both themes.
+
 ## Not verified / open
 - Latency compensation uses device-reported latency only (no loopback). Monitoring not checked by ear.
 - No power-loss test; kill-during-finalization was not targeted (the kill script hits journal creation and mid-take).

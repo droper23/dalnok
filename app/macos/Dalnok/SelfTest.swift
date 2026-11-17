@@ -686,6 +686,10 @@ final class SelfTest {
         let limiter = (try? s.addPlugin(track, path: "au:aufx:lmtr:appl")) ?? 0
         let panel = w.devicePanel
         check(!panel.isHidden && panel.devices.map(\.slot) == [slot, limiter], "device panel shows the track's plug-ins in order")
+        if Analog.on {
+            panel.layoutCables()
+            check(panel.cableCount == 3, "Warm Analog patches IN → AUDelay → AUPeakLimiter → OUT with \(panel.cableCount) cables")
+        }
         guard let delay = panel.devices.first else { return }
         let names = delay.knobs.map { $0.label.stringValue }
         check(delay.knobs.count == 4 && names.contains("Dry/Wet Mix"), "controller shows AUDelay's parameters (\(names))")

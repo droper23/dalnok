@@ -33,12 +33,16 @@
       "caption": "Recording and MIDI: R chips arm tracks, each header shows its input (IN 1 or MIDI), the record button sits next to Play, and MIDI clips show their notes."
     },
     {
+      "file": "screenshots/device-panel.png",
+      "caption": "Device panel: the selected track's plug-ins (Apple's AUDelay and AUPeakLimiter here) with a controller of knobs per plug-in; Edit Controls chooses the parameters."
+    },
+    {
       "file": "screenshots/piano-roll.png",
       "caption": "Piano roll: notes shaded by velocity, a velocity lane, bars-and-beats grid; every gesture is one undo step."
     },
     {
       "file": "screenshots/warm-analog.png",
-      "caption": "Warm Analog theme: warmer surfaces and its own amber-to-olive track palette; selected in Settings and applied on reopening."
+      "caption": "Warm Analog: the same layout as hardware — LED buttons, metal knobs with LED rings, LED ladder meters, a VFD position display, masking-tape track names, and plug-ins as rack units joined by patch cables."
     },
     {
       "file": "screenshots/settings.png",
@@ -1448,7 +1452,7 @@
           "todo"
         ],
         [
-          "Warm Analog theme with its own amber track palette (applies on reopening)",
+          "Warm Analog as a hardware overhaul: LED lenses, metal knobs with LED rings, LED ladder meters, VFD, faceplates, scribble strips, patch-cabled rack units (same layout and controls)",
           "verified"
         ],
         [
@@ -1468,7 +1472,7 @@
           "todo"
         ]
       ],
-      "evidence": "UI audit, reviewed screenshots, and app self-tests in both themes. Theme changes require reopening; VoiceOver and all auxiliary windows are not yet verified. Motion: the self-test checks that knobs glide after undo, the record button pulses and the palette fades, and that all of it is instant with Reduce Motion.",
+      "evidence": "UI audit, reviewed screenshots, and app self-tests in both themes. Theme changes require reopening; VoiceOver and all auxiliary windows are not yet verified. Motion: the self-test checks that knobs glide after undo, the record button pulses and the palette fades, and that all of it is instant with Reduce Motion. Warm Analog: the self-test passes all checks in that theme (including the patch-cable count for a two-plug-in chain); visual review from snapshots; see 06 - Design/Warm Analog.",
       "screenshot": "screenshots/warm-analog.png"
     },
     {

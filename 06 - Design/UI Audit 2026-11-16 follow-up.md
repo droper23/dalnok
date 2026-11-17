@@ -62,6 +62,10 @@ Still open:
 - Pass 3 added motion (see `Motion.swift`): short ease-out transitions (0.12–0.24 s) on state that changes, a
   breathing pulse only for "recording now", and a beat tick on the metronome button. All of it is skipped with
   Reduce Motion. The piano roll's keyboard was redrawn after its first screenshot looked like a barcode.
+- Pass 4 (owner request): Warm Analog became a hardware-style overhaul with the same layout (see
+  [[Warm Analog]]); the device panel joined the bottom of the window; the window opens zoomed to the screen.
+  Found and fixed while reviewing: the empty state and timeline showing together at launch, and uneven knob
+  columns in device controllers.
 - Recording with built-in microphone and speakers is refused (two devices, two clocks) with an explanation;
   supporting it needs aggregate devices or drift correction (ADR-0008).
 

@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Changed (2026-11-16, Warm Analog overhaul)
+- Warm Analog is now a hardware-style interface with the same layout: LED-lens buttons, knurled metal knobs with LED-dot rings, segmented LED meters, a vacuum-fluorescent position display, grained faceplates with screws, masking-tape scribble strips for track names, and plug-ins as rack units joined by patch cables that plug in when added. See `06 - Design/Warm Analog.md`.
 ### Added (2026-11-16, Audio Units, device panel)
 - Audio Unit hosting (effects and instruments, state, parameters, AUv2 Cocoa editors) through the same track slots as VST3; Audio ▸ Plug-ins adds AUs too.
 - Device panel (View ▸ Device Panel, ⌥⌘D): the selected track's plug-ins as devices, each with a controller of knobs; Edit Controls chooses its parameters (saved in the project, one undo step). Knobs follow changes made in the plug-in's window.
