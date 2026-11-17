@@ -842,11 +842,11 @@
           "verified"
         ],
         [
-          "Record into slots; drag timeline clips into slots",
-          "todo"
+          "Record into slots (trimmed to whole bars); drag timeline clips into slots",
+          "verified"
         ]
       ],
-      "evidence": "LauncherTests: launching while playing switches exactly on the next bar and loops every clip length, stopping returns to the arrangement on a later bar, launching while stopped starts the transport, exports play the arrangement only, scenes launch every filled track. App self-test: View > Clip Launcher, clicking an empty slot copies the selected clip, clicking launches it and clicking again stops it on the bar, undo. LauncherFollowAndRecord: next-slot and stop follow actions switch on the exact loop end; recording a performance writes loop passes into the arrangement from the launch frame (one undo step). Self-test: follow action from the slot menu, dragging a slot onto the timeline, Transport > Record Launcher to Arrangement. Launch quantization is one bar."
+      "evidence": "LauncherTests: launching while playing switches exactly on the next bar and loops every clip length, stopping returns to the arrangement on a later bar, launching while stopped starts the transport, exports play the arrangement only, scenes launch every filled track. App self-test: View > Clip Launcher, clicking an empty slot copies the selected clip, clicking launches it and clicking again stops it on the bar, undo. LauncherFollowAndRecord: next-slot and stop follow actions switch on the exact loop end; recording a performance writes loop passes into the arrangement from the launch frame (one undo step). Self-test: follow action from the slot menu, dragging a slot onto the timeline, Transport > Record Launcher to Arrangement. RecordIntoSlot: a take started mid-bar lands in the target slot as the one whole bar it covers (offset 86,000, length 96,000, sample-exact), nothing stays in the arrangement, one undo removes it. Self-test: dragging an arrangement clip into a slot copies it and leaves the clip in place; an empty slot's menu sets and clears the record target. Launch quantization is one bar."
     },
     {
       "id": "channel",

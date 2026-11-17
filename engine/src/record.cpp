@@ -335,7 +335,11 @@ bool Engine::stopRecording(RecordResult &r, std::string &err) {
             if (!clip) problems.push_back("could not place the take on " + recordAudio_[i].name + ": " + placeErr);
             else trackTakes.push_back(clip);
         }
-        if (trackTakes.size() > 1) {
+        if (recordSlot_.load() >= 0 && !trackTakes.empty()) { // into the launcher, not the arrangement
+            const DalnokClipId clip = takeToSlot(trackTakes, recordSlot_.load(), placeErr);
+            if (!clip) problems.push_back("could not put the take in the launcher slot: " + placeErr);
+            trackTakes = clip ? std::vector<DalnokClipId>{clip} : std::vector<DalnokClipId>{};
+        } else if (trackTakes.size() > 1) {
             const int32_t folder = addTakeFolder(recordAudio_[i].track, trackTakes, placeErr);
             if (!folder) problems.push_back("could not make the take folder: " + placeErr);
             r.takeFolders.push_back(folder);
@@ -352,6 +356,10 @@ bool Engine::stopRecording(RecordResult &r, std::string &err) {
         r.notes = static_cast<int32_t>(notes.size());
         r.midiClip = addMidiClip(recordMidiTrack_, r.start, end - r.start, placeErr, std::move(notes), "Record");
         if (!r.midiClip) problems.push_back("could not place the MIDI take: " + placeErr);
+        else if (recordSlot_.load() >= 0) {
+            r.midiClip = takeToSlot({r.midiClip}, recordSlot_.load(), placeErr);
+            if (!r.midiClip) problems.push_back("could not put the MIDI take in the launcher slot: " + placeErr);
+        }
     }
     endGroup();
 

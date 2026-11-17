@@ -106,3 +106,31 @@ import Testing
         #expect(result.start_frame == at && !result.recovered, "start \(result.start_frame) vs \(at)")
     }
 }
+
+@Suite struct RecordIntoSlot {
+    @Test func takeGoesToTheSlotTrimmedToWholeBars() {
+        // 120 BPM 4/4 at 48 kHz: a bar is 96,000 frames. The take covers 10,000..230,400, so the whole bars are
+        // 96,000..192,000: the slot clip starts 86,000 frames into the take and lasts one bar.
+        let e = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(e) }
+        let dir = tempDir()
+        let track = dalnok_track_add(e, "Vox")
+        _ = dalnok_track_set_armed(e, track, true)
+        dalnok_record_set_simulated_latency(e, 0)
+        #expect(dalnok_record_set_punch(e, true, 10_000, Int64.max / 4) == DALNOK_OK)
+        dalnok_record_set_slot(e, 2)
+        #expect(dalnok_record_slot(e) == 2)
+        var err = [CChar](repeating: 0, count: 512)
+        #expect(dalnok_record_start(e, DALNOK_SIMULATED_INPUT, dir.path, &err, 512) == DALNOK_OK, "\(cstr(err))")
+        var take = SimulatedTake(engine: e)
+        take.pump(450)
+        var result = DalnokRecordResult()
+        #expect(dalnok_record_stop(e, &result, &err, 512) == DALNOK_OK, "\(cstr(err))")
+        let clip = clipInfo(e, result.audio_clip)
+        #expect(clip.track == track && clip.slot == 2 && clip.start == 0 && clip.length == 96_000 && clip.offset == 86_000,
+                "slot \(clip.slot) start \(clip.start) length \(clip.length) offset \(clip.offset)")
+        #expect(mediaSamples(e, clip.media, 86_000, 4) == (0..<4).map { inputSample(96_000 + $0) }, "the slot starts on the bar's input")
+        #expect(dalnok_track_clip_at(e, track, 1) == 0, "nothing left in the arrangement")
+        dalnok_undo(e)
+        #expect(dalnok_track_clip_at(e, track, 0) == 0, "one undo step removes the take")
+    }
+}

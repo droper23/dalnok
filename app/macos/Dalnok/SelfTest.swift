@@ -1107,6 +1107,19 @@ final class SelfTest {
             _ = perform("Undo")
             check(s.slotClip(track.id, 1) == nil, "undo removes the dragged slot copy")
         }
+        // An empty slot's menu sets where takes go; choosing it again goes back to the arrangement.
+        do {
+            let r = lv.slotRect(row: row, slot: 3)
+            let at = lv.convert(CGPoint(x: r.midX, y: r.midY), to: nil)
+            let item = lv.menu(for: mouse(.rightMouseDown, at))?.items.first
+            check(item?.title == "Record Takes into Slot 4", "an empty slot's menu offers recording into it (\(item?.title ?? "none"))")
+            if let item { lv.recordSlotChosen(item) }
+            check(dalnok_record_slot(e.handle) == 3, "choosing it makes slot 4 the record target")
+            let back = lv.menu(for: mouse(.rightMouseDown, at))?.items.first
+            check(back?.title == "Record Takes into the Arrangement", "the menu then offers going back")
+            if let back { lv.recordSlotChosen(back) }
+            check(dalnok_record_slot(e.handle) == -1, "takes go to the arrangement again")
+        }
         check(perform("Record Launcher to Arrangement") && dalnok_launcher_recording(e.handle), "Transport > Record Launcher to Arrangement")
         _ = perform("Record Launcher to Arrangement")
         check(perform("Undo") && s.slotClip(track.id, 0) == nil, "undo removes the slot copy")

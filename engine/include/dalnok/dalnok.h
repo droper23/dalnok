@@ -28,7 +28,7 @@
 extern "C" {
 #endif
 
-#define DALNOK_API_VERSION 22
+#define DALNOK_API_VERSION 23
 
 typedef enum {
     DALNOK_OK = 0,
@@ -158,6 +158,10 @@ int64_t dalnok_record_start_frame(const DalnokEngine *engine);
  * Call before dalnok_record_start; changing it during a take moves the window for the rest of the take. */
 DalnokStatus dalnok_record_set_punch(DalnokEngine *engine, bool enabled, int64_t in, int64_t out);
 void dalnok_record_punch(const DalnokEngine *engine, bool *enabled, int64_t *in, int64_t *out);
+/* Record into launcher slot `slot` (-1 = the arrangement, the default): each recorded track's take goes to
+ * that slot, trimmed to the whole bars it covers, replacing the slot's clip (part of the "Record" undo step). Not saved. */
+void dalnok_record_set_slot(DalnokEngine *engine, int32_t slot);
+int32_t dalnok_record_slot(const DalnokEngine *engine);
 /* Device-reported round trip (input + output) plus the manual offset. Not loopback-measured. */
 int64_t dalnok_record_latency(const DalnokEngine *engine);
 void dalnok_record_set_latency_offset(DalnokEngine *engine, int64_t frames);

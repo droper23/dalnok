@@ -68,6 +68,12 @@ final class LauncherView: NSView {
             Theme.recordOn.setFill(); CGRect(x: 0, y: Theme.rulerHeight - 3, width: bounds.width, height: 2).fill()
         }
         let pos = session.engine.position, rate = session.engine.sampleRate
+        let recordSlot = Int(dalnok_record_slot(session.engine.handle))
+        if recordSlot >= 0 && recordSlot < Int(session.scenes) { // scene-row mark on the record column
+            let r = sceneRect(recordSlot)
+            ctx.setFillColor(Theme.recordOn.cgColor)
+            ctx.fillEllipse(in: CGRect(x: r.maxX - 12, y: r.midY - 3.5, width: 7, height: 7))
+        }
         for (i, track) in session.tracks.enumerated() {
             let y = laneY(i)
             guard y + Theme.trackHeight > Theme.rulerHeight, y < bounds.height else { continue }
@@ -78,9 +84,20 @@ final class LauncherView: NSView {
                 let r = slotRect(row: i, slot: k)
                 let path = CGPath(roundedRect: r, cornerWidth: 4, cornerHeight: 4, transform: nil)
                 guard let clip = session.slotClip(track.id, Int32(k)) else {
-                    ctx.setStrokeColor(Theme.hairline.cgColor); ctx.setLineWidth(1)
-                    ctx.addPath(path); ctx.strokePath()
+                    if recordSlot == k && track.armed { // the take lands here: a red ring and dot
+                        ctx.setStrokeColor(Theme.recordOn.withAlphaComponent(0.85).cgColor); ctx.setLineWidth(1.5)
+                        ctx.addPath(path); ctx.strokePath()
+                        ctx.setFillColor(Theme.recordOn.cgColor)
+                        ctx.fillEllipse(in: CGRect(x: r.midX - 4, y: r.midY - 4, width: 8, height: 8))
+                    } else {
+                        ctx.setStrokeColor(Theme.hairline.cgColor); ctx.setLineWidth(1)
+                        ctx.addPath(path); ctx.strokePath()
+                    }
                     continue
+                }
+                if recordSlot == k && track.armed { // will be replaced by the next take
+                    ctx.setStrokeColor(Theme.recordOn.cgColor); ctx.setLineWidth(2)
+                    ctx.addPath(CGPath(roundedRect: r.insetBy(dx: -1, dy: -1), cornerWidth: 5, cornerHeight: 5, transform: nil)); ctx.strokePath()
                 }
                 let tint = TrackTint(base: track.color)
                 let isPlaying = playing == Int32(k)
@@ -115,8 +132,14 @@ final class LauncherView: NSView {
         let p = convert(event.locationInWindow, from: nil)
         for (i, track) in session.tracks.enumerated() {
             for k in 0..<Int(session.scenes) where slotRect(row: i, slot: k).contains(p) {
-                guard let clip = session.slotClip(track.id, Int32(k)) else { return nil }
                 let m = NSMenu()
+                let target = dalnok_record_slot(session.engine.handle) == Int32(k)
+                let rec = NSMenuItem(title: target ? "Record Takes into the Arrangement" : "Record Takes into Slot \(k + 1)",
+                                     action: #selector(recordSlotChosen(_:)), keyEquivalent: "")
+                rec.target = self; rec.representedObject = target ? -1 : k
+                guard let clip = session.slotClip(track.id, Int32(k)) else { m.addItem(rec); return m }
+                m.addItem(rec)
+                m.addItem(.separator())
                 let header = NSMenuItem(title: "Follow Action", action: nil, keyEquivalent: ""); header.isEnabled = false
                 m.addItem(header)
                 for (title, action, loops) in [("None", 0, 1), ("Next Slot After 1 Loop", 1, 1), ("Next Slot After 2 Loops", 1, 2),
@@ -141,6 +164,12 @@ final class LauncherView: NSView {
         guard let v = sender.representedObject as? [Int], v.count == 3 else { return }
         dalnok_launcher_set_follow(session.engine.handle, DalnokClipId(v[0]), Int32(v[1]), Int32(v[2]))
         session.refresh(); needsDisplay = true
+    }
+    @objc func recordSlotChosen(_ sender: NSMenuItem) {
+        guard let k = sender.representedObject as? Int else { return }
+        dalnok_record_set_slot(session.engine.handle, Int32(k))
+        onMessage?(k < 0 ? "Takes go into the arrangement" : "Takes on armed tracks go into slot \(k + 1), trimmed to whole bars")
+        needsDisplay = true
     }
     @objc func removeChosen(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? Int else { return }

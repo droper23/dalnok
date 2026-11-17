@@ -280,6 +280,10 @@ const CommandDef kCommands[] = {
          return status(e.setPunch(a.getBool("on", true), static_cast<int64_t>(a.getNumber("in", on ? static_cast<double>(in) : 0)),
                                   static_cast<int64_t>(a.getNumber("out", on ? static_cast<double>(out) : 0)), err), err);
      }},
+    {"launcher.setRecordSlot", "Record Into Launcher Slot", "{slot (-1 = arrangement)}", [](ARGS) {
+         e.setRecordSlot(std::max(-1, static_cast<int32_t>(a.getNumber("slot", -1))));
+         return DALNOK_OK;
+     }},
     {"transport.setCycle", "Cycle", "{on, start?, end? (frames)}", [](ARGS) {
          bool on; int64_t start, end;
          e.cycle(on, start, end);

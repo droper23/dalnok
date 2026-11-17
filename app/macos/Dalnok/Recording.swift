@@ -157,7 +157,7 @@ extension MainWindowController {
         timeline.recording = nil
         session.refresh()
         let clip = result.audio_clip != 0 ? result.audio_clip : result.midi_clip
-        if clip != 0 { timeline.selectedClip = clip }
+        if clip != 0 && dalnok_record_slot(session.engine.handle) < 0 { timeline.selectedClip = clip }
         if let problem {
             let path = fixedString(result.path)
             let detail = problem + (result.recovered ? "\n\nRecovered file: \(path)" : "")

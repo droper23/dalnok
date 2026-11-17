@@ -920,6 +920,52 @@ int64_t nextBar(const Model &m, const TempoMap &map, int64_t frame) {
 }
 } // namespace
 
+DalnokClipId Engine::takeToSlot(const std::vector<DalnokClipId> &takes, int32_t slot, std::string &err) {
+    const auto id = nextClip_;
+    const bool ok = edit("Record to Slot", true, [&](Model &m) {
+        const ClipState *c = takes.empty() ? nullptr : m.clip(takes.back());
+        if (!c) return fail(err, "no take");
+        if (slot < 0 || slot >= m.scenes) return fail(err, "no such launcher slot");
+        ClipState copy = *c;
+        // The whole bars the take covers: from the first bar line at or after its start to the last one before its end.
+        const int64_t end = c->start + c->length;
+        const int64_t a = nextBar(m, map_, c->start);
+        double beat = 0;
+        int64_t b = a;
+        if (map_.frameToBeat(end, beat)) {
+            int32_t bar, num, den; double inBar;
+            beatToBar(m.meters, beat, bar, inBar, num, den);
+            map_.beatToFrame(barToBeat(m.meters, bar), b);
+        }
+        if (b > a && a >= c->start) {
+            if (copy.midi()) { // notes are relative to the clip start: shift them, drop what falls outside
+                const int64_t shift = a - c->start;
+                std::vector<MidiNote> notes;
+                for (MidiNote n : *c->notes)
+                    if (n.start >= shift && n.start < shift + (b - a)) { n.start -= shift; notes.push_back(n); }
+                copy.notes = std::make_shared<const std::vector<MidiNote>>(std::move(notes));
+            } else {
+                copy.offset += a - c->start;
+            }
+            copy.length = b - a;
+        }
+        copy.id = id;
+        copy.slot = slot;
+        copy.folder = 0;
+        copy.alt = false;
+        copy.start = 0;
+        const DalnokTrackId track = c->track;
+        std::erase_if(m.clips, [&](const ClipState &x) {
+            return (x.track == track && x.slot == slot) || std::find(takes.begin(), takes.end(), x.id) != takes.end();
+        });
+        m.clips.push_back(std::move(copy));
+        return true;
+    });
+    if (!ok) return 0;
+    ++nextClip_;
+    return id;
+}
+
 bool Engine::launch(DalnokTrackId track, int32_t slot, std::string &err) {
     const TrackState *t = model_.track(track);
     if (!t) return fail(err, "no such track");

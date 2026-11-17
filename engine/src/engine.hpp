@@ -187,6 +187,10 @@ public:
     bool startRecording(const std::string &inputUid, const std::string &directory, std::string &err);
     bool stopRecording(RecordResult &result, std::string &err);
     bool recording() const { return recording_; }
+    // Record into a launcher slot (-1 = the arrangement): takes go to this slot on each recorded track,
+    // trimmed to whole bars (the bars the take fully covers), replacing what was there. Not saved.
+    void setRecordSlot(int32_t slot) { recordSlot_.store(slot, std::memory_order_relaxed); }
+    int32_t recordSlot() const { return recordSlot_.load(std::memory_order_relaxed); }
     int64_t recordStart() const { return recordStart_.load(std::memory_order_acquire); }
     bool recordBroken() const { return recordBroken_.load(std::memory_order_acquire); }
     void setRecordLatencyOffset(int64_t frames) { latencyOffset_ = frames; }
@@ -505,6 +509,9 @@ private:
     std::atomic<int64_t> position_{0};
     std::atomic<bool> cycleOn_{false};
     std::atomic<int64_t> punchIn_{INT64_MIN}, punchOut_{INT64_MAX};
+    std::atomic<int32_t> recordSlot_{-1};
+    // Moves a take (the last of `takes`, trimmed to whole bars) into a launcher slot; removes `takes`.
+    DalnokClipId takeToSlot(const std::vector<DalnokClipId> &takes, int32_t slot, std::string &err);
     std::atomic<int64_t> countInUntil_{0};
     std::atomic<bool> recordCycle_{false};
     struct LaunchEvent { DalnokTrackId track; int32_t slot; int64_t frame; };

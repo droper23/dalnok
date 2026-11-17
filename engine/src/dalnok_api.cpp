@@ -561,6 +561,8 @@ DalnokStatus dalnok_record_set_punch(DalnokEngine *e, bool on, int64_t in, int64
     std::string err;
     return e ? statusFor(e->impl.setPunch(on, in, out, err), err) : DALNOK_ERR_INVALID_ARG;
 }
+void dalnok_record_set_slot(DalnokEngine *e, int32_t slot) { if (e) e->impl.setRecordSlot(slot < 0 ? -1 : slot); }
+int32_t dalnok_record_slot(const DalnokEngine *e) { return e ? e->impl.recordSlot() : -1; }
 void dalnok_record_punch(const DalnokEngine *e, bool *on, int64_t *in, int64_t *out) {
     bool o = false;
     int64_t a = 0, b = 0;
