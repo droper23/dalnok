@@ -5,7 +5,10 @@ milestone: M11 VST3 hosting (ADR-0009 stage 3) done; editors, parameters and AU 
 ---
 # Current State
 
-## Latest session (Logic import validation)
+## Latest session (MIDI persistence validation)
+- A generated corrupt shared MIDI source is rejected without changing the open project; offline rendering confirms the prior project survives.
+
+## Earlier (Logic import validation)
 - Duplicate primary region IDs now report ambiguity and unresolved placements; truncated known event records abort import. Generated fixtures verify both. Logic mixer and take-folder semantics remain incomplete.
 
 ## Earlier (self-test reliability)

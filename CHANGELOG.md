@@ -1,6 +1,9 @@
 # Changelog
 
 ## [Unreleased]
+### Tested (2026-11-16, shared MIDI sources)
+- Added a regression proving inconsistent shared MIDI sources are rejected without changing the open project.
+
 ### Fixed (2026-11-16, Logic import validation)
 - Ambiguous duplicate region IDs are reported instead of assigning arbitrary audio; truncated known events fail import rather than being silently ignored.
 

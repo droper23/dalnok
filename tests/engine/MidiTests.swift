@@ -192,12 +192,24 @@ func oneNoteSession(pitch: UInt8 = 69, velocity: UInt8 = 127) -> (OpaquePointer,
         let project = tempDir().appendingPathComponent("split.dalnok")
         var err = [CChar](repeating: 0, count: 256)
         #expect(dalnok_project_save(e, project.path, &err, err.count) == DALNOK_OK)
-        let doc = try JSONSerialization.jsonObject(with: Data(contentsOf: project)) as? [String: Any]
-        #expect(doc?["version"] as? Int == 3)
+        var doc = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: project)) as? [String: Any])
+        #expect(doc["version"] as? Int == 3)
         let reopened = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(reopened) }
         #expect(dalnok_project_load(reopened, project.path, nil, &err, err.count) == DALNOK_OK)
         let restored = render(reopened, 0, 120_000)
         #expect(zip(unsplit, restored).allSatisfy { abs($0 - $1) < 1e-6 })
+        var tracks = try #require(doc["tracks"] as? [[String: Any]])
+        try #require(!tracks.isEmpty)
+        var clips = try #require(tracks[0]["clips"] as? [[String: Any]])
+        try #require(clips.count >= 2)
+        var notes = try #require(clips[1]["notes"] as? [[Int]])
+        try #require((notes.first?.count ?? 0) >= 4)
+        notes[0][2] = 70
+        clips[1]["notes"] = notes; tracks[0]["clips"] = clips; doc["tracks"] = tracks
+        let bad = project.deletingLastPathComponent().appendingPathComponent("bad-source.dalnok")
+        try JSONSerialization.data(withJSONObject: doc).write(to: bad)
+        #expect(dalnok_project_load(reopened, bad.path, nil, &err, err.count) != DALNOK_OK)
+        #expect(zip(unsplit, render(reopened, 0, 120_000)).allSatisfy { abs($0 - $1) < 1e-6 })
     }
 
     @Test func tempoChangeRejectsTimelineOverflowWithoutMutation() {
