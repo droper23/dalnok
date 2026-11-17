@@ -1,6 +1,9 @@
 # Changelog
 
 ## [Unreleased]
+### Fixed (2026-11-16, MIDI group editing)
+- Moving or transposing multiple notes now clamps the whole selection at timeline and pitch boundaries, preserving spacing instead of collapsing notes.
+
 ### Tested (2026-11-16, shared MIDI sources)
 - Added a regression proving inconsistent shared MIDI sources are rejected without changing the open project.
 

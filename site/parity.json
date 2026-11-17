@@ -1304,7 +1304,7 @@
           "todo"
         ]
       ],
-      "evidence": "MidiTests: recording, quantize, persistence, split rendering, and a Core MIDI virtual source driving the instrument through a real input port (TSan clean). The app self-test plays live MIDI through the running device, records a note through the menus and quantizes. Input events are stamped at the start of the audio callback that receives them, so timing is up to one buffer late. The Arturia MiniLab has not been played into a recording yet. The piano roll is driven by the GUI self-test with synthesized mouse and key events (add, drag, resize, velocity, transpose, nudge, delete, undo, select all). GUI self-test also covers marquee and keyboard step entry."
+      "evidence": "MidiTests: recording, quantize, persistence, split rendering, and a Core MIDI virtual source driving the instrument through a real input port (TSan clean). The app self-test plays live MIDI through the running device, records a note through the menus and quantizes. Input events are stamped at the start of the audio callback that receives them, so timing is up to one buffer late. The Arturia MiniLab has not been played into a recording yet. The piano roll is driven by the GUI self-test with synthesized mouse and key events (add, drag, resize, velocity, transpose, nudge, delete, undo, select all). GUI self-test also covers marquee and keyboard step entry. GUI self-test checks group movement at pitch and time boundaries."
     },
     {
       "id": "tempo",

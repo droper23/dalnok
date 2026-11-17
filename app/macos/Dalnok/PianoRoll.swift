@@ -374,12 +374,14 @@ final class PianoRollView: NSView {
         switch d.kind {
         case .move:
             // Snap the gesture so the grabbed note lands on the grid; keep relative timing.
-            let dt = Int64(bypass ? dxFrames.rounded() : (dxFrames / snapFrames).rounded() * snapFrames)
-            let dp = -Int(((p.y - d.start.y) / rowHeight).rounded())
+            let moving = d.original.filter { d.moving.contains(key($0)) }
+            guard let earliest = moving.map(\.start).min(), let low = moving.map(\.pitch).min(), let high = moving.map(\.pitch).max() else { return }
+            let dt = max(-earliest, Int64(bypass ? dxFrames.rounded() : (dxFrames / snapFrames).rounded() * snapFrames))
+            let dp = max(-Int(low), min(127 - Int(high), -Int(((p.y - d.start.y) / rowHeight).rounded())))
             for n in d.original {
                 guard d.moving.contains(key(n)) else { result.append(n); continue }
-                let m = DalnokNote(start: max(0, n.start + dt), length: n.length,
-                                   pitch: UInt8(max(0, min(127, Int(n.pitch) + dp))), velocity: n.velocity)
+                let m = DalnokNote(start: n.start + dt, length: n.length,
+                                   pitch: UInt8(Int(n.pitch) + dp), velocity: n.velocity)
                 result.append(m)
                 moved.insert(key(m))
             }
@@ -465,10 +467,14 @@ final class PianoRollView: NSView {
 
     func transpose(by semitones: Int) {
         guard let c = clip, !selection.isEmpty else { return }
+        let selected = c.notes.filter { selection.contains(key($0)) }
+        guard let low = selected.map(\.pitch).min(), let high = selected.map(\.pitch).max() else { return }
+        let delta = max(-Int(low), min(127 - Int(high), semitones))
+        guard delta != 0 else { return }
         var sel: Set<NoteKey> = []
         let notes = c.notes.map { n -> DalnokNote in
             guard selection.contains(key(n)) else { return n }
-            let m = DalnokNote(start: n.start, length: n.length, pitch: UInt8(max(0, min(127, Int(n.pitch) + semitones))), velocity: n.velocity)
+            let m = DalnokNote(start: n.start, length: n.length, pitch: UInt8(Int(n.pitch) + delta), velocity: n.velocity)
             sel.insert(key(m)); return m
         }
         commit(notes, select: sel)
@@ -477,10 +483,13 @@ final class PianoRollView: NSView {
 
     func nudge(by frames: Int64) {
         guard let c = clip, !selection.isEmpty else { return }
+        guard let earliest = c.notes.filter({ selection.contains(key($0)) }).map(\.start).min() else { return }
+        let delta = max(-earliest, frames)
+        guard delta != 0 else { return }
         var sel: Set<NoteKey> = []
         let notes = c.notes.map { n -> DalnokNote in
             guard selection.contains(key(n)) else { return n }
-            let m = DalnokNote(start: max(0, n.start + frames), length: n.length, pitch: n.pitch, velocity: n.velocity)
+            let m = DalnokNote(start: n.start + delta, length: n.length, pitch: n.pitch, velocity: n.velocity)
             sel.insert(key(m)); return m
         }
         commit(notes, select: sel)

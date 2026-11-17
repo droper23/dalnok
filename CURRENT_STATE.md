@@ -5,7 +5,10 @@ milestone: M11 VST3 hosting (ADR-0009 stage 3) done; editors, parameters and AU 
 ---
 # Current State
 
-## Latest session (MIDI persistence validation)
+## Latest session (MIDI group editing)
+- Keyboard and drag movement clamp selected notes as a group at timeline and pitch limits; the GUI self-test verifies spacing and passes.
+
+## Earlier (MIDI persistence validation)
 - A generated corrupt shared MIDI source is rejected without changing the open project; offline rendering confirms the prior project survives.
 
 ## Earlier (Logic import validation)

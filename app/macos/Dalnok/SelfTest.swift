@@ -678,6 +678,23 @@ final class SelfTest {
         check(roll.entryFrame == Double(c.start + 2 * entry), "step entry advances by the grid")
         _ = perform("Undo")
         check(s.clip(clip)?.notes.contains { $0.pitch == 71 && $0.start == c.offset + entry } == false, "undo removes the entered note")
+        let originalNotes = s.clip(clip)?.notes ?? []
+        let boundaryNotes = [DalnokNote(start: 0, length: entry, pitch: 126, velocity: 100),
+                             DalnokNote(start: entry, length: entry, pitch: 127, velocity: 100)]
+        s.setNotes(clip, boundaryNotes)
+        key(0, "a", mods: .command)
+        key(126, "")
+        key(123, "")
+        check(s.clip(clip)?.notes.map(\.pitch) == [126, 127] && s.clip(clip)?.notes.map(\.start) == [0, entry],
+              "keyboard movement preserves group spacing at MIDI boundaries")
+        if let current = s.clip(clip), let first = current.notes.first {
+            roll.scrollY = 0
+            let r = roll.rect(first, current)
+            drag(from: CGPoint(x: r.minX + 2, y: r.midY), to: CGPoint(x: r.minX - 30, y: r.midY - roll.rowHeight * 4))
+            check(s.clip(clip)?.notes.map(\.pitch) == [126, 127] && s.clip(clip)?.notes.map(\.start) == [0, entry],
+                  "drag preserves group spacing at MIDI boundaries")
+        }
+        s.setNotes(clip, originalNotes)
         win.close()
         check(!w.pianoRollIsKey, "closing the piano roll returns Delete to the arrangement")
         w.window?.makeKey()
