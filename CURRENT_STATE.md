@@ -6,6 +6,7 @@ milestone: Phase 1 + Migration (M5) + Time stretch (M6) + UI pass 1 (M7) done; P
 # Current State
 
 ## Latest session
+- Atomic project saves use unique temporary files and preserve existing project permissions; targeted persistence tests pass.
 - Periodic recovery snapshots and File ▸ Recover Snapshot are implemented. The app self-test verifies snapshot creation and manual restore as a new unsaved project; automatic timing and real application-crash recovery remain unverified. Copies are retained in Application Support/Dalnok/Recovery.
 - A tested project snapshot API writes a recovery copy without changing the model revision or saved/dirty state. Periodic scheduling and manual recovery UI are implemented; crash and timer validation remain.
 - Added independently tested off-thread capture draining and an exclusive temporary PCM spool with read-only inspection of complete frames and partial tails. A process-kill test verifies that the spool’s complete-frame prefix remains inspectable, and a synthetic ten-second capture has the expected frames and samples. This is not yet a recorder, a project import path, or end-to-end crash recovery. Normal, AddressSanitizer, and ThreadSanitizer native tests pass.

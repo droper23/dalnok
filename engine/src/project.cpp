@@ -21,6 +21,7 @@
 #include <set>
 #include <sstream>
 #include <unistd.h>
+#include <sys/stat.h>
 #include <vector>
 
 namespace fs = std::filesystem;
@@ -55,6 +56,14 @@ bool writeFileAtomically(const std::string &path, const std::string &data, std::
         return false;
     }
     const std::string tmp(name.data());
+    // Replacing an existing project must not silently change its permissions.
+    struct stat existing{};
+    if (::stat(path.c_str(), &existing) == 0 && ::fchmod(fd, existing.st_mode & 0777) != 0) {
+        ::close(fd);
+        std::remove(tmp.c_str());
+        err = "cannot preserve permissions for " + path;
+        return false;
+    }
     FILE *f = ::fdopen(fd, "wb");
     if (!f) {
         ::close(fd);

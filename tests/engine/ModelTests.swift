@@ -138,6 +138,17 @@ import Testing
         #expect(dalnok_project_dirty(e))
     }
 
+    @Test func savingExistingProjectPreservesPermissions() throws {
+        let e = dalnok_engine_create(sr)!; defer { dalnok_engine_destroy(e) }
+        let project = dir.appendingPathComponent("permissions.dalnok")
+        try "old".write(to: project, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o640], ofItemAtPath: project.path)
+        _ = dalnok_track_add(e, "Track")
+        #expect(dalnok_project_save(e, project.path, nil, 0) == DALNOK_OK)
+        let attrs = try FileManager.default.attributesOfItem(atPath: project.path)
+        #expect((attrs[.posixPermissions] as? NSNumber)?.intValue == 0o640)
+    }
+
     @Test func recoverySnapshotKeepsDirtyStateAndAudio() throws {
         let e = dalnok_engine_create(sr)!; defer { dalnok_engine_destroy(e) }
         try makeProject(e, audio: dir.appendingPathComponent("snapshot-audio.wav"))

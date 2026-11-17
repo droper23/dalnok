@@ -1,6 +1,9 @@
 # Changelog
 
 ## [Unreleased]
+### Fixed (2026-11-16, project saves)
+- Atomic saves use unique temporary files and preserve an existing project file’s permissions.
+
 ### Added (2026-11-16, recovery snapshots)
 - Periodic recovery snapshots while a project has unsaved changes, and File ▸ Recover Snapshot to open a copy as a new unsaved project. Snapshots are retained in Application Support/Dalnok/Recovery. Automatic timing and real crash recovery need validation.
 
