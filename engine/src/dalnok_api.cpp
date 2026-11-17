@@ -616,6 +616,16 @@ DalnokStatus dalnok_clip_move(DalnokEngine *e, DalnokClipId c, DalnokTrackId t, 
     std::string err;
     return e ? statusFor(e->impl.moveClip(c, t, start, err), err) : DALNOK_ERR_INVALID_ARG;
 }
+DalnokStatus dalnok_clips_nudge(DalnokEngine *e, const DalnokClipId *clips, int32_t count, int64_t delta) {
+    if (!e || !clips || count <= 0) return DALNOK_ERR_INVALID_ARG;
+    std::string err;
+    return statusFor(e->impl.nudgeClips(std::vector<DalnokClipId>(clips, clips + count), delta, err), err);
+}
+DalnokStatus dalnok_clips_remove(DalnokEngine *e, const DalnokClipId *clips, int32_t count) {
+    if (!e || !clips || count <= 0) return DALNOK_ERR_INVALID_ARG;
+    std::string err;
+    return statusFor(e->impl.removeClips(std::vector<DalnokClipId>(clips, clips + count), err), err);
+}
 DalnokStatus dalnok_clip_set_region(DalnokEngine *e, DalnokClipId c, int64_t start, int64_t offset, int64_t length) {
     std::string err;
     return e ? statusFor(e->impl.setClipRegion(c, start, offset, length, err), err) : DALNOK_ERR_INVALID_ARG;

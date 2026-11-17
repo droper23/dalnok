@@ -280,7 +280,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
                 }
             }
         }
-        if let sel = timeline.selectedClip, session.clip(sel) == nil { timeline.selectedClip = nil }
+        timeline.pruneSelection()
         if fitOnNextChange && !session.tracks.isEmpty {
             timeline.zoomToFit()
             fitOnNextChange = false
@@ -646,15 +646,23 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
     @objc func delete(_ sender: Any?) {
         if pianoRollIsKey { return pianoRoll.roll.deleteSelection() }
-        guard let c = timeline.selectedClip else { return }
-        session.removeClip(c)
+        let ids = timeline.selectedClips.sorted()
+        guard !ids.isEmpty else { return }
+        if !session.removeClips(ids) { NSSound.beep() }
+    }
+
+    @objc func nudgeClipsLeft(_ sender: Any?) { nudgeClips(direction: -1) }
+    @objc func nudgeClipsRight(_ sender: Any?) { nudgeClips(direction: 1) }
+    private func nudgeClips(direction: Int64) {
+        let frames = max(1, Int64(timeline.snapQuantum().rounded())) * direction
+        if !session.nudgeClips(timeline.selectedClips.sorted(), by: frames) { NSSound.beep() }
     }
 
     /// Splits the selected clip at the playhead, or every clip under it if none is selected.
     @objc func splitAtPlayhead() {
         let pos = session.engine.position
-        let targets = timeline.selectedClip.flatMap { session.clip($0) }.map { [$0] }
-            ?? session.tracks.flatMap(\.clips)
+        let targets = timeline.selectedClips.isEmpty ? session.tracks.flatMap(\.clips)
+            : timeline.selectedClips.compactMap { session.clip($0) }
         let hits = targets.filter { $0.start < pos && pos < $0.end }
         guard !hits.isEmpty else { NSSound.beep(); return }
         session.engine.group("Split at Playhead") {
@@ -956,6 +964,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             return session.engine.canRedo
         case #selector(delete(_:)):
             return pianoRollIsKey ? !pianoRoll.roll.selection.isEmpty : timeline.selectedClip != nil
+        case #selector(nudgeClipsLeft(_:)), #selector(nudgeClipsRight(_:)):
+            return !pianoRollIsKey && !timeline.selectedClips.isEmpty
         case #selector(openPianoRoll(_:)):
             return selectedClipView?.isMidi == true
         case #selector(deleteTrack(_:)), #selector(renameTrack(_:)):

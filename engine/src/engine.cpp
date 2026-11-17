@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <ctime>
+#include <set>
 #include <unistd.h>
 
 namespace dalnok {
@@ -433,6 +434,44 @@ bool Engine::setInputChannel(DalnokTrackId id, int32_t channel, std::string &err
         if (t->kind != kTrackAudio) return fail(err, "only audio tracks have an audio input");
         if (channel < 0 || channel > 63) return fail(err, "input channel must be 0-63");
         t->inputChannel = channel;
+        return true;
+    });
+}
+
+bool Engine::removeClips(const std::vector<DalnokClipId> &ids, std::string &err) {
+    if (ids.empty()) return fail(err, "no clips selected");
+    std::set<DalnokClipId> unique;
+    for (auto id : ids) {
+        if (!model_.clip(id)) return fail(err, "no such clip");
+        if (!unique.insert(id).second) return fail(err, "duplicate clip id");
+    }
+    return edit("Delete Clips", true, [&](Model &m) {
+        std::erase_if(m.clips, [&](const ClipState &clip) { return unique.count(clip.id) != 0; });
+        return true;
+    });
+}
+
+bool Engine::nudgeClips(const std::vector<DalnokClipId> &ids, int64_t delta, std::string &err) {
+    if (ids.empty()) return fail(err, "no clips selected");
+    std::set<DalnokClipId> unique;
+    int64_t earliest = INT64_MAX;
+    for (auto id : ids) {
+        const ClipState *clip = model_.clip(id);
+        if (!clip) return fail(err, "no such clip");
+        if (!unique.insert(id).second) return fail(err, "duplicate clip id");
+        earliest = std::min(earliest, clip->start);
+    }
+    if (delta < 0) delta = std::max(delta, -earliest);
+    if (delta > 0) {
+        for (auto id : ids) {
+            const ClipState *clip = model_.clip(id);
+            if (clip->length > INT64_MAX - clip->start || delta > INT64_MAX - clip->start - clip->length)
+                return fail(err, "nudge exceeds the supported timeline");
+        }
+    }
+    if (delta == 0) return true;
+    return edit("Nudge Clips", true, [&](Model &m) {
+        for (auto id : ids) m.clip(id)->start += delta;
         return true;
     });
 }

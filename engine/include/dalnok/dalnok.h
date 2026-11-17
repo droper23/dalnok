@@ -28,7 +28,7 @@
 extern "C" {
 #endif
 
-#define DALNOK_API_VERSION 10
+#define DALNOK_API_VERSION 11
 
 typedef enum {
     DALNOK_OK = 0,
@@ -309,9 +309,13 @@ DalnokStatus dalnok_track_move(DalnokEngine *engine, DalnokTrackId track, int32_
 DalnokClipId dalnok_clip_add(DalnokEngine *engine, DalnokTrackId track, DalnokMediaId media,
                              int64_t timeline_start, int64_t source_offset, int64_t length);
 DalnokStatus dalnok_clip_remove(DalnokEngine *engine, DalnokClipId clip);
+/* Delete selected clips atomically as one undo step. */
+DalnokStatus dalnok_clips_remove(DalnokEngine *engine, const DalnokClipId *clips, int32_t count);
 /* Moves a clip (optionally to another track) and brings it to the top. */
 DalnokStatus dalnok_clip_move(DalnokEngine *engine, DalnokClipId clip, DalnokTrackId track,
                               int64_t timeline_start);
+/* Nudge selected clips together in frames, clamped at timeline zero; one undo step. */
+DalnokStatus dalnok_clips_nudge(DalnokEngine *engine, const DalnokClipId *clips, int32_t count, int64_t delta);
 /* Sets the clip's timeline start and source region (trim). */
 DalnokStatus dalnok_clip_set_region(DalnokEngine *engine, DalnokClipId clip, int64_t timeline_start,
                                     int64_t source_offset, int64_t length);

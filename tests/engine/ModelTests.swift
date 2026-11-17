@@ -5,6 +5,35 @@ import Foundation
 import Testing
 
 @Suite struct UndoAndEditing {
+    @Test func nudgeClipsIsAtomicAndPreservesSpacing() {
+        let e = dalnok_engine_create(sr)!; defer { dalnok_engine_destroy(e) }
+        let m = makeMedia([ramp(10_000)]); defer { dalnok_media_release(m) }
+        let a = dalnok_clip_add(e, dalnok_track_add(e, "A"), m, 1_000, 0, 2_000)
+        let b = dalnok_clip_add(e, dalnok_track_add(e, "B"), m, 5_000, 0, 2_000)
+        let midi = dalnok_midi_clip_add(e, dalnok_track_add_instrument(e, "Keys"), 3_000, 2_000)
+        var ids = [a, b, midi]
+        #expect(dalnok_clips_nudge(e, &ids, 3, -2_000) == DALNOK_OK)
+        #expect(clipInfo(e, a).start == 0 && clipInfo(e, b).start == 4_000 && clipInfo(e, midi).start == 2_000 && undoName(e) == "Nudge Clips")
+        #expect(dalnok_undo(e) && clipInfo(e, a).start == 1_000 && clipInfo(e, b).start == 5_000 && clipInfo(e, midi).start == 3_000)
+        #expect(dalnok_redo(e) && clipInfo(e, a).start == 0 && clipInfo(e, b).start == 4_000 && clipInfo(e, midi).start == 2_000)
+        let revision = dalnok_model_revision(e)
+        #expect(dalnok_clips_nudge(e, &ids, 3, -200) == DALNOK_OK && dalnok_model_revision(e) == revision)
+        var invalid = [a, DalnokClipId.max]
+        #expect(dalnok_clips_nudge(e, &invalid, 2, 100) != DALNOK_OK && clipInfo(e, a).start == 0)
+        invalid = [a, a]
+        #expect(dalnok_clips_nudge(e, &invalid, 2, 100) != DALNOK_OK && clipInfo(e, a).start == 0)
+        let before = render(e, frames: 7_000).0
+        #expect(runCommand(e, "clips.nudge", #"{"clips":[\#(a),\#(b)],"delta":200}"#).0 == DALNOK_OK)
+        #expect(clipInfo(e, a).start == 200 && clipInfo(e, b).start == 4_200)
+        let after = render(e, frames: 7_200).0
+        #expect(after.prefix(200).allSatisfy { abs($0) < 1e-6 } && zip(before, after.dropFirst(200)).allSatisfy { abs($0 - $1) < 1e-6 })
+        invalid = [a, DalnokClipId.max]
+        #expect(dalnok_clips_remove(e, &invalid, 2) != DALNOK_OK && clipInfo(e, a).id == a)
+        #expect(runCommand(e, "clips.remove", #"{"clips":[\#(a),\#(b)]}"#).0 == DALNOK_OK)
+        var removed = DalnokClipInfo()
+        #expect(dalnok_clip_info(e, a, &removed) != DALNOK_OK && undoName(e) == "Delete Clips")
+        #expect(dalnok_undo(e) && clipInfo(e, a).start == 200 && clipInfo(e, b).start == 4_200)
+    }
     @Test func everyEditIsUndoableAndRedoable() {
         let e = dalnok_engine_create(sr)!; defer { dalnok_engine_destroy(e) }
         let m = makeMedia([ramp(10_000)]); defer { dalnok_media_release(m) }

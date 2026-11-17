@@ -19,7 +19,22 @@ final class TimelineView: NSView {
     var onSelectionChange: (() -> Void)?
 
     var selectedClip: DalnokClipId? {
-        didSet { if oldValue != selectedClip { animateSelection = true }; needsDisplay = true; onSelectionChange?() }
+        didSet {
+            if !changingSelection { selectedClips = selectedClip.map { [$0] } ?? [] }
+            if oldValue != selectedClip { animateSelection = true }; needsDisplay = true; onSelectionChange?()
+        }
+    }
+    private(set) var selectedClips: Set<DalnokClipId> = [] { didSet { needsDisplay = true } }
+    private var changingSelection = false
+    private func select(_ ids: Set<DalnokClipId>, primary: DalnokClipId?) {
+        changingSelection = true
+        selectedClips = ids; selectedClip = primary
+        changingSelection = false
+    }
+    func pruneSelection() {
+        let remaining = selectedClips.filter { session.clip($0) != nil }
+        let primary = selectedClip.flatMap { remaining.contains($0) ? $0 : nil } ?? remaining.sorted().first
+        if remaining != selectedClips || primary != selectedClip { select(remaining, primary: primary) }
     }
     /// A soft halo in the clip's color that glides from the old selection to the new one.
     private let selectionGlow = CAShapeLayer()
@@ -36,6 +51,7 @@ final class TimelineView: NSView {
     private let fadeHandleZone: CGFloat = 14
     private struct Drag {
         let clip: ClipView
+        let moving: [ClipView]
         let zone: Zone
         let startX: CGFloat
         var changed = false
@@ -383,7 +399,7 @@ final class TimelineView: NSView {
         guard rect.maxX > 0, rect.minX < bounds.width else { return }
         let path = CGPath(roundedRect: rect, cornerWidth: 3, cornerHeight: 3, transform: nil)
         let tint = TrackTint(base: clip.offline ? Theme.textFaint : (track.muted ? TrackTint(base: track.color).muted : track.color))
-        let selected = clip.id == selectedClip
+        let selected = selectedClips.contains(clip.id)
         let dim = track.muted || clip.offline
 
         ctx.saveGState()
@@ -578,11 +594,24 @@ final class TimelineView: NSView {
             seek(toX: p.x)
             return
         }
-        selectedClip = clip.id
+        if event.modifierFlags.contains(.shift) {
+            var ids = selectedClips
+            if ids.remove(clip.id) != nil {
+                select(ids, primary: selectedClip == clip.id ? ids.sorted().first : selectedClip)
+                if let id = selectedClip, let remaining = session.clip(id) { onClipSelected?(remaining) }
+                return
+            }
+            ids.insert(clip.id); select(ids, primary: clip.id)
+        } else if selectedClips.contains(clip.id) {
+            select(selectedClips, primary: clip.id)
+        } else {
+            selectedClip = clip.id
+        }
         onClipSelected?(clip)
         if event.clickCount == 2 && clip.isMidi { onOpenClip?(clip); return }
         let stretch = zone == .rightEdge && event.modifierFlags.contains(.option)
-        drag = Drag(clip: clip, zone: zone, startX: p.x, stretch: stretch)
+        let moving = zone == .body ? selectedClips.compactMap { session.clip($0) } : [clip]
+        drag = Drag(clip: clip, moving: moving, zone: zone, startX: p.x, stretch: stretch)
         session.engine.beginGroup(stretch ? "Time Stretch" : zone == .body ? "Move Clip"
                                   : (zone == .fadeIn || zone == .fadeOut) ? "Fade" : "Trim Clip")
         if zone == .body { NSCursor.closedHand.set() }
@@ -601,6 +630,13 @@ final class TimelineView: NSView {
         switch d.zone {
         case .body:
             let start = snap(Double(c.start) + delta, bypass: bypass)
+            if d.moving.count > 1 {
+                let earliest = d.moving.map(\.start).min() ?? 0
+                let wanted = max(-earliest, start - c.start)
+                let applied = current.start - c.start
+                if wanted != applied && session.nudgeClips(d.moving.map(\.id), by: wanted - applied) { d.changed = true }
+                break
+            }
             let track = trackIndex(atY: p.y).map { session.tracks[$0].id } ?? current.track
             if start != current.start || track != current.track {
                 session.moveClip(c.id, track: track, start: start)

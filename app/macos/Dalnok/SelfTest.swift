@@ -111,6 +111,36 @@ final class SelfTest {
         _ = perform("Undo")
         check(s.clip(first.id)?.start == 0, "undo returns clip to 0")
 
+        if let other = s.tracks.dropFirst().first?.clips.first, let point = w.timeline.windowPoint(ofClip: other.id) {
+            w.timeline.selectedClip = first.id
+            w.timeline.mouseDown(with: mouse(.leftMouseDown, point, .shift))
+            w.timeline.mouseUp(with: mouse(.leftMouseUp, point, .shift))
+            check(w.timeline.selectedClips == [first.id, other.id], "shift-click selects clips on multiple tracks")
+            w.timeline.mouseDown(with: mouse(.leftMouseDown, point, .shift))
+            w.timeline.mouseUp(with: mouse(.leftMouseUp, point, .shift))
+            check(w.timeline.selectedClips == [first.id] && w.timeline.selectedClip == first.id && w.headers.selectedTrack == first.track,
+                  "shift-click deselects the primary clip and restores the remaining track")
+            w.timeline.mouseDown(with: mouse(.leftMouseDown, point, .shift))
+            w.timeline.mouseUp(with: mouse(.leftMouseUp, point, .shift))
+            let step = max(1, Int64(w.timeline.snapQuantum().rounded()))
+            let right = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+                                         windowNumber: w.window!.windowNumber, context: nil,
+                                         characters: String(UnicodeScalar(NSRightArrowFunctionKey)!),
+                                         charactersIgnoringModifiers: String(UnicodeScalar(NSRightArrowFunctionKey)!), isARepeat: false, keyCode: 124)!
+            check((NSApp.mainMenu?.performKeyEquivalent(with: right) ?? false) && s.clip(first.id)?.start == first.start + step && s.clip(other.id)?.start == other.start + step,
+                  "nudge moves selected clips together")
+            check(e.undoName == "Nudge Clips" && perform("Undo") && s.clip(first.id)?.start == first.start && s.clip(other.id)?.start == other.start,
+                  "one undo restores both nudged clips")
+            dragClip(first.id, zone: "body", fraction: 0.5)
+            let shift1 = (s.clip(first.id)?.start ?? first.start) - first.start
+            let shift2 = (s.clip(other.id)?.start ?? other.start) - other.start
+            check(shift1 > 0 && shift1 == shift2, "drag moves selected clips together")
+            _ = perform("Undo")
+            check(perform("Delete") && s.clip(first.id) == nil && s.clip(other.id) == nil, "Delete removes selected clips together")
+            check(perform("Undo") && s.clip(first.id) != nil && s.clip(other.id) != nil, "one undo restores deleted clips")
+            w.timeline.selectedClip = first.id
+        } else { check(false, "two clips available for multi-selection") }
+
         // Trim the right edge left.
         dragClip(first.id, zone: "right", fraction: -0.3)
         let trimmed = s.clip(first.id)!
@@ -284,8 +314,13 @@ final class SelfTest {
                                      charactersIgnoringModifiers: " ", isARepeat: false, keyCode: 49)!
         let typing = MainWindowController.isTyping
         let consumed = NSApp.mainMenu?.performKeyEquivalent(with: space) ?? true
+        let rightArrow = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+                                          windowNumber: w.window!.windowNumber, context: nil,
+                                          characters: String(UnicodeScalar(NSRightArrowFunctionKey)!),
+                                          charactersIgnoringModifiers: String(UnicodeScalar(NSRightArrowFunctionKey)!), isARepeat: false, keyCode: 124)!
         check(typing && !consumed && !e.isPlaying,
               "Space types into the rename field instead of starting playback (typing=\(typing), menu consumed=\(consumed))")
+        check(!(NSApp.mainMenu?.performKeyEquivalent(with: rightArrow) ?? true), "arrow keys stay in the rename field")
         w.headers.row(t0)?.nameLabel.stringValue = "Lead Vox"
         w.window?.makeFirstResponder(nil)
         check(!MainWindowController.isTyping && NSApp.mainMenu?.performKeyEquivalent(with: space) == true && e.isPlaying,
@@ -596,6 +631,11 @@ final class SelfTest {
         let roll = w.pianoRoll.roll
         guard let win = w.pianoRoll.window, win.isVisible, roll.clipId == clip else { return check(false, "piano roll window is visible") }
         win.makeKey()
+        let pianoArrow = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+                                          windowNumber: win.windowNumber, context: nil,
+                                          characters: String(UnicodeScalar(NSRightArrowFunctionKey)!),
+                                          charactersIgnoringModifiers: String(UnicodeScalar(NSRightArrowFunctionKey)!), isARepeat: false, keyCode: 124)!
+        check(!(NSApp.mainMenu?.performKeyEquivalent(with: pianoArrow) ?? true), "arrangement nudge shortcuts do not steal piano-roll arrows")
         roll.layoutSubtreeIfNeeded()
         func ev(_ type: NSEvent.EventType, _ p: CGPoint, clicks: Int = 1, mods: NSEvent.ModifierFlags = []) -> NSEvent {
             NSEvent.mouseEvent(with: type, location: roll.convert(p, to: nil), modifierFlags: mods,

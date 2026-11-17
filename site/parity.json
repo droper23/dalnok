@@ -596,10 +596,10 @@
         ],
         [
           "Multi-select and keyboard nudge",
-          "todo"
+          "verified"
         ]
       ],
-      "evidence": "UndoAndEditing and Fades tests (crossfade weights checked numerically); self-test drives real drags, fade handles, and menu items.",
+      "evidence": "UndoAndEditing and Fades tests (crossfade weights checked numerically); self-test drives real drags, fade handles, and menu items. GUI self-test verifies shift-selection, group nudge/drag/delete and undo; group drag is horizontal only.",
       "screenshot": "screenshots/arrangement.png"
     },
     {

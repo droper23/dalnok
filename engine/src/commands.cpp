@@ -40,6 +40,18 @@ DalnokStatus status(bool ok, const std::string &err) {
     return err.rfind("no such", 0) == 0 ? DALNOK_ERR_NOT_FOUND : DALNOK_ERR_INVALID_ARG;
 }
 
+bool clipIds(const Value &a, std::vector<DalnokClipId> &ids, std::string &err) {
+    const Value *list = a.get("clips");
+    if (!list || !list->isArray() || list->array.empty()) { err = "clips must be a nonempty array"; return false; }
+    for (const auto &v : list->array) {
+        if (!v.isNumber() || !std::isfinite(v.number) || v.number < 1 || v.number > INT32_MAX || std::floor(v.number) != v.number) {
+            err = "invalid clip id"; return false;
+        }
+        ids.push_back(static_cast<DalnokClipId>(v.number));
+    }
+    return true;
+}
+
 #define ARGS [[maybe_unused]] Engine &e, [[maybe_unused]] const Value &a, [[maybe_unused]] Value &r, [[maybe_unused]] std::string &err
 
 const CommandDef kCommands[] = {
@@ -213,6 +225,11 @@ const CommandDef kCommands[] = {
          if (!needInt(a, "clip", c, err)) return DALNOK_ERR_INVALID_ARG;
          return status(e.removeClip(c, err), err);
      }},
+    {"clips.remove", "Delete Clips", "{clips: [id, ...]}", [](ARGS) {
+         std::vector<DalnokClipId> ids;
+         if (!clipIds(a, ids, err)) return DALNOK_ERR_INVALID_ARG;
+         return status(e.removeClips(ids, err), err);
+     }},
     {"clip.move", "Move Clip", "{clip, start, track?}", [](ARGS) {
          DalnokClipId c;
          int64_t start;
@@ -221,6 +238,14 @@ const CommandDef kCommands[] = {
          if (!cs) return err = "no such clip", DALNOK_ERR_NOT_FOUND;
          const auto track = static_cast<DalnokTrackId>(a.getNumber("track", cs->track));
          return status(e.moveClip(c, track, start, err), err);
+     }},
+    {"clips.nudge", "Nudge Clips", "{clips: [id, ...], delta: frames}", [](ARGS) {
+         std::vector<DalnokClipId> ids;
+         double delta;
+         if (!clipIds(a, ids, err) || !needNumber(a, "delta", delta, err) ||
+             !std::isfinite(delta) || std::floor(delta) != delta || std::fabs(delta) > 9007199254740991.0)
+             return err = "clips must be a nonempty array and delta an exact integer", DALNOK_ERR_INVALID_ARG;
+         return status(e.nudgeClips(ids, static_cast<int64_t>(delta), err), err);
      }},
     {"clip.setRegion", "Trim Clip", "{clip, start, offset, length}", [](ARGS) {
          DalnokClipId c;

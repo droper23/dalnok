@@ -134,6 +134,8 @@ final class MainMenu: NSMenu {
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         let mods = event.modifierFlags.intersection([.command, .control, .option])
         if mods.isEmpty, MainActor.assumeIsolated({ MainWindowController.isTyping }) { return false }
+        if mods.isEmpty, (event.keyCode == 123 || event.keyCode == 124),
+           MainActor.assumeIsolated({ (NSApp.delegate as? AppDelegate)?.main?.pianoRollIsKey == true }) { return false }
         return super.performKeyEquivalent(with: event)
     }
 }
@@ -185,6 +187,8 @@ func buildMenu(target: MainWindowController) -> NSMenu {
         .separator(),
         item("Delete", #selector(W.delete(_:)), "\u{8}", []),
         item("Split at Playhead", #selector(W.splitAtPlayhead), "t"),
+        item("Nudge Clips Left", #selector(W.nudgeClipsLeft(_:)), String(UnicodeScalar(NSLeftArrowFunctionKey)!), []),
+        item("Nudge Clips Right", #selector(W.nudgeClipsRight(_:)), String(UnicodeScalar(NSRightArrowFunctionKey)!), []),
     ])
     let colorItem = NSMenuItem(title: "Track Color", action: nil, keyEquivalent: "")
     colorItem.submenu = target.colorMenu()

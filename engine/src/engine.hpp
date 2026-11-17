@@ -184,6 +184,8 @@ public:
     bool setMute(DalnokTrackId id, bool muted, std::string &err);
     bool setSolo(DalnokTrackId id, bool solo, std::string &err);
     bool moveTrack(DalnokTrackId id, int32_t index, std::string &err);
+    bool nudgeClips(const std::vector<DalnokClipId> &ids, int64_t delta, std::string &err);
+    bool removeClips(const std::vector<DalnokClipId> &ids, std::string &err);
     bool setTrackColor(DalnokTrackId id, int32_t customRgb, std::string &err); // -1 = automatic
     DalnokTrackId addInstrumentTrack(const std::string &name, std::string &err);
     bool setArmed(DalnokTrackId id, bool armed, std::string &err);

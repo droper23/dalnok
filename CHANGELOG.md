@@ -1,6 +1,9 @@
 # Changelog
 
 ## [Unreleased]
+### Added (2026-11-16, arrangement multi-selection)
+- Shift-click selects clips across tracks. Arrow keys nudge them together; horizontal group drag and Delete operate as one undo step. The command catalog and C API expose atomic group nudging and deletion.
+
 ### Changed (2026-11-16, tempo-map groundwork)
 - Added an internal, tested beat/frame converter for piecewise-constant tempos. Tempo maps are not yet exposed or used by playback. Piano-roll beat lines now follow the meter denominator.
 

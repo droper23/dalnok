@@ -229,10 +229,20 @@ final class Session {
         return (relinked, missing.count - relinked)
     }
     func moveClip(_ c: DalnokClipId, track: DalnokTrackId, start: Int64) { dalnok_clip_move(h, c, track, start); refresh() }
+    func nudgeClips(_ ids: [DalnokClipId], by frames: Int64) -> Bool {
+        let ok = ids.withUnsafeBufferPointer { dalnok_clips_nudge(h, $0.baseAddress, Int32($0.count), frames) == DALNOK_OK }
+        if ok { refresh() }
+        return ok
+    }
     func setRegion(_ c: DalnokClipId, start: Int64, offset: Int64, length: Int64) {
         dalnok_clip_set_region(h, c, start, offset, length); refresh()
     }
     func removeClip(_ c: DalnokClipId) { dalnok_clip_remove(h, c); refresh() }
+    func removeClips(_ ids: [DalnokClipId]) -> Bool {
+        let ok = ids.withUnsafeBufferPointer { dalnok_clips_remove(h, $0.baseAddress, Int32($0.count)) == DALNOK_OK }
+        if ok { refresh() }
+        return ok
+    }
     @discardableResult
     func split(_ c: DalnokClipId, at frame: Int64) -> Bool {
         let ok = dalnok_clip_split(h, c, frame, nil) == DALNOK_OK
