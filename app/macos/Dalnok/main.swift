@@ -129,7 +129,6 @@ func buildMenu(target: MainWindowController) -> NSMenu {
         item("Save As…", #selector(W.saveDocumentAs(_:then:)), "s", [.command, .shift]),
         .separator(),
         item("Import Audio…", #selector(W.importAudio), "i"),
-        item("Import Project from Another DAW…", #selector(W.importProjectFromDAW(_:)), "o", [.command, .shift]),
         item("Export Mix…", #selector(W.exportMix(_:)), "b"),
         .separator(),
         item("Relink Missing Audio…", #selector(W.relinkMissingAudio(_:)), ""),

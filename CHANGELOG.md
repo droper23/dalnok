@@ -1,6 +1,9 @@
 # Changelog
 
 ## [Unreleased]
+### Changed (2026-11-16, Open projects)
+- Open now selects Dalnok and other DAW projects, including Logic packages and stem folders. Foreign projects prompt to import or cancel; the separate import menu was removed.
+
 ### Fixed (2026-11-16, Logic import)
 - Reject malformed Logic chunk and name lengths, avoid reporting unverified MIDI event counts, and clarify limitations of the Final Cut Pro XML alternative.
 
@@ -29,7 +32,7 @@
 ### Added (2026-11-16, Migration M5)
 - Project import: REAPER `.rpp`, Ableton Live `.als`, Final Cut Pro XML (Logic's export), folders of
   stems, and Logic `.logicx` (experimental). Each import comes with a migration report.
-  File ▸ Import Project from Another DAW… (⇧⌘O). Open… and drag-and-drop also accept these.
+  Open… and drag-and-drop accept these.
 - Onboarding: "Where are you coming from?" sets shortcut presets (Logic, Ableton, or REAPER). The
   project finder searches your Mac and previews each import. Help ▸ Migration Assistant and Concept Guide.
 - ⌘K understands other DAWs' words ("bounce", "region", "item", "collect all and save"…) and lists

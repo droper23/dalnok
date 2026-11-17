@@ -129,7 +129,7 @@ enum Migration {
         "Transpose Down a Semitone": ["pitch", "transpose", "pitch shift"],
         "Preserve Pitch When Stretching": ["varispeed", "re-pitch", "tape speed"],
         "Reset Speed and Pitch": ["unstretch", "original speed", "unwarp"],
-        "Import Project from Another DAW…": ["open logic", "open ableton", "open reaper", "migrate", "convert"],
+        "Open…": ["open logic", "open ableton", "open reaper", "migrate", "convert"],
     ]
 
     /// Their nouns -> ours, applied to palette queries.

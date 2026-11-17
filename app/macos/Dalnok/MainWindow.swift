@@ -9,7 +9,7 @@ extension UTType {
 }
 
 @MainActor
-final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuItemValidation, NSMenuDelegate {
+final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuItemValidation, NSMenuDelegate, NSOpenSavePanelDelegate {
     let session: Session
     let palette = CommandPalette()
     let emptyState = EmptyStateView()
@@ -446,34 +446,47 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     }
 
     @objc func openDocument(_ sender: Any?) {
-        confirmDiscard { [weak self] in
-            guard let self else { return }
-            let panel = NSOpenPanel()
-            panel.allowedContentTypes = [.dalnokProject] + Self.foreignExtensions.compactMap { UTType(filenameExtension: $0) }
-            panel.treatsFilePackagesAsDirectories = false
-            panel.message = "Open a Dalnok project — or a Logic, Ableton or REAPER project to import."
-            panel.beginSheetModal(for: window!) { resp in
-                guard resp == .OK, let url = panel.url else { return }
-                MainActor.assumeIsolated {
-                    if Self.foreignExtensions.contains(url.pathExtension.lowercased()) { self.importProject(url, confirm: false) }
-                    else { self.openProject(url) }
-                }
-            }
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        // Logic packages may have a dynamic UTI; filter by extension instead.
+        panel.delegate = self
+        panel.treatsFilePackagesAsDirectories = false
+        panel.message = "Choose a Dalnok project, a project from another DAW, or a folder of stems."
+        panel.beginSheetModal(for: window!) { [weak self] resp in
+            guard resp == .OK, let url = panel.url else { return }
+            MainActor.assumeIsolated { self?.openSelectedProject(url) }
+        }
+    }
+
+    func panel(_ sender: Any, shouldEnable url: URL) -> Bool {
+        var isDirectory: ObjCBool = false
+        if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory), isDirectory.boolValue { return true }
+        return (["dalnok"] + Array(Self.foreignExtensions)).contains(url.pathExtension.lowercased())
+    }
+
+    /// Foreign projects are imported only after the user chooses Import.
+    func openSelectedProject(_ url: URL, completion: ((Bool) -> Void)? = nil) {
+        let ext = url.pathExtension.lowercased()
+        var directory: ObjCBool = false
+        let isDirectory = FileManager.default.fileExists(atPath: url.path, isDirectory: &directory) && directory.boolValue
+        let foreign = ext != "dalnok" && (Self.foreignExtensions.contains(ext) || isDirectory)
+        guard foreign else {
+            confirmDiscard { [weak self] in self?.openProject(url, completion: completion) }
+            return
+        }
+        let alert = NSAlert()
+        alert.messageText = "Import this project?"
+        alert.informativeText = "Dalnok will import \(url.lastPathComponent) into a new project. The original will remain unchanged."
+        alert.addButton(withTitle: "Import")
+        alert.addButton(withTitle: "Cancel")
+        guard let window else { completion?(false); return }
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn else { completion?(false); return }
+            self?.importProject(url, completion: completion)
         }
     }
 
     // MARK: Migration
-
-    @objc func importProjectFromDAW(_ sender: Any?) {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.allowedContentTypes = Self.foreignExtensions.compactMap { UTType(filenameExtension: $0) } + [.folder]
-        panel.message = "Choose a Logic (.logicx), Ableton (.als), REAPER (.rpp) or Final Cut Pro XML project — or a folder of stems."
-        panel.beginSheetModal(for: window!) { [weak self] resp in
-            guard resp == .OK, let url = panel.url else { return }
-            MainActor.assumeIsolated { self?.importProject(url) }
-        }
-    }
 
     /// Imports into a new unsaved project (after resolving unsaved changes) and shows the report.
     func importProject(_ url: URL, confirm: Bool = true, completion: ((Bool) -> Void)? = nil) {

@@ -364,8 +364,18 @@ final class SelfTest {
         rpp += "  <TRACK\n    NAME Keys\n    <ITEM\n      POSITION 0\n      LENGTH 2\n      <SOURCE MIDI\n      >\n    >\n  >\n>\n"
         let rppURL = workdir.appendingPathComponent("from-reaper.rpp")
         try? rpp.write(to: rppURL, atomically: true, encoding: .utf8)
-        let ok = await withCheckedContinuation { cont in w.importProject(rppURL, confirm: false) { cont.resume(returning: $0) } }
-        check(ok && w.lastImportReport?.app == "REAPER", "imported REAPER project")
+        let logicPackage = workdir.appendingPathComponent("Example.logicx", isDirectory: true)
+        try? FileManager.default.createDirectory(at: logicPackage, withIntermediateDirectories: true)
+        check(w.panel(NSOpenPanel(), shouldEnable: logicPackage), "Open enables Logic project packages")
+        check(menuItem("Import Project from Another DAW") == nil, "foreign projects use the Open menu")
+        check(w.saveProject(to: workdir.appendingPathComponent("before-import.dalnok")), "save before import prompt")
+        let revision = e.revision
+        Task { await wait(0.2); if let sheet = w.window?.attachedSheet { w.window?.endSheet(sheet, returnCode: .alertSecondButtonReturn) } }
+        let cancelled = await withCheckedContinuation { cont in w.openSelectedProject(rppURL) { cont.resume(returning: $0) } }
+        check(!cancelled && e.revision == revision, "cancel import leaves the current project unchanged")
+        Task { await wait(0.2); if let sheet = w.window?.attachedSheet { w.window?.endSheet(sheet, returnCode: .alertFirstButtonReturn) } }
+        let ok = await withCheckedContinuation { cont in w.openSelectedProject(rppURL) { cont.resume(returning: $0) } }
+        check(ok && w.lastImportReport?.app == "REAPER", "Open confirms and imports a REAPER project")
         check(s.tracks.count == files.count + 1 && s.tracks.flatMap(\.clips).allSatisfy { !$0.offline }, "\(s.tracks.count) tracks, all audio found")
         check(s.tracks.flatMap(\.clips).map(\.start).sorted() == (0..<files.count).map { Int64($0) * Int64(e.sampleRate) },
               "clip positions from the RPP")

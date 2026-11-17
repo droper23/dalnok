@@ -6,6 +6,8 @@ milestone: Phase 1 + Migration (M5) + Time stretch (M6) + UI pass 1 (M7) done; P
 # Current State
 
 ## Latest session
+- Open selects foreign projects and asks before import; Logic packages and stem folders are accepted. GUI self-test covers cancel and confirm.
+- Scarlett Solo 4th Gen detected over USB at 48 kHz (4 inputs, 2 outputs). An external 2.66 s capture recorded a very low signal; microphone operation and Dalnok capture are not yet established.
 - ADR-0008 defines the first recording path, failure handling, recovery, and verification gates. Capture is not implemented.
 - Logic import rejects oversized chunk/name lengths; its report no longer presents uncertain events as MIDI counts or XML as exact. Three Logic importer tests pass.
 - GUI self-test verifies Space starts and pauses playback, including with gain knob focus.

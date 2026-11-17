@@ -18,7 +18,7 @@ world-class UI, honest verification, and milestone check-ins.
 **Just finished (M8):** knobs are now a layer-based `RotaryKnob` (`Controls.swift`): a flat face and pointer
 at rest. On hover, drag or focus, the face shrinks (0.68×, 160 ms) to reveal a glowing ring in the track
 color. `PanKnob` subclasses it. `site/screenshots/knobs.png` shows the rest and revealed states.
-**Latest:** gain and pan are labeled knobs; the gain halo follows the post-fader peak. Space play/pause is already present and self-tested. More keyboard shortcuts were requested. A synthetic Logic project and FCPXML export both import, but the XML rendered and shortened the audio, so exact native placement remains unverified.
+**Latest:** Open accepts foreign projects and asks before import; the separate import menu is removed. Scarlett Solo is connected and detected, but Dalnok recording remains unimplemented. Gain and pan are labeled knobs; the gain halo follows the post-fader peak. Space play/pause is already present and self-tested. More keyboard shortcuts were requested. A synthetic Logic project and FCPXML export both import, but the XML rendered and shortened the audio, so exact native placement remains unverified.
 
 ## Done so far (all committed, CI green)
 - **Phase 1:** engine, C API, AppKit UI, undo, projects, export, fades, solo, relink, copy-on-save, meters,

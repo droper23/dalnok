@@ -30,7 +30,7 @@ final class EmptyStateView: NSView {
         let buttons = NSStackView(views: [
             button("Import Audio…", "⌘I", #selector(importTapped), primary: false),
             button("Open Project…", "⌘O", #selector(openTapped)),
-            button("Bring Projects from Another DAW…", "⇧⌘O", #selector(migrateTapped)),
+            button("Migration Assistant…", "", #selector(migrateTapped)),
         ])
         buttons.spacing = 10
         let stack = NSStackView(views: [icon, title, sub, buttons])
