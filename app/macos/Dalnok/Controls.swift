@@ -194,6 +194,8 @@ class RotaryKnob: NSControl {
     var onEnd: (() -> Void)?
     private(set) var tracking = false
     private var hovering = false
+    private(set) var meterDb: Float = -120
+    var showsMeter = false
     private var dragStart: (y: CGFloat, value: Double)?
 
     private let haloTrack = CAShapeLayer()
@@ -257,7 +259,9 @@ class RotaryKnob: NSControl {
         let track = CGMutablePath()
         track.addArc(center: c, radius: ringR, startAngle: angle(bipolar ? -1 : 0), endAngle: angle(1), clockwise: false)
         haloTrack.path = track
-        let from = bipolar ? min(0, value) : 0, to = bipolar ? max(0, value) : value
+        let showingLevel = showsMeter && meterDb > -60 && !hovering && !tracking
+        let displayed = showingLevel ? Double(max(0, min(1, (meterDb + 60) / 60))) : value
+        let from = bipolar ? min(0, displayed) : 0, to = bipolar ? max(0, displayed) : displayed
         let arc = CGMutablePath()
         if abs(to - from) > 0.004 {
             arc.addArc(center: c, radius: ringR, startAngle: angle(from), endAngle: angle(to), clockwise: false)
@@ -291,7 +295,17 @@ class RotaryKnob: NSControl {
         CATransaction.commit()
     }
 
-    private func updateReveal() { setRevealed(hovering || tracking || window?.firstResponder === self, animated: true) }
+    private func updateReveal() {
+        let meterVisible = showsMeter && meterDb > -60 && !hovering && !tracking
+        let interacting = hovering || tracking || (window?.firstResponder === self && !meterVisible)
+        let color = meterVisible ? (meterDb >= 0 ? Theme.hex(0xE0574F) : meterDb >= -6 ? Theme.hex(0xE3A857) : Theme.hex(0x5FB39B)) : tint
+        haloValue.strokeColor = color.cgColor
+        haloValue.shadowColor = color.cgColor
+        layoutLayers()
+        setRevealed(interacting || meterVisible, animated: !meterVisible)
+    }
+
+    func updateMeter(_ db: Float) { meterDb = db; updateReveal() }
 
     override func mouseEntered(with event: NSEvent) { hovering = true; updateReveal() }
     override func mouseExited(with event: NSEvent) { hovering = false; updateReveal() }
@@ -351,6 +365,29 @@ class RotaryKnob: NSControl {
     func previewReveal(_ on: Bool) { hovering = on; updateReveal() }
 }
 
+/// Gain uses the same audio taper and unity detent as the original fader.
+@MainActor
+final class GainKnob: RotaryKnob {
+    var db: Float {
+        get { FaderControl.db(for: value) }
+        set { value = FaderControl.position(for: newValue) }
+    }
+    var onGainChange: ((Float) -> Void)?
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        bipolar = false
+        showsMeter = true
+        defaultValue = FaderControl.position(for: 0)
+        value = defaultValue
+        format = { FaderControl.format(FaderControl.db(for: $0)) }
+        onChange = { [weak self] v in self?.onGainChange?(FaderControl.db(for: v)) }
+        setAccessibilityValue(format(value))
+        toolTip = "Gain (dB)"
+    }
+    required init?(coder: NSCoder) { fatalError() }
+}
+
 /// Pan: a bipolar knob reading L/C/R.
 @MainActor
 final class PanKnob: RotaryKnob {
@@ -363,6 +400,7 @@ final class PanKnob: RotaryKnob {
     override init(frame: NSRect) {
         super.init(frame: frame)
         bipolar = true
+        toolTip = "Pan (left/right)"
         format = PanKnob.format
         onChange = { [weak self] v in self?.onPanChange?(Float(v)) }
         setAccessibilityValue(format(value))

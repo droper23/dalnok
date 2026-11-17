@@ -169,6 +169,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         for row in headers.rows {
             let (l, r) = e.trackMeter(row.trackId)
             row.meter.push(l, r)
+            row.gain.updateMeter(max(row.meter.levelDb.0, row.meter.levelDb.1))
         }
         let (ml, mr) = e.masterMeter()
         transport.masterMeter.push(ml, mr)

@@ -20,8 +20,7 @@ long-duration capture test. Ask the owner to connect the Scarlett.
 **Just finished (M8):** knobs are now a layer-based `RotaryKnob` (`Controls.swift`): a flat face and pointer
 at rest. On hover, drag or focus, the face shrinks (0.68×, 160 ms) to reveal a glowing ring in the track
 color. `PanKnob` subclasses it. `site/screenshots/knobs.png` shows the rest and revealed states.
-**Not done:** `site/parity.json`, `CHANGELOG.md` and `CURRENT_STATE.md` don't mention the knob yet. Add
-it, then run `scripts/publish-site.sh`.
+**Latest:** gain and pan are labeled knobs; the gain halo follows the post-fader peak. Space play/pause is already present and self-tested. More keyboard shortcuts were requested. A synthetic Logic project and FCPXML export both import, but the XML rendered and shortened the audio, so exact native placement remains unverified.
 
 ## Done so far (all committed, CI green)
 - **Phase 1:** engine, C API, AppKit UI, undo, projects, export, fades, solo, relink, copy-on-save, meters,

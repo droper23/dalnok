@@ -1,6 +1,9 @@
 # Changelog
 
 ## [Unreleased]
+### Changed (2026-11-16, track controls)
+- Track gain is now a labeled rotary knob, paired with a labeled pan knob. Its halo displays post-fader peak level during playback and the gain setting while adjusting.
+
 ### Changed (2026-11-16, UI pass 1, M7; see "06 - Design/UI Audit 2026-11-16")
 - Track colors: a rainbow gradient from green (12 steps in OKLCH, equal brightness, alternating
   lightness for color-blind users). New tracks continue the gradient. Custom colors via Track ▸ Track

@@ -147,6 +147,7 @@ final class SelfTest {
         await wait(0.6)
         let master = w.transport.masterMeter.levelDb
         let trackLevels = w.headers.rows.map(\.meter.levelDb.0)
+        check(w.headers.rows.contains { $0.gain.meterDb > -60 }, "gain halo receives live track level")
         e.pause()
         check(master.0 > -60, String(format: "master meter live (%.1f dBFS)", master.0))
         check(trackLevels.contains { $0 > -60 }, "track meters live (\(trackLevels.map { Int($0) }) dBFS)")
@@ -197,26 +198,25 @@ final class SelfTest {
         check(perform("Reset Speed and Pitch"), "menu Clip > Reset Speed and Pitch")
         check(s.clip(first.id)?.rate == 1 && s.clip(first.id)?.pitch == 0 && s.clip(first.id)?.length == pre.sourceSpan, "back to original")
 
-        // Mixer controls: drag the fader cap, ⌥-click resets; pan knob; M/S chips; colors.
+        // Mixer controls: gain and pan drags, reset, and undo.
         if let row = w.headers.rows.first {
-            let f = row.fader
+            let f = row.gain
             func at(_ v: NSView, _ x: CGFloat, _ y: CGFloat) -> CGPoint { v.convert(CGPoint(x: x, y: y), to: nil) }
-            let capX = 6 + CGFloat(FaderControl.position(for: f.db)) * (f.bounds.width - 12)
-            f.mouseDown(with: mouse(.leftMouseDown, at(f, capX, f.bounds.midY)))
-            f.mouseDragged(with: mouse(.leftMouseDragged, at(f, capX - 40, f.bounds.midY)))
-            f.mouseUp(with: mouse(.leftMouseUp, at(f, capX - 40, f.bounds.midY)))
+            let center = at(f, f.bounds.midX, f.bounds.midY)
+            f.mouseDown(with: mouse(.leftMouseDown, center))
+            f.mouseDragged(with: mouse(.leftMouseDragged, CGPoint(x: center.x, y: center.y - 40)))
+            f.mouseUp(with: mouse(.leftMouseUp, center))
             let g = s.track(row.trackId)!.gainDb
-            check(g < -2 && e.undoName == "Volume", String(format: "fader drag lowered volume to %.1f dB (one undo step)", g))
-            f.mouseDown(with: mouse(.leftMouseDown, at(f, 10, f.bounds.midY), .option))
-            f.mouseUp(with: mouse(.leftMouseUp, at(f, 10, f.bounds.midY)))
-            check(s.track(row.trackId)!.gainDb == 0, "⌥-click resets the fader to 0 dB")
+            check(g < -2 && e.undoName == "Volume", String(format: "gain knob drag lowered volume to %.1f dB (one undo step)", g))
+            f.mouseDown(with: mouse(.leftMouseDown, center, .option))
+            check(s.track(row.trackId)!.gainDb == 0, "⌥-click resets gain to 0 dB")
             let k = row.pan
             k.mouseDown(with: mouse(.leftMouseDown, at(k, k.bounds.midX, k.bounds.midY)))
             k.mouseDragged(with: mouse(.leftMouseDragged, CGPoint(x: at(k, k.bounds.midX, 0).x, y: at(k, k.bounds.midX, k.bounds.midY).y + 30)))
             k.mouseUp(with: mouse(.leftMouseUp, at(k, k.bounds.midX, k.bounds.midY)))
             check((s.track(row.trackId)?.pan ?? 0) > 0.2, "pan knob drag up pans right (\(s.track(row.trackId)?.pan ?? 0))")
             _ = perform("Undo"); _ = perform("Undo"); _ = perform("Undo")
-            check(s.track(row.trackId)!.gainDb == 0 && s.track(row.trackId)!.pan == 0, "undo restores fader and pan")
+            check(s.track(row.trackId)!.gainDb == 0 && s.track(row.trackId)!.pan == 0, "undo restores gain and pan")
             let steps = s.tracks.map { OKLCH.fromSRGB($0.color).2 }
             check(steps.count < 2 || zip(steps, steps.dropFirst()).allSatisfy { a, b in (b - a + 360).truncatingRemainder(dividingBy: 360) > 15 },
                   "automatic colors advance around the hue wheel from green (\(steps.map { Int($0) }))")

@@ -5,6 +5,11 @@ milestone: Phase 1 + Migration (M5) + Time stretch (M6) + UI pass 1 (M7) done; P
 ---
 # Current State
 
+## Latest session
+- Track gain and pan use labeled rotary knobs. Gain halo follows post-fader peak level; knob interaction shows gain. Build and GUI self-test passed.
+- A synthetic Logic 12.2 project and its Final Cut Pro XML export both import (one track, one clip, no missing media). The XML export rendered and shortened the audio, so exact native placement remains unverified.
+- Space is assigned to Play / Pause and is covered by the typing and playback self-test. More shortcut coverage remains requested.
+
 ## Latest verified build
 - `main`, 2026-11-16. macOS 27.3, Xcode 27.2, Swift 6.4.2, Apple clang 21, M3 Max.
 - `swift build`: 0 warnings. `swift test`: 45 tests pass, including the mutation-checked click tests.

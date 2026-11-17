@@ -121,7 +121,9 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
     let nameLabel = NSTextField(labelWithString: "")
     private let mute = ToggleChip("M", on: Theme.muteOn, onText: .white, help: "Mute (⌃M)")
     private let solo = ToggleChip("S", on: Theme.soloOn, onText: Theme.hex(0x1A1400), help: "Solo (⌃S)")
-    let fader = FaderControl()
+    let gain = GainKnob()
+    private let gainLabel = NSTextField(labelWithString: "GAIN")
+    private let panLabel = NSTextField(labelWithString: "PAN")
     let pan = PanKnob()
     let meter = MeterView()
     private var dragStartY: CGFloat?
@@ -143,16 +145,21 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
 
         mute.onToggle = { [weak self] on in guard let self else { return }; self.session.setMute(self.trackId, on) }
         solo.onToggle = { [weak self] on in guard let self else { return }; self.session.setSolo(self.trackId, on) }
-        fader.onBegin = { [weak self] in self?.session.engine.beginGroup("Volume") }
-        fader.onChange = { [weak self] db in guard let self else { return }; self.session.setGain(self.trackId, db: db) }
-        fader.onEnd = { [weak self] in self?.session.engine.endGroup() }
+        gain.onBegin = { [weak self] in self?.session.engine.beginGroup("Volume") }
+        gain.onGainChange = { [weak self] db in guard let self else { return }; self.session.setGain(self.trackId, db: db) }
+        gain.onEnd = { [weak self] in self?.session.engine.endGroup() }
         pan.onBegin = { [weak self] in self?.session.engine.beginGroup("Pan") }
         pan.onPanChange = { [weak self] p in guard let self else { return }; self.session.setPan(self.trackId, p) }
         pan.onEnd = { [weak self] in self?.session.engine.endGroup() }
+        for label in [gainLabel, panLabel] {
+            label.font = Theme.mono(9, .medium)
+            label.textColor = Theme.textDim
+            label.alignment = .center
+        }
         meter.vertical = true
         meter.toolTip = "Post-fader level (click to reset the clip indicator)"
 
-        for v in [number, nameLabel, mute, solo, fader, pan, meter] as [NSView] {
+        for v in [number, nameLabel, mute, solo, gain, pan, gainLabel, panLabel, meter] as [NSView] {
             v.translatesAutoresizingMaskIntoConstraints = false
             addSubview(v)
         }
@@ -167,14 +174,18 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
             solo.centerYAnchor.constraint(equalTo: nameLabel.centerYAnchor),
             mute.trailingAnchor.constraint(equalTo: solo.leadingAnchor, constant: -4),
             mute.centerYAnchor.constraint(equalTo: nameLabel.centerYAnchor),
-            fader.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor, constant: -6),
-            fader.trailingAnchor.constraint(equalTo: pan.leadingAnchor, constant: -8),
-            fader.centerYAnchor.constraint(equalTo: pan.centerYAnchor),
-            fader.heightAnchor.constraint(equalToConstant: 18),
-            pan.trailingAnchor.constraint(equalTo: meter.leadingAnchor, constant: -10),
+            gain.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor),
+            gain.centerYAnchor.constraint(equalTo: pan.centerYAnchor),
+            gain.widthAnchor.constraint(equalToConstant: 30),
+            gain.heightAnchor.constraint(equalToConstant: 30),
+            pan.leadingAnchor.constraint(equalTo: gain.trailingAnchor, constant: 34),
             pan.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 12),
             pan.widthAnchor.constraint(equalToConstant: 30),
             pan.heightAnchor.constraint(equalToConstant: 30),
+            gainLabel.centerXAnchor.constraint(equalTo: gain.centerXAnchor),
+            gainLabel.topAnchor.constraint(equalTo: gain.bottomAnchor, constant: 2),
+            panLabel.centerXAnchor.constraint(equalTo: pan.centerXAnchor),
+            panLabel.topAnchor.constraint(equalTo: pan.bottomAnchor, constant: 2),
             meter.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
             meter.topAnchor.constraint(equalTo: topAnchor, constant: 10),
             meter.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
@@ -195,11 +206,11 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
         nameLabel.textColor = t.muted ? Theme.textDim : Theme.text
         mute.isOn = t.muted
         solo.isOn = t.solo
-        fader.tint = t.muted ? Theme.textFaint : t.color
+        gain.tint = t.muted ? Theme.textFaint : t.color
         pan.tint = t.color
-        if !fader.tracking { fader.db = t.gainDb.isFinite ? t.gainDb : -.infinity }
+        if !gain.tracking { gain.db = t.gainDb.isFinite ? t.gainDb : -.infinity }
         if !pan.tracking { pan.pan = t.pan }
-        fader.setAccessibilityLabel("Volume, \(t.name)")
+        gain.setAccessibilityLabel("Volume, \(t.name)")
         pan.setAccessibilityLabel("Pan, \(t.name)")
         mute.setAccessibilityLabel("Mute \(t.name)")
         solo.setAccessibilityLabel("Solo \(t.name)")
