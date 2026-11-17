@@ -93,9 +93,9 @@ extension MainWindowController {
                         String(format: "%@ runs at %g kHz, but this session runs at %g kHz. Set the device to %g kHz in Audio MIDI Setup, or make it the system output and reopen Dalnok.",
                                device.name, device.sampleRate / 1000, e.sampleRate / 1000, e.sampleRate / 1000))
                 }
-                guard Int(audio.inputChannel) < device.channels else {
+                for t in session.tracks where t.armed && !t.isInstrument && Int(t.inputChannel) >= device.channels {
                     return recordingProblem("Input not available",
-                                            "\(device.name) has \(device.channels) inputs; choose another input for \(audio.name).")
+                                            "\(device.name) has \(device.channels) inputs; choose another input for \(t.name).")
                 }
                 if e.outputDeviceUid != device.uid {
                     do { try e.setOutputDevice(device.uid) } catch {
@@ -164,7 +164,9 @@ extension MainWindowController {
         }
         var parts: [String] = []
         if result.audio_clip != 0 {
-            parts.append(TimelineView.formatTime(Double(result.frames) / e.sampleRate, step: 0.1) + " of audio")
+            let tracks = Int(result.audio_clip_count)
+            parts.append(TimelineView.formatTime(Double(result.frames) / e.sampleRate, step: 0.1) + " of audio"
+                         + (tracks > 1 ? " on \(tracks) tracks" : ""))
         }
         if result.midi_clip != 0 { parts.append(result.notes == 1 ? "1 note" : "\(result.notes) notes") }
         flash(parts.isEmpty ? "Nothing was recorded" : "Recorded " + parts.joined(separator: " and "))

@@ -115,14 +115,28 @@ bool Engine::pump(float *left, float *right, int frames) {
 }
 
 bool Engine::pumpInput(const float *input, float *left, float *right, int frames) {
-    if (!simulatedInput_ || !duplex_ || !left || !right || frames <= 0) return false;
-    duplexCallback(this, left, right, input, frames);
+    // Mono test input appears on every device channel.
+    const float *channels[64];
+    for (auto &c : channels) c = input;
+    return pumpInputChannels(input ? channels : nullptr, input ? 64 : 0, left, right, frames);
+}
+
+bool Engine::pumpInputChannels(const float *const *inputs, int count, float *left, float *right, int frames) {
+    if (!simulatedInput_ || !duplex_ || !left || !right || frames <= 0 || count < 0 || count > 64) return false;
+    duplexCallback(this, left, right, inputs, count, frames);
     collectGarbage();
     return true;
 }
 
-bool Engine::startCapture(const std::string &uid, int channel, const std::string &path, std::string &err) {
+bool Engine::startCapture(const std::string &uid, const std::vector<int> &channels, const std::string &path, std::string &err) {
     if (duplex_ || captureWriter_) { err = "capture is already active"; return false; }
+    if (channels.empty() || channels.size() > 64) { err = "choose 1 to 64 input channels"; return false; }
+    int highest = 0;
+    for (int c : channels) {
+        if (c < 0 || c > 63) { err = "input channel out of range"; return false; }
+        highest = std::max(highest, c);
+    }
+    const auto count = static_cast<uint32_t>(channels.size());
     const bool simulated = uid == kSimulatedInput;
     if (simulated ? device_ != nullptr : (!device_ || uid.empty() || uid != outputUid_)) {
         err = simulated ? "the simulated input requires the output device to be stopped"
@@ -134,14 +148,17 @@ bool Engine::startCapture(const std::string &uid, int channel, const std::string
     }
     std::unique_ptr<AudioDuplexDevice> duplex;
     if (simulated) duplex = std::make_unique<SimulatedDuplex>(sampleRate_, simulatedLatency_);
-    else duplex = createDuplexDevice(uid, sampleRate_, channel, err);
+    else duplex = createDuplexDevice(uid, sampleRate_, highest, err);
     if (!duplex) return false;
-    const int fd = CaptureSpool::create(path, static_cast<uint32_t>(sampleRate_), 1);
+    const int fd = CaptureSpool::create(path, static_cast<uint32_t>(sampleRate_), count);
     if (fd < 0) { err = "cannot create new capture spool"; return false; }
     try {
-        captureSpool_ = std::make_unique<CaptureSpool>(fd, 1);
+        captureSpool_ = std::make_unique<CaptureSpool>(fd, count);
         // About 5.5 seconds at 48 kHz; overflow always reports an error.
-        captureWriter_ = std::make_unique<CaptureWriter>(1 << 18, 1, *captureSpool_);
+        captureWriter_ = std::make_unique<CaptureWriter>(1 << 18, count, *captureSpool_);
+        captureScratch_.assign(static_cast<size_t>(kMaxCaptureBlock) * count, 0.0f);
+        for (size_t i = 0; i < channels.size(); ++i) captureMap_[i] = channels[i];
+        captureChannels_ = static_cast<int>(count);
         captureWriter_->start();
     } catch (...) {
         if (!captureSpool_) ::close(fd);
@@ -183,6 +200,7 @@ bool Engine::stopCapture(DalnokCaptureStats &stats, std::string &err, bool resto
     if (!duplex_ || !captureWriter_) { err = "capture is not active"; return false; }
     duplex_->stop(); // callback no longer accesses captureRT_
     captureRT_ = nullptr;
+    captureChannels_ = 0;
     captureWriter_->stop();
     captureStatus(stats);
     duplex_.reset(); captureWriter_.reset(); captureSpool_.reset();
@@ -423,8 +441,8 @@ bool Engine::setArmed(DalnokTrackId id, bool armed, std::string &err) {
     return edit(armed ? "Record Enable" : "Record Disable", true, [&](Model &m) {
         TrackState *t = m.track(id);
         if (!t) return fail(err, "no such track");
-        // One armed track per kind: the first recording release takes one input and one MIDI stream.
-        if (armed)
+        // Any number of audio tracks record at once (one device input each); one instrument track takes MIDI.
+        if (armed && t->kind == kTrackInstrument)
             for (auto &other : m.tracks) if (other.kind == t->kind) other.armed = false;
         t->armed = armed;
         return true;
@@ -1125,23 +1143,36 @@ void Engine::renderPendingStretchesNow() {
 
 // ---- Audio thread -------------------------------------------------------
 
-void Engine::duplexCallback(void *ctx, float *left, float *right, const float *input, int frames) DALNOK_NONBLOCKING {
+void Engine::duplexCallback(void *ctx, float *left, float *right, const float *const *inputs, int inputCount,
+                            int frames) DALNOK_NONBLOCKING {
     auto *self = static_cast<Engine *>(ctx);
     audioCallback(ctx, left, right, frames);
-    if (!input) {
+    const int n = self->captureChannels_;
+    bool ok = inputs != nullptr && frames <= kMaxCaptureBlock;
+    for (int c = 0; ok && c < n; ++c) {
+        const int ch = self->captureMap_[static_cast<size_t>(c)];
+        ok = ch < inputCount && inputs[ch] != nullptr;
+    }
+    if (!ok) {
         self->captureMissingFrames_.fetch_add(static_cast<uint64_t>(frames), std::memory_order_relaxed);
         self->captureInputFailed_.store(true, std::memory_order_release);
         return;
     }
-    // In a recording session only blocks where the transport rolled continuously belong to the take.
+    // Outside a recording session every frame is captured; in one, only the part of the block inside the
+    // punch window, and only where the transport rolled continuously.
     const bool session = self->recordSession_.load(std::memory_order_acquire);
-    if (self->captureRT_) {
-        if (!session) self->captureRT_->push(input, static_cast<uint32_t>(frames));
-        else if (self->rtRecordingBlock_) // only the part of the block inside the punch window
-            self->captureRT_->push(input + self->rtRecordOffset_, static_cast<uint32_t>(self->rtRecordCount_));
+    if (self->captureRT_ && n > 0 && (!session || self->rtRecordingBlock_)) {
+        const int from = session ? self->rtRecordOffset_ : 0, count = session ? self->rtRecordCount_ : frames;
+        float *out = self->captureScratch_.data();
+        for (int i = 0; i < count; ++i)
+            for (int c = 0; c < n; ++c) out[i * n + c] = inputs[self->captureMap_[static_cast<size_t>(c)]][from + i];
+        self->captureRT_->push(out, static_cast<uint32_t>(count));
     }
     if (self->monitoring_.load(std::memory_order_relaxed))
-        for (int i = 0; i < frames; ++i) { left[i] += input[i]; right[i] += input[i]; }
+        for (int c = 0; c < n; ++c) {
+            const float *in = inputs[self->captureMap_[static_cast<size_t>(c)]];
+            for (int i = 0; i < frames; ++i) { left[i] += in[i]; right[i] += in[i]; }
+        }
 }
 
 void Engine::renderClick(float *left, float *right, int frames, int64_t pos) DALNOK_NONBLOCKING {

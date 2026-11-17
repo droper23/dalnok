@@ -115,12 +115,17 @@ public:
     const std::string &outputDeviceUid() const { return outputUid_; }
     bool deviceAlive() const { return duplex_ ? duplex_->alive() : (!device_ || device_->alive()); }
     double hardwareSampleRate() const { return duplex_ ? duplex_->hardwareSampleRate() : (device_ ? device_->hardwareSampleRate() : 0); }
-    bool startCapture(const std::string &uid, int channel, const std::string &path, std::string &err);
+    // Captures the given device input channels (zero-based) into one interleaved spool.
+    bool startCapture(const std::string &uid, const std::vector<int> &channels, const std::string &path, std::string &err);
+    bool startCapture(const std::string &uid, int channel, const std::string &path, std::string &err) {
+        return startCapture(uid, std::vector<int>{channel}, path, err);
+    }
     // Recording: one armed audio track (captured from `inputUid`, the explicit output device or
     // kSimulatedInput) and/or one armed instrument track (MIDI). The take starts when the
     // transport rolls; files go to `directory` with a journal (see record.cpp).
     struct RecordResult {
-        DalnokClipId audioClip = 0, midiClip = 0;
+        DalnokClipId audioClip = 0, midiClip = 0; // audioClip: the first armed audio track's take
+        std::vector<DalnokClipId> audioClips;      // every placed audio take, in track order
         DalnokMediaId media = 0;
         uint64_t frames = 0;   // audio frames in the finished or recovered file
         int64_t start = -1;    // timeline frame where the take began (before latency compensation)
@@ -166,6 +171,7 @@ public:
     void setSimulatedLatency(int64_t frames) { simulatedLatency_ = frames; }
     // Runs one duplex cycle on the simulated input device (tests and simulation).
     bool pumpInput(const float *input, float *left, float *right, int frames);
+    bool pumpInputChannels(const float *const *inputs, int count, float *left, float *right, int frames);
     // MIDI input
     bool openMidiInput(int32_t uniqueId, std::string &err);
     bool injectMidi(uint8_t status, uint8_t data1, uint8_t data2);
@@ -309,7 +315,8 @@ private:
     void resetModel();
 
     static void audioCallback(void *ctx, float *left, float *right, int frames) DALNOK_NONBLOCKING;
-    static void duplexCallback(void *ctx, float *left, float *right, const float *input, int frames) DALNOK_NONBLOCKING;
+    static void duplexCallback(void *ctx, float *left, float *right, const float *const *inputs, int inputCount,
+                               int frames) DALNOK_NONBLOCKING;
     void process(float *left, float *right, int frames) DALNOK_NONBLOCKING;
     void handleMidiInput(int64_t pos) DALNOK_NONBLOCKING;
     void renderClick(float *left, float *right, int frames, int64_t pos) DALNOK_NONBLOCKING;
@@ -336,6 +343,11 @@ private:
     std::unique_ptr<CaptureWriter> captureWriter_;
     std::unique_ptr<AudioDuplexDevice> duplex_;
     CaptureWriter *captureRT_ = nullptr; // published before start; cleared after synchronous stop
+    // Device input channel for each spool channel, and interleaving space (set before the device starts).
+    std::array<int, 64> captureMap_{};
+    int captureChannels_ = 0;
+    std::vector<float> captureScratch_;
+    static constexpr int kMaxCaptureBlock = 8192;
     std::atomic<bool> captureInputFailed_{false};
     std::atomic<uint64_t> captureMissingFrames_{0};
     std::unique_ptr<AudioDevice> device_;
@@ -346,7 +358,10 @@ private:
     uint64_t pluginEdits_ = 0;
     // Recording (control thread)
     bool recording_ = false;
-    DalnokTrackId recordAudioTrack_ = 0, recordMidiTrack_ = 0;
+    DalnokTrackId recordAudioTrack_ = 0, recordMidiTrack_ = 0; // audio: the first armed audio track
+    // Every armed audio track in this take: spool channel i belongs to recordAudio_[i].
+    struct RecordAudio { DalnokTrackId track; std::string name; int channel; std::string wav; };
+    std::vector<RecordAudio> recordAudio_;
     std::string recordSpool_, recordWav_, recordJournal_;
     int64_t latencyOffset_ = 0, simulatedLatency_ = 0;
     bool simulatedInput_ = false;

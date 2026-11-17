@@ -163,6 +163,9 @@ DalnokStatus dalnok_record_stop(DalnokEngine *e, DalnokRecordResult *out, char *
     if (out) {
         *out = DalnokRecordResult{};
         out->audio_clip = r.audioClip;
+        out->audio_clip_count = 0;
+        for (DalnokClipId c : r.audioClips)
+            if (out->audio_clip_count < 64) out->audio_clips[out->audio_clip_count++] = c;
         out->midi_clip = r.midiClip;
         out->media = r.media;
         out->frames = r.frames;
@@ -185,6 +188,12 @@ void dalnok_record_set_monitoring(DalnokEngine *e, bool on) { if (e) e->impl.set
 void dalnok_record_set_simulated_latency(DalnokEngine *e, int64_t frames) { if (e) e->impl.setSimulatedLatency(frames); }
 DalnokStatus dalnok_engine_pump_input(DalnokEngine *e, const float *in, float *l, float *r, int32_t frames) {
     return e && in && e->impl.pumpInput(in, l, r, frames) ? DALNOK_OK : DALNOK_ERR_INVALID_ARG;
+}
+DalnokStatus dalnok_engine_pump_input_channels(DalnokEngine *e, const float *const *in, int32_t count, float *l, float *r,
+                                               int32_t frames) {
+    if (!e || !in || count < 1 || count > 64) return DALNOK_ERR_INVALID_ARG;
+    for (int32_t c = 0; c < count; ++c) if (!in[c]) return DALNOK_ERR_INVALID_ARG;
+    return e->impl.pumpInputChannels(in, count, l, r, frames) ? DALNOK_OK : DALNOK_ERR_INVALID_ARG;
 }
 size_t dalnok_record_scan(const char *dir, char *out, size_t len) {
     return copyOut(out, len, json::serialize(dir ? scanTakes(dir) : json::Value::makeArray()));

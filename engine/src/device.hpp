@@ -27,10 +27,12 @@ public:
 };
 
 // Internal full-duplex path. Input and output are clocked by the same device.
-// A null input indicates a capture failure; the callback must not block.
+// `inputs` holds one mono buffer per device input channel (`inputCount` of them). Null inputs indicate
+// a capture failure; the callback must not block.
 class AudioDuplexDevice {
 public:
-    using Callback = void (*)(void *ctx, float *left, float *right, const float *input, int frames) DALNOK_NONBLOCKING;
+    using Callback = void (*)(void *ctx, float *left, float *right, const float *const *inputs, int inputCount,
+                              int frames) DALNOK_NONBLOCKING;
     virtual ~AudioDuplexDevice() = default;
     virtual bool start(Callback cb, void *ctx, std::string &err) = 0;
     virtual void stop() = 0;

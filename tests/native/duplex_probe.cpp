@@ -11,8 +11,10 @@
 struct Probe {
     std::atomic<uint64_t> callbacks{0};
     std::atomic<float> peak{0};
-    static void render(void *context, float *left, float *right, const float *input, int frames) DALNOK_NONBLOCKING {
+    int channel = 0;
+    static void render(void *context, float *left, float *right, const float *const *inputs, int count, int frames) DALNOK_NONBLOCKING {
         auto *p = static_cast<Probe *>(context);
+        const float *input = inputs && p->channel < count ? inputs[p->channel] : nullptr;
         float max = 0;
         for (int i = 0; i < frames; ++i) {
             left[i] = right[i] = 0;
@@ -36,6 +38,7 @@ int main(int argc, char **argv) {
             auto duplex = dalnok::createDuplexDevice(device.uid, device.sampleRate, channel, error);
             if (!duplex) { std::fprintf(stderr, "%s\n", error.c_str()); return 5; }
             Probe p;
+            p.channel = channel;
             if (!duplex->start(&Probe::render, &p, error)) { std::fprintf(stderr, "%s\n", error.c_str()); return 6; }
             std::this_thread::sleep_for(std::chrono::seconds(3));
             duplex->stop();

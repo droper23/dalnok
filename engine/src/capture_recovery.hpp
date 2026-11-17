@@ -5,5 +5,6 @@
 #include <string>
 namespace dalnok {
 bool recoverCapture(const std::string &source, const std::string &destination,
-                    uint64_t &frames, uint32_t &trailingBytes, std::string &error);
+                    uint64_t &frames, uint32_t &trailingBytes, std::string &error,
+                    int channel = -1); // channel >= 0: a mono WAV of that spool channel
 }

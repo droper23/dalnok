@@ -39,6 +39,7 @@ struct Value {
     bool isBool() const { return type == Type::Bool; }
 
     const Value *get(std::string_view key) const;
+    Value *get(std::string_view key) { return const_cast<Value *>(static_cast<const Value &>(*this).get(key)); }
     Value &set(std::string key, Value v);
     void push(Value v) { array.push_back(std::move(v)); }
 

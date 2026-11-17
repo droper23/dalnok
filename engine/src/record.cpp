@@ -14,6 +14,7 @@
 #include "capture_spool.hpp"
 #include "midi.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <ctime>
@@ -68,15 +69,19 @@ int64_t Engine::recordLatency() const {
 bool Engine::startRecording(const std::string &inputUid, const std::string &directory, std::string &err) {
     if (recording_ || duplex_) return fail(err, "already recording");
     const TrackState *audio = nullptr, *midi = nullptr;
+    std::vector<const TrackState *> audioTracks;
     for (const auto &t : model_.tracks) {
         if (!t.armed) continue;
-        (t.kind == kTrackAudio ? audio : midi) = &t;
+        if (t.kind == kTrackAudio) { audioTracks.push_back(&t); if (!audio) audio = &t; }
+        else midi = &t;
     }
+    if (audioTracks.size() > 64) return fail(err, "too many armed audio tracks (64 at most)");
     if (!audio && !midi) return fail(err, "arm a track to record");
     if (audio && inputUid.empty()) return fail(err, "choose an audio input device to record an audio track");
 
     recordAudioTrack_ = audio ? audio->id : 0;
     recordMidiTrack_ = midi ? midi->id : 0;
+    recordAudio_.clear();
     recordSpool_.clear(); recordWav_.clear(); recordJournal_.clear();
     if (audio) {
         std::error_code ec;
@@ -84,15 +89,29 @@ bool Engine::startRecording(const std::string &inputUid, const std::string &dire
         if (directory.empty() || !fs::is_directory(directory)) return fail(err, "cannot create recording folder " + directory);
         // Never reuse a name: every file of a take is created exclusively.
         const fs::path dir = fs::absolute(directory);
+        // One take number for every armed track: "<Track> Take N.wav" each, never reusing a name.
+        // The spool and journal are named after the first track.
         std::string base;
-        for (int n = 1; n < 10000; ++n) {
-            base = (dir / (safeName(audio->name) + " Take " + std::to_string(n))).string();
-            if (!fs::exists(base + ".wav") && !fs::exists(base + ".dlncap") && !fs::exists(base + ".dlntake") &&
-                !fs::exists(base + " (recovered).wav"))
-                break;
+        int take = 1;
+        for (; take < 10000; ++take) {
+            bool free = true;
+            for (const auto *t : audioTracks) {
+                const std::string b = (dir / (safeName(t->name) + " Take " + std::to_string(take))).string();
+                free = free && !fs::exists(b + ".wav") && !fs::exists(b + ".dlncap") && !fs::exists(b + ".dlntake") &&
+                       !fs::exists(b + " (recovered).wav");
+            }
+            if (free) break;
+        }
+        base = (dir / (safeName(audio->name) + " Take " + std::to_string(take))).string();
+        for (const auto *t : audioTracks) {
+            std::string wav = (dir / (safeName(t->name) + " Take " + std::to_string(take))).string() + ".wav";
+            // Two armed tracks with the same name: keep their files apart.
+            for (int k = 2; std::any_of(recordAudio_.begin(), recordAudio_.end(), [&](const RecordAudio &r) { return r.wav == wav; }); ++k)
+                wav = (dir / (safeName(t->name) + " Take " + std::to_string(take) + " (" + std::to_string(k) + ")")).string() + ".wav";
+            recordAudio_.push_back({t->id, t->name, t->inputChannel, wav});
         }
         recordSpool_ = base + ".dlncap";
-        recordWav_ = base + ".wav";
+        recordWav_ = recordAudio_.front().wav;
         recordJournal_ = base + ".dlntake";
         json::Value j = json::Value::makeObject();
         j.set("format", "dalnok-take");
@@ -104,11 +123,23 @@ bool Engine::startRecording(const std::string &inputUid, const std::string &dire
         j.set("trackName", audio->name);
         j.set("inputChannel", audio->inputChannel);
         j.set("sampleRate", sampleRate_);
-        j.set("channels", 1);
+        j.set("channels", static_cast<int64_t>(recordAudio_.size()));
+        json::Value tracks = json::Value::makeArray(); // spool channel i → tracks[i]
+        for (const auto &r : recordAudio_) {
+            json::Value t = json::Value::makeObject();
+            t.set("track", r.track);
+            t.set("trackName", r.name);
+            t.set("inputChannel", r.channel);
+            t.set("wav", fs::path(r.wav).filename().string());
+            tracks.push(std::move(t));
+        }
+        j.set("tracks", std::move(tracks));
         j.set("requestedStart", position());
         j.set("created", static_cast<int64_t>(std::time(nullptr)));
         if (!writeJournal(recordJournal_, j, err)) return false;
-        if (!startCapture(inputUid, audio->inputChannel, recordSpool_, err)) {
+        std::vector<int> channels;
+        for (const auto &r : recordAudio_) channels.push_back(r.channel);
+        if (!startCapture(inputUid, channels, recordSpool_, err)) {
             ::unlink(recordJournal_.c_str()); // nothing was captured; the spool was never created or is empty
             std::error_code ignored;
             if (fs::exists(recordSpool_) && fs::file_size(recordSpool_, ignored) <= 16) ::unlink(recordSpool_.c_str());
@@ -162,6 +193,7 @@ bool Engine::stopRecording(RecordResult &r, std::string &err) {
     // ---- Audio: stop capture, finalize, verify ----
     bool audioOK = true;
     std::shared_ptr<const Media> media;
+    std::vector<std::shared_ptr<const Media>> takes; // one per armed audio track, in recordAudio_ order
     if (recordAudioTrack_) {
         std::string captureErr;
         const bool captureOK = stopCapture(r.stats, captureErr);
@@ -172,29 +204,42 @@ bool Engine::stopRecording(RecordResult &r, std::string &err) {
         if (r.start < 0)
             problems.push_back(punchIn_.load() != INT64_MIN ? "playback never reached the punch-in point, so nothing was recorded"
                                                             : "the transport never started, so nothing was recorded");
+        // One mono WAV per armed track (spool channel i → recordAudio_[i]); each is verified independently.
         uint64_t frames = 0;
         uint32_t trailing = 0;
-        std::string convertErr;
-        const std::string target = audioOK ? recordWav_ : recoveredPath(recordJournal_);
-        const bool converted = r.stats.written_frames > 0 &&
-                               recoverCapture(recordSpool_, target, frames, trailing, convertErr);
-        if (converted) syncDirectory(fs::path(target).parent_path().string());
-        if (audioOK && (!converted || frames != r.stats.written_frames || trailing != 0)) {
-            audioOK = false;
-            problems.push_back(converted ? "the finished file does not match the captured frame count"
-                                         : "could not finalize the take: " + convertErr);
+        bool converted = r.stats.written_frames > 0;
+        for (size_t i = 0; i < recordAudio_.size(); ++i) {
+            std::string convertErr;
+            const std::string target = audioOK ? recordAudio_[i].wav : recoveredPath(recordAudio_[i].wav);
+            uint64_t f = 0;
+            uint32_t t = 0;
+            const bool ok = converted && recoverCapture(recordSpool_, target, f, t, convertErr, static_cast<int>(i));
+            if (ok) { recordAudio_[i].wav = target; frames = f; trailing = t; }
+            if (!ok) {
+                converted = false;
+                if (audioOK) problems.push_back("could not finalize the take: " + convertErr);
+                audioOK = false;
+                break;
+            }
+            if (audioOK && (f != r.stats.written_frames || t != 0)) {
+                audioOK = false;
+                problems.push_back("the finished file does not match the captured frame count");
+            }
         }
-        if (audioOK) {
+        if (converted) syncDirectory(fs::path(recordAudio_.front().wav).parent_path().string());
+        for (size_t i = 0; audioOK && i < recordAudio_.size(); ++i) {
             std::vector<std::vector<float>> ch;
             std::string decodeErr;
-            if (decodeAudioFile(recordWav_, sampleRate_, ch, decodeErr) && !ch.empty() &&
+            if (decodeAudioFile(recordAudio_[i].wav, sampleRate_, ch, decodeErr) && !ch.empty() &&
                 static_cast<uint64_t>(ch[0].size()) == frames)
-                media = std::make_shared<const Media>(std::move(ch), sampleRate_);
+                takes.push_back(std::make_shared<const Media>(std::move(ch), sampleRate_));
             else {
                 audioOK = false;
                 problems.push_back("the finished take could not be read back");
             }
         }
+        if (audioOK) media = takes.front();
+        const std::string target = recordAudio_.front().wav;
         r.frames = converted ? frames : 0;
         r.path = converted ? target : "";
         // Journal: complete takes keep only the WAV; anything else keeps spool + journal.
@@ -213,6 +258,10 @@ bool Engine::stopRecording(RecordResult &r, std::string &err) {
                 j.set("frames", static_cast<int64_t>(r.frames));
                 j.set("start", r.start);
                 if (converted) j.set("recoveredWav", fs::path(target).filename().string());
+                if (converted)
+                    if (json::Value *tracks = j.get("tracks"); tracks && tracks->isArray())
+                        for (size_t i = 0; i < tracks->array.size() && i < recordAudio_.size(); ++i)
+                            tracks->array[i].set("recoveredWav", fs::path(recordAudio_[i].wav).filename().string());
                 std::string all;
                 for (const auto &p : problems) all += (all.empty() ? "" : "; ") + p;
                 j.set("error", all);
@@ -252,13 +301,16 @@ bool Engine::stopRecording(RecordResult &r, std::string &err) {
     // ---- Placement: one undo step ----
     beginGroup("Record");
     std::string placeErr;
-    if (media) {
-        r.media = poolAdd(media, recordWav_);
+    for (size_t i = 0; media && i < takes.size(); ++i) {
+        const DalnokMediaId id = poolAdd(takes[i], recordAudio_[i].wav);
+        if (i == 0) r.media = id;
         int64_t start = r.start - r.latency, offset = 0;
         if (start < 0) { offset = -start; start = 0; }
-        if (offset < media->frames()) {
-            r.audioClip = addClip(recordAudioTrack_, r.media, start, offset, media->frames() - offset, placeErr);
-            if (!r.audioClip) problems.push_back("could not place the take: " + placeErr);
+        if (offset < takes[i]->frames()) {
+            const DalnokClipId clip = addClip(recordAudio_[i].track, id, start, offset, takes[i]->frames() - offset, placeErr);
+            if (!clip) problems.push_back("could not place the take on " + recordAudio_[i].name + ": " + placeErr);
+            if (i == 0) r.audioClip = clip;
+            if (clip) r.audioClips.push_back(clip);
         }
     }
     if (!notes.empty()) {
@@ -302,14 +354,35 @@ bool recoverTake(const std::string &journal, json::Value &out, std::string &err)
         return fail(err, "not a Dalnok take journal");
     const fs::path dir = fs::path(journal).parent_path();
     const std::string target = recoveredPath(journal);
+    const std::string spool = (dir / out.getString("spool", "")).string();
+    uint64_t frames = 0;
+    uint32_t trailing = 0;
+    json::Value *tracks = out.get("tracks");
+    if (tracks && tracks->isArray() && tracks->array.size() > 1) {
+        // Multi-track take: one "<take> (recovered).wav" per track from its spool channel.
+        for (size_t i = 0; i < tracks->array.size(); ++i) {
+            const std::string wav = tracks->array[i].getString("wav", "");
+            if (wav.empty()) return fail(err, "take journal lists a track without a file name");
+            const std::string each = recoveredPath((dir / wav).string());
+            if (!fs::exists(each) && !recoverCapture(spool, each, frames, trailing, err, static_cast<int>(i))) return false;
+            tracks->array[i].set("recoveredWav", fs::path(each).filename().string());
+            if (i == 0) out.set("recoveredWav", fs::path(each).filename().string());
+        }
+        syncDirectory(dir.string());
+        out.set("state", "recovered");
+        out.set("frames", static_cast<int64_t>(frames));
+        out.set("trailingBytes", static_cast<int64_t>(trailing));
+        std::string writeErr;
+        json::Value stored = out;
+        writeJournal(journal, stored, writeErr);
+        out.set("path", recoveredPath((dir / tracks->array[0].getString("wav", "")).string()));
+        return true;
+    }
     if (fs::exists(target)) { // repeated recovery: report the existing file, change nothing
         out.set("recoveredWav", fs::path(target).filename().string());
         out.set("path", target);
         return true;
     }
-    const std::string spool = (dir / out.getString("spool", "")).string();
-    uint64_t frames = 0;
-    uint32_t trailing = 0;
     if (!recoverCapture(spool, target, frames, trailing, err)) return false;
     syncDirectory(dir.string());
     out.set("state", "recovered");

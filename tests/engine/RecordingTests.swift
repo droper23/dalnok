@@ -165,9 +165,13 @@ func files(_ dir: URL) -> [String] {
         #expect(cstr(err).contains("arm"))
         let a = dalnok_track_add(e, "A"), b = dalnok_track_add(e, "B")
         dalnok_track_set_armed(e, a, true)
-        dalnok_track_set_armed(e, b, true) // exclusive per kind
+        dalnok_track_set_armed(e, b, true) // audio tracks can all be armed (one input each)
         var info = DalnokTrackInfo()
         dalnok_track_info(e, a, &info)
+        #expect(info.armed)
+        let k1 = dalnok_track_add_instrument(e, "K1"), k2 = dalnok_track_add_instrument(e, "K2")
+        dalnok_track_set_armed(e, k1, true); dalnok_track_set_armed(e, k2, true) // one MIDI track at a time
+        dalnok_track_info(e, k1, &info)
         #expect(!info.armed)
         #expect(dalnok_record_start(e, nil, dir.path, &err, 256) != DALNOK_OK)
         #expect(cstr(err).contains("input"))

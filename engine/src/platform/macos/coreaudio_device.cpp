@@ -6,6 +6,7 @@
 
 #include <AudioToolbox/AudioToolbox.h>
 #include <CoreAudio/CoreAudio.h>
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 
@@ -287,7 +288,8 @@ private:
             output->mBuffers[1].mDataByteSize < frames * sizeof(float)) {
             self->failed_.store(true, std::memory_order_release); return kAudio_ParamError;
         }
-        const float *selected = nullptr;
+        const float *channels[64] = {};
+        int channelCount = 0;
         const bool continuous = self->clock_.accept(time && (time->mFlags & kAudioTimeStampSampleTimeValid),
                                                     time ? time->mSampleTime : 0, frames);
         if (continuous && frames <= self->maxFrames_) {
@@ -300,12 +302,16 @@ private:
             }
             AudioUnitRenderActionFlags inputFlags = 0;
             const OSStatus s = AudioUnitRender(self->unit_, &inputFlags, time, 1, frames, reinterpret_cast<AudioBufferList *>(&input));
-            if (s == noErr && input.count > static_cast<UInt32>(self->selected_) &&
-                input.buffers[self->selected_].mDataByteSize >= frames * sizeof(float))
-                selected = static_cast<const float *>(input.buffers[self->selected_].mData);
+            if (s == noErr && input.count > static_cast<UInt32>(self->selected_)) {
+                channelCount = static_cast<int>(std::min<UInt32>(input.count, 64));
+                for (int c = 0; c < channelCount; ++c) {
+                    if (input.buffers[c].mDataByteSize < frames * sizeof(float)) { channelCount = 0; break; }
+                    channels[c] = static_cast<const float *>(input.buffers[c].mData);
+                }
+            }
         }
-        if (!selected) self->failed_.store(true, std::memory_order_release);
-        self->cb_(self->ctx_, left, right, selected, static_cast<int>(frames));
+        if (!channelCount) self->failed_.store(true, std::memory_order_release);
+        self->cb_(self->ctx_, left, right, channelCount ? channels : nullptr, channelCount, static_cast<int>(frames));
         return noErr;
     }
     AudioDeviceID device_;

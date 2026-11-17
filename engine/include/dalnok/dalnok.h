@@ -28,7 +28,7 @@
 extern "C" {
 #endif
 
-#define DALNOK_API_VERSION 12
+#define DALNOK_API_VERSION 13
 
 typedef enum {
     DALNOK_OK = 0,
@@ -136,6 +136,9 @@ typedef struct {
     bool recovered;           /* failed take; `path` holds the recovered prefix */
     char path[1024];
     DalnokCaptureStats capture;
+    /* Every armed audio track records its own input; one take (clip) each, all one undo step. */
+    int32_t audio_clip_count;
+    DalnokClipId audio_clips[64];
 } DalnokRecordResult;
 DalnokStatus dalnok_record_start(DalnokEngine *engine, const char *input_device_uid, const char *directory,
                                  char *err, size_t err_len);
@@ -159,9 +162,13 @@ void dalnok_record_set_latency_offset(DalnokEngine *engine, int64_t frames);
 void dalnok_record_set_monitoring(DalnokEngine *engine, bool on);
 /* Simulated device only: the round trip it reports. Tests and simulation. */
 void dalnok_record_set_simulated_latency(DalnokEngine *engine, int64_t frames);
-/* One duplex cycle on DALNOK_SIMULATED_INPUT: `input` is mono, `frames` long. */
+/* One duplex cycle on DALNOK_SIMULATED_INPUT: `input` is mono, `frames` long, and appears on every
+ * device input channel. */
 DalnokStatus dalnok_engine_pump_input(DalnokEngine *engine, const float *input, float *left, float *right,
                                       int32_t frames);
+/* As above with one buffer per device input channel (`count` <= 64). */
+DalnokStatus dalnok_engine_pump_input_channels(DalnokEngine *engine, const float *const *inputs, int32_t count,
+                                               float *left, float *right, int32_t frames);
 /* Lists take journals in a folder as JSON [{"journal","state","wav",...}]; returns full length. [any thread] */
 size_t dalnok_record_scan(const char *directory, char *json, size_t len);
 /* Saves an unfinished take's valid prefix as "<name> (recovered).wav" (spool unchanged).

@@ -28,14 +28,18 @@ void put32(uint8_t *p, uint32_t n) { for (int i = 0; i < 4; ++i) p[i] = static_c
 }
 
 bool recoverCapture(const std::string &source, const std::string &destination,
-                    uint64_t &frames, uint32_t &trailingBytes, std::string &error) {
+                    uint64_t &frames, uint32_t &trailingBytes, std::string &error, int channel) {
     frames = 0; trailingBytes = 0;
     const int input = ::open(source.c_str(), O_RDONLY);
     if (input < 0) { error = "cannot open capture spool"; return false; }
     CaptureSpool::Inspection info;
-    if (!CaptureSpool::inspectFd(input, info) || info.channels > 2) {
+    if (!CaptureSpool::inspectFd(input, info) || (channel < 0 && info.channels > 2) ||
+        (channel >= 0 && static_cast<uint32_t>(channel) >= info.channels)) {
         ::close(input); error = "invalid capture spool or unsupported channel count"; return false;
     }
+    // channel >= 0: a mono file of that spool channel; otherwise every channel (at most two).
+    const uint32_t spoolChannels = info.channels, outChannels = channel >= 0 ? 1 : info.channels;
+    info.channels = outChannels;
     const uint64_t bytes = info.completeFrames * info.channels * sizeof(float);
     if (bytes > std::numeric_limits<uint32_t>::max() - 36) {
         ::close(input); error = "capture is too large for WAV"; return false;
@@ -55,13 +59,36 @@ bool recoverCapture(const std::string &source, const std::string &destination,
     bool ok = writeAll(output, header, sizeof(header));
     uint8_t buffer[65536];
     uint64_t copied = 0;
-    while (ok && copied < bytes) {
-        const auto want = static_cast<size_t>(std::min<uint64_t>(sizeof(buffer), bytes - copied));
-        const auto n = ::pread(input, buffer, want, static_cast<off_t>(16 + copied));
-        if (n < 0 && errno == EINTR) continue;
-        if (n <= 0) { ok = false; break; }
-        ok = writeAll(output, buffer, static_cast<size_t>(n));
-        copied += static_cast<uint64_t>(n);
+    if (channel < 0) {
+        while (ok && copied < bytes) {
+            const auto want = static_cast<size_t>(std::min<uint64_t>(sizeof(buffer), bytes - copied));
+            const auto n = ::pread(input, buffer, want, static_cast<off_t>(16 + copied));
+            if (n < 0 && errno == EINTR) continue;
+            if (n <= 0) { ok = false; break; }
+            ok = writeAll(output, buffer, static_cast<size_t>(n));
+            copied += static_cast<uint64_t>(n);
+        }
+    } else {
+        // De-interleave whole frames: read up to 64 KB of frames, keep one channel's samples.
+        const size_t frameBytes = static_cast<size_t>(spoolChannels) * sizeof(float);
+        const size_t framesPerRead = sizeof(buffer) / frameBytes;
+        std::vector<uint8_t> mono(framesPerRead * sizeof(float));
+        uint64_t frame = 0;
+        while (ok && frame < info.completeFrames) {
+            const auto want = static_cast<size_t>(std::min<uint64_t>(framesPerRead, info.completeFrames - frame));
+            size_t got = 0;
+            while (got < want * frameBytes) {
+                const auto n = ::pread(input, buffer + got, want * frameBytes - got, static_cast<off_t>(16 + frame * frameBytes + got));
+                if (n < 0 && errno == EINTR) continue;
+                if (n <= 0) { ok = false; break; }
+                got += static_cast<size_t>(n);
+            }
+            if (!ok) break;
+            for (size_t i = 0; i < want; ++i)
+                std::memcpy(mono.data() + i * sizeof(float), buffer + i * frameBytes + static_cast<size_t>(channel) * sizeof(float), sizeof(float));
+            ok = writeAll(output, mono.data(), want * sizeof(float));
+            frame += want;
+        }
     }
     if (ok) ok = ::fsync(output) == 0;
     if (::close(output) != 0) ok = false;

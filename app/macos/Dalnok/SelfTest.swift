@@ -626,6 +626,26 @@ final class SelfTest {
               "autopunch keeps exactly the punch range (\(punched?.start ?? -1), \(punched?.length ?? -1))")
         _ = perform("Autopunch")
 
+        // Two armed audio tracks record together: one take each, one undo step.
+        if let second = s.tracks.first(where: { !$0.isInstrument && $0.id != track })?.id {
+            w.headers.select(second)
+            if s.track(second)?.armed != true { _ = perform("Record Enable Track") }
+            check(s.track(track)?.armed == true && s.track(second)?.armed == true, "two audio tracks can be armed together")
+            let before = (s.track(track)?.clips.count ?? 0, s.track(second)?.clips.count ?? 0)
+            e.seek(Int64(s.beatToFrame(s.barToBeat(5)).rounded()))
+            for _ in 0..<2 { dalnok_engine_pump(e.handle, &l, &r, 512) }
+            check(perform("Record", exact: true) && e.isRecording, "multi-track take starts")
+            for _ in 0..<12 { dalnok_engine_pump_input(e.handle, input, &l, &r, 512) }
+            check(perform("Stop Recording", exact: true), "multi-track take stops")
+            check(s.track(track)?.clips.count == before.0 + 1 && s.track(second)?.clips.count == before.1 + 1,
+                  "both armed tracks get a take")
+            check(perform("Undo") && s.track(track)?.clips.count == before.0 && s.track(second)?.clips.count == before.1,
+                  "one undo removes both takes")
+            _ = perform("Redo")
+            w.headers.select(second); _ = perform("Record Enable Track") // disarm
+            w.headers.select(track)
+        } else { check(false, "a second audio track for multi-track recording") }
+
         // Interrupted take: pausing ends it with an explanation; nothing is placed.
         let clipsBeforeInterrupted = s.track(track)?.clips.count ?? 0
         check(perform("Record", exact: true) && e.isRecording, "second take starts")
