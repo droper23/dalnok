@@ -1027,19 +1027,27 @@
           "verified"
         ],
         [
-          "Load and process",
-          "todo"
+          "Load and process: insert effects and instruments, sample-accurate notes, live MIDI",
+          "verified"
         ],
         [
-          "Save state",
-          "todo"
+          "Save and restore plugin state; a missing plugin keeps its state and is bypassed",
+          "verified"
         ],
         [
           "Plugin editor window",
           "todo"
+        ],
+        [
+          "Parameter automation and generic parameter panel",
+          "todo"
+        ],
+        [
+          "Latency compensation (latency is reported only)",
+          "todo"
         ]
       ],
-      "evidence": "PluginDiscovery tests; scripts/ci/plugin-scan.sh builds fake VST3 and CLAP plugins (good, crashing, hanging, printing, no code) and checks that each is classified (ok, crashed, timeout, failed) without affecting the scan, and that results are cached until a bundle changes. On the development Mac, Vital's VST3, CLAP and AU all validate as instruments. Loading onto tracks is not implemented."
+      "evidence": "scripts/ci/plugin-host.sh builds a test VST3 (gain effect, note-driven synth) and checks exact gain, a bit-exact passthrough null test, note on/off on the exact sample across block boundaries, live input, undo/redo, state through save and reopen, and a missing plugin keeping its state (also under ThreadSanitizer). Vital (VST3, third-party) loads as an instrument through the command catalog and renders its notes offline (0.28 RMS during clips, 0.0007 in the gap). Offline renders and exports use separate plugin instances. The app adds and removes VST3 plug-ins from Audio ▸ Plug-ins and the track menu (self-test with the test plugin)."
     },
     {
       "id": "genericui",
@@ -1147,7 +1155,7 @@
           "verified"
         ],
         [
-          "Out-of-process hosting",
+          "Out-of-process hosting (plugins currently run in the app process)",
           "todo"
         ],
         [

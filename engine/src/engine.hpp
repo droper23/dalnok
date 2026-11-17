@@ -7,6 +7,7 @@
 #include "capture_spool.hpp"
 #include "json.hpp"
 #include "midi_parser.hpp"
+#include "plugin_host.hpp"
 #include "render.hpp"
 #include "stretch_cache.hpp"
 
@@ -26,11 +27,21 @@ namespace dalnok {
 
 enum TrackKind : int32_t { kTrackAudio = 0, kTrackInstrument = 1 };
 
+// A plugin on a track: the instrument (instrument tracks) or an insert effect. The live instance
+// lives in Engine::plugins_ by id, outside the undoable model, so undo never reloads plugin code.
+struct PluginSlot {
+    int32_t id = 0;
+    std::string format = "vst3", path, classId, name, vendor;
+    bool instrument = false;
+    std::string state; // last known plugin state (used when the plugin is missing, and for saving)
+};
+
 struct TrackState {
     DalnokTrackId id = 0;
     int32_t kind = kTrackAudio;
     bool armed = false;       // record-enabled
     int32_t inputChannel = 0; // zero-based input of the recording device (audio tracks)
+    std::vector<PluginSlot> plugins; // instrument first (if any), then inserts in processing order
     std::string name;
     int32_t color = 0;        // gradient step (see "06 - Design/Track Colors")
     int32_t customColor = -1; // 0xRRGGBB pinned by the user, or -1 = automatic
@@ -183,6 +194,13 @@ public:
                              std::vector<MidiNote> notes = {}, const char *undoName = "New MIDI Clip");
     bool setNotes(DalnokClipId id, std::vector<MidiNote> notes, std::string &err);
     bool quantize(DalnokClipId id, double gridBeats, double strength, std::string &err);
+    // Plugins (ADR-0009 stage 3). Loading runs plugin code in this process (control thread).
+    int32_t addPlugin(DalnokTrackId track, const std::string &path, const std::string &classId, std::string &err);
+    bool removePlugin(DalnokTrackId track, int32_t slot, std::string &err);
+    PluginProcessor *pluginInstance(int32_t slot) const;
+    std::string pluginError(int32_t slot) const;
+    bool pluginState(int32_t slot, std::string &bytes) const;
+    bool setPluginState(int32_t slot, const std::string &bytes, std::string &err);
     bool recolorAsGradient(std::string &err); // automatic tracks get gradient steps in display order
     DalnokClipId addClip(DalnokTrackId track, DalnokMediaId media, int64_t start, int64_t offset, int64_t length,
                          std::string &err);
@@ -253,7 +271,11 @@ private:
     bool edit(const char *name, bool structural, F &&fn);
     void restore(Model m);
     void syncRuntimes();
-    std::unique_ptr<RenderState> compile(std::vector<StretchJob> *needed = nullptr) const;
+    using PluginMap = std::map<int32_t, std::shared_ptr<PluginProcessor>>;
+    std::unique_ptr<RenderState> compile(std::vector<StretchJob> *needed = nullptr, const PluginMap *plugins = nullptr) const;
+    PluginMap offlinePlugins() const; // fresh instances with the live state, for offline renders
+    void instantiatePlugins();        // creates missing instances for every slot in the model
+    void captureLiveState(Model &m) const;
     StretchKey stretchKey(const ClipState &c) const;
     void renderPendingStretchesNow();
     void commit();
@@ -290,6 +312,9 @@ private:
     std::atomic<uint64_t> captureMissingFrames_{0};
     std::unique_ptr<AudioDevice> device_;
     std::string outputUid_;
+    PluginMap plugins_;                       // live instances by slot id
+    std::map<int32_t, std::string> pluginErrors_;
+    int32_t nextPlugin_ = 1;
     // Recording (control thread)
     bool recording_ = false;
     DalnokTrackId recordAudioTrack_ = 0, recordMidiTrack_ = 0;
@@ -330,6 +355,8 @@ private:
     int clickLeft_ = 0;
     RecordedMidi rtMidiEvents_[256]{};
     int rtMidiCount_ = 0;
+    PluginNote rtLiveNotes_[256]{}; // this callback's live notes for a plugin instrument
+    int rtLiveNoteCount_ = 0;
     std::atomic<float> masterPeakL_{0.0f}, masterPeakR_{0.0f};
 
     // Shared atomics.

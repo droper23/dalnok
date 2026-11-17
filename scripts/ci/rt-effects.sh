@@ -8,7 +8,7 @@ cd "$(dirname "$0")/../.."
 CXX="${CXX:-$(brew --prefix llvm)/bin/clang++}"
 SDK="$(xcrun --show-sdk-path)"
 flags=(-std=c++20 -fsyntax-only -isysroot "$SDK" -Iengine/include -Iengine/src -Iengine/dsp/include
-       -Iengine/third_party/pugixml -Iengine/third_party/signalsmith -DSIGNALSMITH_USE_ACCELERATE -Werror=function-effects)
+       -Iengine/third_party/pugixml -Iengine/third_party/signalsmith -Iengine/third_party/vst3 -DSIGNALSMITH_USE_ACCELERATE -Werror=function-effects)
 "$CXX" --version | head -1
 # Every engine source (all subfolders) plus the DSP target.
 while IFS= read -r f; do

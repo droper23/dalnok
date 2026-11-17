@@ -321,9 +321,15 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
         mute.isOn = t.muted
         solo.isOn = t.solo
         arm.isOn = t.armed
-        inputButton.title = t.isInstrument ? "MIDI" : "IN \(t.inputChannel + 1)"
-        inputButton.toolTip = t.isInstrument ? "Plays the built-in Dalnok Poly from all MIDI inputs when armed"
-                                             : "Recording input channel (click to choose)"
+        let fx = t.effects.count
+        let instrument = t.instrumentName ?? "Dalnok Poly"
+        inputButton.title = (t.isInstrument ? String(instrument.prefix(12)) : "IN \(t.inputChannel + 1)") + (fx > 0 ? " · \(fx) FX" : "")
+        let missing = t.plugins.filter { !$0.loaded }.map(\.name)
+        inputButton.toolTip = (t.isInstrument ? "Instrument: \(instrument). Plays from all MIDI inputs when armed."
+                                              : "Recording input channel (click to choose)")
+            + (fx > 0 ? "\nInserts: " + t.effects.map(\.name).joined(separator: " → ") : "")
+            + (missing.isEmpty ? "" : "\nNot loaded (bypassed): " + missing.joined(separator: ", "))
+        inputButton.contentTintColor = missing.isEmpty ? Theme.textDim : Theme.clipRed
         inputButton.setAccessibilityLabel(t.isInstrument ? "Input, MIDI" : "Input channel \(t.inputChannel + 1), \(t.name)")
         arm.setAccessibilityLabel("Record enable \(t.name)")
         gain.tint = t.muted ? Theme.textFaint : t.color

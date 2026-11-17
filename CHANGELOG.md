@@ -1,6 +1,13 @@
 # Changelog
 
 ## [Unreleased]
+### Added (2026-11-16, VST3 hosting, ADR-0009 stage 3)
+- VST3 plug-ins on tracks: instruments on instrument tracks (notes from clips and live MIDI, sample-accurate) and insert effects on any track, processed every block so tails continue. Add from Audio ▸ Plug-ins (Add to Selected Track); remove from the track's context menu. Adding and removing are undo steps.
+- Plug-in state is saved in the project (base64) and restored on open; a missing plug-in keeps its state and is bypassed. Offline renders and exports use separate instances with the same state.
+- C API `dalnok_plugin_add/remove`, `dalnok_track_plugin_info`, `dalnok_plugin_get_state/set_state`; catalog commands `plugin.add`, `plugin.remove`; `scripts/ci/plugin-host.sh` with a test VST3.
+### Fixed
+- Adding an insert to a mono track switched it to the stereo balance pan law, changing its level; mono sources keep their pan law.
+- The scanner binary no longer links the test plug-in sources that live next to it.
 ### Added (2026-11-16, plugin validation, ADR-0009 stage 2)
 - `dalnok-scan`: loads one VST3, CLAP or Audio Unit per process and reports what it declares; Dalnok runs it with a timeout, four at a time, and caches results until a bundle changes. Crashing, hanging and broken plugins are listed with their status instead of affecting Dalnok.
 - Audio ▸ Plug-ins… (⌥⌘P): searchable list of installed plugins with type, vendor and scan status, and a Scan button. Loading plugins onto tracks is not available yet.

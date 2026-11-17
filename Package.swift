@@ -37,6 +37,7 @@ let package = Package(
             cxxSettings: [
                 .headerSearchPath("src"),
                 .headerSearchPath("third_party/pugixml"),
+                .headerSearchPath("third_party/vst3"),
                 .unsafeFlags(["-Wall", "-Wextra", "-Wfunction-effects", "-Werror=function-effects"]),
             ],
             linkerSettings: [
@@ -63,6 +64,7 @@ let package = Package(
         .executableTarget(
             name: "dalnok-scan",
             path: "tools/dalnok-scan",
+            exclude: ["fixtures"], // test plugins, built by scripts/ci/plugin-*.sh
             cxxSettings: [
                 .headerSearchPath("../../engine/third_party/vst3"),
                 .headerSearchPath("../../engine/third_party/clap/include"),

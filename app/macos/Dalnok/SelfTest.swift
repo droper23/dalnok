@@ -404,6 +404,7 @@ final class SelfTest {
         await recordingAndMidi()
         await motion()
         pluginManager()
+        hostedPlugins()
 
         // Import a REAPER project end to end (fixture built from this run's audio files).
         let media = workdir.appendingPathComponent("Media")
@@ -510,7 +511,7 @@ final class SelfTest {
         // Instrument track and MIDI clip.
         check(perform("New Instrument Track"), "menu Track > New Instrument Track")
         guard let keys = s.tracks.last, keys.isInstrument, keys.armed else { return check(false, "instrument track is armed") }
-        check(w.headers.row(keys.id)?.inputButton.title == "MIDI", "instrument header shows MIDI input")
+        check(w.headers.row(keys.id)?.inputButton.title == "Dalnok Poly", "instrument header names its instrument (Dalnok Poly)")
         e.seek(0)
         try? await Task.sleep(for: .milliseconds(100))
         check(perform("New MIDI Clip"), "menu Clip > New MIDI Clip")
@@ -630,8 +631,32 @@ final class SelfTest {
         check(pm.all.count > 0 && pm.all.contains { $0.format == "AU" && $0.vendor == "Apple" }, "plug-in list shows \(pm.all.count) plug-ins including Apple's Audio Units")
         pm.filter("apple")
         check(!pm.rows.isEmpty && pm.rows.allSatisfy { "\($0.name) \($0.vendor)".lowercased().contains("apple") }, "search narrows the list (\(pm.rows.count))")
-        check(pm.summary.stringValue.contains("not available yet"), "the list says hosting is not available yet")
+        check(pm.summary.stringValue.contains("VST3 plug-ins can be added"), "the list says which formats can be added")
         pm.filter("")
+        pm.window?.orderOut(nil)
+    }
+
+    /// With DALNOK_TEST_VST3 (the test plug-in from scripts/ci/plugin-host.sh): add, show and remove hosted plug-ins.
+    private func hostedPlugins() {
+        guard let bundle = ProcessInfo.processInfo.environment["DALNOK_TEST_VST3"], !bundle.isEmpty else {
+            return print("SKIP  hosted plug-in UI checks (set DALNOK_TEST_VST3)")
+        }
+        guard let keys = s.tracks.first(where: \.isInstrument) else { return check(false, "an instrument track exists") }
+        w.headers.select(keys.id)
+        _ = perform("Plug-ins")
+        let pm = w.pluginManager
+        check(pm.onAdd?(bundle) == nil, "Add to Selected Track loads the test plug-in (the instrument class comes first only if asked)")
+        var t = s.track(keys.id)
+        check(t?.plugins.count == 1, "the track lists its plug-in (\(t?.plugins.map(\.name) ?? []))")
+        // The test bundle's first class is an effect: it becomes an insert after Dalnok Poly.
+        check(w.headers.row(keys.id)?.inputButton.title.contains("1 FX") == true, "header shows the insert (\(w.headers.row(keys.id)?.inputButton.title ?? "-"))")
+        let menu = w.pluginsMenu(for: t!)
+        check(menu.items.first?.title.hasPrefix("Remove Dalnok Test Gain") == true, "track menu offers to remove it")
+        if let remove = menu.items.first { menu.performActionForItem(at: menu.index(of: remove)) }
+        t = s.track(keys.id)
+        check(t?.plugins.isEmpty == true && s.engine.undoName == "Remove Plug-in", "removed through the track menu as one undo step")
+        _ = perform("Undo")
+        check(s.track(keys.id)?.plugins.count == 1, "undo brings the plug-in back")
         pm.window?.orderOut(nil)
     }
 

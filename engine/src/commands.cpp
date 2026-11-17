@@ -126,6 +126,19 @@ const CommandDef kCommands[] = {
          e.setMetronome(a.getBool("on", true), static_cast<float>(a.getNumber("level", 0.5)));
          return DALNOK_OK;
      }},
+    {"plugin.add", "Add Plug-in", "{track, path (VST3 bundle), class? (hex id)}", [](ARGS) {
+         DalnokTrackId t;
+         if (!needInt(a, "track", t, err)) return DALNOK_ERR_INVALID_ARG;
+         const auto id = e.addPlugin(t, a.getString("path", ""), a.getString("class", ""), err);
+         r.set("slot", id);
+         return id ? DALNOK_OK : (err.rfind("no such", 0) == 0 ? DALNOK_ERR_NOT_FOUND : DALNOK_ERR_IO);
+     }},
+    {"plugin.remove", "Remove Plug-in", "{track, slot}", [](ARGS) {
+         DalnokTrackId t;
+         int32_t slot;
+         if (!needInt(a, "track", t, err) || !needInt(a, "slot", slot, err)) return DALNOK_ERR_INVALID_ARG;
+         return status(e.removePlugin(t, slot, err), err);
+     }},
     {"midi.addClip", "New MIDI Clip", "{track, start, length}", [](ARGS) {
          DalnokTrackId t;
          int64_t start, length;

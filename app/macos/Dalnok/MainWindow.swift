@@ -16,7 +16,37 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     lazy var settings = SettingsController()
     lazy var pianoRoll = PianoRollController(session: session)
     lazy var pluginManager = PluginManagerController()
-    @objc func showPlugins(_ sender: Any?) { pluginManager.show() }
+    @objc func showPlugins(_ sender: Any?) {
+        pluginManager.onAdd = { [weak self] path in
+            guard let self, let track = self.selectedTrack else { return "no track selected" }
+            do { _ = try self.session.addPlugin(track, path: path); return nil } catch { return "\(error)" }
+        }
+        pluginManager.selectedTrackName = { [weak self] in self?.selectedTrack.flatMap { self?.session.track($0)?.name } }
+        pluginManager.show()
+        pluginManager.updateAddButton()
+    }
+
+    @objc func removePluginItem(_ sender: NSMenuItem) {
+        guard let (track, slot) = sender.representedObject as? (DalnokTrackId, Int32) else { return }
+        session.removePlugin(track, slot)
+    }
+
+    /// Track context menu: the track's plug-ins (remove) and a way to add more.
+    func pluginsMenu(for track: TrackView) -> NSMenu {
+        let m = NSMenu(title: "Plug-ins")
+        for p in track.plugins {
+            let it = NSMenuItem(title: "Remove \(p.name)\(p.instrument ? " (instrument)" : "")\(p.loaded ? "" : " — not loaded")",
+                                action: #selector(removePluginItem(_:)), keyEquivalent: "")
+            it.representedObject = (track.id, p.id)
+            it.target = self
+            m.addItem(it)
+        }
+        if !track.plugins.isEmpty { m.addItem(.separator()) }
+        let add = NSMenuItem(title: "Add Plug-in…", action: #selector(showPlugins(_:)), keyEquivalent: "")
+        add.target = self
+        m.addItem(add)
+        return m
+    }
     /// True while the piano roll is the window the user is working in (it was opened or clicked last),
     /// so Edit ▸ Delete removes notes there instead of the selected timeline clip.
     var pianoRollIsKey: Bool { pianoRoll.window?.isVisible == true && pianoRoll.focused }
@@ -341,6 +371,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
         if menu.title == "Recording Input" { return buildRecordingInputMenu(menu) }
+        if menu.title == "Track Plug-ins" {
+            guard let track = selectedTrack.flatMap({ session.track($0) }) else { return }
+            for item in pluginsMenu(for: track).items { item.menu?.removeItem(item); menu.addItem(item) }
+            return
+        }
         if menu.title == "MIDI Inputs" {
             connectMidiInputs()
             let sources = Engine.midiSources()
@@ -396,6 +431,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         let color = NSMenuItem(title: "Color", action: nil, keyEquivalent: "")
         color.submenu = colorMenu()
         m.addItem(color)
+        let plugins = NSMenuItem(title: "Plug-ins", action: nil, keyEquivalent: "")
+        plugins.submenu = NSMenu(title: "Track Plug-ins") // filled for the clicked track in menuNeedsUpdate
+        plugins.submenu?.delegate = self
+        m.addItem(plugins)
         m.addItem(.separator())
         let del = NSMenuItem(title: "Delete Track", action: #selector(deleteTrack(_:)), keyEquivalent: "")
         del.target = self

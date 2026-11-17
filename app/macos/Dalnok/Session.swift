@@ -42,6 +42,10 @@ struct TrackView {
     var isInstrument = false
     var armed = false
     var inputChannel: Int32 = 0
+    struct Plugin { let id: Int32; let name: String; let instrument: Bool; let loaded: Bool; let error: String; let latency: UInt32 }
+    var plugins: [Plugin] = []
+    var instrumentName: String? { plugins.first { $0.instrument }?.name }
+    var effects: [Plugin] { plugins.filter { !$0.instrument } }
 }
 
 @MainActor
@@ -89,11 +93,18 @@ final class Session {
                 }
                 clips.append(clip)
             }
+            var plugins: [TrackView.Plugin] = []
+            for k in 0..<dalnok_track_plugin_count(h, tid) {
+                var pi = DalnokPluginSlotInfo()
+                guard dalnok_track_plugin_info(h, tid, k, &pi) == DALNOK_OK else { continue }
+                plugins.append(.init(id: pi.id, name: fixedString(pi.name), instrument: pi.instrument, loaded: pi.loaded,
+                                     error: fixedString(pi.error), latency: pi.latency))
+            }
             out.append(TrackView(id: tid, name: fixedString(ti.name), color: Theme.trackColor(step: Int(ti.color), custom: ti.custom_color),
                                  customColor: ti.custom_color,
                                  gainDb: ti.gain_db, pan: ti.pan, muted: ti.muted, solo: ti.solo, clips: clips,
                                  isInstrument: ti.kind == Int32(DALNOK_TRACK_INSTRUMENT.rawValue), armed: ti.armed,
-                                 inputChannel: ti.input_channel))
+                                 inputChannel: ti.input_channel, plugins: plugins))
         }
         tracks = out
         onChange?()
@@ -126,6 +137,15 @@ final class Session {
         refresh()
     }
     func setInput(_ t: DalnokTrackId, _ channel: Int32) { dalnok_track_set_input(h, t, channel); refresh() }
+    /// Loads a VST3 onto a track (instrument or insert). Runs plugin code on the main thread.
+    func addPlugin(_ t: DalnokTrackId, path: String) throws -> Int32 {
+        var err = [CChar](repeating: 0, count: 512)
+        let id = dalnok_plugin_add(h, t, path, nil, &err, 512)
+        refresh()
+        if id == 0 { throw EngineError(description: cString(err)) }
+        return id
+    }
+    func removePlugin(_ t: DalnokTrackId, _ slot: Int32) { dalnok_plugin_remove(h, t, slot); refresh() }
     @discardableResult
     func addMidiClip(_ t: DalnokTrackId, start: Int64, length: Int64) -> DalnokClipId {
         let id = dalnok_midi_clip_add(h, t, start, length); refresh(); return id

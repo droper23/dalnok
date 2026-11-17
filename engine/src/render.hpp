@@ -10,6 +10,8 @@
 #include "media.hpp"
 #include "rt.hpp"
 #include "synth.hpp"
+#include "plugin_host.hpp"
+#include <array>
 
 #include <atomic>
 #include <memory>
@@ -60,8 +62,12 @@ struct RenderTrack {
     std::shared_ptr<TrackRuntime> runtime;
     std::vector<RenderClip> clips; // z-order: later clips overwrite earlier ones
     bool monoSource = true;        // every clip is mono -> constant-power pan law
-    bool instrument = false;       // MIDI track playing the built-in synth
+    bool instrument = false;       // MIDI track (built-in synth unless instrumentPlugin is set)
     std::vector<RenderNote> notes; // sorted by start
+    std::vector<RenderNote> noteEnds; // the same notes sorted by end (plugin note-offs)
+    PluginProcessor *instrumentPlugin = nullptr;
+    std::vector<PluginProcessor *> inserts;               // processing order
+    std::vector<std::shared_ptr<PluginProcessor>> keep;   // keeps instances alive while this snapshot exists
 };
 
 struct RenderState {
@@ -75,6 +81,11 @@ constexpr int kMaxBlock = 512; // internal processing chunk (frames)
 struct Scratch {
     float trackL[kMaxBlock];
     float trackR[kMaxBlock];
+    float tmp[kMaxBlock];
+    PluginNote events[512];
+    // Live-input notes for the live track's plugin instrument in this block (set by the live path).
+    const PluginNote *liveNotes = nullptr;
+    int liveNoteCount = 0;
 };
 
 // Mixes `frames` (<= kMaxBlock) of `state` at timeline position `pos` into
@@ -85,7 +96,8 @@ struct Scratch {
 void renderBlock(const RenderState &state, int64_t pos, int frames, float *left, float *right,
                  Scratch &scratch, bool smooth, bool anySolo, SynthState *synths = nullptr) DALNOK_NONBLOCKING;
 // Adds live-input instrument voices (independent of the transport) through the track's gain and pan.
+// While the transport is stopped this also runs a plugin instrument (and its inserts) for live notes.
 void renderLiveInput(const RenderState &state, int frames, float *left, float *right, Scratch &scratch,
-                     bool anySolo) DALNOK_NONBLOCKING;
+                     bool anySolo, bool transportStopped) DALNOK_NONBLOCKING;
 
 } // namespace dalnok

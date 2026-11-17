@@ -220,6 +220,49 @@ size_t dalnok_plugins_scan(const char *extra, bool au, char *out, size_t len) {
     return copyOut(out, len, json::serialize(pluginsToJson(list)));
 }
 
+int32_t dalnok_plugin_add(DalnokEngine *e, DalnokTrackId t, const char *path, const char *cid, char *err, size_t len) {
+    if (!e || !path) return 0;
+    std::string msg;
+    const int32_t id = e->impl.addPlugin(t, path, cid ? cid : "", msg);
+    if (!id) copyOut(err, len, msg);
+    return id;
+}
+DalnokStatus dalnok_plugin_remove(DalnokEngine *e, DalnokTrackId t, int32_t slot) {
+    std::string err;
+    return e ? statusFor(e->impl.removePlugin(t, slot, err), err) : DALNOK_ERR_INVALID_ARG;
+}
+int32_t dalnok_track_plugin_count(const DalnokEngine *e, DalnokTrackId t) {
+    const TrackState *tr = e ? e->impl.model().track(t) : nullptr;
+    return tr ? static_cast<int32_t>(tr->plugins.size()) : 0;
+}
+DalnokStatus dalnok_track_plugin_info(const DalnokEngine *e, DalnokTrackId t, int32_t index, DalnokPluginSlotInfo *out) {
+    const TrackState *tr = e ? e->impl.model().track(t) : nullptr;
+    if (!tr || !out) return DALNOK_ERR_INVALID_ARG;
+    if (index < 0 || index >= static_cast<int32_t>(tr->plugins.size())) return DALNOK_ERR_NOT_FOUND;
+    const PluginSlot &slot = tr->plugins[static_cast<size_t>(index)];
+    *out = DalnokPluginSlotInfo{};
+    out->id = slot.id;
+    copyOut(out->name, sizeof out->name, slot.name);
+    copyOut(out->vendor, sizeof out->vendor, slot.vendor);
+    copyOut(out->path, sizeof out->path, slot.path);
+    out->instrument = slot.instrument;
+    PluginProcessor *p = e->impl.pluginInstance(slot.id);
+    out->loaded = p != nullptr;
+    out->latency = p ? p->latency() : 0;
+    copyOut(out->error, sizeof out->error, e->impl.pluginError(slot.id));
+    return DALNOK_OK;
+}
+size_t dalnok_plugin_get_state(const DalnokEngine *e, int32_t slot, char *out, size_t len) {
+    std::string bytes;
+    if (!e || !e->impl.pluginState(slot, bytes)) return copyOut(out, len, "");
+    return copyOut(out, len, base64Encode(bytes));
+}
+DalnokStatus dalnok_plugin_set_state(DalnokEngine *e, int32_t slot, const char *b64) {
+    std::string bytes, err;
+    if (!e || !b64 || !base64Decode(b64, bytes)) return DALNOK_ERR_INVALID_ARG;
+    return statusFor(e->impl.setPluginState(slot, bytes, err), err);
+}
+
 size_t dalnok_plugins_validate(const char *scanner, const char *cache, const char *extra, bool onlyExtra, bool au,
                                const char *filter, int32_t timeoutMs, bool rescan, char *out, size_t len) {
     if (!scanner || !*scanner) return copyOut(out, len, "[]");

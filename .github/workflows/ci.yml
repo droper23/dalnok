@@ -24,6 +24,8 @@ jobs:
         run: scripts/ci/record-crash.sh
       - name: Plugin scan containment (fake crashing and hanging plugins)
         run: scripts/ci/plugin-scan.sh
+      - name: Plugin hosting (test VST3)
+        run: scripts/ci/plugin-host.sh
       - name: Release build
         run: swift build -c release
       # No audio device or GUI session on CI: live smoke test and app self-test run locally (scripts/check.sh).

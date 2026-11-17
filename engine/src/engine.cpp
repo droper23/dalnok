@@ -337,6 +337,8 @@ void Engine::endGroup() {
 
 void Engine::resetModel() {
     model_ = Model{};
+    plugins_.clear(); // snapshots still holding instances release them on this thread
+    pluginErrors_.clear();
     pool_.clear();
     cache_.clear();
     undo_.clear();
@@ -513,6 +515,112 @@ bool Engine::quantize(DalnokClipId id, double gridBeats, double strength, std::s
         c->notes = sortedNotes(std::move(notes));
         return true;
     });
+}
+
+// ---- Plugins ----------------------------------------------------------------
+
+int32_t Engine::addPlugin(DalnokTrackId track, const std::string &path, const std::string &classId, std::string &err) {
+    const TrackState *t = model_.track(track);
+    if (!t) return fail(err, "no such track"), 0;
+    std::shared_ptr<PluginProcessor> instance(loadVst3(path, classId, sampleRate_, kMaxBlock, false, err));
+    if (!instance) return 0;
+    if (instance->instrument() && t->kind != kTrackInstrument) return fail(err, "instrument plug-ins go on instrument tracks"), 0;
+    const int32_t id = nextPlugin_;
+    PluginSlot slot;
+    slot.id = id;
+    slot.path = path;
+    slot.classId = instance->classId();
+    slot.name = instance->name();
+    slot.vendor = instance->vendor();
+    slot.instrument = instance->instrument();
+    instance->getState(slot.state);
+    plugins_[id] = std::move(instance);
+    const bool ok = edit(slot.instrument ? "Set Instrument" : "Add Plug-in", true, [&](Model &m) {
+        TrackState *tr = m.track(track);
+        if (!tr) return fail(err, "no such track");
+        if (slot.instrument) {
+            std::erase_if(tr->plugins, [](const PluginSlot &p) { return p.instrument; }); // replaces the instrument
+            tr->plugins.insert(tr->plugins.begin(), slot);
+        } else {
+            tr->plugins.push_back(slot);
+        }
+        return true;
+    });
+    if (!ok) { plugins_.erase(id); return 0; }
+    ++nextPlugin_;
+    return id;
+}
+
+bool Engine::removePlugin(DalnokTrackId track, int32_t id, std::string &err) {
+    return edit("Remove Plug-in", true, [&](Model &m) {
+        TrackState *t = m.track(track);
+        if (!t) return fail(err, "no such track");
+        const auto before = t->plugins.size();
+        std::erase_if(t->plugins, [id](const PluginSlot &p) { return p.id == id; });
+        if (t->plugins.size() == before) return fail(err, "no such plug-in");
+        return true; // the instance stays loaded for undo
+    });
+}
+
+PluginProcessor *Engine::pluginInstance(int32_t id) const {
+    auto it = plugins_.find(id);
+    return it == plugins_.end() ? nullptr : it->second.get();
+}
+
+std::string Engine::pluginError(int32_t id) const {
+    auto it = pluginErrors_.find(id);
+    return it == pluginErrors_.end() ? "" : it->second;
+}
+
+bool Engine::pluginState(int32_t id, std::string &bytes) const {
+    if (PluginProcessor *p = pluginInstance(id)) return p->getState(bytes);
+    for (const auto &t : model_.tracks)
+        for (const auto &slot : t.plugins)
+            if (slot.id == id) { bytes = slot.state; return true; } // missing plugin: keep what was saved
+    return false;
+}
+
+bool Engine::setPluginState(int32_t id, const std::string &bytes, std::string &err) {
+    PluginProcessor *p = pluginInstance(id);
+    if (!p) return fail(err, "no such plug-in, or it is not loaded");
+    if (!p->setState(bytes)) return fail(err, "the plug-in rejected the state");
+    ++revision_; // plugin state is saved with the project, so the project changed
+    return true;
+}
+
+Engine::PluginMap Engine::offlinePlugins() const {
+    PluginMap out;
+    for (const auto &t : model_.tracks)
+        for (const auto &slot : t.plugins) {
+            if (!pluginInstance(slot.id)) continue;
+            std::string err, state;
+            std::shared_ptr<PluginProcessor> p(loadVst3(slot.path, slot.classId, sampleRate_, kMaxBlock, true, err));
+            if (!p) continue;
+            if (pluginState(slot.id, state)) p->setState(state);
+            out[slot.id] = std::move(p);
+        }
+    return out;
+}
+
+void Engine::instantiatePlugins() {
+    for (const auto &t : model_.tracks)
+        for (const auto &slot : t.plugins) {
+            nextPlugin_ = std::max(nextPlugin_, slot.id + 1);
+            if (plugins_.count(slot.id)) continue;
+            std::string err;
+            std::shared_ptr<PluginProcessor> p(loadVst3(slot.path, slot.classId, sampleRate_, kMaxBlock, false, err));
+            if (!p) { pluginErrors_[slot.id] = err; continue; }
+            if (!slot.state.empty() && !p->setState(slot.state)) pluginErrors_[slot.id] = "the saved state was not accepted";
+            plugins_[slot.id] = std::move(p);
+        }
+}
+
+void Engine::captureLiveState(Model &m) const {
+    for (auto &t : m.tracks)
+        for (auto &slot : t.plugins) {
+            std::string state;
+            if (PluginProcessor *p = pluginInstance(slot.id); p && p->getState(state)) slot.state = std::move(state);
+        }
 }
 
 bool Engine::removeTrack(DalnokTrackId id, std::string &err) {
@@ -768,7 +876,8 @@ bool Engine::clipProcessing(const ClipState &c) const {
     return pe && pe->handle->impl && !cache_.find(stretchKey(c));
 }
 
-std::unique_ptr<RenderState> Engine::compile(std::vector<StretchJob> *needed) const {
+std::unique_ptr<RenderState> Engine::compile(std::vector<StretchJob> *needed, const PluginMap *pluginMap) const {
+    const PluginMap &instances = pluginMap ? *pluginMap : plugins_;
     auto s = std::make_unique<RenderState>();
     s->synth = SynthParams::make(sampleRate_);
     for (const auto &t : model_.tracks) {
@@ -776,6 +885,13 @@ std::unique_ptr<RenderState> Engine::compile(std::vector<StretchJob> *needed) co
         rt.runtime = t.runtime;
         rt.instrument = t.kind == kTrackInstrument;
         if (rt.instrument && t.armed) s->liveTrack = static_cast<int32_t>(s->tracks.size());
+        for (const auto &slot : t.plugins) {
+            auto it = instances.find(slot.id);
+            if (it == instances.end() || !it->second) continue; // missing plugin: insert bypassed, instrument silent
+            rt.keep.push_back(it->second);
+            if (slot.instrument && rt.instrument) rt.instrumentPlugin = it->second.get();
+            else if (!slot.instrument) rt.inserts.push_back(it->second.get());
+        }
         for (const auto &c : model_.clips) {
             if (c.track != t.id) continue;
             if (c.midi()) {
@@ -817,6 +933,9 @@ std::unique_ptr<RenderState> Engine::compile(std::vector<StretchJob> *needed) co
         }
         std::stable_sort(rt.notes.begin(), rt.notes.end(),
                          [](const RenderNote &a, const RenderNote &b) { return a.start < b.start; });
+        rt.noteEnds = rt.notes;
+        std::stable_sort(rt.noteEnds.begin(), rt.noteEnds.end(),
+                         [](const RenderNote &a, const RenderNote &b) { return a.end < b.end; });
         s->tracks.push_back(std::move(rt));
     }
     return s;
@@ -899,7 +1018,9 @@ void Engine::handleMidiInput(int64_t pos) DALNOK_NONBLOCKING {
     RecordedMidi events[kMaxEvents];
     int count = 0;
     const int32_t live = current_ ? current_->liveTrack : -1;
-    SynthState *synth = live >= 0 ? &current_->tracks[static_cast<size_t>(live)].runtime->live : nullptr;
+    const bool pluginLive = live >= 0 && current_->tracks[static_cast<size_t>(live)].instrumentPlugin;
+    SynthState *synth = live >= 0 && !pluginLive ? &current_->tracks[static_cast<size_t>(live)].runtime->live : nullptr;
+    rtLiveNoteCount_ = 0;
     for (auto &slot : midiInputs_) {
         MidiParser *parser = slot.load(std::memory_order_acquire);
         if (!parser) continue;
@@ -907,6 +1028,8 @@ void Engine::handleMidiInput(int64_t pos) DALNOK_NONBLOCKING {
         while (parser->pop(m)) {
             const uint8_t type = m.status & 0xf0;
             const bool on = type == 0x90 && m.data2 > 0, off = type == 0x80 || (type == 0x90 && m.data2 == 0);
+            if (pluginLive && (on || off) && rtLiveNoteCount_ < 256)
+                rtLiveNotes_[rtLiveNoteCount_++] = PluginNote{0, static_cast<uint8_t>(on ? 1 : 0), m.data1, m.data2};
             if (synth && on) synth->noteOn(current_->synth, m.data1, m.data2, -1);
             else if (synth && off) synth->noteOff(current_->synth, m.data1);
             else if (synth && type == 0xb0 && (m.data1 == 120 || m.data1 == 123)) synth->reset();
@@ -966,9 +1089,13 @@ void Engine::process(float *left, float *right, int frames) DALNOK_NONBLOCKING {
 
         if (transportGain_ == 0.0f && target == 0.0f) {
             for (int i = 0; i < n; ++i) l[i] = r[i] = 0.0f;
-            if (current_) renderLiveInput(*current_, n, l, r, scratch_, anySolo);
+            scratch_.liveNotes = rtLiveNotes_;
+            scratch_.liveNoteCount = off == n ? rtLiveNoteCount_ : 0; // live notes go to the first sub-block
+            if (current_) renderLiveInput(*current_, n, l, r, scratch_, anySolo, true);
             continue;
         }
+        scratch_.liveNotes = rtLiveNotes_;
+        scratch_.liveNoteCount = off == n ? rtLiveNoteCount_ : 0;
         if (current_) {
             renderBlock(*current_, rtPosition_, n, l, r, scratch_, true, anySolo);
         } else {
@@ -983,7 +1110,7 @@ void Engine::process(float *left, float *right, int frames) DALNOK_NONBLOCKING {
             }
             transportGain_ = g;
         }
-        if (current_) renderLiveInput(*current_, n, l, r, scratch_, anySolo);
+        if (current_) renderLiveInput(*current_, n, l, r, scratch_, anySolo, false);
         if (play && pendingSeek_ < 0 && (clickLeft_ > 0 || metronome_.load(std::memory_order_relaxed)))
             renderClick(l, r, n, rtPosition_);
         float pl = 0, pr = 0;
@@ -1027,7 +1154,8 @@ void Engine::process(float *left, float *right, int frames) DALNOK_NONBLOCKING {
 bool Engine::renderOffline(int64_t start, int64_t frames, float *left, float *right) {
     if (start < 0 || frames < 0 || !left || !right) return false;
     renderPendingStretchesNow();
-    const auto state = compile();
+    const auto offline = offlinePlugins();
+    const auto state = compile(nullptr, &offline);
     const bool anySolo = soloCount_.load() > 0;
     Scratch scratch{};
     std::vector<SynthState> synths(state->tracks.size());
@@ -1047,7 +1175,8 @@ bool Engine::renderToWav(const std::string &path, int64_t start, int64_t frames,
     std::unique_ptr<WavWriter> w(openWavWriter(path, sampleRate_, bits, err));
     if (!w) return false;
     renderPendingStretchesNow();
-    const auto state = compile();
+    const auto offline = offlinePlugins();
+    const auto state = compile(nullptr, &offline);
     Scratch scratch{};
     std::vector<SynthState> synths(state->tracks.size());
     std::vector<float> l(kMaxBlock * 64), r(kMaxBlock * 64);

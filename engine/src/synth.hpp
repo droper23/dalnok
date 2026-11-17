@@ -49,6 +49,9 @@ struct SynthState {
     std::array<SynthVoice, kSynthVoices> voices{};
     uint64_t counter = 0;
     int64_t expected = -1; // next timeline frame; any other position means a seek
+    // Plugin instruments: notes this render has started and not yet ended, per pitch.
+    std::array<uint8_t, 128> pluginHeld{};
+    int64_t pluginExpected = -1;
 
     void reset() DALNOK_NONBLOCKING {
         for (auto &v : voices) v = SynthVoice{};

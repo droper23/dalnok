@@ -48,5 +48,5 @@ metronome (engine `renderClick`, C API `dalnok_metronome_set`), `Motion.swift` a
 ## Next steps
 1. Loopback latency measurement on the Scarlett (needs an output-to-input cable) and an owner MiniLab recording.
 2. Tempo map and count-in; piano roll marquee selection.
-3. ADR-0009 stage 3: VST3 adapter (stage 2, the out-of-process scanner, is done: `tools/dalnok-scan`, `scripts/ci/plugin-scan.sh`).
+3. VST3 editor windows and parameters (stage 3 hosting is done: `engine/src/platform/macos/vst3_host.cpp`, `scripts/ci/plugin-host.sh`); then Audio Unit hosting.
 4. Review `git log` for this session's commit; publish `site/` only when the owner agrees.

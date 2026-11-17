@@ -99,21 +99,87 @@ bool renderNotes(const RenderTrack &t, const SynthParams &p, SynthState &synth, 
     if (frames > done) synth.render(p, out + done, frames - done, pos + done);
     return true;
 }
+// Timeline notes (and live notes) for a plugin instrument in [pos, pos + frames), in time order.
+// `starts` and `ends` are the same notes sorted by start and by end (may be empty).
+void renderPluginNotes(PluginProcessor *plugin, const RenderNote *starts, const RenderNote *ends, size_t noteCount,
+                       SynthState &state, int64_t pos, int frames, Scratch &s) DALNOK_NONBLOCKING {
+    int count = 0;
+    constexpr int cap = static_cast<int>(sizeof(s.events) / sizeof(s.events[0]));
+    auto push = [&](int offset, bool on, uint8_t pitch, uint8_t velocity) DALNOK_NONBLOCKING {
+        if (count < cap) s.events[count++] = PluginNote{offset, static_cast<uint8_t>(on ? 1 : 0), pitch, velocity};
+    };
+    if (state.pluginExpected != pos) { // seek or first block: end everything this render started
+        for (int p = 0; p < 128; ++p)
+            if (state.pluginHeld[static_cast<size_t>(p)]) { push(0, false, static_cast<uint8_t>(p), 0); state.pluginHeld[static_cast<size_t>(p)] = 0; }
+    }
+    state.pluginExpected = pos + frames;
+    const auto end = pos + frames;
+    for (auto it = std::lower_bound(ends, ends + noteCount, pos,
+                                    [](const RenderNote &n, int64_t at) DALNOK_NONBLOCKING { return n.end < at; });
+         it != ends + noteCount && it->end < end; ++it) {
+        auto &held = state.pluginHeld[it->pitch];
+        if (held) { --held; push(static_cast<int>(it->end - pos), false, it->pitch, 0); }
+    }
+    for (auto it = std::lower_bound(starts, starts + noteCount, pos,
+                                    [](const RenderNote &n, int64_t at) DALNOK_NONBLOCKING { return n.start < at; });
+         it != starts + noteCount && it->start < end; ++it) {
+        auto &held = state.pluginHeld[it->pitch];
+        if (held < 255) ++held;
+        push(static_cast<int>(it->start - pos), true, it->pitch, it->velocity);
+    }
+    for (int i = 0; i < s.liveNoteCount; ++i) push(s.liveNotes[i].offset, s.liveNotes[i].on, s.liveNotes[i].pitch, s.liveNotes[i].velocity);
+    // Stable insertion sort by offset; at equal offsets note-offs come first.
+    for (int i = 1; i < count; ++i) {
+        const PluginNote e = s.events[i];
+        int j = i - 1;
+        while (j >= 0 && (s.events[j].offset > e.offset || (s.events[j].offset == e.offset && s.events[j].on && !e.on))) {
+            s.events[j + 1] = s.events[j];
+            --j;
+        }
+        s.events[j + 1] = e;
+    }
+    clear(s.trackL, frames);
+    clear(s.trackR, frames);
+    plugin->process(s.trackL, s.trackR, frames, s.events, count);
+}
+
+void runInserts(const RenderTrack &t, int frames, Scratch &s) DALNOK_NONBLOCKING {
+    for (PluginProcessor *p : t.inserts) p->process(s.trackL, s.trackR, frames, nullptr, 0);
+}
 } // namespace
 
 void renderLiveInput(const RenderState &state, int frames, float *left, float *right, Scratch &s,
-                     bool anySolo) DALNOK_NONBLOCKING {
+                     bool anySolo, bool transportStopped) DALNOK_NONBLOCKING {
     if (state.liveTrack < 0 || state.liveTrack >= static_cast<int32_t>(state.tracks.size())) return;
     const RenderTrack &t = state.tracks[static_cast<size_t>(state.liveTrack)];
     TrackRuntime &rt = *t.runtime;
-    if (!rt.live.active()) return;
-    clear(s.trackL, frames);
-    rt.live.render(state.synth, s.trackL, frames, -1);
+    bool stereo = false;
+    if (t.instrumentPlugin) {
+        // A plugin instrument plays live input through renderBlock while the transport rolls.
+        if (!transportStopped) return;
+        // No timeline notes while stopped; the live notes are in the scratch. The timeline voice state
+        // (rt.play) is left alone: resuming playback releases what the timeline started.
+        SynthState idle;
+        idle.pluginExpected = 0;
+        renderPluginNotes(t.instrumentPlugin, nullptr, nullptr, 0, idle, 0, frames, s);
+        runInserts(t, frames, s);
+        stereo = true;
+    } else {
+        if (!rt.live.active()) return;
+        clear(s.trackL, frames);
+        rt.live.render(state.synth, s.trackL, frames, -1);
+        if (!t.inserts.empty()) {
+            if (!transportStopped) return; // live input already went through the inserts in renderBlock
+            for (int i = 0; i < frames; ++i) s.trackR[i] = s.trackL[i];
+            runInserts(t, frames, s);
+            stereo = true;
+        }
+    }
     float gl, gr;
-    panGains(rt, true, anySolo, gl, gr);
+    panGains(rt, !t.instrumentPlugin, anySolo, gl, gr); // same pan law as renderBlock
     float pl = 0, pr = 0;
     for (int i = 0; i < frames; ++i) {
-        const float vl = s.trackL[i] * gl, vr = s.trackL[i] * gr;
+        const float vl = s.trackL[i] * gl, vr = (stereo ? s.trackR[i] : s.trackL[i]) * gr;
         left[i] += vl;
         right[i] += vr;
         pl = std::max(pl, std::fabs(vl));
@@ -133,10 +199,22 @@ void renderBlock(const RenderState &state, int64_t pos, int frames, float *left,
         SynthState &synth = synths ? synths[index] : rt.play;
         ++index;
         float gl, gr;
-        panGains(rt, t.monoSource, anySolo, gl, gr);
+        // A mono source keeps its pan law through inserts, so a passthrough insert is transparent;
+        // plugin instruments are stereo sources (balance).
+        panGains(rt, t.monoSource && !t.instrumentPlugin, anySolo, gl, gr);
 
         bool any = false;
-        if (t.instrument && renderNotes(t, state.synth, synth, pos, frames, s.trackL)) {
+        if (t.instrumentPlugin) {
+            // Plugin instruments run every block (tails, internal state); live notes join on the live track.
+            const bool liveHere = !synths && static_cast<int32_t>(index - 1) == state.liveTrack;
+            const PluginNote *live = s.liveNotes;
+            const int liveCount = s.liveNoteCount;
+            if (!liveHere) { s.liveNotes = nullptr; s.liveNoteCount = 0; }
+            renderPluginNotes(t.instrumentPlugin, t.notes.data(), t.noteEnds.data(), t.notes.size(), synth, pos, frames, s);
+            s.liveNotes = live;
+            s.liveNoteCount = liveCount;
+            any = true;
+        } else if (t.instrument && renderNotes(t, state.synth, synth, pos, frames, s.trackL)) {
             for (int i = 0; i < frames; ++i) s.trackR[i] = s.trackL[i];
             any = true;
         }
@@ -148,6 +226,16 @@ void renderBlock(const RenderState &state, int64_t pos, int frames, float *left,
                 any = true;
             }
             mixClip(c, pos, frames, s.trackL, s.trackR);
+        }
+        if (!t.inserts.empty()) {
+            if (!any) { clear(s.trackL, frames); clear(s.trackR, frames); any = true; }
+            // Live input on a built-in-synth track with inserts goes through the inserts too.
+            if (!synths && static_cast<int32_t>(index - 1) == state.liveTrack && !t.instrumentPlugin && rt.live.active()) {
+                clear(s.tmp, frames);
+                rt.live.render(state.synth, s.tmp, frames, -1);
+                for (int i = 0; i < frames; ++i) { s.trackL[i] += s.tmp[i]; s.trackR[i] += s.tmp[i]; }
+            }
+            runInserts(t, frames, s); // every block, so reverb and delay tails continue after clips end
         }
 
         if (!smooth) {

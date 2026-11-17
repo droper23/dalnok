@@ -9,7 +9,7 @@ import DalnokEngine
 @MainActor
 final class PluginManagerController: NSWindowController, NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate {
     struct Plugin {
-        let name, vendor, format, kind, version, status, error: String
+        let name, vendor, format, kind, version, status, error, path: String
         let cached: Bool
     }
     private(set) var all: [Plugin] = []
@@ -18,6 +18,10 @@ final class PluginManagerController: NSWindowController, NSTableViewDataSource, 
     let search = NSSearchField()
     let summary = NSTextField(labelWithString: "")
     let scanButton = NSButton(title: "Scan Plug-ins", target: nil, action: nil)
+    let addButton = NSButton(title: "Add to Selected Track", target: nil, action: nil)
+    /// Adds the plug-in at a VST3 path to the selected track; returns an error message on failure.
+    var onAdd: ((String) -> String?)?
+    var selectedTrackName: (() -> String?)?
     let spinner = NSProgressIndicator()
     private(set) var scanning = false
 
@@ -66,7 +70,10 @@ final class PluginManagerController: NSWindowController, NSTableViewDataSource, 
         summary.font = Theme.ui(11)
         summary.textColor = Theme.textDim
         summary.lineBreakMode = .byTruncatingTail
-        let bar = NSStackView(views: [search, spinner, scanButton])
+        addButton.target = self
+        addButton.action = #selector(addSelected(_:))
+        addButton.isEnabled = false
+        let bar = NSStackView(views: [search, spinner, scanButton, addButton])
         bar.spacing = 8
         let stack = NSStackView(views: [bar, scroll, summary])
         stack.orientation = .vertical
@@ -137,7 +144,8 @@ final class PluginManagerController: NSWindowController, NSTableViewDataSource, 
             let status = scan?["status"] as? String ?? cache[key]?.0 ?? "not scanned"
             return Plugin(name: p["name"] as? String ?? "?", vendor: p["vendor"] as? String ?? "", format: (p["format"] as? String ?? "").uppercased(),
                           kind: p["kind"] as? String ?? "unknown", version: p["version"] as? String ?? "", status: status,
-                          error: scan?["error"] as? String ?? cache[key]?.1 ?? "", cached: scan?["cached"] as? Bool ?? false)
+                          error: scan?["error"] as? String ?? cache[key]?.1 ?? "", path: p["path"] as? String ?? "",
+                          cached: scan?["cached"] as? Bool ?? false)
         }
     }
 
@@ -167,11 +175,30 @@ final class PluginManagerController: NSWindowController, NSTableViewDataSource, 
         let scanned = count("ok") + count("failed") + count("crashed") + count("timeout")
         if scanned > 0 { text += " · scanned: \(count("ok")) ok, \(count("failed")) failed, \(count("crashed")) crashed, \(count("timeout")) timed out" }
         else { text += " · not scanned yet (types come from metadata only)" }
-        text += " · Loading plug-ins onto tracks is not available yet."
+        text += " · VST3 plug-ins can be added to tracks; Audio Units and CLAP come later."
         summary.stringValue = text
     }
     private func value(_ p: Plugin, _ key: String) -> String {
         switch key { case "kind": p.kind; case "format": p.format; case "vendor": p.vendor; case "status": p.status; default: p.name }
+    }
+
+    func tableViewSelectionDidChange(_ notification: Notification) { updateAddButton() }
+    func updateAddButton() {
+        let row = table.selectedRow >= 0 && table.selectedRow < rows.count ? rows[table.selectedRow] : nil
+        let track = selectedTrackName?()
+        addButton.isEnabled = row?.format == "VST3" && track != nil
+        addButton.toolTip = row == nil ? "Select a plug-in" : row?.format != "VST3" ? "Only VST3 plug-ins can be loaded so far"
+            : track == nil ? "Select a track in the arrangement first" : "Add \(row!.name) to \(track!)"
+    }
+    @objc func addSelected(_ sender: Any?) {
+        guard table.selectedRow >= 0, table.selectedRow < rows.count else { return }
+        let p = rows[table.selectedRow]
+        if let error = onAdd?(p.path) { summary.stringValue = "Couldn’t add \(p.name): \(error)" }
+        else { summary.stringValue = "Added \(p.name) to \(selectedTrackName?() ?? "the track")." }
+    }
+    /// Selects the first row whose name matches (tests and keyboard users).
+    func selectRow(named name: String) {
+        if let i = rows.firstIndex(where: { $0.name == name }) { table.selectRowIndexes([i], byExtendingSelection: false); updateAddButton() }
     }
 
     func controlTextDidChange(_ obj: Notification) { apply() }

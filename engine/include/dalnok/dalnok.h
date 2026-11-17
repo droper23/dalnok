@@ -357,6 +357,32 @@ size_t dalnok_plugins_validate(const char *scanner_path, const char *cache_path,
                                bool only_extra_folder, bool include_audio_units, const char *name_filter,
                                int32_t timeout_ms, bool rescan, char *json, size_t len);
 
+/* ---- Hosted plugins (VST3; ADR-0009 stage 3) ---------------------------
+ * Loads plugin code into this process (control thread). An instrument plugin
+ * becomes the instrument of an instrument track (replacing the previous one);
+ * an effect is appended to the track's insert chain. Adding and removing are
+ * undo steps; the instance stays loaded for undo. Offline renders and exports
+ * use separate instances with the same state. A plugin missing when a project
+ * opens keeps its saved state and is bypassed (effects) or silent (instruments). */
+typedef struct {
+    int32_t id;
+    char name[128];
+    char vendor[128];
+    char path[1024];
+    bool instrument;
+    bool loaded;
+    uint32_t latency;  /* frames, as reported (not compensated yet) */
+    char error[256];   /* why it is not loaded */
+} DalnokPluginSlotInfo;
+int32_t dalnok_plugin_add(DalnokEngine *engine, DalnokTrackId track, const char *bundle_path, const char *class_id,
+                          char *err, size_t err_len); /* returns the slot id, 0 on failure */
+DalnokStatus dalnok_plugin_remove(DalnokEngine *engine, DalnokTrackId track, int32_t slot);
+int32_t dalnok_track_plugin_count(const DalnokEngine *engine, DalnokTrackId track);
+DalnokStatus dalnok_track_plugin_info(const DalnokEngine *engine, DalnokTrackId track, int32_t index, DalnokPluginSlotInfo *out);
+/* Plugin state as base64 (presets, tests); returns full length. */
+size_t dalnok_plugin_get_state(const DalnokEngine *engine, int32_t slot, char *base64, size_t len);
+DalnokStatus dalnok_plugin_set_state(DalnokEngine *engine, int32_t slot, const char *base64);
+
 /* ---- Instruments, MIDI clips, tempo --------------------------------- */
 
 /* Adds a track that plays MIDI clips through the built-in Dalnok Poly synth.

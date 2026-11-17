@@ -139,6 +139,24 @@ json::Value Engine::describe() const {
         if (t.kind == kTrackInstrument) { tv.set("kind", "instrument"); tv.set("instrument", "dalnok.poly"); }
         if (t.armed) tv.set("armed", true);
         if (t.inputChannel != 0) tv.set("input", t.inputChannel);
+        if (!t.plugins.empty()) {
+            Value list = Value::makeArray();
+            for (const auto &slot : t.plugins) {
+                Value pv = Value::makeObject();
+                pv.set("id", slot.id);
+                pv.set("format", slot.format);
+                pv.set("path", slot.path);
+                pv.set("class", slot.classId);
+                pv.set("name", slot.name);
+                if (!slot.vendor.empty()) pv.set("vendor", slot.vendor);
+                if (slot.instrument) pv.set("instrument", true);
+                std::string state;
+                if (!pluginState(slot.id, state)) state = slot.state;
+                pv.set("state", base64Encode(state));
+                list.push(std::move(pv));
+            }
+            tv.set("plugins", std::move(list));
+        }
         tv.set("color", t.color);
         if (t.customColor >= 0) {
             char hex[8];
@@ -353,6 +371,25 @@ std::unique_ptr<Engine::PreparedProject> Engine::prepareDocument(const json::Val
             t.kind = tv.getString("kind", "audio") == "instrument" ? kTrackInstrument : kTrackAudio;
             t.armed = tv.getBool("armed", false);
             t.inputChannel = static_cast<int32_t>(std::clamp<int64_t>(toInt(tv, "input"), 0, 63));
+            if (const json::Value *pl = tv.get("plugins"); pl && pl->isArray()) {
+                std::set<int32_t> seen;
+                for (const auto &pv : pl->array) {
+                    PluginSlot slot;
+                    slot.id = static_cast<int32_t>(toInt(pv, "id"));
+                    slot.format = pv.getString("format", "vst3");
+                    slot.path = pv.getString("path", "");
+                    slot.classId = pv.getString("class", "");
+                    slot.name = pv.getString("name", "Plug-in");
+                    slot.vendor = pv.getString("vendor", "");
+                    slot.instrument = pv.getBool("instrument", false);
+                    if (slot.id <= 0 || !seen.insert(slot.id).second || slot.format != "vst3" ||
+                        !base64Decode(pv.getString("state", ""), slot.state)) {
+                        err = "invalid plug-in on track " + t.name;
+                        return nullptr;
+                    }
+                    t.plugins.push_back(std::move(slot));
+                }
+            }
             t.color = static_cast<int32_t>(toInt(tv, "color"));
             if (const auto hex = tv.getString("customColor", ""); hex.size() == 7 && hex[0] == '#')
                 t.customColor = static_cast<int32_t>(std::strtol(hex.c_str() + 1, nullptr, 16));
@@ -468,6 +505,7 @@ void Engine::applyProject(std::unique_ptr<PreparedProject> p, bool recovered) {
     for (auto &[k, m] : p->stretched) cache_.insert(k, std::move(m));
     model_ = std::move(p->model);
     pool_ = std::move(p->pool);
+    instantiatePlugins(); // loads plugin code on this (control) thread; missing plugins keep their state
     nextTrack_ = std::max(nextTrack_, p->maxTrack + 1);
     nextClip_ = std::max(nextClip_, p->maxClip + 1);
     nextMedia_ = std::max(nextMedia_, p->maxMedia + 1);
