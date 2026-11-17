@@ -153,6 +153,29 @@ const CommandDef kCommands[] = {
              }
          return status(e.setAutomation(t, target == "volume" ? kAutoVolume : kAutoPan, std::move(points), err), err);
      }},
+    {"takes.makeFolder", "Make Take Folder", "{track, clips: [clip, ...]}", [](ARGS) {
+         DalnokTrackId t;
+         if (!needInt(a, "track", t, err)) return DALNOK_ERR_INVALID_ARG;
+         std::vector<DalnokClipId> clips;
+         if (const json::Value *l = a.get("clips"); l && l->isArray())
+             for (const auto &v : l->array) if (v.isNumber()) clips.push_back(static_cast<DalnokClipId>(v.number));
+         const auto id = e.addTakeFolder(t, std::move(clips), err);
+         if (!id) return DALNOK_ERR_INVALID_ARG;
+         r.set("folder", id);
+         return DALNOK_OK;
+     }},
+    {"takes.setComp", "Comp", "{folder, comp: [[from, to, take], ...]}", [](ARGS) {
+         int32_t f;
+         if (!needInt(a, "folder", f, err)) return DALNOK_ERR_INVALID_ARG;
+         std::vector<CompSegment> comp;
+         if (const json::Value *l = a.get("comp"); l && l->isArray())
+             for (const auto &v : l->array) {
+                 if (!v.isArray() || v.array.size() != 3) { err = "each segment is [from, to, take]"; return DALNOK_ERR_INVALID_ARG; }
+                 comp.push_back({static_cast<int64_t>(v.array[0].number), static_cast<int64_t>(v.array[1].number),
+                                 static_cast<int32_t>(v.array[2].number)});
+             }
+         return status(e.setComp(f, std::move(comp), err), err);
+     }},
     {"track.setArmed", "Record Enable Track", "{track, armed}", [](ARGS) {
          DalnokTrackId t;
          if (!needInt(a, "track", t, err)) return DALNOK_ERR_INVALID_ARG;

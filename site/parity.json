@@ -543,23 +543,27 @@
       "why": "Logic's swipe comping is the fastest way to build a vocal. Required before the owner switches.",
       "steps": [
         [
-          "Loop or cycle recording into takes",
-          "todo"
+          "Cycle recording into takes (one take per pass, a take folder per armed track)",
+          "verified"
         ],
         [
-          "Take lanes",
-          "todo"
+          "Take lanes (in the Takes window; not yet expanded inside the arrangement)",
+          "implemented"
         ],
         [
-          "Swipe comping",
-          "todo"
+          "Swipe comping, click a take for all of it, one undo step per swipe",
+          "verified"
         ],
         [
           "Automatic crossfades between comp segments",
-          "todo"
+          "implemented"
+        ],
+        [
+          "Make a take folder from overlapping clips",
+          "verified"
         ]
       ],
-      "evidence": "Planned for Phase 4."
+      "evidence": "TakeFolderTests: a 2.5-pass cycle take becomes three takes with exact offsets, the newest pass plays where it exists, a comp change plays the chosen take's exact samples and undoes in one step, invalid comps are rejected, folders survive save/reopen (format 7), and a folder made from two clips comps them. App self-test: cycle recording through the menus makes a folder of 3 takes, double-clicking the comp opens the Takes window, a swipe across Take 1 and a click on Take 2 change the comp, and undo restores it. Crossfades are 256-frame equal-power fades into the following piece; not yet judged by ear. Edits to comp pieces in the arrangement are replaced on the next comp change."
     },
     {
       "id": "clipedit",

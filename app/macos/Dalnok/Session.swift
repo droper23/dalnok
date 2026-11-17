@@ -24,6 +24,7 @@ struct ClipView {
     let name: String
     var notes: [DalnokNote] = [] // MIDI clips only
     var isMidi = false
+    var folder: Int32 = 0 // take folder (comp piece when shown in the arrangement)
     var end: Int64 { start + length }
     var isStretched: Bool { abs(rate - 1) > 1e-9 || pitch != 0 }
     var sourceSpan: Int64 { Int64((Double(length) * rate).rounded()) }
@@ -57,6 +58,8 @@ struct TrackView {
 final class Session {
     let engine: Engine
     private(set) var tracks: [TrackView] = []
+    /// Takes inside take folders (not shown in the arrangement), by clip id.
+    private(set) var takeClips: [DalnokClipId: ClipView] = [:]
     private var revision: UInt64 = 0 // reset to force a rebuild
     var projectURL: URL?
     /// Called after the model changed (any source: UI, undo, scripts).
@@ -78,6 +81,7 @@ final class Session {
         guard rev != revision else { return false }
         revision = rev
         var out: [TrackView] = []
+        takeClips = [:]
         for i in 0..<dalnok_track_count(h) {
             let tid = dalnok_track_at(h, i)
             var ti = DalnokTrackInfo()
@@ -91,6 +95,8 @@ final class Session {
                                     fadeIn: ci.fade_in, fadeOut: ci.fade_out, fadeCurve: ci.fade_curve,
                                     gainDb: ci.gain_db, rate: ci.rate, pitch: ci.pitch, preservePitch: ci.preserve_pitch,
                                     processing: ci.processing, name: fixedString(ci.name))
+                clip.folder = ci.folder
+                if ci.alt { takeClips[ci.id] = clip; continue } // takes live in their folder, not the arrangement
                 if ci.midi {
                     clip.isMidi = true
                     clip.notes = [DalnokNote](repeating: DalnokNote(), count: Int(ci.note_count))
@@ -140,6 +146,28 @@ final class Session {
     }
     func removeSend(_ t: DalnokTrackId, _ bus: DalnokTrackId) { dalnok_track_remove_send(h, t, bus); refresh() }
     var buses: [TrackView] { tracks.filter(\.isBus) }
+    // Take folders
+    func takeFolders(_ track: DalnokTrackId) -> [Int32] {
+        let n = dalnok_take_folders(h, track, nil, 0)
+        var out = [Int32](repeating: 0, count: Int(n))
+        _ = dalnok_take_folders(h, track, &out, n); return out
+    }
+    func takes(_ folder: Int32) -> [ClipView] {
+        let n = dalnok_take_folder_takes(h, folder, nil, 0)
+        var ids = [DalnokClipId](repeating: 0, count: Int(n))
+        _ = dalnok_take_folder_takes(h, folder, &ids, n)
+        return ids.compactMap { takeClips[$0] }
+    }
+    func comp(_ folder: Int32) -> [DalnokCompSegment] {
+        let n = dalnok_take_folder_comp(h, folder, nil, 0)
+        var out = [DalnokCompSegment](repeating: DalnokCompSegment(), count: Int(n))
+        _ = dalnok_take_folder_comp(h, folder, &out, n); return out
+    }
+    @discardableResult
+    func setComp(_ folder: Int32, _ segments: [DalnokCompSegment]) -> Bool {
+        let ok = dalnok_take_folder_set_comp(h, folder, segments, Int32(segments.count)) == DALNOK_OK
+        refresh(); return ok
+    }
     private func automationPoints(_ t: DalnokTrackId, _ target: Int32) -> [DalnokAutoPoint] {
         let n = dalnok_track_automation(h, t, target, nil, 0)
         guard n > 0 else { return [] }

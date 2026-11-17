@@ -28,7 +28,7 @@
 extern "C" {
 #endif
 
-#define DALNOK_API_VERSION 15
+#define DALNOK_API_VERSION 16
 
 typedef enum {
     DALNOK_OK = 0,
@@ -139,6 +139,9 @@ typedef struct {
     /* Every armed audio track records its own input; one take (clip) each, all one undo step. */
     int32_t audio_clip_count;
     DalnokClipId audio_clips[64];
+    /* Recording with cycle on: one take per pass, gathered in a take folder per armed audio track. */
+    int32_t take_folder_count;
+    int32_t take_folders[64];
 } DalnokRecordResult;
 DalnokStatus dalnok_record_start(DalnokEngine *engine, const char *input_device_uid, const char *directory,
                                  char *err, size_t err_len);
@@ -283,6 +286,18 @@ int32_t dalnok_track_sends(const DalnokEngine *engine, DalnokTrackId track, Daln
  * whatever latency their plug-ins (and their buses' plug-ins) add. */
 int32_t dalnok_latency_compensation(const DalnokEngine *engine);
 
+/* ---- Take folders and comping ------------------------------------------
+ * A take folder holds a track's takes (alternate clips, not played) and a comp: ordered segments saying which
+ * take plays where. The comp is realized as ordinary clips tagged with the folder, with short equal-power
+ * crossfades where takes change; it is rebuilt on every comp change (edits to those pieces don't persist). */
+typedef struct { int64_t from, to; int32_t take; } DalnokCompSegment; /* take = index into the folder's takes */
+/* Gathers audio clips on one track into a new folder (later clips cover earlier ones). Returns its id or 0. */
+int32_t dalnok_take_folder_create(DalnokEngine *engine, DalnokTrackId track, const DalnokClipId *takes, int32_t count);
+int32_t dalnok_take_folders(const DalnokEngine *engine, DalnokTrackId track, int32_t *out, int32_t capacity);
+int32_t dalnok_take_folder_takes(const DalnokEngine *engine, int32_t folder, DalnokClipId *out, int32_t capacity);
+int32_t dalnok_take_folder_comp(const DalnokEngine *engine, int32_t folder, DalnokCompSegment *out, int32_t capacity);
+DalnokStatus dalnok_take_folder_set_comp(DalnokEngine *engine, int32_t folder, const DalnokCompSegment *segments, int32_t count);
+
 /* ---- Automation -------------------------------------------------------
  * Breakpoints in timeline frames, linear between points and held before the first and after the last.
  * Volume values are dB (<= +6; <= -95 is silence) and follow the fader's taper between points; pan is -1..1.
@@ -319,6 +334,8 @@ typedef struct {
     char name[128];
     bool midi;            /* MIDI clip (media = 0; see dalnok_midi_clip_notes) */
     int32_t note_count;
+    int32_t folder;       /* take folder (0 = none) */
+    bool alt;             /* a take inside a folder: kept, not played (the comp's pieces play) */
 } DalnokClipInfo;
 DalnokStatus dalnok_clip_info(const DalnokEngine *engine, DalnokClipId clip, DalnokClipInfo *out);
 

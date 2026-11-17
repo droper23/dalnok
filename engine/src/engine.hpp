@@ -80,6 +80,8 @@ using NoteList = std::shared_ptr<const std::vector<MidiNote>>; // immutable; sha
 
 struct ClipState {
     DalnokClipId id = 0;
+    int32_t folder = 0; // take folder this clip belongs to (0 = none)
+    bool alt = false;   // a take inside a folder: kept, not played (the comp's pieces play)
     NoteList notes; // non-null: MIDI clip (media = 0)
     bool midi() const { return notes != nullptr; }
     DalnokTrackId track = 0;
@@ -96,8 +98,22 @@ struct ClipState {
     std::string name;
 };
 
+// Take folder (comping): takes are alternate clips (ClipState::alt, kept but not played); the comp says which
+// take plays where and is realized as ordinary clips tagged with the folder (rebuilt on every comp change).
+struct CompSegment {
+    int64_t from = 0, to = 0; // timeline frames
+    int32_t take = 0;         // index into TakeFolder::takes
+};
+struct TakeFolder {
+    int32_t id = 0;
+    DalnokTrackId track = 0;
+    std::vector<DalnokClipId> takes; // oldest first
+    std::vector<CompSegment> comp;   // sorted, non-overlapping
+};
+
 struct Model {
     std::vector<TrackState> tracks; // display order
+    std::vector<TakeFolder> folders;
     std::vector<ClipState> clips;   // z-order: later = on top
     std::vector<TempoPoint> tempo{TempoPoint{}};    // quarter-note beats; first point at beat 0
     std::vector<MeterChange> meters{MeterChange{}}; // first change at bar 0
@@ -143,6 +159,7 @@ public:
     struct RecordResult {
         DalnokClipId audioClip = 0, midiClip = 0; // audioClip: the first armed audio track's take
         std::vector<DalnokClipId> audioClips;      // every placed audio take, in track order
+        std::vector<int32_t> takeFolders;          // cycle takes: one folder per armed audio track
         DalnokMediaId media = 0;
         uint64_t frames = 0;   // audio frames in the finished or recovered file
         int64_t start = -1;    // timeline frame where the take began (before latency compensation)
@@ -236,6 +253,10 @@ public:
     bool setTrackOutput(DalnokTrackId track, DalnokTrackId bus, std::string &err); // bus 0 = master
     bool setSend(DalnokTrackId track, DalnokTrackId bus, float db, bool pre, std::string &err); // adds or updates
     bool removeSend(DalnokTrackId track, DalnokTrackId bus, std::string &err);
+    // Take folders. setComp replaces the comp (one undo step) and rebuilds the pieces that play.
+    bool setComp(int32_t folder, std::vector<CompSegment> comp, std::string &err);
+    int32_t makeTakeFolder(Model &m, DalnokTrackId track, std::vector<DalnokClipId> takes, std::string &err); // inside an edit
+    int32_t addTakeFolder(DalnokTrackId track, std::vector<DalnokClipId> takes, std::string &err); // its own edit ("Take Folder")
     // Replaces a track's automation lane (sorted by frame; an empty list removes it). One undo step.
     bool setAutomation(DalnokTrackId track, int32_t target, std::vector<AutoPoint> points, std::string &err);
     bool setArmed(DalnokTrackId id, bool armed, std::string &err);
@@ -445,6 +466,8 @@ private:
     std::atomic<bool> cycleOn_{false};
     std::atomic<int64_t> punchIn_{INT64_MIN}, punchOut_{INT64_MAX};
     std::atomic<int64_t> countInUntil_{0};
+    std::atomic<bool> recordCycle_{false};      // this take loops the cycle and becomes one take per pass
+    int64_t recordCycleStart_ = 0, recordCycleEnd_ = 0; // the cycle when that take started (control thread)
     std::atomic<int64_t> cycleStart_{0}, cycleEnd_{0};
 
     // Diagnostics (written by the audio thread).

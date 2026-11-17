@@ -164,6 +164,9 @@ DalnokStatus dalnok_record_stop(DalnokEngine *e, DalnokRecordResult *out, char *
         *out = DalnokRecordResult{};
         out->audio_clip = r.audioClip;
         out->audio_clip_count = 0;
+        out->take_folder_count = 0;
+        for (int32_t f : r.takeFolders)
+            if (out->take_folder_count < 64) out->take_folders[out->take_folder_count++] = f;
         for (DalnokClipId c : r.audioClips)
             if (out->audio_clip_count < 64) out->audio_clips[out->audio_clip_count++] = c;
         out->midi_clip = r.midiClip;
@@ -383,6 +386,44 @@ int32_t dalnok_track_sends(const DalnokEngine *e, DalnokTrackId t, DalnokSend *o
     for (int32_t i = 0; out && i < cap && i < static_cast<int32_t>(tr->sends.size()); ++i)
         out[i] = {tr->sends[static_cast<size_t>(i)].bus, tr->sends[static_cast<size_t>(i)].db, tr->sends[static_cast<size_t>(i)].pre};
     return static_cast<int32_t>(tr->sends.size());
+}
+int32_t dalnok_take_folder_create(DalnokEngine *e, DalnokTrackId t, const DalnokClipId *takes, int32_t count) {
+    if (!e || !takes || count < 1) return 0;
+    std::string err;
+    return e->impl.addTakeFolder(t, std::vector<DalnokClipId>(takes, takes + count), err);
+}
+static const dalnok::TakeFolder *findFolder(const DalnokEngine *e, int32_t id) {
+    if (!e) return nullptr;
+    for (const auto &f : e->impl.model().folders) if (f.id == id) return &f;
+    return nullptr;
+}
+int32_t dalnok_take_folders(const DalnokEngine *e, DalnokTrackId t, int32_t *out, int32_t cap) {
+    if (!e) return 0;
+    int32_t n = 0;
+    for (const auto &f : e->impl.model().folders) if (f.track == t) { if (out && n < cap) out[n] = f.id; ++n; }
+    return n;
+}
+int32_t dalnok_take_folder_takes(const DalnokEngine *e, int32_t folder, DalnokClipId *out, int32_t cap) {
+    const auto *f = findFolder(e, folder);
+    if (!f) return 0;
+    for (int32_t i = 0; out && i < cap && i < static_cast<int32_t>(f->takes.size()); ++i) out[i] = f->takes[static_cast<size_t>(i)];
+    return static_cast<int32_t>(f->takes.size());
+}
+int32_t dalnok_take_folder_comp(const DalnokEngine *e, int32_t folder, DalnokCompSegment *out, int32_t cap) {
+    const auto *f = findFolder(e, folder);
+    if (!f) return 0;
+    for (int32_t i = 0; out && i < cap && i < static_cast<int32_t>(f->comp.size()); ++i) {
+        const auto &c = f->comp[static_cast<size_t>(i)];
+        out[i] = {c.from, c.to, c.take};
+    }
+    return static_cast<int32_t>(f->comp.size());
+}
+DalnokStatus dalnok_take_folder_set_comp(DalnokEngine *e, int32_t folder, const DalnokCompSegment *segs, int32_t count) {
+    if (!e || count < 0 || (count > 0 && !segs)) return DALNOK_ERR_INVALID_ARG;
+    std::vector<dalnok::CompSegment> comp;
+    for (int32_t i = 0; i < count; ++i) comp.push_back({segs[i].from, segs[i].to, segs[i].take});
+    std::string err;
+    return statusFor(e->impl.setComp(folder, std::move(comp), err), err);
 }
 int32_t dalnok_latency_compensation(const DalnokEngine *e) { return e ? e->impl.compensation() : 0; }
 DalnokStatus dalnok_track_set_automation(DalnokEngine *e, DalnokTrackId t, int32_t target, const DalnokAutoPoint *pts,
@@ -649,6 +690,8 @@ DalnokStatus dalnok_clip_info(const DalnokEngine *e, DalnokClipId id, DalnokClip
     out->processing = e->impl.clipProcessing(*c);
     copyOut(out->name, sizeof out->name, c->name);
     out->midi = c->midi();
+    out->folder = c->folder;
+    out->alt = c->alt;
     if (c->midi()) {
         out->offline = false;
         out->note_count = static_cast<int32_t>(c->notes->size());

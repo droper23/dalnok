@@ -154,6 +154,11 @@ bool Engine::startRecording(const std::string &inputUid, const std::string &dire
     recordEnd_.store(-1, std::memory_order_relaxed);
     recordBroken_.store(false, std::memory_order_relaxed);
     recordMidi_.store(midi != nullptr, std::memory_order_relaxed);
+    // With cycle on (and no punch), the take loops the cycle and becomes one take per pass.
+    recordCycleStart_ = cycleStart_.load();
+    recordCycleEnd_ = cycleEnd_.load();
+    recordCycle_.store(cycleOn_.load() && punchIn_.load() == INT64_MIN && recordCycleEnd_ - recordCycleStart_ >= 64,
+                       std::memory_order_release);
     recordTake_.fetch_add(1, std::memory_order_acq_rel);
     recordSession_.store(audio != nullptr, std::memory_order_release);
     recordArmed_.store(true, std::memory_order_release);
@@ -301,16 +306,46 @@ bool Engine::stopRecording(RecordResult &r, std::string &err) {
     // ---- Placement: one undo step ----
     beginGroup("Record");
     std::string placeErr;
+    // Cycle take: cut the capture at every wrap. Pass 0 runs from where recording began to the cycle end;
+    // every later pass starts at the cycle start. Each pass is a take; each track's takes form a take folder.
+    struct Pass { int64_t start, offset, length; };
+    std::vector<Pass> passes;
+    if (media && recordCycle_.load()) {
+        const int64_t total = media->frames(), cs = recordCycleStart_, ce = recordCycleEnd_;
+        int64_t pos = r.start, offset = 0;
+        while (offset < total) {
+            const int64_t len = pos < ce ? std::min(ce - pos, total - offset) : total - offset;
+            passes.push_back({pos, offset, len});
+            offset += len;
+            pos = cs;
+        }
+    }
+    recordCycle_.store(false, std::memory_order_release);
+    if (passes.empty()) passes.push_back({r.start, 0, media ? media->frames() : 0});
     for (size_t i = 0; media && i < takes.size(); ++i) {
         const DalnokMediaId id = poolAdd(takes[i], recordAudio_[i].wav);
         if (i == 0) r.media = id;
-        int64_t start = r.start - r.latency, offset = 0;
-        if (start < 0) { offset = -start; start = 0; }
-        if (offset < takes[i]->frames()) {
-            const DalnokClipId clip = addClip(recordAudio_[i].track, id, start, offset, takes[i]->frames() - offset, placeErr);
+        std::vector<DalnokClipId> trackTakes;
+        for (const auto &p : passes) {
+            int64_t start = p.start - r.latency, offset = p.offset;
+            if (start < 0) { offset -= start; start = 0; }
+            const int64_t length = p.offset + p.length - offset;
+            if (length <= 0 || offset >= takes[i]->frames()) continue;
+            const DalnokClipId clip = addClip(recordAudio_[i].track, id, start, offset, length, placeErr);
             if (!clip) problems.push_back("could not place the take on " + recordAudio_[i].name + ": " + placeErr);
-            if (i == 0) r.audioClip = clip;
-            if (clip) r.audioClips.push_back(clip);
+            else trackTakes.push_back(clip);
+        }
+        if (trackTakes.size() > 1) {
+            const int32_t folder = addTakeFolder(recordAudio_[i].track, trackTakes, placeErr);
+            if (!folder) problems.push_back("could not make the take folder: " + placeErr);
+            r.takeFolders.push_back(folder);
+            // The comp's first piece stands for the track's take in the result.
+            for (const auto &c : model_.clips)
+                if (c.folder == folder && !c.alt) { trackTakes = {c.id}; break; }
+        }
+        if (!trackTakes.empty()) {
+            if (i == 0) r.audioClip = trackTakes.front();
+            r.audioClips.push_back(trackTakes.front());
         }
     }
     if (!notes.empty()) {

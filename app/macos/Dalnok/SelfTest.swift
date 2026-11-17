@@ -664,6 +664,54 @@ final class SelfTest {
             w.headers.select(track)
         } else { check(false, "a second audio track for multi-track recording") }
 
+        // Cycle recording: each pass becomes a take in a take folder; the comp editor swipes between them.
+        do {
+            let c0 = Int64(s.beatToFrame(s.barToBeat(8)).rounded()), c1 = Int64(s.beatToFrame(s.barToBeat(9)).rounded())
+            _ = s.setCycle(true, c0, c1)
+            e.seek(c0)
+            for _ in 0..<2 { dalnok_engine_pump(e.handle, &l, &r, 512) }
+            check(perform("Record", exact: true) && e.isRecording, "cycle take starts")
+            let blocks = Int((c1 - c0) * 5 / 2 / 512) // two and a half passes
+            for _ in 0..<blocks { dalnok_engine_pump_input(e.handle, input, &l, &r, 512) }
+            check(perform("Stop Recording", exact: true), "cycle take stops")
+            _ = s.setCycle(false, c0, c1)
+            let folders = s.takeFolders(track)
+            check(folders.count == 1 && s.takes(folders.first ?? 0).count == 3, "a cycle take makes a folder of 3 takes (\(folders))")
+            if let f = folders.first, let piece = s.track(track)?.clips.first(where: { $0.folder == f }) {
+                let lane = s.tracks.firstIndex { $0.id == track } ?? 0
+                let rect = w.timeline.clipRect(piece, laneY: w.timeline.laneY(lane))
+                let at = w.timeline.convert(CGPoint(x: rect.minX + 8, y: rect.midY), to: nil)
+                w.timeline.mouseDown(with: NSEvent.mouseEvent(with: .leftMouseDown, location: at, modifierFlags: [], timestamp: 0,
+                                                              windowNumber: w.window!.windowNumber, context: nil, eventNumber: 0,
+                                                              clickCount: 2, pressure: 1)!)
+                w.timeline.mouseUp(with: mouse(.leftMouseUp, at))
+                await wait(0.2)
+                let ed = w.compEditor.view
+                check(w.compEditor.window?.isVisible == true && ed.folder == f, "double-clicking a comp opens the take folder")
+                ed.layoutSubtreeIfNeeded(); ed.fit()
+                // Swipe across the first half of take 1.
+                let y = ed.laneTop(0) + CompView.lane / 2
+                let a = ed.convert(CGPoint(x: ed.x(Double(c0)) + 2, y: y), to: nil)
+                let b = ed.convert(CGPoint(x: ed.x(Double(c0 + (c1 - c0) / 2)), y: y), to: nil)
+                ed.mouseDown(with: mouse(.leftMouseDown, a))
+                for k in 1...5 { ed.mouseDragged(with: mouse(.leftMouseDragged, CGPoint(x: a.x + (b.x - a.x) * CGFloat(k) / 5, y: a.y))) }
+                ed.mouseUp(with: mouse(.leftMouseUp, b))
+                let comp = s.comp(f)
+                check(comp.first?.take == 0 && comp.first?.from == c0 && e.undoName == "Comp",
+                      "swiping across take 1 puts it in the comp (\(comp.map { ($0.from, $0.to, $0.take) }))")
+                try? w.compEditor.window?.contentView?.superview.map { v in
+                    let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds)!; v.cacheDisplay(in: v.bounds, to: rep)
+                    try rep.representation(using: .png, properties: [:])?.write(to: workdir.appendingPathComponent("comp-editor.png"))
+                }
+                // Clicking a take's name uses all of it.
+                let name = ed.convert(CGPoint(x: 20, y: ed.laneTop(1) + 10), to: nil)
+                ed.mouseDown(with: mouse(.leftMouseDown, name)); ed.mouseUp(with: mouse(.leftMouseUp, name))
+                check(s.comp(f).count == 1 && s.comp(f).first?.take == 1, "clicking Take 2 comps the whole take")
+                check(perform("Undo") && s.comp(f).first?.take == 0, "undo restores the swiped comp")
+                w.compEditor.window?.orderOut(nil)
+            } else { check(false, "the comp shows in the arrangement") }
+        }
+
         // Interrupted take: pausing ends it with an explanation; nothing is placed.
         let clipsBeforeInterrupted = s.track(track)?.clips.count ?? 0
         check(perform("Record", exact: true) && e.isRecording, "second take starts")

@@ -15,6 +15,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     let emptyState = EmptyStateView()
     lazy var settings = SettingsController()
     lazy var pianoRoll = PianoRollController(session: session)
+    lazy var compEditor = CompEditorController(session: session)
     lazy var pluginManager = PluginManagerController()
     var pluginWindows: [Int32: PluginWindowController] = [:]
 
@@ -197,7 +198,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         headers.onAddTrack = { [weak self] in self?.newTrack(nil) }
         timeline.onVerticalScroll = { [weak self] y in self?.headers.scrollY = y }
         timeline.onClipSelected = { [weak self] clip in self?.headers.selectedTrack = clip.track }
-        timeline.onOpenClip = { [weak self] clip in self?.pianoRoll.show(clip: clip.id) }
+        timeline.onOpenClip = { [weak self] clip in
+            if clip.folder != 0 { self?.compEditor.show(folder: clip.folder) } else { self?.pianoRoll.show(clip: clip.id) }
+        }
         timeline.onActivate = { [weak self] in self?.pianoRoll.focused = false }
         headers.contextMenu = trackContextMenu()
         headers.onSelect = { [weak self] id in
@@ -367,6 +370,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         updateTempoDisplay()
         applyCycle()
         pianoRoll.modelChanged()
+        if compEditor.window?.isVisible == true { compEditor.modelChanged() }
         if devicePanel.track == nil, let first = session.tracks.first?.id { headers.select(first) }
         devicePanel.rebuild()
         if !mixer.isHidden { mixer.rebuild(); mixer.select(selectedTrack) }
@@ -735,6 +739,23 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
     @objc func undo(_ sender: Any?) { session.undo() }
     @objc func redo(_ sender: Any?) { session.redo() }
+
+    /// Clip ▸ Open Take Folder: the comp editor for the selected comp.
+    @objc func openTakeFolder(_ sender: Any?) {
+        guard let c = timeline.selectedClip.flatMap({ session.clip($0) }), c.folder != 0 else { return }
+        compEditor.show(folder: c.folder)
+    }
+    /// Clip ▸ Make Take Folder: the selected audio clips on one track become takes of a new folder.
+    @objc func makeTakeFolder(_ sender: Any?) {
+        let clips = timeline.selectedClips.compactMap { session.clip($0) }.filter { !$0.isMidi && $0.folder == 0 }
+        guard clips.count >= 2, let track = clips.first?.track, clips.allSatisfy({ $0.track == track }) else {
+            return flash("Select two or more audio clips on one track to make a take folder")
+        }
+        let ids = clips.sorted { $0.start < $1.start }.map(\.id)
+        let folder = dalnok_take_folder_create(session.engine.handle, track, ids, Int32(ids.count))
+        session.refresh()
+        if folder != 0 { compEditor.show(folder: folder) } else { flash("Couldn't make a take folder from those clips") }
+    }
 
     @objc func openPianoRoll(_ sender: Any?) {
         guard let c = timeline.selectedClip, session.clip(c)?.isMidi == true else { return }
@@ -1217,6 +1238,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             return pianoRollIsKey ? !pianoRoll.roll.selection.isEmpty : timeline.selectedClip != nil
         case #selector(nudgeClipsLeft(_:)), #selector(nudgeClipsRight(_:)):
             return !pianoRollIsKey && !timeline.selectedClips.isEmpty
+        case #selector(openTakeFolder(_:)):
+            return timeline.selectedClip.flatMap { session.clip($0) }.map { $0.folder != 0 } ?? false
+        case #selector(makeTakeFolder(_:)):
+            let clips = timeline.selectedClips.compactMap { session.clip($0) }
+            return clips.count >= 2 && clips.allSatisfy { !$0.isMidi && $0.folder == 0 && $0.track == clips[0].track }
         case #selector(openPianoRoll(_:)):
             return selectedClipView?.isMidi == true
         case #selector(deleteTrack(_:)), #selector(renameTrack(_:)):

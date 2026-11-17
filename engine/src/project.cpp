@@ -30,7 +30,7 @@ namespace fs = std::filesystem;
 namespace dalnok {
 
 namespace {
-constexpr int kFormatVersion = 6; // 6: volume and pan automation // 3: shared MIDI sources preserve notes crossing split clips; 4: tempo and meter maps;
+constexpr int kFormatVersion = 7; // 6: volume and pan automation; 7: take folders // 3: shared MIDI sources preserve notes crossing split clips; 4: tempo and meter maps;
                                    // 5: bus tracks, track outputs and sends
 constexpr int kConstantTempoVersion = 3; // written when there are no tempo or meter changes, so older builds still open it
 
@@ -251,6 +251,8 @@ json::Value Engine::describe() const {
             cv.set("offset", c.offset);
             cv.set("length", c.length);
             cv.set("name", c.name);
+            if (c.folder) cv.set("folder", c.folder);
+            if (c.alt) cv.set("alt", true);
             if (c.stretched()) {
                 cv.set("rate", c.rate);
                 if (c.pitch != 0) cv.set("pitch", static_cast<double>(c.pitch));
@@ -334,9 +336,29 @@ bool Engine::saveProject(const std::string &path, std::string &err, bool copyMed
     // The oldest version that holds everything in this project, so older builds open what they can play.
     bool routing = false;
     for (const auto &t : model_.tracks) routing = routing || t.kind == kTrackBus || t.output || !t.sends.empty();
+    if (!model_.folders.empty()) {
+        json::Value folders = json::Value::makeArray();
+        for (const auto &f : model_.folders) {
+            json::Value fv = json::Value::makeObject();
+            fv.set("id", f.id);
+            fv.set("track", f.track);
+            json::Value takes = json::Value::makeArray();
+            for (auto id : f.takes) takes.push(id);
+            fv.set("takes", std::move(takes));
+            json::Value comp = json::Value::makeArray();
+            for (const auto &c : f.comp) {
+                json::Value v = json::Value::makeArray();
+                v.push(static_cast<double>(c.from)); v.push(static_cast<double>(c.to)); v.push(c.take);
+                comp.push(std::move(v));
+            }
+            fv.set("comp", std::move(comp));
+            folders.push(std::move(fv));
+        }
+        doc.set("takeFolders", std::move(folders));
+    }
     bool automation = false;
     for (const auto &t : model_.tracks) automation = automation || !t.volumeAuto.empty() || !t.panAuto.empty();
-    doc.set("version", automation ? 6 : routing ? 5 : model_.tempo.size() > 1 || model_.meters.size() > 1 ? 4 : kConstantTempoVersion);
+    doc.set("version", !model_.folders.empty() ? 7 : automation ? 6 : routing ? 5 : model_.tempo.size() > 1 || model_.meters.size() > 1 ? 4 : kConstantTempoVersion);
     json::Value body = describe();
     for (auto &[key, value] : body.object) {
         if (key != "media") continue;
@@ -509,6 +531,8 @@ std::unique_ptr<Engine::PreparedProject> Engine::prepareDocument(const json::Val
                     c.offset = scale(toInt(cv, "offset"));
                     c.length = scale(toInt(cv, "length"));
                     c.name = cv.getString("name", "Audio");
+                    c.folder = static_cast<int32_t>(std::max<int64_t>(0, toInt(cv, "folder")));
+                    c.alt = cv.getBool("alt", false);
                     if (cv.getString("kind", "audio") == "midi") {
                         std::vector<MidiNote> notes;
                         if (const json::Value *nv = cv.get("notes"); nv && nv->isArray())
@@ -580,6 +604,30 @@ std::unique_ptr<Engine::PreparedProject> Engine::prepareDocument(const json::Val
                 }
             }
             model.tracks.push_back(std::move(t));
+        }
+    }
+    // Take folders: every take must exist on the folder's track; comp segments must be valid.
+    if (const json::Value *fl = doc.get("takeFolders")) {
+        if (!fl->isArray()) { err = "invalid take folders"; return nullptr; }
+        for (const auto &fv : fl->array) {
+            TakeFolder f;
+            f.id = static_cast<int32_t>(toInt(fv, "id"));
+            f.track = static_cast<DalnokTrackId>(toInt(fv, "track"));
+            if (const json::Value *tl = fv.get("takes"); tl && tl->isArray())
+                for (const auto &v : tl->array) if (v.isNumber()) f.takes.push_back(static_cast<DalnokClipId>(v.number));
+            if (const json::Value *cl = fv.get("comp"); cl && cl->isArray())
+                for (const auto &v : cl->array)
+                    if (v.isArray() && v.array.size() == 3)
+                        f.comp.push_back({scale(static_cast<int64_t>(v.array[0].number)), scale(static_cast<int64_t>(v.array[1].number)),
+                                          static_cast<int32_t>(v.array[2].number)});
+            bool ok = f.id > 0 && !f.takes.empty() && model.track(f.track);
+            for (auto id : f.takes) {
+                const ClipState *c = model.clip(id);
+                ok = ok && c && c->track == f.track && c->folder == f.id && c->alt;
+            }
+            for (const auto &seg : f.comp) ok = ok && seg.take >= 0 && seg.take < static_cast<int32_t>(f.takes.size()) && seg.to > seg.from;
+            if (!ok) { err = "a take folder is damaged"; return nullptr; }
+            model.folders.push_back(std::move(f));
         }
     }
     // Routing must name existing buses and never loop; a damaged file is an error, not a silent re-route.

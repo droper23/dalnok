@@ -663,6 +663,7 @@ final class TimelineView: NSView {
         var tags: [String] = []
         if clip.offline { tags.append("offline") }
         if clip.isMidi { tags.append(clip.notes.count == 1 ? "1 note" : "\(clip.notes.count) notes") }
+        if clip.folder != 0 { tags.append("⧉ takes \(session.takes(clip.folder).count)") }
         if abs(clip.rate - 1) > 1e-9 { tags.append(String(format: "%.0f%% speed", clip.rate * 100)) }
         if clip.pitch != 0 { tags.append(String(format: "%+g st", Double(clip.pitch))) }
         if !clip.preservePitch && abs(clip.rate - 1) > 1e-9 { tags.append("varispeed") }
@@ -856,7 +857,7 @@ final class TimelineView: NSView {
             selectedClip = clip.id
         }
         onClipSelected?(clip)
-        if event.clickCount == 2 && clip.isMidi { onOpenClip?(clip); return }
+        if event.clickCount == 2 && (clip.isMidi || clip.folder != 0) { onOpenClip?(clip); return }
         let stretch = zone == .rightEdge && event.modifierFlags.contains(.option)
         let moving = zone == .body ? selectedClips.compactMap { session.clip($0) } : [clip]
         drag = Drag(clip: clip, moving: moving, zone: zone, startX: p.x, stretch: stretch)

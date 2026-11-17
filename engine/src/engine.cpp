@@ -872,6 +872,99 @@ bool Engine::setAutomation(DalnokTrackId track, int32_t target, std::vector<Auto
     });
 }
 
+namespace {
+// Rebuilds the clips that play a folder's comp: one piece per segment, cut from its take. A piece that
+// follows another starts a little early and fades in over it (an equal-power crossfade, no gap or click).
+bool realizeComp(Model &m, const TakeFolder &f, DalnokClipId &nextClip, std::string &err) {
+    std::erase_if(m.clips, [&](const ClipState &c) { return c.folder == f.id && !c.alt; });
+    constexpr int64_t kXfade = 256;
+    int64_t prevEnd = -1;
+    for (const auto &seg : f.comp) {
+        const ClipState *take = m.clip(f.takes[static_cast<size_t>(seg.take)]);
+        if (!take) return fail(err, "a take is missing");
+        ClipState piece = *take;
+        piece.id = nextClip++;
+        piece.alt = false;
+        piece.fadeIn = piece.fadeOut = 0;
+        piece.fadeCurve = kFadeEqualPower;
+        int64_t from = seg.from;
+        if (prevEnd == seg.from) { // adjacent to the previous piece: overlap it for the crossfade
+            const int64_t back = std::min({kXfade, seg.from - take->start, take->offset + (seg.from - take->start)});
+            from -= std::max<int64_t>(0, back);
+            piece.fadeIn = seg.from - from;
+        }
+        piece.start = from;
+        piece.offset = take->offset + (from - take->start);
+        piece.length = seg.to - from;
+        m.clips.push_back(std::move(piece));
+        prevEnd = seg.to;
+    }
+    return true;
+}
+} // namespace
+
+int32_t Engine::makeTakeFolder(Model &m, DalnokTrackId track, std::vector<DalnokClipId> takes, std::string &err) {
+    int32_t id = 1;
+    for (const auto &f : m.folders) id = std::max(id, f.id + 1);
+    TakeFolder f;
+    f.id = id;
+    f.track = track;
+    f.takes = std::move(takes);
+    // Default comp: later takes cover earlier ones (the newest pass plays wherever it was recorded).
+    std::vector<CompSegment> comp;
+    for (int32_t k = 0; k < static_cast<int32_t>(f.takes.size()); ++k) {
+        ClipState *c = m.clip(f.takes[static_cast<size_t>(k)]);
+        if (!c) return fail(err, "no such take"), 0;
+        c->folder = id;
+        c->alt = true;
+        const int64_t a = c->start, b = c->start + c->length;
+        std::vector<CompSegment> next;
+        for (const auto &s : comp) { // cut existing segments around [a, b)
+            if (s.to <= a || s.from >= b) { next.push_back(s); continue; }
+            if (s.from < a) next.push_back({s.from, a, s.take});
+            if (s.to > b) next.push_back({b, s.to, s.take});
+        }
+        next.push_back({a, b, k});
+        std::sort(next.begin(), next.end(), [](const CompSegment &x, const CompSegment &y) { return x.from < y.from; });
+        comp = std::move(next);
+    }
+    f.comp = std::move(comp);
+    if (!realizeComp(m, f, nextClip_, err)) return 0;
+    m.folders.push_back(std::move(f));
+    return id;
+}
+
+int32_t Engine::addTakeFolder(DalnokTrackId track, std::vector<DalnokClipId> takes, std::string &err) {
+    int32_t folder = 0;
+    edit("Take Folder", true, [&](Model &m) {
+        for (auto id : takes) {
+            const ClipState *c = m.clip(id);
+            if (!c || c->track != track || c->midi() || c->folder) return fail(err, "takes must be audio clips on the track, not in a folder");
+        }
+        folder = makeTakeFolder(m, track, std::move(takes), err);
+        return folder != 0;
+    });
+    return folder;
+}
+
+bool Engine::setComp(int32_t folder, std::vector<CompSegment> comp, std::string &err) {
+    std::sort(comp.begin(), comp.end(), [](const CompSegment &x, const CompSegment &y) { return x.from < y.from; });
+    return edit("Comp", true, [&](Model &m) {
+        auto it = std::find_if(m.folders.begin(), m.folders.end(), [&](const TakeFolder &f) { return f.id == folder; });
+        if (it == m.folders.end()) return fail(err, "no such take folder");
+        int64_t prev = INT64_MIN;
+        for (const auto &seg : comp) {
+            if (seg.take < 0 || seg.take >= static_cast<int32_t>(it->takes.size()) || seg.to <= seg.from || seg.from < prev)
+                return fail(err, "comp segments must be ordered, non-overlapping and name a take");
+            const ClipState *t = m.clip(it->takes[static_cast<size_t>(seg.take)]);
+            if (!t || seg.from < t->start || seg.to > t->start + t->length) return fail(err, "a comp segment lies outside its take");
+            prev = seg.to;
+        }
+        it->comp = std::move(comp);
+        return realizeComp(m, *it, nextClip_, err);
+    });
+}
+
 bool Engine::removeSend(DalnokTrackId track, DalnokTrackId bus, std::string &err) {
     return edit("Remove Send", true, [&](Model &m) {
         TrackState *t = m.track(track);
@@ -887,6 +980,7 @@ bool Engine::removeTrack(DalnokTrackId id, std::string &err) {
     return edit("Delete Track", true, [&](Model &m) {
         if (!m.track(id)) return fail(err, "no such track");
         std::erase_if(m.tracks, [id](const TrackState &t) { return t.id == id; });
+        std::erase_if(m.folders, [id](const TakeFolder &f) { return f.track == id; });
         for (auto &t : m.tracks) { // whatever fed a deleted bus goes to the master instead
             if (t.output == id) t.output = 0;
             std::erase_if(t.sends, [id](const Send &s) { return s.bus == id; });
@@ -1193,7 +1287,7 @@ std::unique_ptr<RenderState> Engine::compile(std::vector<StretchJob> *needed, co
             else if (!slot.instrument) rt.inserts.push_back(it->second.get());
         }
         for (const auto &c : model_.clips) {
-            if (c.track != t.id) continue;
+            if (c.track != t.id || c.alt) continue; // takes in a folder don't play; the comp's pieces do
             if (c.midi()) {
                 if (!rt.instrument) continue;
                 for (const auto &n : *c.notes) {
@@ -1490,7 +1584,11 @@ void Engine::process(float *left, float *right, int frames) DALNOK_NONBLOCKING {
     const float step = static_cast<float>(1.0 / (kTransportFadeSeconds * sampleRate_));
 
     // Cycle: read once per callback (the control thread writes start/end before enabling).
-    const bool cycling = cycleOn_.load(std::memory_order_acquire) && !recordArmed_.load(std::memory_order_relaxed);
+    // Recording plays straight through, except a cycle take (recordCycle_), which loops and becomes takes.
+    const bool cycleTake = recordCycle_.load(std::memory_order_acquire) && recordArmed_.load(std::memory_order_relaxed);
+    const bool cycling = cycleOn_.load(std::memory_order_acquire) && (!recordArmed_.load(std::memory_order_relaxed) || cycleTake);
+    int64_t advanced = 0; // frames the transport advanced in this callback (cycle wraps included)
+    bool jumped = false;  // a seek landed in this callback
     const int64_t cycleStart = cycleStart_.load(std::memory_order_relaxed), cycleEnd = cycleEnd_.load(std::memory_order_relaxed);
     const bool cycleValid = cycling && cycleEnd - cycleStart >= 64 && cycleStart >= 0;
 
@@ -1505,6 +1603,7 @@ void Engine::process(float *left, float *right, int frames) DALNOK_NONBLOCKING {
         if (pendingSeek_ >= 0 && transportGain_ == 0.0f) {
             rtPosition_ = pendingSeek_;
             pendingSeek_ = -1;
+            jumped = true;
         }
         const float target = (play && pendingSeek_ < 0) ? 1.0f : 0.0f;
 
@@ -1544,6 +1643,7 @@ void Engine::process(float *left, float *right, int frames) DALNOK_NONBLOCKING {
         raisePeak(masterPeakL_, pl);
         raisePeak(masterPeakR_, pr);
         rtPosition_ += n;
+        advanced += n;
         if (cycleValid && play && pendingSeek_ < 0 && rtPosition_ == cycleEnd) rtPosition_ = cycleStart;
     }
     position_.store(pendingSeek_ >= 0 ? pendingSeek_ : rtPosition_, std::memory_order_relaxed);
@@ -1558,9 +1658,21 @@ void Engine::process(float *left, float *right, int frames) DALNOK_NONBLOCKING {
         // Punch window: only frames in [in, out) belong to the take (whole blocks without punch).
         const int64_t in = punchIn_.load(std::memory_order_relaxed), out = punchOut_.load(std::memory_order_relaxed);
         const bool finished = rtRecordNext_ >= 0 && rtRecordNext_ >= out; // past punch-out: nothing more to check
+        if (cycleTake) {
+            // Cycle take: every frame while the transport rolls continuously, across wraps. The control
+            // thread cuts the capture into one take per pass when recording stops.
+            if (advanced == frames && !jumped && pendingSeek_ < 0) {
+                if (rtRecordNext_ < 0) recordStart_.store(before, std::memory_order_release);
+                rtRecordingBlock_ = true;
+                rtRecordNext_ = 0; // started
+                recordEnd_.store(rtPosition_, std::memory_order_release);
+            } else if (rtRecordNext_ >= 0) {
+                recordBroken_.store(true, std::memory_order_release);
+            }
+        }
         // A block that ends with a seek still pending is a fade-out before a jump (e.g. count-in pre-roll
         // requested while playing): it never starts a take, and during a take the jump breaks it below.
-        if (!finished && rtPosition_ - before == frames && pendingSeek_ < 0) {
+        else if (!finished && rtPosition_ - before == frames && pendingSeek_ < 0) {
             const int64_t blockStart = rtPosition_ - frames;
             const int64_t from = std::max(blockStart, in), to = std::min(rtPosition_, out);
             if (to > from) {
