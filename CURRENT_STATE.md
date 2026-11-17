@@ -6,6 +6,7 @@ milestone: Phase 1 + Migration (M5) + Time stretch (M6) + UI pass 1 (M7) done; P
 # Current State
 
 ## Latest session
+- Added an independent bounded SPSC audio capture buffer with all-or-nothing writes and dropped-frame accounting. Native tests pass normally and under ThreadSanitizer; it is not integrated into device capture or disk writing.
 - Open selects foreign projects and asks before import; Logic packages and stem folders are accepted. GUI self-test covers cancel and confirm.
 - Scarlett Solo 4th Gen detected over USB at 48 kHz (4 inputs, 2 outputs). An external 2.66 s capture recorded a very low signal; microphone operation and Dalnok capture are not yet established.
 - ADR-0008 defines the first recording path, failure handling, recovery, and verification gates. Capture is not implemented.
@@ -89,7 +90,7 @@ Phase 2: recording. Recording integrity outranks everything else. Time-stretch l
 [[ADR-0007 Time stretch]]) because real imports needed it.
 
 ## Next recommended action
-Implement and test the capture ring and disk writer described in [[ADR-0008 Recording architecture]], then integrate same-device AUHAL input, record-arm, monitoring, and recovery. The Scarlett is needed for hardware and loopback validation.
+Implement and test the disk writer described in [[ADR-0008 Recording architecture]], then integrate the tested capture buffer with same-device AUHAL input, record-arm, monitoring, and recovery. The Scarlett is needed for hardware and loopback validation.
 
 ## Open migration items
 - Verify Logic `.logicx` placement against a real Logic **Final Cut Pro XML export** of the same project

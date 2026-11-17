@@ -14,6 +14,8 @@ jobs:
         run: swift build
       - name: Engine tests
         run: swift test
+      - name: Capture buffer tests
+        run: scripts/ci/capture-ring.sh
       - name: Release build
         run: swift build -c release
       # No audio device or GUI session on CI: live smoke test and app self-test run locally (scripts/check.sh).
@@ -28,6 +30,9 @@ jobs:
         run: swift test --sanitize=address
       - name: Engine tests (ThreadSanitizer)
         run: swift test --sanitize=thread
+
+      - name: Capture buffer (ThreadSanitizer)
+        run: DALNOK_CAPTURE_TSAN=1 scripts/ci/capture-ring.sh
 
   rt-effects:
     # Xcode's clang on hosted runners may predate [[clang::nonblocking]]; use Homebrew LLVM.

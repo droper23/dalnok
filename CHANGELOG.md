@@ -1,6 +1,9 @@
 # Changelog
 
 ## [Unreleased]
+### Added (2026-11-16, recording foundation)
+- A bounded capture buffer with dropped-frame accounting, tested in isolation and under ThreadSanitizer. Recording is not yet connected.
+
 ### Changed (2026-11-16, Open projects)
 - Open now selects Dalnok and other DAW projects, including Logic packages and stem folders. Foreign projects prompt to import or cancel; the separate import menu was removed.
 
