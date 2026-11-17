@@ -5,7 +5,10 @@ milestone: M11 VST3 hosting (ADR-0009 stage 3) done; editors, parameters and AU 
 ---
 # Current State
 
-## Latest session (MIDI timing)
+## Latest session (self-test reliability)
+- Hardened several GUI self-test array accesses and release timing checks; the self-test passed in Graphite and Warm Analog. The earlier intermittent index crash has no stack trace and is not confirmed resolved.
+
+## Earlier (MIDI timing)
 - Constant tempo changes keep MIDI clips and notes on their beats, while audio remains time-locked. Split MIDI notes continue across adjacent pieces and after save/reopen; offline-render tests and the full `scripts/check.sh` pass. Project format is now version 3; old projects load, but old splits do not retain shared-source identity.
 - Tempo and meter maps remain unimplemented; Phase 3 is not complete. MIDI is still stored in frames and repeated tempo changes round to frames.
 
