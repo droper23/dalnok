@@ -8,7 +8,7 @@ import DalnokEngine
 
 @MainActor
 final class DevicePanel: NSView {
-    static let height: CGFloat = 196
+    static var height: CGFloat { Analog.on ? 268 : 196 } // Warm Analog: room for upright stomp boxes
     let session: Session
     var track: DalnokTrackId? { didSet { if oldValue != track { rebuild() } } }
     private(set) var devices: [DeviceView] = []
@@ -92,7 +92,8 @@ final class DevicePanel: NSView {
     required init?(coder: NSCoder) { fatalError() }
 
     override func draw(_ dirtyRect: NSRect) {
-        (Analog.on ? Theme.hex(0x15100C) : Theme.panel).setFill(); bounds.fill()
+        if Analog.on, let ctx = NSGraphicsContext.current?.cgContext { PedalDraw.board(ctx, bounds) } // a pedalboard
+        else { Theme.panel.setFill(); bounds.fill() }
         Theme.separator.setFill(); NSRect(x: 0, y: bounds.height - 1, width: bounds.width, height: 1).fill()
     }
 
@@ -108,7 +109,7 @@ final class DevicePanel: NSView {
             devices.forEach { $0.removeFromSuperview() }
             if devices.first?.trackId != t?.id { knownCables = [] } // a different track: draw its cables fresh
             devices = plugins.map { p in
-                let d = DeviceView(session: session, track: t!.id, slot: p.id, name: p.name, loaded: p.loaded, color: t!.color)
+                let d = DeviceView(session: session, track: t!.id, slot: p.id, name: p.name, loaded: p.loaded, color: t!.color, vendor: p.vendor)
                 d.onOpen = { [weak self] in self?.onOpen?(t!.id, p.id) }
                 return d
             }
@@ -240,14 +241,18 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
     private let openButton = NSButton(title: "Open", target: nil, action: nil)
     private let editButton = NSButton(title: "Edit Controls", target: nil, action: nil)
     private let grid = NSGridView()
-    private(set) var knobs: [(knob: RotaryKnob, label: NSTextField, value: NSTextField, id: UInt32)] = []
+    private(set) var knobs: [(knob: any ParameterControl, label: NSTextField, value: NSTextField, id: UInt32)] = []
+    /// Warm Analog: the plug-in drawn as a stomp box (nil in Graphite).
+    private(set) var pedal: PedalBody?
+    private let power = NSButton(title: "", target: nil, action: nil)
+    var bypassed: Bool { session.pluginBypassed(trackId, slot) }
     private(set) var allParameters: [DalnokPluginParameter] = []
     private var indexOf: [UInt32: Int32] = [:]
     var onOpen: (() -> Void)?
     static let columns = 4, defaultCount = 8
     static var ear: CGFloat { Analog.on ? 12 : 0 } // rack ear width
 
-    init(session: Session, track: DalnokTrackId, slot: Int32, name: String, loaded: Bool, color: NSColor) {
+    init(session: Session, track: DalnokTrackId, slot: Int32, name: String, loaded: Bool, color: NSColor, vendor: String = "") {
         self.session = session
         self.trackId = track
         self.slot = slot
@@ -257,7 +262,7 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         wantsLayer = true
         layer?.backgroundColor = Analog.on ? nil : Theme.panelRaised.cgColor
         layer?.cornerRadius = Analog.on ? 2 : 6
-        layer?.borderWidth = 1
+        layer?.borderWidth = Analog.on ? 0 : 1
         layer?.borderColor = Theme.hairline.cgColor
         title.stringValue = name
         title.font = Theme.ui(12, .semibold)
@@ -284,25 +289,58 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         sidechain.action = #selector(sidechainChosen)
         sidechain.toolTip = "Sidechain: which track's signal this plug-in listens to (for ducking and keyed effects)"
         sidechain.isHidden = !(loaded && dalnok_plugin_has_sidechain(session.engine.handle, slot))
-        let header = NSStackView(views: [title, NSView(), sidechain, editButton, openButton])
+        // Bypass: the pedal's footswitch in Warm Analog, a power button here in Graphite.
+        power.bezelStyle = .inline
+        power.isBordered = false
+        power.setButtonType(.toggle)
+        power.image = NSImage(systemSymbolName: "power", accessibilityDescription: "Bypass")
+        power.target = self
+        power.action = #selector(toggleBypass)
+        power.toolTip = "On/Off: bypass \(name) (undoable)"
+        power.setAccessibilityLabel("Bypass \(name)")
+        power.isEnabled = loaded
+        power.isHidden = Analog.on
+        let header = NSStackView(views: [power, title, NSView(), sidechain, editButton, openButton])
         header.spacing = 6
+        if Analog.on {
+            title.isHidden = true // the name is lettered on the pedal
+            for b in [editButton, openButton] { b.contentTintColor = Theme.textDim; b.font = Theme.ui(9.5, .semibold) }
+            editButton.title = "Controls…"
+            let p = PedalBody(name: name)
+            p.vendor = vendor
+            p.footswitch.onStomp = { [weak self] in self?.toggleBypass() }
+            p.footswitch.isEnabled = loaded
+            p.menuProvider = { [weak self] in self?.pedalMenu() }
+            pedal = p
+        }
         // Knobs sit in the middle of the unit, so a one-row controller doesn't leave the bottom half empty.
         let above = NSView(), below = NSView()
-        let body = NSStackView(views: [header, above, grid, below])
+        let body = NSStackView(views: pedal.map { [header, $0] } ?? [header, above, grid, below])
         body.orientation = .vertical
-        body.alignment = .leading
+        body.alignment = pedal == nil ? .leading : .centerX
         body.spacing = 4
-        body.edgeInsets = NSEdgeInsets(top: 8, left: 12 + Self.ear, bottom: 8, right: 10 + Self.ear)
+        body.edgeInsets = pedal == nil ? NSEdgeInsets(top: 8, left: 12 + Self.ear, bottom: 8, right: 10 + Self.ear)
+                                       : NSEdgeInsets(top: 0, left: Self.ear, bottom: 2, right: Self.ear)
         body.translatesAutoresizingMaskIntoConstraints = false
         addSubview(body)
         NSLayoutConstraint.activate([
             body.leadingAnchor.constraint(equalTo: leadingAnchor), body.trailingAnchor.constraint(equalTo: trailingAnchor),
             body.topAnchor.constraint(equalTo: topAnchor), body.bottomAnchor.constraint(equalTo: bottomAnchor),
-            above.heightAnchor.constraint(equalTo: below.heightAnchor),
-            header.widthAnchor.constraint(equalTo: body.widthAnchor, constant: -22 - 2 * Self.ear),
-            widthAnchor.constraint(greaterThanOrEqualToConstant: 300),
             heightAnchor.constraint(equalToConstant: DevicePanel.height - 20),
         ])
+        if let pedal {
+            NSLayoutConstraint.activate([
+                header.widthAnchor.constraint(equalTo: pedal.widthAnchor),
+                widthAnchor.constraint(greaterThanOrEqualToConstant: 150),
+            ])
+            pedal.setContentHuggingPriority(.defaultLow, for: .vertical)
+        } else {
+            NSLayoutConstraint.activate([
+                above.heightAnchor.constraint(equalTo: below.heightAnchor),
+                header.widthAnchor.constraint(equalTo: body.widthAnchor, constant: -22 - 2 * Self.ear),
+                widthAnchor.constraint(greaterThanOrEqualToConstant: 300),
+            ])
+        }
         loadParameters()
         refreshControls()
         setAccessibilityElement(true)
@@ -317,19 +355,14 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
             NSRect(x: 0, y: 0, width: 3, height: bounds.height).fill()
             return
         }
-        // A rack unit: textured faceplate, darker rack ears with screws, IN and OUT jacks, and a power LED.
-        Analog.faceplate.setFill(); bounds.fill()
+        // A pedal: the enclosure is the PedalBody; here only the input and output jacks on its sides.
         let ear = Self.ear
         for x in [CGFloat(0), bounds.width - ear] {
-            NSColor(white: 0.10, alpha: 1).setFill()
-            NSRect(x: x, y: 0, width: ear, height: bounds.height).fill()
-            Analog.screw(ctx, at: CGPoint(x: x + ear / 2, y: 10), radius: 3)
-            Analog.screw(ctx, at: CGPoint(x: x + ear / 2, y: bounds.height - 10), radius: 3)
-            Analog.jack(ctx, at: CGPoint(x: x + ear / 2, y: bounds.midY), radius: 4.5)
+            let nut = CGRect(x: x + 1, y: bounds.midY - 6, width: ear - 2, height: 12)
+            NSColor(white: 0.55, alpha: 1).setFill(); NSBezierPath(roundedRect: nut, xRadius: 1.5, yRadius: 1.5).fill()
+            NSColor(white: 0.3, alpha: 1).setFill(); NSRect(x: nut.minX, y: nut.midY - 0.5, width: nut.width, height: 1).fill()
+            Analog.jack(ctx, at: CGPoint(x: x + ear / 2, y: bounds.midY), radius: 4)
         }
-        NSColor(white: 1, alpha: 0.06).setFill(); NSRect(x: ear, y: bounds.height - 1, width: bounds.width - 2 * ear, height: 1).fill()
-        Analog.led(ctx, in: CGRect(x: ear + 6, y: bounds.height - 18, width: 6, height: 6),
-                   color: loaded ? Theme.hex(0x52D273) : Theme.recordOn, lit: true)
     }
 
     private func loadParameters() {
@@ -378,8 +411,10 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
 
     func refreshControls() {
         refreshSidechain()
+        refreshBypass()
         let ids = controlIds
         if knobs.map(\.id) == ids { return refreshValues() }
+        if let pedal { return buildPedal(pedal, ids) }
         while grid.numberOfRows > 0 { grid.removeRow(at: 0) }
         knobs = []
         if !loaded {
@@ -446,6 +481,7 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
 
     /// External changes (the plug-in's own editor) glide the knob and light its ring.
     func refreshValues() {
+        refreshBypass()
         for k in knobs where !k.knob.tracking {
             guard let p = current(k.id) else { continue }
             if abs(p.value - k.knob.value) > 1e-6 { k.knob.glide(to: p.value) }
@@ -454,6 +490,80 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
     }
 
     @objc private func openTapped() { onOpen?() }
+
+    // MARK: Bypass and the pedal (Warm Analog)
+
+    @objc func toggleBypass() {
+        guard loaded else { return }
+        session.setPluginBypassed(trackId, slot, !bypassed)
+        refreshBypass()
+        session.onMessage?(bypassed ? "\(title.stringValue) bypassed" : "\(title.stringValue) on")
+    }
+    private func refreshBypass() {
+        let off = bypassed
+        power.state = off ? .off : .on
+        power.contentTintColor = off ? Theme.textFaint : Theme.accent
+        title.textColor = !loaded || off ? Theme.textFaint : Theme.text
+        pedal?.engaged = loaded && !off
+    }
+
+    private func buildPedal(_ pedal: PedalBody, _ ids: [UInt32]) {
+        knobs = []
+        pedal.message = !loaded ? "Not loaded: bypassed.\nIts settings are kept." : ids.isEmpty ? "No automatable parameters. Use Open." : nil
+        var controls: [PedalControl] = [], names: [NSTextField] = []
+        for id in loaded ? ids : [] {
+            guard let p = current(id) else { continue }
+            let kind = PedalStore.kind(pedal.name, id) ?? PedalControl.defaultKind(steps: p.step_count)
+            let c = PedalControl(kind: kind, look: pedal.look)
+            c.steps = p.step_count
+            c.value = p.value
+            c.defaultValue = p.default_value
+            c.format = { [weak self] _ in self?.current(id).map { self?.display($0) ?? "" } ?? "" }
+            c.onChange = { [weak self] v in self?.set(id, v); c.toolTip = self?.current(id).map { "\(fixedString($0.title)): \(self?.display($0) ?? "")" } }
+            c.onKindChange = { [weak pedal] k in if let pedal { PedalStore.setKind(pedal.name, id, k) } }
+            c.setAccessibilityLabel(fixedString(p.title))
+            c.toolTip = "\(fixedString(p.title)): \(display(p)). Drag up or down (⇧ fine), double-click for the default; right-click to change the control."
+            let name = NSTextField(labelWithString: fixedString(p.title).uppercased())
+            name.font = Theme.ui(6.8, .bold)
+            name.alignment = .center
+            name.lineBreakMode = .byTruncatingTail
+            name.toolTip = fixedString(p.title)
+            let value = label(display(p), dim: true) // read by tests and VoiceOver; the bubble shows it while turning
+            controls.append(c); names.append(name)
+            knobs.append((c, name, value, id))
+        }
+        pedal.setControls(controls, labels: names)
+    }
+
+    /// Right-click on the pedal: bypass, the plug-in's window, controls, and the look (re-roll or pick each part).
+    func pedalMenu() -> NSMenu? {
+        guard let pedal else { return nil }
+        let m = NSMenu()
+        func item(_ t: String, _ f: @escaping () -> Void, on: Bool = false) -> NSMenuItem {
+            let i = ClosureMenuItem(title: t, action: f); i.state = on ? .on : .off; return i
+        }
+        m.addItem(item(bypassed ? "Turn On" : "Bypass", { [weak self] in self?.toggleBypass() }))
+        m.addItem(item("Open Plug-in Window", { [weak self] in self?.onOpen?() }))
+        m.addItem(item("Edit Controls…", { [weak self] in self?.editTapped(self?.editButton) }))
+        m.addItem(.separator())
+        let name = pedal.name
+        let apply = { [weak self, weak pedal] in pedal?.look = PedalStore.look(name); self?.needsDisplay = true }
+        m.addItem(item("New Random Look", { PedalStore.reroll(name); apply() }))
+        func sub(_ title: String, _ entries: [(String, String)], field: String, current: String) {
+            let s = NSMenu()
+            for (t, v) in entries { s.addItem(item(t, { PedalStore.set(name, field, v); apply() }, on: v == current)) }
+            let parent = NSMenuItem(title: title, action: nil, keyEquivalent: ""); parent.submenu = s; m.addItem(parent)
+        }
+        let l = pedal.look
+        sub("Colour", PedalLook.enclosures.enumerated().map { ($0.element.0, String($0.offset)) }, field: "enclosure", current: String(l.enclosure))
+        sub("Finish", PedalLook.Finish.allCases.map { ($0.title, $0.rawValue) }, field: "finish", current: l.finish.rawValue)
+        sub("Knobs", PedalLook.Knob.allCases.map { ($0.title, $0.rawValue) }, field: "knob", current: l.knob.rawValue)
+        sub("Artwork", PedalLook.Artwork.allCases.map { ($0.title, $0.rawValue) }, field: "artwork", current: l.artwork.rawValue)
+        sub("LED", PedalLook.leds.enumerated().map { ($0.element.0, String($0.offset)) }, field: "led", current: String(l.led))
+        sub("Footswitch", PedalLook.Switch.allCases.map { ($0.title, $0.rawValue) }, field: "footswitch", current: l.footswitch.rawValue)
+        m.addItem(item("Reset Look", { PedalStore.reset(name); apply() }))
+        return m
+    }
 
     // MARK: Edit Controls (searchable list; checked parameters are on the controller, in order)
 

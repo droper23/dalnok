@@ -407,6 +407,16 @@ DalnokTrackId dalnok_plugin_sidechain(const DalnokEngine *e, DalnokTrackId t, in
     for (const auto &p : tr->plugins) if (p.id == slot) return p.sidechain;
     return 0;
 }
+DalnokStatus dalnok_plugin_set_bypassed(DalnokEngine *e, DalnokTrackId t, int32_t slot, bool bypassed) {
+    std::string err;
+    return e ? statusFor(e->impl.setPluginBypassed(t, slot, bypassed, err), err) : DALNOK_ERR_INVALID_ARG;
+}
+bool dalnok_plugin_bypassed(const DalnokEngine *e, DalnokTrackId t, int32_t slot) {
+    const auto *tr = e ? e->impl.model().track(t) : nullptr;
+    if (!tr) return false;
+    for (const auto &p : tr->plugins) if (p.id == slot) return p.bypassed;
+    return false;
+}
 bool dalnok_plugin_has_sidechain(const DalnokEngine *e, int32_t slot) { return e && e->impl.pluginHasSidechain(slot); }
 int32_t dalnok_launcher_scenes(const DalnokEngine *e) { return e ? e->impl.model().scenes : 0; }
 DalnokClipId dalnok_launcher_copy_clip(DalnokEngine *e, DalnokClipId clip, int32_t slot) {

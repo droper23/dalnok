@@ -13,7 +13,13 @@ final class TimelineView: NSView {
     /// Leftmost visible timeline frame and zoom (frames per point).
     var scrollFrame: Double = 0 { didSet { if scrollFrame < 0 { scrollFrame = 0 }; needsDisplay = true; updatePlayhead() } }
     var framesPerPoint: Double = 480 { didSet { needsDisplay = true; updatePlayhead() } }
-    var scrollY: CGFloat = 0 { didSet { needsDisplay = true; onVerticalScroll?(scrollY) } }
+    var scrollY: CGFloat = 0 { didSet { if scrollY != oldValue { needsDisplay = true; onVerticalScroll?(scrollY) } } }
+    /// Largest vertical offset that still shows tracks (the track list is one shared vertical viewport).
+    var maxScrollY: CGFloat {
+        max(0, CGFloat(session.tracks.count) * Theme.trackHeight - max(0, bounds.height - Theme.rulerHeight))
+    }
+    /// Keeps the shared vertical offset valid after tracks are removed, collapsed or the view shrinks.
+    func clampScrollY() { scrollY = min(max(0, scrollY), maxScrollY) }
     var onVerticalScroll: ((CGFloat) -> Void)?
     var onSeek: (() -> Void)?
     var onSelectionChange: (() -> Void)?
@@ -1111,8 +1117,14 @@ final class TimelineView: NSView {
     }
 
     override func scrollWheel(with event: NSEvent) {
+        scroll(with: event, zoomAnchorX: convert(event.locationInWindow, from: nil).x)
+    }
+
+    /// One handler for wheel and trackpad scrolling over the arrangement, the track headers and the launcher, so
+    /// they share one vertical viewport and never drift apart. ⌘ or ⌥ zooms around `zoomAnchorX`.
+    func scroll(with event: NSEvent, zoomAnchorX: CGFloat) {
         if event.modifierFlags.contains(.command) || event.modifierFlags.contains(.option) {
-            zoom(by: exp(-event.scrollingDeltaY * 0.01), around: convert(event.locationInWindow, from: nil).x)
+            zoom(by: exp(-event.scrollingDeltaY * 0.01), around: max(0, zoomAnchorX))
             return
         }
         let dx = event.hasPreciseScrollingDeltas ? event.scrollingDeltaX : event.scrollingDeltaX * 8
@@ -1121,8 +1133,7 @@ final class TimelineView: NSView {
         if event.modifierFlags.contains(.shift) && dx == 0 {
             scrollFrame -= Double(dy) * framesPerPoint
         } else {
-            let content = CGFloat(session.tracks.count) * Theme.trackHeight
-            scrollY = min(max(0, scrollY - dy), max(0, content - (bounds.height - Theme.rulerHeight)))
+            scrollY = min(max(0, scrollY - dy), maxScrollY)
         }
     }
 
@@ -1151,6 +1162,7 @@ final class TimelineView: NSView {
 
     override func layout() {
         super.layout()
+        clampScrollY()
         removeAllToolTips()
         addToolTip(CGRect(x: 0, y: 0, width: bounds.width, height: Theme.rulerHeight / 2),
                    owner: "Drag here to set the cycle (loop) region; drag it to move, drag its edges to resize. C turns cycle on or off." as NSString, userData: nil)

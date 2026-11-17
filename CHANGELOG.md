@@ -1,6 +1,12 @@
 # Changelog
 
 ## [Unreleased]
+### Added (2026-11-17, overhaul part 1)
+- Plug-in bypass: an undoable engine edit, saved with the project (format 10, C API 25, `plugin.setBypassed`). A bypassed effect nulls against the dry signal; a bypassed instrument is silent. Graphite shows a power button on each device.
+- Warm Analog pedalboard: every plug-in is a stomp box generated from seeded parameters (finish, colour, knobs, artwork, lettering, LED, footswitch). Its size follows the number of controls, the footswitch is the real bypass, each control can be shown as a knob, small knob, selector, switch or slider, and the look can be re-rolled or overridden part by part.
+### Fixed (2026-11-17, overhaul part 1)
+- Scrolling over the track headers or the clip launcher now scrolls the tracks; knobs in a header no longer take the scroll. The vertical offset stays valid after tracks are removed or collapsed.
+- Analog tape reels turn at a real deck's rate (ω = v/r on a spiral tape pack) instead of almost not at all.
 ### Changed (2026-11-17, visual audit)
 - Refined both themes with aligned mixer controls, clearer track and device hierarchy, and readable muted labels. Warm Analog lamps now warm and cool and patch cables settle when connected; Reduce Motion remains supported.
 ### Added (2026-11-17, nested stacks)

@@ -522,7 +522,11 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
 
 /// Column of track headers; vertically synced with the timeline.
 @MainActor
-final class TrackHeaderColumn: NSView {
+final class TrackHeaderColumn: NSView, TrackScrollHost {
+    /// Scrolling over the headers moves the shared track viewport (owned by the timeline).
+    var onScroll: ((NSEvent) -> Void)?
+    func scrollTracks(with event: NSEvent) { onScroll?(event) }
+    override func scrollWheel(with event: NSEvent) { scrollTracks(with: event) }
     var onToggleStack: ((DalnokTrackId, Bool) -> Void)?
     let session: Session
     private(set) var rows: [TrackHeaderRow] = []
@@ -646,6 +650,25 @@ final class TrackHeaderColumn: NSView {
         Theme.separator.setFill()
         NSRect(x: 0, y: Theme.rulerHeight - 1, width: bounds.width, height: 1).fill()
         NSRect(x: bounds.width - 1, y: 0, width: 1, height: bounds.height).fill()
+    }
+}
+
+/// A view that owns (or forwards to) the shared vertical track viewport. Controls inside it pass wheel and
+/// trackpad scrolling up instead of changing their value, so scrolling over a header never nudges a fader.
+@MainActor
+protocol TrackScrollHost: AnyObject {
+    func scrollTracks(with event: NSEvent)
+}
+
+extension NSView {
+    /// Sends a scroll event to the nearest enclosing `TrackScrollHost`. Returns false when there is none.
+    func forwardScrollToTrackHost(_ event: NSEvent) -> Bool {
+        var v = superview
+        while let s = v {
+            if let host = s as? TrackScrollHost { host.scrollTracks(with: event); return true }
+            v = s.superview
+        }
+        return false
     }
 }
 

@@ -28,7 +28,7 @@
 extern "C" {
 #endif
 
-#define DALNOK_API_VERSION 24
+#define DALNOK_API_VERSION 25
 
 typedef enum {
     DALNOK_OK = 0,
@@ -340,6 +340,10 @@ DalnokStatus dalnok_track_stack_ungroup(DalnokEngine *engine, DalnokTrackId stac
 DalnokStatus dalnok_plugin_set_sidechain(DalnokEngine *engine, DalnokTrackId track, int32_t slot, DalnokTrackId source);
 DalnokTrackId dalnok_plugin_sidechain(const DalnokEngine *engine, DalnokTrackId track, int32_t slot);
 bool dalnok_plugin_has_sidechain(const DalnokEngine *engine, int32_t slot);
+/* Bypass (API 25): a bypassed effect passes audio through untouched (it leaves the insert chain and the
+ * delay compensation); a bypassed instrument is silent. Saved with the project; undoable. */
+DalnokStatus dalnok_plugin_set_bypassed(DalnokEngine *engine, DalnokTrackId track, int32_t slot, bool bypassed);
+bool dalnok_plugin_bypassed(const DalnokEngine *engine, DalnokTrackId track, int32_t slot);
 
 /* ---- Automation -------------------------------------------------------
  * Breakpoints in timeline frames, linear between points and held before the first and after the last.

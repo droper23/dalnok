@@ -45,7 +45,7 @@ struct TrackView {
     var isInstrument = false
     var armed = false
     var inputChannel: Int32 = 0
-    struct Plugin { let id: Int32; let name: String; let instrument: Bool; let loaded: Bool; let error: String; let latency: UInt32 }
+    struct Plugin { let id: Int32; let name: String; let vendor: String; let instrument: Bool; let loaded: Bool; let error: String; let latency: UInt32; let bypassed: Bool }
     var plugins: [Plugin] = []
     var isBus = false
     var output: DalnokTrackId = 0 // 0 = master
@@ -125,8 +125,8 @@ final class Session {
             for k in 0..<dalnok_track_plugin_count(h, tid) {
                 var pi = DalnokPluginSlotInfo()
                 guard dalnok_track_plugin_info(h, tid, k, &pi) == DALNOK_OK else { continue }
-                plugins.append(.init(id: pi.id, name: fixedString(pi.name), instrument: pi.instrument, loaded: pi.loaded,
-                                     error: fixedString(pi.error), latency: pi.latency))
+                plugins.append(.init(id: pi.id, name: fixedString(pi.name), vendor: fixedString(pi.vendor), instrument: pi.instrument, loaded: pi.loaded,
+                                     error: fixedString(pi.error), latency: pi.latency, bypassed: dalnok_plugin_bypassed(h, tid, pi.id)))
             }
             var sends = [DalnokSend](repeating: DalnokSend(), count: 16)
             let sendCount = Int(dalnok_track_sends(h, tid, &sends, 16))
@@ -288,6 +288,9 @@ final class Session {
         return id
     }
     func removePlugin(_ t: DalnokTrackId, _ slot: Int32) { dalnok_plugin_remove(h, t, slot); refresh() }
+    func pluginBypassed(_ t: DalnokTrackId, _ slot: Int32) -> Bool { dalnok_plugin_bypassed(h, t, slot) }
+    /// Bypass (footswitch / power button): one undo step.
+    func setPluginBypassed(_ t: DalnokTrackId, _ slot: Int32, _ bypassed: Bool) { dalnok_plugin_set_bypassed(h, t, slot, bypassed); refresh() }
     func setPluginControls(_ t: DalnokTrackId, _ slot: Int32, _ ids: [UInt32]) {
         var list = ids
         dalnok_plugin_set_controls(h, t, slot, &list, Int32(list.count))

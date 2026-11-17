@@ -251,6 +251,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         transport.onPalette = { [weak self] in self?.showCommandPalette(nil) }
         headers.onAddTrack = { [weak self] in self?.newTrack(nil) }
         timeline.onVerticalScroll = { [weak self] y in self?.headers.scrollY = y; self?.launcher.scrollY = y }
+        headers.onScroll = { [weak self] e in self?.timeline.scroll(with: e, zoomAnchorX: 0) }
+        launcher.onScroll = { [weak self] e in self?.timeline.scroll(with: e, zoomAnchorX: 0) }
         timeline.onClipSelected = { [weak self] clip in self?.headers.selectedTrack = clip.track }
         timeline.onOpenClip = { [weak self] clip in
             if clip.folder != 0 { self?.compEditor.show(folder: clip.folder) } else { self?.pianoRoll.show(clip: clip.id) }
@@ -392,6 +394,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
     private func modelChanged() {
         headers.sync()
+        timeline.clampScrollY()
         // Show the empty state or the arrangement; crossfade only when that actually changes.
         let empty = session.tracks.isEmpty
         devicePanel.isHidden = empty || !Self.showDevicePanel

@@ -1297,6 +1297,18 @@ bool Engine::setSidechain(DalnokTrackId track, int32_t slot, DalnokTrackId sourc
     });
 }
 
+bool Engine::setPluginBypassed(DalnokTrackId track, int32_t slot, bool bypassed, std::string &err) {
+    return edit(bypassed ? "Bypass Plug-in" : "Enable Plug-in", true, [&](Model &m) {
+        TrackState *t = m.track(track);
+        if (!t) return fail(err, "no such track");
+        auto it = std::find_if(t->plugins.begin(), t->plugins.end(), [slot](const PluginSlot &p) { return p.id == slot; });
+        if (it == t->plugins.end()) return fail(err, "that plug-in isn't on this track");
+        if (it->bypassed == bypassed) return fail(err, bypassed ? "already bypassed" : "not bypassed");
+        it->bypassed = bypassed;
+        return true;
+    });
+}
+
 bool Engine::removeSend(DalnokTrackId track, DalnokTrackId bus, std::string &err) {
     return edit("Remove Send", true, [&](Model &m) {
         TrackState *t = m.track(track);
@@ -1641,6 +1653,7 @@ std::unique_ptr<RenderState> Engine::compile(std::vector<StretchJob> *needed, co
         for (const auto &slot : t.plugins) {
             auto it = instances.find(slot.id);
             if (it == instances.end() || !it->second) continue; // missing plugin: insert bypassed, instrument silent
+            if (slot.bypassed) continue;                          // bypassed by the user: same as missing
             rt.keep.push_back(it->second);
             rt.latency += static_cast<int32_t>(std::min<uint32_t>(it->second->latency(), 1u << 20));
             if (slot.instrument && rt.instrument) rt.instrumentPlugin = it->second.get();
@@ -1742,7 +1755,7 @@ std::unique_ptr<RenderState> Engine::compile(std::vector<StretchJob> *needed, co
         std::map<DalnokTrackId, int32_t> scIndex;
         for (size_t i = 0; i < order.size(); ++i)
             for (const auto &slot : order[i]->plugins) {
-                if (!slot.sidechain || !indexOf.count(slot.sidechain)) continue;
+                if (!slot.sidechain || slot.bypassed || !indexOf.count(slot.sidechain)) continue;
                 auto it = instances.find(slot.id);
                 if (it == instances.end() || !it->second || !it->second->hasSidechain()) continue;
                 auto [sc, fresh] = scIndex.try_emplace(slot.sidechain, static_cast<int32_t>(scIndex.size()));

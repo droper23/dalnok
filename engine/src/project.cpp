@@ -30,7 +30,7 @@ namespace fs = std::filesystem;
 namespace dalnok {
 
 namespace {
-constexpr int kFormatVersion = 9; // 3: shared MIDI sources; 4: tempo/meter maps; 5: routing; 6: automation; 7: take folders; 8: plug-in automation; 9: launcher slots
+constexpr int kFormatVersion = 10; // 10: plug-in bypass; 3: shared MIDI sources; 4: tempo/meter maps; 5: routing; 6: automation; 7: take folders; 8: plug-in automation; 9: launcher slots
 constexpr int kConstantTempoVersion = 3; // written when there are no tempo or meter changes, so older builds still open it
 
 bool readFile(const std::string &path, std::string &out, std::string &err) {
@@ -223,6 +223,7 @@ json::Value Engine::describe() const {
                 if (!slot.vendor.empty()) pv.set("vendor", slot.vendor);
                 if (slot.instrument) pv.set("instrument", true);
                 if (slot.sidechain) pv.set("sidechain", slot.sidechain);
+                if (slot.bypassed) pv.set("bypassed", true);
                 if (!slot.controls.empty()) {
                     Value ids = Value::makeArray();
                     for (auto c : slot.controls) ids.push(static_cast<int64_t>(c));
@@ -384,7 +385,9 @@ bool Engine::saveProject(const std::string &path, std::string &err, bool copyMed
     for (const auto &c : model_.clips) launcher = launcher || c.slot >= 0;
     bool pluginAutomation = false;
     for (const auto &t : model_.tracks) pluginAutomation = pluginAutomation || !t.pluginAuto.empty();
-    doc.set("version", launcher ? 9 : pluginAutomation ? 8 : !model_.folders.empty() ? 7 : automation ? 6 : routing ? 5 : model_.tempo.size() > 1 || model_.meters.size() > 1 ? 4 : kConstantTempoVersion);
+    bool bypass = false;
+    for (const auto &t : model_.tracks) for (const auto &p : t.plugins) bypass = bypass || p.bypassed;
+    doc.set("version", bypass ? 10 : launcher ? 9 : pluginAutomation ? 8 : !model_.folders.empty() ? 7 : automation ? 6 : routing ? 5 : model_.tempo.size() > 1 || model_.meters.size() > 1 ? 4 : kConstantTempoVersion);
     json::Value body = describe();
     for (auto &[key, value] : body.object) {
         if (key != "media") continue;
@@ -539,6 +542,7 @@ std::unique_ptr<Engine::PreparedProject> Engine::prepareDocument(const json::Val
                     slot.vendor = pv.getString("vendor", "");
                     slot.instrument = pv.getBool("instrument", false);
                     slot.sidechain = static_cast<int32_t>(std::max<int64_t>(0, toInt(pv, "sidechain")));
+                    slot.bypassed = pv.getBool("bypassed", false);
                     if (const json::Value *ids = pv.get("controls"); ids && ids->isArray())
                         for (const auto &c : ids->array)
                             if (c.isNumber() && c.number >= 0 && c.number <= 4294967295.0) slot.controls.push_back(static_cast<uint32_t>(c.number));

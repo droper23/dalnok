@@ -13,7 +13,7 @@ final class SelfTest {
     let workdir: URL
     private var failures = 0
     /// Preferences the test changes; all are restored at the end so a run never alters the owner's settings.
-    private static let restoredKeys = ["copyAudioOnSave", "comingFrom", "onboardingDone", "recordingInputUID", "rulerBarsAndBeats", "metronome", "showDevicePanel", "countIn", "showMixer", "showLauncher", "automationMode"]
+    private static let restoredKeys = ["copyAudioOnSave", "comingFrom", "onboardingDone", "recordingInputUID", "rulerBarsAndBeats", "metronome", "showDevicePanel", "countIn", "showMixer", "showLauncher", "automationMode", "pedal.AUDelay"]
     private let previousPreferences: [String: Any]
     private var w: MainWindowController { app.main }
     private var s: Session { app.session }
@@ -470,6 +470,7 @@ final class SelfTest {
                   "a clean quit removes the marker, so the next launch offers nothing")
         }
 
+        await trackHeaderScrolling()
         try? w.snapshot(to: workdir.appendingPathComponent("selftest.png"))
         await migrationSteps()
         // Settings: exercise the menu, appearance selection, and project preference.
@@ -507,6 +508,49 @@ final class SelfTest {
         MainWindowController.copyAudioOnSave = oldCopy
         w.settings.window?.orderOut(nil)
         finish()
+    }
+
+    // MARK: Track header scrolling (regression: scrolling over the headers did nothing or moved a knob)
+
+    private func scrollEvent(dy: Int32, at window: CGPoint) -> NSEvent? {
+        guard let cg = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2, wheel1: dy, wheel2: 0, wheel3: 0) else { return nil }
+        if let win = w.window { cg.location = CGPoint(x: win.frame.minX + window.x, y: (NSScreen.screens.first?.frame.height ?? 0) - (win.frame.minY + window.y)) }
+        return NSEvent(cgEvent: cg)
+    }
+
+    private func trackHeaderScrolling() async {
+        let e = s.engine
+        var added = 0
+        while CGFloat(s.tracks.count) * Theme.trackHeight < w.timeline.bounds.height * 2, added < 40 { s.addTrack("Scroll \(added)"); added += 1 }
+        w.window?.layoutIfNeeded()
+        await wait(0.1)
+        w.timeline.scrollY = 0
+        guard let row = w.headers.rows.first, let ev = scrollEvent(dy: -60, at: .zero) else {
+            check(false, "header scrolling: rows and scroll events exist"); return
+        }
+        let before = row.gain.db
+        w.headers.scrollWheel(with: ev)
+        check(w.timeline.scrollY > 0, "scrolling over the track headers scrolls the tracks (\(w.timeline.scrollY) pt)")
+        check(w.headers.scrollY == w.timeline.scrollY && w.launcher.scrollY == w.timeline.scrollY,
+              "headers, launcher and arrangement share one vertical offset")
+        let y = w.timeline.scrollY
+        row.gain.scrollWheel(with: ev)
+        check(row.gain.db == before && w.timeline.scrollY > y, "scrolling over a header knob scrolls instead of changing gain")
+        // Hit-testing: the view under the cursor in the header column hands scrolling to the column.
+        if let content = w.window?.contentView {
+            let p = w.headers.convert(CGPoint(x: w.headers.bounds.midX, y: w.headers.bounds.midY), to: nil)
+            var v = content.hitTest(content.convert(p, from: nil)), reaches = false
+            while let x = v { if x === w.headers { reaches = true; break }; v = x.superview }
+            check(reaches, "the view under the cursor over the headers belongs to the header column")
+        }
+        w.timeline.scrollY = 1e6
+        w.timeline.clampScrollY()
+        check(w.timeline.scrollY == w.timeline.maxScrollY && w.headers.scrollY == w.timeline.scrollY, "vertical scrolling stops at the last track")
+        for _ in 0..<added { e.undo() }
+        s.refresh(); w.window?.layoutIfNeeded()
+        check(w.timeline.scrollY <= w.timeline.maxScrollY && w.headers.scrollY == w.timeline.scrollY,
+              "removing tracks keeps the viewport valid and aligned (\(w.timeline.scrollY))")
+        w.timeline.scrollY = 0
     }
 
     // MARK: Migration & onboarding
@@ -1007,10 +1051,42 @@ final class SelfTest {
         } else { check(false, "AUDelay's window opens") }
         guard let delay = panel.devices.first else { return }
         let names = delay.knobs.map { $0.label.stringValue }
-        check(delay.knobs.count == 4 && names.contains("Dry/Wet Mix"), "controller shows AUDelay's parameters (\(names))")
+        check(delay.knobs.count == 4 && names.contains { $0.caseInsensitiveCompare("Dry/Wet Mix") == .orderedSame }, "controller shows AUDelay's parameters (\(names))")
         if let lim = panel.devices.last {
             let limNames = lim.knobs.map { $0.label.stringValue }
             check(lim.knobs.count == lim.controlIds.count && !limNames.contains(""), "every limiter control has a named knob (\(limNames))")
+        }
+        // Bypass (power button in Graphite, footswitch on the Warm Analog pedal): real, undoable, nulls the effect.
+        let delayName = "AUDelay"
+        if let pedal = delay.pedal {
+            check(Analog.on && pedal.controls.count == delay.knobs.count, "Warm Analog shows AUDelay as a pedal with \(pedal.controls.count) controls")
+            check(PedalStore.look(delayName) == PedalStore.look(delayName) && PedalLook.random("A#0") != PedalLook.random("B#0"),
+                  "a pedal's look is stable for its plug-in and differs between plug-ins")
+            panel.layoutSubtreeIfNeeded()
+            if let lim = panel.devices.last?.pedal {
+                check(lim.controls.count < pedal.controls.count ? lim.frame.width < pedal.frame.width : lim.frame.width >= pedal.frame.width,
+                      "pedal size follows the number of controls (\(lim.controls.count): \(lim.frame.width) pt, \(pedal.controls.count): \(pedal.frame.width) pt)")
+            }
+            let up = mouse(.leftMouseUp, pedal.footswitch.convert(CGPoint(x: pedal.footswitch.bounds.midX, y: pedal.footswitch.bounds.midY), to: nil))
+            pedal.footswitch.mouseDown(with: mouse(.leftMouseDown, up.locationInWindow)); pedal.footswitch.mouseUp(with: up)
+            check(s.pluginBypassed(track, slot) && !pedal.engaged && s.engine.undoName == "Bypass Plug-in", "stomping the footswitch bypasses AUDelay (LED off, undoable)")
+            _ = perform("Undo"); panel.refreshValues()
+            check(!s.pluginBypassed(track, slot) && pedal.engaged, "undo turns it back on")
+            // Each control's kind can be changed and is remembered for that plug-in.
+            if let c = pedal.controls.first, let item = c.menu(for: mouse(.rightMouseDown, .zero))?.items.first(where: { $0.title == "Slider" }) {
+                _ = item.target?.perform(item.action, with: item)
+                check(c.kind == .slider && PedalStore.kind(delayName, delay.knobs[0].id) == .slider, "a pedal control can become a slider and keeps that choice")
+                PedalStore.setKind(delayName, delay.knobs[0].id, nil)
+            } else { check(false, "pedal controls offer their kinds") }
+            let before = pedal.look
+            PedalStore.reroll(delayName)
+            check(PedalStore.look(delayName) != before, "New Random Look changes the pedal")
+            PedalStore.reset(delayName); UserDefaults.standard.removeObject(forKey: "pedal." + delayName)
+        } else {
+            delay.toggleBypass()
+            check(s.pluginBypassed(track, slot) && s.engine.undoName == "Bypass Plug-in", "the device power button bypasses AUDelay (undoable)")
+            delay.toggleBypass()
+            check(!s.pluginBypassed(track, slot), "pressing it again turns it back on")
         }
         // Turning a knob changes the plug-in.
         guard let mix = delay.knobs.first else { return check(false, "AUDelay has a controller knob") }
@@ -1155,6 +1231,19 @@ final class SelfTest {
             check(w.transport.reels.superview != nil && start < 0.01 && w.transport.reels.tapeFraction > 0.05,
                   "the tape reels wind with the playhead (\(start) → \(w.transport.reels.tapeFraction))")
             e.seek(0)
+        }
+        do { // reel physics (any theme): ω = v / r; a second of play turns the reels at a visible, real-deck rate
+            let saved = Motion.override; Motion.override = true; defer { Motion.override = saved }
+            let reels = TapeReels(); reels.length = 120
+            reels.update(seconds: 0)
+            reels.update(seconds: 0.5); reels.update(seconds: 1.0) // one second of playback in steps
+            let (supply, takeUp) = reels.reelAngles
+            check(supply > 2 && takeUp > supply, "reels turn at deck speed, the near-empty take-up reel faster (\(supply), \(takeUp) rad/s)")
+            reels.update(seconds: 0.5)
+            check(reels.reelAngles.1 < takeUp, "rewinding turns the reels backwards")
+            let h = TapeReels.thickness(length: 120), r0 = TapeReels.hub
+            let exact = 2 * CGFloat.pi * (sqrt(r0 * r0 + TapeReels.speed * 0.5 * h / .pi) - r0) / h
+            check(abs(reels.reelAngles.1 - exact) < 1e-3, "the take-up angle matches the spiral model at 0.5 s (\(reels.reelAngles.1) vs \(exact))")
         }
         // Follow action from the slot's menu, then drag the slot clip out onto the timeline.
         if let slotClip = s.slotClip(track.id, 0) {

@@ -42,6 +42,7 @@ struct PluginSlot {
     std::string format = "vst3", path, classId, name, vendor;
     bool instrument = false;
     std::vector<uint32_t> controls; // parameters on the device panel's controller (empty = the first automatable ones)
+    bool bypassed = false;          // footswitch/bypass: effects pass audio through, instruments go silent (undoable)
     int32_t sidechain = 0;          // DalnokTrackId whose pre-fader signal feeds this plug-in's sidechain input (0 = none)
     std::string state; // last known plugin state (used when the plugin is missing, and for saving)
 };
@@ -275,6 +276,8 @@ public:
     bool removeSend(DalnokTrackId track, DalnokTrackId bus, std::string &err);
     // Sidechain: feed a track's post-insert, pre-fader signal into a plug-in's sidechain input (0 = none).
     bool setSidechain(DalnokTrackId track, int32_t slot, DalnokTrackId source, std::string &err);
+    // Bypass: a bypassed effect is left out of the insert chain (and its latency); a bypassed instrument is silent.
+    bool setPluginBypassed(DalnokTrackId track, int32_t slot, bool bypassed, std::string &err);
     bool pluginHasSidechain(int32_t slot) const { auto it = plugins_.find(slot); return it != plugins_.end() && it->second && it->second->hasSidechain(); }
     // Summing stacks: a stack bus placed above its members, which are routed into it. One undo step each.
     DalnokTrackId makeStack(const std::vector<DalnokTrackId> &members, const std::string &name, std::string &err);

@@ -8,7 +8,10 @@ import AppKit
 import DalnokEngine
 
 @MainActor
-final class LauncherView: NSView {
+final class LauncherView: NSView, TrackScrollHost {
+    var onScroll: ((NSEvent) -> Void)?
+    func scrollTracks(with event: NSEvent) { onScroll?(event) }
+    override func scrollWheel(with event: NSEvent) { scrollTracks(with: event) }
     static let slotWidth: CGFloat = 70
     let session: Session
     var scrollY: CGFloat = 0 { didSet { needsDisplay = true } }

@@ -158,4 +158,32 @@ struct PluginHosting {
         #expect(dalnok_project_save(e3, resaved.path, &err, 256) == DALNOK_OK)
         #expect(try String(contentsOf: resaved, encoding: .utf8).contains(floatState(0.25)), "the saved state is kept")
     }
+
+    @Test func bypassPassesAudioThroughAndSurvivesSaveAndUndo() throws {
+        let (e, t) = audioSession(); defer { dalnok_engine_destroy(e) }
+        let dry = renderStereo(e, 4_800)
+        let slot = dalnok_plugin_add(e, t, testVst3, gainClass, nil, 0)
+        dalnok_plugin_set_state(e, slot, floatState(0.5))
+        #expect(renderStereo(e, 4_800).0 == dry.0.map { $0 * 0.5 })
+        #expect(dalnok_plugin_set_bypassed(e, t, slot, true) == DALNOK_OK)
+        #expect(dalnok_plugin_bypassed(e, t, slot) && undoName(e) == "Bypass Plug-in")
+        let bypassed = renderStereo(e, 4_800)
+        #expect(bypassed.0 == dry.0 && bypassed.1 == dry.1, "a bypassed insert nulls against the dry signal")
+        #expect(dalnok_plugin_set_bypassed(e, t, slot, true) != DALNOK_OK, "bypassing twice is not an undo step")
+        // Saved and reopened: still bypassed, state kept; the project is written as format 10.
+        let project = tempDir().appendingPathComponent("bypass.dalnok")
+        var err = [CChar](repeating: 0, count: 256)
+        #expect(dalnok_project_save(e, project.path, &err, 256) == DALNOK_OK, "\(cstr(err))")
+        #expect(try String(contentsOf: project, encoding: .utf8).contains("\"version\": 10") ||
+                (try String(contentsOf: project, encoding: .utf8).contains("\"version\":10")))
+        let e2 = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(e2) }
+        #expect(dalnok_project_load(e2, project.path, nil, &err, 256) == DALNOK_OK, "\(cstr(err))")
+        let t2 = dalnok_track_at(e2, 0)
+        var info = DalnokPluginSlotInfo()
+        dalnok_track_plugin_info(e2, t2, 0, &info)
+        #expect(dalnok_plugin_bypassed(e2, t2, info.id) && renderStereo(e2, 4_800).0 == dry.0)
+        // Undo brings the effect back.
+        #expect(dalnok_undo(e))
+        #expect(!dalnok_plugin_bypassed(e, t, slot) && renderStereo(e, 4_800).0 == dry.0.map { $0 * 0.5 })
+    }
 }

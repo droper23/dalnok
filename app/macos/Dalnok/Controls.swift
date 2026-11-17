@@ -206,6 +206,7 @@ final class FaderControl: NSControl {
     }
 
     override func scrollWheel(with event: NSEvent) {
+        if forwardScrollToTrackHost(event) { return } // in a track header: scroll the tracks
         let delta = event.hasPreciseScrollingDeltas ? event.scrollingDeltaY / 120 : event.scrollingDeltaY / 20
         guard delta != 0 else { return }
         onBegin?()
@@ -512,6 +513,7 @@ class RotaryKnob: NSControl {
         onEnd?()
     }
     override func scrollWheel(with event: NSEvent) {
+        if forwardScrollToTrackHost(event) { return } // in a track header: scroll the tracks
         let d = Double(event.hasPreciseScrollingDeltas ? event.scrollingDeltaY / 300 : event.scrollingDeltaY / 30)
         guard d != 0 else { return }
         onBegin?(); set(value + d * (bipolar ? 1 : 0.5)); onEnd?()

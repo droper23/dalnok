@@ -287,9 +287,16 @@ final class TapeReels: NSView {
     override var intrinsicContentSize: NSSize { NSSize(width: 84, height: 34) }
 
     var tapeFraction: CGFloat { fraction } // for tests
+    var reelAngles: (CGFloat, CGFloat) { angles } // for tests
+    static let hub: CGFloat = 5, full: CGFloat = 15
+    /// Linear tape speed in points per second of audio: 15 ips on a 10.5-inch reel scaled to these 15 pt packs
+    /// (a full reel turns about 0.5 rev/s, an empty hub about 1.4 rev/s, like the real machine).
+    static let speed: CGFloat = 43
+    /// Tape thickness that makes the whole project fit on one reel: π(full² − hub²) = h · speed · length.
+    static func thickness(length: Double) -> CGFloat { .pi * (full * full - hub * hub) / (speed * CGFloat(max(1, length))) }
     private var fraction: CGFloat { CGFloat(max(0, min(1, shown / max(1, length)))) }
     private var radii: (CGFloat, CGFloat) {
-        let hub: CGFloat = 5, full: CGFloat = 15
+        let hub = Self.hub, full = Self.full
         // Tape area is conserved: r² goes linearly from hub² to full² as tape moves across.
         let f = fraction
         return (sqrt(hub * hub + (full * full - hub * hub) * (1 - f)), sqrt(hub * hub + (full * full - hub * hub) * f))
@@ -304,9 +311,14 @@ final class TapeReels: NSView {
         let moved = next - shown
         guard abs(moved) > 1e-4 else { return }
         if !Motion.reduced {
-            let (rl, rr) = radii
-            let tape = CGFloat(moved) * 1.2 // points of tape per second of audio
-            angles = (angles.0 + tape / rl, angles.1 + tape / rr)
+            // ω = v / r, integrated exactly over the move: a spiral pack of thickness h gives dθ = 2π·dr / h, so
+            // each reel turns by 2π·Δr / h (the take-up pack grows, the supply pack shrinks; both turn the same way).
+            // Driven by tape position, not elapsed time, so dropped frames never desynchronise the reels.
+            let before = radii
+            shown = next
+            let after = radii
+            let h = TapeReels.thickness(length: length)
+            angles = (angles.0 + 2 * .pi * (before.0 - after.0) / h, angles.1 + 2 * .pi * (after.1 - before.1) / h)
         }
         shown = next
         needsDisplay = true
