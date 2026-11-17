@@ -20,7 +20,7 @@ if [[ ! -d "$WORK/.git" ]]; then
   gh repo clone "$REPO" "$WORK" -- -q 2>/dev/null || { mkdir -p "$WORK" && git -C "$WORK" init -q -b main && git -C "$WORK" remote add origin "https://github.com/$REPO.git"; }
 fi
 git -C "$WORK" pull -q --rebase origin main 2>/dev/null || true
-rsync -a --delete --exclude .git site/ "$WORK"/
+rsync -a --delete --exclude .git --exclude .DS_Store site/ "$WORK"/
 touch "$WORK/.nojekyll"
 cat > "$WORK/README.md" <<MD
 # Dalnok: feature parity
