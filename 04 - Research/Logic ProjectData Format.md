@@ -35,6 +35,7 @@ Placement events are in EvSq streams (16-byte events, `0xF1` terminator). Type `
 - +0x2c: u32 AuRg header ID; use the region with sub-index zero.
 
 Each MSeq begins a section; 58-byte Trak chunks give arrange rows in order, with an Envi ID at payload +8.
+Row numbers may be reused by different channel strips across sequences; the importer distinguishes row and strip identity. The role of every sequence and take folder remains uncertain.
 Envi has a u16 name length at payload +158 followed by name bytes at +160. Type `0x20` may represent MIDI.
 Generated fixtures cover region IDs, leftover sub-indices, names and row order. Take folders, tempo changes,
 channel volume and pan, track stacks, routing, plug-ins and automation remain undecoded.

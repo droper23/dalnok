@@ -151,8 +151,9 @@ bool importAbleton(const std::string &path, Result &out, std::string &err) {
     auto main = set.child("MainTrack");
     if (!main) main = set.child("MasterTrack");
     const auto tempoNode = main.first_element_by_path("DeviceChain/Mixer/Tempo");
-    const double tempo = val(tempoNode, "Manual", 120);
-    const double spb = 60.0 / (tempo > 0 ? tempo : 120);
+    const double rawTempo = val(tempoNode, "Manual", 120);
+    const double tempo = rawTempo >= 20 && rawTempo <= 400 ? rawTempo : 120;
+    const double spb = 60.0 / tempo;
     if (const auto ev = tempoNode.first_element_by_path("ArrangerAutomation/Events");
         ev && countChildren(ev) > 1)
         rep.skip("tempoChanges");
@@ -276,6 +277,7 @@ bool importAbleton(const std::string &path, Result &out, std::string &err) {
         rep.notes.push_back(std::to_string(stretched) + " warped or transposed clip(s) were time-stretched to match" +
                             (segmented ? " (" + std::to_string(segmented) + " extra cuts at warp markers)." : "."));
     out.document = b.document();
+    out.document.set("tempo", tempo);
     if (rep.missingMedia) rep.notes.push_back(std::to_string(rep.missingMedia) + " audio file(s) not found; clips are offline until relinked.");
     return true;
 }

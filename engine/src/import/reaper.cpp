@@ -231,6 +231,12 @@ bool importReaper(const std::string &path, Result &out, std::string &err) {
     }
     if (stretchedItems) rep.notes.push_back(std::to_string(stretchedItems) + " item(s) with a changed playback rate or pitch were time-stretched to match.");
     out.document = b.document();
+    const double tempo = proj.num("TEMPO", 1, 120), num = proj.num("TEMPO", 2, 4), den = proj.num("TEMPO", 3, 4);
+    out.document.set("tempo", tempo >= 20 && tempo <= 400 ? tempo : 120);
+    json::Value meter = json::Value::makeArray();
+    meter.push(num >= 1 && num <= 32 && std::floor(num) == num ? static_cast<int>(num) : 4);
+    meter.push(den == 1 || den == 2 || den == 4 || den == 8 || den == 16 ? static_cast<int>(den) : 4);
+    out.document.set("meter", std::move(meter));
     if (rep.missingMedia) rep.notes.push_back(std::to_string(rep.missingMedia) + " audio file(s) not found; clips are offline until relinked.");
     return true;
 }

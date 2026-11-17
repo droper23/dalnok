@@ -1,6 +1,9 @@
 # Changelog
 
 ## [Unreleased]
+### Fixed (2026-11-16, import timing and tracks)
+- Preserve REAPER tempo and meter and Ableton constant tempo when importing; distinguish Logic sequence rows that point to different channel strips.
+
 ### Added and fixed (2026-11-16, MIDI editing and Logic import)
 - Piano roll supports marquee selection and keyboard step entry; eighth-note meters use the correct metronome beat and ruler numbering.
 - Logic import preserves constant tempo and meter, reads supplementary Unicode filenames, and counts distinct unplaced regions when placements repeat.

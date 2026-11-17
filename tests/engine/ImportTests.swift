@@ -37,7 +37,7 @@ func skipped(_ r: [String: Any], _ key: String) -> Int { (r["skipped"] as? [Stri
         let rpp = """
         <REAPER_PROJECT 0.1 "7.39/win64" 1755279602
           SAMPLERATE 48000 0 0
-          TEMPO 120 4 4 0
+          TEMPO 137 7 8 0
           <TRACK {A}
             NAME "Guitar Left"
             VOLPAN 0.5 -0.5 -1 -1 1
@@ -96,6 +96,9 @@ func skipped(_ r: [String: Any], _ key: String) -> Int { (r["skipped"] as? [Stri
         try rpp.write(to: path, atomically: true, encoding: .utf8)
         let (e, r) = try importInto(path.path); defer { dalnok_engine_destroy(e) }
         #expect(r["app"] as? String == "REAPER")
+        var numerator: Int32 = 0, denominator: Int32 = 0
+        dalnok_meter(e, &numerator, &denominator)
+        #expect(dalnok_tempo_bpm(e) == 137 && numerator == 7 && denominator == 8)
         #expect(skipped(r, "midiClips") == 1 && skipped(r, "mutedItems") == 1 && skipped(r, "plugins") == 1)
         #expect(dalnok_track_count(e) == 2)
         var t = DalnokTrackInfo(); dalnok_track_info(e, dalnok_track_at(e, 0), &t)
@@ -120,6 +123,13 @@ func skipped(_ r: [String: Any], _ key: String) -> Int { (r["skipped"] as? [Stri
 }
 
 @Suite struct AbletonImport {
+    @Test func preservesConstantTempo() throws {
+        let dir = tempDir(), path = dir.appendingPathComponent("Tempo.als")
+        let xml = "<Ableton><LiveSet><Tracks/><MainTrack><DeviceChain><Mixer><Tempo><Manual Value=\"91\"/></Tempo></Mixer></DeviceChain></MainTrack></LiveSet></Ableton>"
+        try gzip(xml, to: path)
+        let (e, _) = try importInto(path.path); defer { dalnok_engine_destroy(e) }
+        #expect(dalnok_tempo_bpm(e) == 91)
+    }
     func gzip(_ xml: String, to url: URL) throws {
         let raw = url.deletingPathExtension().appendingPathExtension("xml")
         try xml.write(to: raw, atomically: true, encoding: .utf8)
@@ -277,6 +287,14 @@ func skipped(_ r: [String: Any], _ key: String) -> Int { (r["skipped"] as? [Stri
         ev.append(end)
         var body = chunk("Song", Data(repeating: 0, count: 8))
         body.append(chunk("AuFl", fl)); body.append(chunk("AuRg", rg)); body.append(chunk("EvSq", ev))
+        // An event before the first MSeq must not borrow that later sequence's row names.
+        var en = Data(repeating: 0, count: 170)
+        en.replaceSubrange(158..<160, with: le(UInt16(5))); en.replaceSubrange(160..<165, with: Array("Later".utf8))
+        body.append(chunk("Envi", en, id: 7)); body.append(chunk("MSeq", Data(repeating: 0, count: 8)))
+        for _ in 0..<2 {
+            var tk = Data(repeating: 0, count: 58); tk.replaceSubrange(8..<12, with: le(UInt32(7)))
+            body.append(chunk("Trak", tk))
+        }
         var file = Data([0x23, 0x47, 0xc0, 0xab]); file.append(Data(repeating: 0, count: 12))
         file.append(contentsOf: le(UInt64(body.count))); file.append(body)
         try file.write(to: alt.appendingPathComponent("ProjectData"))
@@ -292,6 +310,7 @@ func skipped(_ r: [String: Any], _ key: String) -> Int { (r["skipped"] as? [Stri
         #expect(dalnok_tempo_bpm(e) == 90 && num == 3 && den == 8)
         #expect((r["notes"] as? [String])?.first?.contains("key A minor") == true)
         let c = clips(e).map(\.info)
+        #expect(clips(e).first?.track == "Audio 2")
         // 7680 quarter-note ticks at 90 BPM = 256000 frames.
         #expect(c.count == 1 && c[0].start == 256_000 && c[0].offset == 24_000 && c[0].length == 96_000 && !c[0].offline,
                 "\(c.map { ($0.start, $0.offset, $0.length) })")
@@ -346,6 +365,20 @@ func skipped(_ r: [String: Any], _ key: String) -> Int { (r["skipped"] as? [Stri
         var end = Data(repeating: 0, count: 16); end[0] = 0xf1
         ev.append(end)
         body.append(chunk("EvSq", ev))
+        // Another sequence reuses row 2 for a different strip, while row 4 still means Rhythm.
+        body.append(chunk("MSeq", Data(repeating: 0, count: 8)))
+        for strip in [96, 96, 92, 92] as [UInt32] {
+            var tk = Data(repeating: 0, count: 58); tk.replaceSubrange(8..<12, with: le(strip))
+            body.append(chunk("Trak", tk))
+        }
+        var ev2 = Data()
+        for track in [UInt8(2), UInt8(4)] {
+            var e = Data(repeating: 0, count: 80)
+            e.replaceSubrange(0..<4, with: le(UInt32(0x24))); e.replaceSubrange(4..<8, with: le(UInt32(34_560 + 12 * 3_840)))
+            e[0x14] = track; e.replaceSubrange(0x2c..<0x30, with: le(UInt32(4)))
+            ev2.append(e)
+        }
+        ev2.append(end); body.append(chunk("EvSq", ev2))
         var file = Data([0x23, 0x47, 0xc0, 0xab]); file.append(Data(repeating: 0, count: 12))
         file.append(contentsOf: le(UInt64(body.count))); file.append(body)
         try file.write(to: alt.appendingPathComponent("ProjectData"))
@@ -359,9 +392,10 @@ func skipped(_ r: [String: Any], _ key: String) -> Int { (r["skipped"] as? [Stri
         for i in 0..<dalnok_track_count(e) {
             var t = DalnokTrackInfo(); dalnok_track_info(e, dalnok_track_at(e, i), &t); names.append(name(t.name))
         }
-        #expect(names == ["Lead", "Rhythm"], "\(names)")
+        #expect(names == ["Lead", "Stack", "Rhythm"], "\(names)")
+        #expect(clips(e).filter { $0.info.start == 1_152_000 }.map(\.track).sorted() == ["Rhythm", "Stack"])
         // Link 4 is region "B" (offset 1000, length 200000) at bar 5 = 8 s at 120 BPM; document index 1 would be "A.1".
-        #expect(c.count == 3 && c[0].start == 0 && c[0].offset == 0 && c[0].length == 300_000 &&
+        #expect(c.count == 5 && c[0].start == 0 && c[0].offset == 0 && c[0].length == 300_000 &&
                 c[1].start == 384_000 && c[1].offset == 1_000 && c[1].length == 200_000 &&
                 c[2].start == 768_000 && c[2].offset == 1_000 && c[2].length == 200_000,
                 "\(c.map { ($0.start, $0.offset, $0.length) })")

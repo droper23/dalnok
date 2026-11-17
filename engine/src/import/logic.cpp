@@ -166,7 +166,7 @@ bool importLogic(const std::string &path, Result &out, std::string &err) {
             if ((t & 0xff) == 0xf1) break;
             if (t == 0x24 && i + 80 <= c.length) {
                 placements.push_back({rd<uint32_t>(d, c.payload + i + 4), static_cast<uint8_t>(d[c.payload + i + 0x14]),
-                                      rd<uint32_t>(d, c.payload + i + 0x2c), sectionRows.empty() ? 0 : sectionRows.size() - 1});
+                                      rd<uint32_t>(d, c.payload + i + 0x2c), sectionRows.empty() ? size_t(-1) : sectionRows.size() - 1});
                 i += 80;
             } else if (t == 0x20 || t == 0x22 || t == 0x26 || t == 0x28) {
                 if (t == 0x20) ++midiRegions;
@@ -179,7 +179,8 @@ bool importLogic(const std::string &path, Result &out, std::string &err) {
 
     Builder b(rep, rate);
     const fs::path audioDir = pkg / "Media" / "Audio Files";
-    std::map<int, int32_t> tracks;
+    // Row numbers can be reused for different channel strips in different sequences.
+    std::map<std::pair<uint8_t, uint64_t>, int32_t> tracks;
     std::set<size_t> placedRegions;
     int unresolved = 0;
     const double secPerTick = 60.0 / (bpm * kPpq);
@@ -194,17 +195,20 @@ bool importLogic(const std::string &path, Result &out, std::string &err) {
         const auto it = byId.find(p.link);
         if (it == byId.end() || p.pos < kTickOrigin) { ++unresolved; continue; }
         const Region &r = regions[it->second];
-        if (!tracks.count(p.track)) {
+        const bool hasRow = p.section < sectionRows.size() && p.track >= 1 && p.track <= sectionRows[p.section].size();
+        const uint32_t strip = hasRow ? sectionRows[p.section][p.track - 1] : 0;
+        const auto trackKey = std::make_pair(p.track, hasRow ? uint64_t(strip) : (uint64_t(1) << 32));
+        if (!tracks.count(trackKey)) {
             std::string name = "Audio " + std::to_string(p.track);
-            if (p.section < sectionRows.size() && p.track >= 1 && p.track <= sectionRows[p.section].size()) {
-                const auto it = channelName.find(sectionRows[p.section][p.track - 1]);
+            if (hasRow) {
+                const auto it = channelName.find(strip);
                 if (it != channelName.end() && !it->second.empty()) name = it->second;
             }
-            tracks[p.track] = b.addTrack(name, 0, 0, false, false);
+            tracks[trackKey] = b.addTrack(name, 0, 0, false, false);
         }
         const std::string file = (audioDir / r.file).string();
         const int32_t media = b.addMedia(fs::exists(file) ? file : locateMedia(r.file, pkg.parent_path().string()));
-        b.addClip(tracks[p.track], media, (p.pos - kTickOrigin) * secPerTick, r.offset / rate, r.length / rate,
+        b.addClip(tracks[trackKey], media, (p.pos - kTickOrigin) * secPerTick, r.offset / rate, r.length / rate,
                   r.name.empty() ? r.file : r.name);
         placedRegions.insert(it->second);
     }
