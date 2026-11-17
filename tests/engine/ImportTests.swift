@@ -400,6 +400,14 @@ func skipped(_ r: [String: Any], _ key: String) -> Int { (r["skipped"] as? [Stri
                 c[2].start == 768_000 && c[2].offset == 1_000 && c[2].length == 200_000,
                 "\(c.map { ($0.start, $0.offset, $0.length) })")
         #expect((r["skipped"] as? [String: Any])?["unplacedRegions"] as? Int == 1)
+        // Duplicate primary IDs are ambiguous: neither region may be chosen silently.
+        body.append(chunk("AuRg", region("Duplicate", offset: 0, length: 48_000), id: 4))
+        var ambiguousFile = Data([0x23, 0x47, 0xc0, 0xab]); ambiguousFile.append(Data(repeating: 0, count: 12))
+        ambiguousFile.append(contentsOf: le(UInt64(body.count))); ambiguousFile.append(body)
+        try ambiguousFile.write(to: alt.appendingPathComponent("ProjectData"))
+        let (ambiguous, report) = try importInto(pkg.path); defer { dalnok_engine_destroy(ambiguous) }
+        #expect(clips(ambiguous).count == 1 && skipped(report, "ambiguousRegionIds") == 1 &&
+                skipped(report, "unresolvedPlacements") == 4)
     }
 
     @Test func rejectsInvalidChunkAndNameLengths() throws {
@@ -423,6 +431,9 @@ func skipped(_ r: [String: Any], _ key: String) -> Int { (r["skipped"] as? [Stri
         var region = Data(repeating: 0, count: 77)
         region.replaceSubrange(74..<76, with: le(UInt16(100)))
         try checkInvalid(chunk("AuRg", region))
+        var event = Data(repeating: 0, count: 16)
+        event.replaceSubrange(0..<4, with: le(UInt32(0x24)))
+        try checkInvalid(chunk("EvSq", event))
     }
 
     @Test func corruptDataFailsWithGuidance() throws {

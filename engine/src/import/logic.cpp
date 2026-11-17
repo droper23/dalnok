@@ -164,15 +164,17 @@ bool importLogic(const std::string &path, Result &out, std::string &err) {
         while (i + 16 <= c.length) {
             const auto t = rd<uint32_t>(d, c.payload + i);
             if ((t & 0xff) == 0xf1) break;
-            if (t == 0x24 && i + 80 <= c.length) {
+            const size_t eventSize = (t == 0x20 || t == 0x22 || t == 0x24 || t == 0x26 || t == 0x28) ? 80 : (t == 0x60 ? 32 : 16);
+            if (eventSize > c.length - i) { err = "truncated Logic event sequence; import aborted"; return false; }
+            if (t == 0x24) {
                 placements.push_back({rd<uint32_t>(d, c.payload + i + 4), static_cast<uint8_t>(d[c.payload + i + 0x14]),
                                       rd<uint32_t>(d, c.payload + i + 0x2c), sectionRows.empty() ? size_t(-1) : sectionRows.size() - 1});
-                i += 80;
+                i += eventSize;
             } else if (t == 0x20 || t == 0x22 || t == 0x26 || t == 0x28) {
                 if (t == 0x20) ++midiRegions;
-                i += 80;
+                i += eventSize;
             } else {
-                i += t == 0x60 ? 32 : 16;
+                i += eventSize;
             }
         }
     }
@@ -187,8 +189,15 @@ bool importLogic(const std::string &path, Result &out, std::string &err) {
     // Placements link to a region's header id, not document order: leftover split regions
     // can sit between real ones and shift later indices.
     std::map<uint32_t, size_t> byId;
-    for (size_t i = 0; i < regions.size(); ++i)
-        if (regions[i].sub == 0) byId.emplace(regions[i].id, i);
+    std::set<uint32_t> ambiguousIds;
+    for (size_t i = 0; i < regions.size(); ++i) {
+        if (regions[i].sub != 0 || ambiguousIds.count(regions[i].id)) continue;
+        if (!byId.emplace(regions[i].id, i).second) {
+            byId.erase(regions[i].id);
+            ambiguousIds.insert(regions[i].id);
+        }
+    }
+    rep.skip("ambiguousRegionIds", static_cast<int>(ambiguousIds.size()));
     // Tracks in Logic's row order (placements are stored in time order).
     std::stable_sort(placements.begin(), placements.end(), [](const Placement &a, const Placement &b) { return a.track < b.track; });
     for (const auto &p : placements) {

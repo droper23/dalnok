@@ -37,7 +37,7 @@ Placement events are in EvSq streams (16-byte events, `0xF1` terminator). Type `
 Each MSeq begins a section; 58-byte Trak chunks give arrange rows in order, with an Envi ID at payload +8.
 Row numbers may be reused by different channel strips across sequences; the importer distinguishes row and strip identity. The role of every sequence and take folder remains uncertain.
 Envi has a u16 name length at payload +158 followed by name bytes at +160. Type `0x20` may represent MIDI.
-Generated fixtures cover region IDs, leftover sub-indices, names and row order. Take folders, tempo changes,
+Generated fixtures cover region IDs, leftover sub-indices, names and row order. Duplicate primary IDs are treated as ambiguous; truncated known event records cause import failure. Take folders, tempo changes,
 channel volume and pan, track stacks, routing, plug-ins and automation remain undecoded.
 
 ## Controlled Logic export (2026-11-16)

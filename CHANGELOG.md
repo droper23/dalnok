@@ -1,6 +1,9 @@
 # Changelog
 
 ## [Unreleased]
+### Fixed (2026-11-16, Logic import validation)
+- Ambiguous duplicate region IDs are reported instead of assigning arbitrary audio; truncated known events fail import rather than being silently ignored.
+
 ### Changed (2026-11-16, self-test reliability)
 - The GUI self-test reports missing tracks or controls instead of indexing absent elements, and its ring-release checks tolerate UI scheduling and clock rounding.
 

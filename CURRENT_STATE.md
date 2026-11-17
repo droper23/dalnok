@@ -5,7 +5,10 @@ milestone: M11 VST3 hosting (ADR-0009 stage 3) done; editors, parameters and AU 
 ---
 # Current State
 
-## Latest session (self-test reliability)
+## Latest session (Logic import validation)
+- Duplicate primary region IDs now report ambiguity and unresolved placements; truncated known event records abort import. Generated fixtures verify both. Logic mixer and take-folder semantics remain incomplete.
+
+## Earlier (self-test reliability)
 - Hardened several GUI self-test array accesses and release timing checks; the self-test passed in Graphite and Warm Analog. The earlier intermittent index crash has no stack trace and is not confirmed resolved.
 
 ## Earlier (MIDI timing)
