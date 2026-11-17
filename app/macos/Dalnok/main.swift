@@ -63,7 +63,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard engine.isDirty, main.window?.attachedSheet == nil, !SelfTest.running else {
+        guard engine.isDirty, main.window?.attachedSheet == nil, !SelfTest.running,
+              !CommandLine.arguments.contains("--snapshot"), !CommandLine.arguments.contains("--screenshots") else {
             return .terminateNow
         }
         main.confirmDiscard { NSApp.reply(toApplicationShouldTerminate: true) }
@@ -117,6 +118,7 @@ func buildMenu(target: MainWindowController) -> NSMenu {
     typealias W = MainWindowController
     menu("Dalnok", [
         item("About Dalnok", #selector(NSApplication.orderFrontStandardAboutPanel(_:)), ""),
+        item("Settings…", #selector(W.showSettings(_:)), ","),
         .separator(),
         item("Hide Dalnok", #selector(NSApplication.hide(_:)), "h"),
         item("Quit Dalnok", #selector(NSApplication.terminate(_:)), "q"),

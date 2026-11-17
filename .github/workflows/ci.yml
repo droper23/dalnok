@@ -16,6 +16,10 @@ jobs:
         run: swift test
       - name: Capture buffer tests
         run: scripts/ci/capture-ring.sh
+      - name: MIDI parser tests
+        run: scripts/ci/midi-parser.sh
+      - name: Duplex device validation
+        run: scripts/ci/duplex-probe.sh
       - name: Release build
         run: swift build -c release
       # No audio device or GUI session on CI: live smoke test and app self-test run locally (scripts/check.sh).
@@ -33,6 +37,9 @@ jobs:
 
       - name: Capture buffer (ThreadSanitizer)
         run: DALNOK_CAPTURE_TSAN=1 scripts/ci/capture-ring.sh
+
+      - name: MIDI parser (ThreadSanitizer)
+        run: DALNOK_MIDI_TSAN=1 scripts/ci/midi-parser.sh
 
   rt-effects:
     # Xcode's clang on hosted runners may predate [[clang::nonblocking]]; use Homebrew LLVM.

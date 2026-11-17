@@ -25,17 +25,35 @@ public:
     virtual double hardwareSampleRate() const = 0;
 };
 
+// Internal full-duplex path. Input and output are clocked by the same device.
+// A null input indicates a capture failure; the callback must not block.
+class AudioDuplexDevice {
+public:
+    using Callback = void (*)(void *ctx, float *left, float *right, const float *input, int frames) DALNOK_NONBLOCKING;
+    virtual ~AudioDuplexDevice() = default;
+    virtual bool start(Callback cb, void *ctx, std::string &err) = 0;
+    virtual void stop() = 0;
+    virtual bool captureFailed() const = 0;
+    virtual bool alive() const = 0;
+    virtual double hardwareSampleRate() const = 0;
+};
+
 struct DeviceInfo {
     std::string uid;  // stable identifier
     std::string name;
     double sampleRate = 0;
     int outputChannels = 0;
+    int inputChannels = 0;
     bool isDefault = false;
 };
 
 std::vector<DeviceInfo> listOutputDevices();
+std::vector<DeviceInfo> listInputDevices();
 // Empty uid = follow the system default output.
 std::unique_ptr<AudioDevice> createOutputDevice(const std::string &uid, double sampleRate, std::string &err);
+// UID must name a single duplex device; inputChannel is zero-based.
+std::unique_ptr<AudioDuplexDevice> createDuplexDevice(const std::string &uid, double sampleRate,
+                                                      int inputChannel, std::string &err);
 double defaultOutputSampleRate(); // 0 if unknown
 
 } // namespace dalnok

@@ -133,6 +133,28 @@ func liveEngine(_ samples: [Float]) -> (OpaquePointer, DalnokTrackId, OpaquePoin
         #expect(list.prefix(Int(n)).filter(\.is_default).count <= 1)
     }
 
+    @Test func midiSourceEnumerationIsWellFormed() {
+        let n = dalnok_midi_sources(nil, 0)
+        #expect(n >= 0)
+        var list = [DalnokMidiSourceInfo](repeating: DalnokMidiSourceInfo(), count: Int(max(n, 1)))
+        let current = dalnok_midi_sources(&list, n)
+        for source in list.prefix(Int(max(0, min(n, current)))) {
+            #expect(source.unique_id != 0 && !name(source.name).isEmpty)
+        }
+    }
+
+    @Test func inputEnumerationIsWellFormed() {
+        let n = dalnok_input_devices(nil, 0)
+        #expect(n >= 0)
+        var list = [DalnokInputDeviceInfo](repeating: DalnokInputDeviceInfo(), count: Int(max(n, 1)))
+        let current = dalnok_input_devices(&list, n)
+        for d in list.prefix(Int(max(0, min(n, current)))) {
+            #expect(!name(d.uid).isEmpty && !name(d.name).isEmpty)
+            #expect(d.sample_rate > 0 && d.input_channels > 0)
+        }
+        #expect(list.prefix(Int(max(0, min(n, current)))).filter(\.is_default).count <= 1)
+    }
+
     @Test(.enabled(if: ProcessInfo.processInfo.environment["CI"] == nil, "needs real audio hardware"))
     func switchingDevicesKeepsAudioRunning() {
         let e = dalnok_engine_create(0)!; defer { dalnok_engine_destroy(e) }

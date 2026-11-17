@@ -13,6 +13,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     let session: Session
     let palette = CommandPalette()
     let emptyState = EmptyStateView()
+    lazy var settings = SettingsController()
     lazy var conceptGuide = ConceptGuideController()
     lazy var welcome = WelcomeController(main: self)
     private(set) var lastImportReport: ImportReport?
@@ -567,6 +568,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         }
         confirm ? confirmDiscard(run) : run()
     }
+
+    @objc func showSettings(_ sender: Any?) { settings.show() }
 
     @objc func showConceptGuide(_ sender: Any?) { conceptGuide.show(daw: SourceDAW.preferred) }
     @objc func showMigrationAssistant(_ sender: Any?) { welcome.show() }

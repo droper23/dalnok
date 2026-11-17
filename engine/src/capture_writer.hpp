@@ -38,7 +38,10 @@ public:
         if (thread_.joinable()) thread_.join();
     }
     bool push(const float *samples, uint32_t frames) DALNOK_NONBLOCKING {
-        if (error_.load(std::memory_order_acquire) != 0 || stopping_.load(std::memory_order_acquire)) return false;
+        if (error_.load(std::memory_order_acquire) != 0 || stopping_.load(std::memory_order_acquire)) {
+            rejected_.fetch_add(frames, std::memory_order_relaxed);
+            return false;
+        }
         if (!ring_.push(samples, frames)) {
             error_.fetch_or(static_cast<uint32_t>(Error::overflow), std::memory_order_release);
             return false;
@@ -50,7 +53,7 @@ public:
     bool ok() const { return error_.load(std::memory_order_acquire) == 0; }
     uint64_t capturedFrames() const { return captured_.load(std::memory_order_relaxed); }
     uint64_t writtenFrames() const { return written_.load(std::memory_order_relaxed); }
-    uint64_t droppedFrames() const { return ring_.droppedFrames(); }
+    uint64_t droppedFrames() const { return ring_.droppedFrames() + rejected_.load(std::memory_order_relaxed); }
 
 private:
     void setError(Error value) {
@@ -59,11 +62,14 @@ private:
     void drain() {
         bool writeOK = true;
         while (writeOK) {
+            // Observe stop before checking the queue. Once the producer has
+            // stopped, this acquire makes its final published block visible.
+            const bool stopping = stopping_.load(std::memory_order_acquire);
             const uint32_t frames = ring_.pop(scratch_.data(), 256);
             if (frames) {
                 if (!sink_.write(scratch_.data(), frames)) { setError(Error::write); writeOK = false; }
                 else written_.fetch_add(frames, std::memory_order_relaxed);
-            } else if (stopping_.load(std::memory_order_acquire)) {
+            } else if (stopping) {
                 break;
             } else {
                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -78,7 +84,7 @@ private:
     std::thread thread_;
     std::atomic<bool> stopping_{false};
     std::atomic<uint32_t> error_{0};
-    std::atomic<uint64_t> captured_{0}, written_{0};
+    std::atomic<uint64_t> captured_{0}, written_{0}, rejected_{0};
 };
 
 } // namespace dalnok

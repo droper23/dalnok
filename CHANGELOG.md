@@ -1,6 +1,14 @@
 # Changelog
 
 ## [Unreleased]
+### Added (2026-11-16, capture, MIDI, and appearance)
+- Experimental same-device mono capture to a retained spool through the C API and `dalnok-cli capture-test`; no track UI, monitoring, clip placement, or latency compensation yet. Device sample rates must match. Scarlett hardware and recovery tests passed.
+- MIDI source discovery and a separately tested MIDI 1 channel-message parser. Live MIDI recording, playback, and instruments are not implemented.
+- Settings (⌘,) with copy-audio preference and Graphite / Warm Analog appearance. Reopen Dalnok to apply an appearance change.
+### Fixed
+- Capture writer shutdown could miss a final block; a repeated immediate-stop test covers the race.
+- Graphite secondary text contrast and gain/pan caption size; snapshot automation exits cleanly. UI self-tests now restore the prior copy-audio preference.
+
 ### Added (2026-11-16, capture recovery)
 - C API v7 and `dalnok-cli recover-capture` convert stopped mono/stereo capture spools into new float WAVs, preserving the original and reporting incomplete trailing bytes. Live recording is not yet connected.
 

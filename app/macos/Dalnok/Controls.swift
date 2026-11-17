@@ -220,7 +220,7 @@ class RotaryKnob: NSControl {
         haloValue.shadowRadius = 4
         haloValue.shadowOpacity = 0.9
         haloValue.shadowOffset = .zero
-        face.fillColor = Theme.hex(0x3A3E46).cgColor
+        face.fillColor = Theme.controlHi.cgColor
         face.strokeColor = Theme.hex(0x000000, 0.35).cgColor
         face.lineWidth = 1
         pointer.strokeColor = Theme.hex(0xF2F3F5).cgColor
@@ -291,7 +291,7 @@ class RotaryKnob: NSControl {
         face.setAffineTransform(on ? CGAffineTransform(scaleX: Self.revealScale, y: Self.revealScale) : .identity)
         haloValue.opacity = on ? 1 : 0
         haloTrack.opacity = on ? 1 : 0
-        face.fillColor = (on ? Theme.hex(0x44484F) : Theme.hex(0x3A3E46)).cgColor
+        face.fillColor = (on ? Theme.knobHover : Theme.controlHi).cgColor
         CATransaction.commit()
     }
 

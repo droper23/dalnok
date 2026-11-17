@@ -4,6 +4,7 @@
 
 #include "dalnok/dalnok.h"
 #include "device.hpp"
+#include "capture_spool.hpp"
 #include "json.hpp"
 #include "render.hpp"
 #include "stretch_cache.hpp"
@@ -76,12 +77,16 @@ public:
     // Device
     bool startDevice(std::string &err);
     void stopDevice();
-    bool deviceRunning() const { return device_ != nullptr; }
+    bool deviceRunning() const { return device_ != nullptr || duplex_ != nullptr; }
     // Switches output (empty uid = system default). On failure the previous device keeps running.
     bool setOutputDevice(const std::string &uid, std::string &err);
     const std::string &outputDeviceUid() const { return outputUid_; }
-    bool deviceAlive() const { return !device_ || device_->alive(); }
-    double hardwareSampleRate() const { return device_ ? device_->hardwareSampleRate() : 0; }
+    bool deviceAlive() const { return duplex_ ? duplex_->alive() : (!device_ || device_->alive()); }
+    double hardwareSampleRate() const { return duplex_ ? duplex_->hardwareSampleRate() : (device_ ? device_->hardwareSampleRate() : 0); }
+    bool startCapture(const std::string &uid, int channel, const std::string &path, std::string &err);
+    bool stopCapture(DalnokCaptureStats &stats, std::string &err, bool restoreOutput = true);
+    bool captureActive() const { return duplex_ != nullptr; }
+    bool captureStatus(DalnokCaptureStats &stats) const;
     void collectGarbage();
     // Runs the live render path manually (no device may be running). For tests and simulation.
     bool pump(float *left, float *right, int frames);
@@ -189,6 +194,7 @@ private:
     void resetModel();
 
     static void audioCallback(void *ctx, float *left, float *right, int frames) DALNOK_NONBLOCKING;
+    static void duplexCallback(void *ctx, float *left, float *right, const float *input, int frames) DALNOK_NONBLOCKING;
     void process(float *left, float *right, int frames) DALNOK_NONBLOCKING;
 
     double sampleRate_;
@@ -205,6 +211,12 @@ private:
     DalnokClipId nextClip_ = 1;
     DalnokMediaId nextMedia_ = 1;
     int32_t nextColor_ = 0;
+    std::unique_ptr<CaptureSpool> captureSpool_;
+    std::unique_ptr<CaptureWriter> captureWriter_;
+    std::unique_ptr<AudioDuplexDevice> duplex_;
+    CaptureWriter *captureRT_ = nullptr; // published before start; cleared after synchronous stop
+    std::atomic<bool> captureInputFailed_{false};
+    std::atomic<uint64_t> captureMissingFrames_{0};
     std::unique_ptr<AudioDevice> device_;
     std::string outputUid_;
     mutable StretchCache cache_;

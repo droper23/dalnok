@@ -24,11 +24,11 @@ Concept Guide. Grows with each phase: MIDI (P3), plugins, automation, and sends 
 Signalsmith-based stretch, pitch, and varispeed rendered in the background. ⌥-drag stretch and the Clip
 menu. Imported REAPER playrates and Ableton warp markers now play correctly.
 
-## Phase 2: Recording and editing 🔶 (ADR-0008 accepted; capture implementation next)
+## Phase 2: Recording and editing 🔶 (headless mono capture verified; UI and integrity work next)
 Input and recording (with a Scarlett test rig), monitoring, split, fades, crossfades, autosave and crash
 recovery, basic routing, disk streaming.
 
-## Phase 3: MIDI and instruments ⬜
+## Phase 3: MIDI and instruments 🔶 (source discovery and parser foundations)
 MIDI tracks, recording and playback, piano roll, quantize, velocity, tempo and meter map, first stock instrument.
 
 ## Phase 4: Professional production ⬜

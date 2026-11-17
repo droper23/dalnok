@@ -1,51 +1,28 @@
-# Handoff prompt: continue the Dalnok DAW
+# Handoff: Dalnok Phases 2 and 3
 
-You are continuing development of **Dalnok**, an open-source (GPL-3.0-or-later) DAW for macOS.
-Repo: `~/Projects/Code/DAW` (GitHub `droper23/dalnok`, private). The repo is also the owner's Obsidian
-vault. The public parity page is built from `site/` and published to `droper23/dalnok-status` by
-`scripts/publish-site.sh`. The owner is the product owner and doesn't write code. They want
-world-class UI, honest verification, and milestone check-ins.
+Continue `/Users/derek/Projects/Code/DAW`. Read `AGENTS.md`, `CURRENT_STATE.md`, the architecture and real-time notes, and accepted ADRs before engine work. The owner asked to finish Phases 2 and 3, add a multi-perspective UI audit, Settings, and a warm analog theme. Work is paused at the owner's request; neither phase is complete.
 
-## Read first (in order)
-1. `AGENTS.md`: rules. The audio thread must stay nonblocking, every edit is an engine command,
-   nothing is reported without evidence, and nothing derived from the owner's projects is ever published.
-2. `CURRENT_STATE.md`: what's verified, known defects, and the next action.
-3. `09 - Decisions/ADR-0001…0007`, `06 - Design/UI Audit 2026-11-16.md`, `06 - Design/Track Colors.md`.
+## Current checkpoint
 
-## Current objective (update this section each milestone)
-**Phase 2: recording.** ADR-0008 is written. The bounded capture ring, off-thread drain, and exclusive temporary PCM spool are implemented and tested independently. C API v7 and `dalnok-cli recover-capture` convert stopped mono/stereo spools to new float WAVs without overwriting or modifying the source. Integrate same-device AUHAL input, record-arm, monitoring, model editing, and long-duration capture; add a durable journal and power-loss validation. C API v6 and the UI now support periodic snapshots and manual recovery as an unsaved project; the timer and recovery after an isolated process kill are verified by scripts/ci/recovery-smoke.sh. Add recovery prompting, retention controls, and power-loss validation. Phase 2 remains incomplete. Scarlett hardware is needed for loopback and hardware validation.
+- **Audio:** Experimental same-device mono capture is exposed through C API v9 and `dalnok-cli capture-test`. `engine/src/platform/macos/coreaudio_device.cpp` uses one AUHAL instance for input/output, requires matching device and engine sample rates, checks sample-clock continuity, and pushes into the bounded writer/spool. Errors and dropped frames are reported; the original spool remains recoverable via `dalnok-cli recover-capture`. Capture is **not** connected to track arm, monitoring, clip creation, latency compensation, a durable journal, or the app UI. Do not call it finished or crash-safe.
+- **Scarlett:** Solo 4th Gen was detected at 44.1 kHz during this session. Both physical inputs produced independent signals. A 30-second headless capture before the final shutdown-race fix wrote 1,323,520 frames with zero reported drops. The opt-in hardware test passed after the race fix, clock checks, and transport-advance assertion. It uses a temporary recording and removes it.
+- **MIDI:** C API/CLI source discovery finds the Arturia MiniLab mkII. A separate 15-second Core MIDI probe counted 9 note-on and 8 note-off events; no performance was saved. `engine/src/midi_parser.hpp` is a separately tested MIDI 1 channel-message parser; it is **not connected to a Core MIDI input port**, a MIDI model, transport, or playback.
+- **UI:** `Dalnok ▸ Settings…` (⌘,) offers Graphite, Warm Analog, and the existing copy-audio preference. The theme takes effect after reopening; it is not a live switch. Both themes passed the GUI self-test and synthetic screenshot review. See `06 - Design/UI Audit 2026-11-16 follow-up.md` for the review and open accessibility/usability issues. VoiceOver was not tested. Some older self-test runs forced “Copy audio on save” on; the self-test now restores the previous preference, but the owner should check this setting because its earlier value is unknown.
+- **Recovery:** Periodic project snapshots and manual restore exist; `scripts/ci/recovery-smoke.sh` verified a timer-triggered snapshot after killing an isolated process. Power-loss durability, startup prompting, and retention controls remain open.
 
-**Just finished (M8):** knobs are now a layer-based `RotaryKnob` (`Controls.swift`): a flat face and pointer
-at rest. On hover, drag or focus, the face shrinks (0.68×, 160 ms) to reveal a glowing ring in the track
-color. `PanKnob` subclasses it. `site/screenshots/knobs.png` shows the rest and revealed states.
-**Latest:** Open accepts foreign projects and asks before import; the separate import menu is removed. Scarlett Solo is connected and detected, but Dalnok recording remains unimplemented. Gain and pan are labeled knobs; the gain halo follows the post-fader peak. Space play/pause is already present and self-tested. More keyboard shortcuts were requested. A synthetic Logic project and FCPXML export both import, but the XML rendered and shortened the audio, so exact native placement remains unverified.
+## Verification and limits
 
-## Done so far (all committed, CI green)
-- **Phase 1:** engine, C API, AppKit UI, undo, projects, export, fades, solo, relink, copy-on-save, meters,
-  device switching, ⌘K palette.
-- **Migration (M5):** import REAPER, Ableton, FCPXML, stems, and Logic `.logicx` (experimental). Plus
-  onboarding, shortcut presets, the Concept Guide, and old-DAW vocabulary in ⌘K.
-- **Time stretch (M6):** Signalsmith, rendered in the background (`stretch_cache.*`, `engine/dsp`).
-- **UI pass 1 (M7):**
-  - OKLCH rainbow track colors starting at green (`Theme.swift`)
-  - custom `FaderControl`, `PanKnob`, `ToggleChip`
-  - new headers, clips, control bar, and empty state
+- `swift test --disable-sandbox`: 74 tests reported passing, with the opt-in hardware test skipped in the ordinary run.
+- `DALNOK_TEST_DUPLEX='Scarlett Solo 4th Gen' swift test --disable-sandbox --filter hardwareCapturePreservesFramesAndRejectsDeviceChanges`: passed, including same-device capture, no-overwrite, device-change rejection, recovered frame count, and silent transport advancement.
+- `scripts/ci/capture-ring.sh` and `DALNOK_CAPTURE_TSAN=1 scripts/ci/capture-ring.sh`: passed after the immediate-stop writer race fix. `scripts/ci/midi-parser.sh` and its `DALNOK_MIDI_TSAN=1` variant passed. `scripts/ci/duplex-probe.sh` passed validation; its optional device-name argument runs a silent-output hardware probe.
+- `CXX="$(xcrun --find clang++)" scripts/ci/rt-effects.sh`: passed, including the negative check. The default Homebrew LLVM path is absent locally.
+- Graphite and Warm Analog `--selftest` runs passed; `--snapshot` verified the warm arrangement and exits cleanly. A release build passed with elevated permissions before the final small self-test-only changes.
+- An additional full hardware integration ThreadSanitizer run was **interrupted at the owner's pause request** after its build; it did not report a test result. Run it on resume if useful: `DALNOK_TEST_DUPLEX='Scarlett Solo 4th Gen' swift test --disable-sandbox --sanitize=thread --filter hardwareCapturePreservesFramesAndRejectsDeviceChanges`.
 
-## Verify
-- `swift build && swift test`: 64 tests.
-- `scripts/check.sh`: tests, the live audio smoke test, and the app self-test (needs a GUI session).
-- `DALNOK_SANITIZE=1 scripts/check.sh` adds ASan and TSan.
-- `.build/debug/Dalnok <wav files> --selftest <dir>`: end-to-end UI checks, ending in `SELFTEST: PASS`.
-- `.build/debug/Dalnok <wav files> --screenshots site/screenshots`: real-app screenshots (no personal data).
-- `scripts/ci/rt-effects.sh`: real-time effect analysis. CI runs build-test, sanitizers, and rt-effects.
+## Next steps
 
-## Open items and known gaps
-- Logic `.logicx` region placement is unverified. Needs a Final Cut Pro XML export from the owner.
-- VoiceOver labels exist but haven't been tested with VoiceOver running.
-- No group tracks yet (Phase 4); group color tinting is specified but unbuilt.
-- No disk streaming: media is fully decoded in RAM.
-
-## Session-end checklist
-Update `CURRENT_STATE.md`, `CHANGELOG.md`, `10 - Development Journal/<date>.md`, `site/parity.json`
-(only mark steps `verified` with evidence), and this file. Commit with the attribution trailer
-(`Co-Authored-By: …`). Run `scripts/publish-site.sh`, then check CI with `gh run watch`.
+1. Review and validate the experimental duplex path, especially failure propagation, device loss/rate changes, and the control-thread shutdown contract. Re-run the full hardware integration TSan test. Keep audio-thread code `DALNOK_NONBLOCKING` and allocation/lock/I/O free.
+2. Design durable recording journal/finalization and recovery, then implement input selection, record-arm, monitoring, take placement as one undoable engine command, and measured latency alignment. Test real failures, long captures, crash recovery, and the full UI. Do not delete the spool or report success on incomplete capture.
+3. Connect a Core MIDI input port to the tested parser with bounded high-priority-thread handoff and explicit overflow/device-loss behavior. Then build the MIDI model, recording/playback, piano roll, tempo/meter map, and instrument with meaningful tests.
+4. Follow up the UI audit: live theme switching, complete panel/state contrast review, VoiceOver and keyboard testing, and real musician usability testing. Keep unproven parity steps honest.
+5. Review `git status` and `git diff` before resuming. `site/parity.json` and synthetic screenshots were updated locally but **not published after this pause**. The repository rules call for updating the state, changelog, journal, parity page, and committing at a milestone; publish only `site/` using `scripts/publish-site.sh` when work resumes.

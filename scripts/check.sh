@@ -8,10 +8,13 @@ cd "$(dirname "$0")/.."
 swift build
 swift test
 scripts/ci/capture-ring.sh
+scripts/ci/midi-parser.sh
+scripts/ci/duplex-probe.sh
 if [[ "${DALNOK_SANITIZE:-0}" == "1" ]]; then
   swift test --sanitize=address
   swift test --sanitize=thread
   DALNOK_CAPTURE_TSAN=1 scripts/ci/capture-ring.sh
+  DALNOK_MIDI_TSAN=1 scripts/ci/midi-parser.sh
 fi
 if [[ "${DALNOK_SKIP_LIVE:-0}" != "1" ]]; then
   swift build --product dalnok-cli

@@ -11,6 +11,7 @@ final class SelfTest {
     let files: [URL]
     let workdir: URL
     private var failures = 0
+    private let previousCopyAudioPreference: Any?
     private var w: MainWindowController { app.main }
     private var s: Session { app.session }
 
@@ -18,6 +19,7 @@ final class SelfTest {
         self.app = app
         self.files = files
         self.workdir = workdir
+        previousCopyAudioPreference = UserDefaults.standard.object(forKey: "copyAudioOnSave")
     }
 
     private func check(_ ok: Bool, _ what: String) {
@@ -328,6 +330,29 @@ final class SelfTest {
 
         try? w.snapshot(to: workdir.appendingPathComponent("selftest.png"))
         await migrationSteps()
+        // Settings: exercise the menu, appearance selection, and project preference.
+        let oldTheme = UserDefaults.standard.object(forKey: "appearanceStyle")
+        let oldCopy = MainWindowController.copyAudioOnSave
+        check(perform("Settings…"), "Dalnok > Settings opens")
+        check(w.settings.window?.isVisible == true, "settings window is visible")
+        if let view = w.settings.window?.contentView, let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
+            view.cacheDisplay(in: view.bounds, to: bitmap)
+            try? bitmap.representation(using: .png, properties: [:])?.write(to: workdir.appendingPathComponent("settings.png"))
+        }
+        w.settings.themePicker.selectItem(at: 1)
+        _ = NSApp.sendAction(#selector(SettingsController.themeChanged(_:)), to: w.settings, from: w.settings.themePicker)
+        check(Theme.preferredStyle == .warmAnalog, "settings saves the Warm Analog theme")
+        let otherStyle = Theme.activeStyle == .graphite ? 1 : 0
+        w.settings.themePicker.selectItem(at: otherStyle)
+        _ = NSApp.sendAction(#selector(SettingsController.themeChanged(_:)), to: w.settings, from: w.settings.themePicker)
+        check(w.settings.appearanceNote.stringValue.contains("Reopen"), "settings explains when the new theme applies")
+        w.settings.copyAudio.state = .off
+        _ = NSApp.sendAction(#selector(SettingsController.copyChanged(_:)), to: w.settings, from: w.settings.copyAudio)
+        check(!MainWindowController.copyAudioOnSave, "settings updates copy-audio preference")
+        if let oldTheme { UserDefaults.standard.set(oldTheme, forKey: "appearanceStyle") }
+        else { UserDefaults.standard.removeObject(forKey: "appearanceStyle") }
+        MainWindowController.copyAudioOnSave = oldCopy
+        w.settings.window?.orderOut(nil)
         finish()
     }
 
@@ -419,6 +444,8 @@ final class SelfTest {
     }
 
     private func finish() {
+        if let previousCopyAudioPreference { UserDefaults.standard.set(previousCopyAudioPreference, forKey: "copyAudioOnSave") }
+        else { UserDefaults.standard.removeObject(forKey: "copyAudioOnSave") }
         print(failures == 0 ? "SELFTEST: PASS" : "SELFTEST: FAIL (\(failures))")
         fflush(stdout)
         exit(failures == 0 ? 0 : 1)

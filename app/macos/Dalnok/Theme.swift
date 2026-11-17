@@ -8,29 +8,50 @@ enum Theme {
                 blue: CGFloat(v & 0xFF) / 255, alpha: a)
     }
 
+    enum Style: String, CaseIterable {
+        case graphite, warmAnalog
+        var title: String { self == .graphite ? "Graphite" : "Warm Analog" }
+    }
+    private static let preferenceKey = "appearanceStyle"
+    static var preferredStyle: Style {
+        get { UserDefaults.standard.string(forKey: preferenceKey).flatMap(Style.init(rawValue:)) ?? .graphite }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: preferenceKey) }
+    }
+    // The interface is built from AppKit layers at launch. A new preference is
+    // applied on the next launch so an in-progress project is never disturbed.
+    static let activeStyle: Style = {
+        if let override = ProcessInfo.processInfo.environment["DALNOK_THEME"], let style = Style(rawValue: override) { return style }
+        return preferredStyle
+    }()
+    private static func tone(_ graphite: UInt32, _ warm: UInt32) -> NSColor {
+        hex(activeStyle == .warmAnalog ? warm : graphite)
+    }
+
     // MARK: Neutrals (cool graphite, 4 elevation steps)
-    static let window = hex(0x111214)
-    static let panel = hex(0x17181B)        // ruler, control bar
-    static let panelRaised = hex(0x1D1F23)  // track headers
-    static let control = hex(0x2A2D33)      // fader grooves, chip backgrounds
-    static let controlHi = hex(0x3A3E46)
-    static let laneA = hex(0x141518)
-    static let laneB = hex(0x16171A)
+    static let window = tone(0x111214, 0x18130F)
+    static let panel = tone(0x17181B, 0x211A15)        // ruler, control bar
+    static let panelRaised = tone(0x1D1F23, 0x2A211A)  // track headers
+    static let control = tone(0x2A2D33, 0x403229)      // fader grooves, chip backgrounds
+    static let controlHi = tone(0x3A3E46, 0x584638)
+    static let laneA = tone(0x141518, 0x1C1713)
+    static let laneB = tone(0x16171A, 0x201A15)
     static let hairline = hex(0xFFFFFF, 0.07)
     static let separator = hex(0x000000, 0.55)
     static let gridMajor = hex(0xFFFFFF, 0.06)
     static let gridMinor = hex(0xFFFFFF, 0.025)
-    static let text = hex(0xE8E9EC)
-    static let textDim = hex(0x9A9EA6)
-    static let textFaint = hex(0x5F646D)
+    static let text = tone(0xE8E9EC, 0xF2E7D7)
+    static let textDim = tone(0x9A9EA6, 0xC0AB96)
+    static let textFaint = tone(0x898E97, 0x9B8876)
 
     // MARK: Reserved state colors (never used for tracks alone; always paired with form)
-    static let accent = hex(0xE8B25C)        // time display / brand
-    static let playhead = hex(0xF4F4F5)
+    static let accent = tone(0xE8B25C, 0xE6AB69)        // time display / brand
+    static let playhead = tone(0xF4F4F5, 0xF6E5CE)
     static let selection = hex(0xFFFFFF)
     static let muteOn = hex(0x5B9BFF)        // blue chip (Logic convention)
     static let soloOn = hex(0xF5C451)        // yellow chip
     static let clipRed = hex(0xFF5A4F)
+    static let selectedHeader = tone(0x262930, 0x3A2B21)
+    static let knobHover = tone(0x44484F, 0x685344)
 
     // MARK: Metrics (4-pt grid)
     static let rulerHeight: CGFloat = 28

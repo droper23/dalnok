@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <ctime>
+#include <unistd.h>
 
 namespace dalnok {
 
@@ -58,7 +59,7 @@ Engine::~Engine() {
 // ---- Device -------------------------------------------------------------
 
 bool Engine::startDevice(std::string &err) {
-    if (device_) return true;
+    if (device_ || duplex_) return true;
     auto dev = createOutputDevice(outputUid_, sampleRate_, err);
     if (!dev || !dev->start(&Engine::audioCallback, this, err)) return false;
     device_ = std::move(dev);
@@ -66,6 +67,7 @@ bool Engine::startDevice(std::string &err) {
 }
 
 bool Engine::setOutputDevice(const std::string &uid, std::string &err) {
+    if (duplex_) { err = "stop capture before changing the output device"; return false; }
     if (uid == outputUid_ && device_ && device_->alive()) return true;
     const std::string previous = outputUid_;
     const bool wasRunning = device_ != nullptr;
@@ -83,10 +85,76 @@ bool Engine::setOutputDevice(const std::string &uid, std::string &err) {
 }
 
 bool Engine::pump(float *left, float *right, int frames) {
-    if (device_ || !left || !right || frames <= 0) return false;
+    if (device_ || duplex_ || !left || !right || frames <= 0) return false;
     process(left, right, frames);
     collectGarbage();
     return true;
+}
+
+bool Engine::startCapture(const std::string &uid, int channel, const std::string &path, std::string &err) {
+    if (duplex_ || captureWriter_) { err = "capture is already active"; return false; }
+    if (!device_ || uid.empty() || uid != outputUid_) { err = "select the same explicit input and output device before capture"; return false; }
+    if (path.empty() || sampleRate_ != std::floor(sampleRate_) || sampleRate_ < 8000 || sampleRate_ > 384000) {
+        err = "invalid capture path or sample rate"; return false;
+    }
+    auto duplex = createDuplexDevice(uid, sampleRate_, channel, err);
+    if (!duplex) return false;
+    const int fd = CaptureSpool::create(path, static_cast<uint32_t>(sampleRate_), 1);
+    if (fd < 0) { err = "cannot create new capture spool"; return false; }
+    try {
+        captureSpool_ = std::make_unique<CaptureSpool>(fd, 1);
+        // About 5.5 seconds at 48 kHz; overflow always reports an error.
+        captureWriter_ = std::make_unique<CaptureWriter>(1 << 18, 1, *captureSpool_);
+        captureWriter_->start();
+    } catch (...) {
+        if (!captureSpool_) ::close(fd);
+        captureWriter_.reset(); captureSpool_.reset();
+        err = "cannot start capture writer; spool retained"; return false;
+    }
+    captureInputFailed_.store(false, std::memory_order_relaxed);
+    captureMissingFrames_.store(0, std::memory_order_relaxed);
+    captureRT_ = captureWriter_.get();
+    device_->stop(); device_.reset();
+    if (!duplex->start(&Engine::duplexCallback, this, err)) {
+        captureRT_ = nullptr;
+        captureWriter_->stop(); captureWriter_.reset(); captureSpool_.reset();
+        std::string restoreError;
+        if (!startDevice(restoreError)) err += "; output restart failed: " + restoreError;
+        return false;
+    }
+    duplex_ = std::move(duplex);
+    return true;
+}
+
+bool Engine::captureStatus(DalnokCaptureStats &stats) const {
+    if (!duplex_ || !captureWriter_) return false;
+    stats = {};
+    stats.captured_frames = captureWriter_->capturedFrames();
+    stats.written_frames = captureWriter_->writtenFrames();
+    stats.dropped_frames = captureWriter_->droppedFrames() + captureMissingFrames_.load(std::memory_order_relaxed);
+    const double hardwareRate = duplex_->hardwareSampleRate();
+    stats.input_error = captureInputFailed_.load(std::memory_order_acquire) || duplex_->captureFailed() || !duplex_->alive() ||
+                        hardwareRate <= 0 || std::abs(hardwareRate - sampleRate_) > 0.5;
+    stats.overflow = captureWriter_->hasError(CaptureWriter::Error::overflow);
+    stats.write_error = captureWriter_->hasError(CaptureWriter::Error::write);
+    stats.finalize_error = captureWriter_->hasError(CaptureWriter::Error::finalize);
+    return true;
+}
+
+bool Engine::stopCapture(DalnokCaptureStats &stats, std::string &err, bool restoreOutput) {
+    if (!duplex_ || !captureWriter_) { err = "capture is not active"; return false; }
+    duplex_->stop(); // callback no longer accesses captureRT_
+    captureRT_ = nullptr;
+    captureWriter_->stop();
+    captureStatus(stats);
+    duplex_.reset(); captureWriter_.reset(); captureSpool_.reset();
+    const bool valid = !stats.input_error && !stats.overflow && !stats.write_error && !stats.finalize_error &&
+                       stats.captured_frames > 0 && stats.captured_frames == stats.written_frames;
+    std::string outputError;
+    const bool outputOK = !restoreOutput || startDevice(outputError);
+    if (!valid) err = "capture failed; the original spool was retained";
+    if (!outputOK) { if (!err.empty()) err += "; "; err += "output restart failed: " + outputError; }
+    return valid && outputOK;
 }
 
 bool Engine::readTrackMeter(DalnokTrackId id, float &l, float &r) {
@@ -103,6 +171,7 @@ void Engine::readMasterMeter(float &l, float &r) {
 }
 
 void Engine::stopDevice() {
+    if (duplex_) { DalnokCaptureStats stats{}; std::string ignored; stopCapture(stats, ignored, false); }
     if (!device_) return;
     device_->stop(); // synchronous: the audio thread is no longer inside process()
     device_.reset();
@@ -578,6 +647,16 @@ void Engine::renderPendingStretchesNow() {
 }
 
 // ---- Audio thread -------------------------------------------------------
+
+void Engine::duplexCallback(void *ctx, float *left, float *right, const float *input, int frames) DALNOK_NONBLOCKING {
+    auto *self = static_cast<Engine *>(ctx);
+    audioCallback(ctx, left, right, frames);
+    if (!input) {
+        self->captureMissingFrames_.fetch_add(static_cast<uint64_t>(frames), std::memory_order_relaxed);
+        self->captureInputFailed_.store(true, std::memory_order_release);
+    }
+    else if (self->captureRT_) self->captureRT_->push(input, static_cast<uint32_t>(frames));
+}
 
 void Engine::audioCallback(void *ctx, float *left, float *right, int frames) DALNOK_NONBLOCKING {
     auto *self = static_cast<Engine *>(ctx);

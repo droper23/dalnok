@@ -28,7 +28,7 @@
 extern "C" {
 #endif
 
-#define DALNOK_API_VERSION 7
+#define DALNOK_API_VERSION 9
 
 typedef enum {
     DALNOK_OK = 0,
@@ -79,6 +79,39 @@ size_t dalnok_engine_output_device(const DalnokEngine *engine, char *buf, size_t
 /* False once the selected device disappeared (e.g. unplugged); poll from the UI. */
 bool dalnok_engine_device_alive(const DalnokEngine *engine);
 double dalnok_engine_hardware_sample_rate(const DalnokEngine *engine);
+
+/* Input device discovery does not open a device or request microphone access. */
+typedef struct {
+    char uid[256];
+    char name[256];
+    double sample_rate;
+    int32_t input_channels;
+    bool is_default;
+} DalnokInputDeviceInfo;
+/* Fills up to capacity entries; returns the total number of input devices. [any thread] */
+int32_t dalnok_input_devices(DalnokInputDeviceInfo *out, int32_t capacity);
+
+/* MIDI source discovery only; does not open ports or receive events. */
+typedef struct {
+    int32_t unique_id;       /* Core MIDI unique ID, stable when the OS preserves it */
+    char name[256];
+} DalnokMidiSourceInfo;
+int32_t dalnok_midi_sources(DalnokMidiSourceInfo *out, int32_t capacity); /* [any thread] */
+
+/* Experimental same-device mono capture to a new spool. Output must already
+ * be explicitly set to device_uid, input_channel is zero-based, and engine/device rates must match. This
+ * does not create a clip, monitor input, or provide latency compensation.
+ * On error the spool is retained for recovery. Control thread only. */
+typedef struct {
+    uint64_t captured_frames, written_frames, dropped_frames;
+    bool input_error, overflow, write_error, finalize_error;
+} DalnokCaptureStats;
+DalnokStatus dalnok_capture_start(DalnokEngine *engine, const char *device_uid, int32_t input_channel,
+                                  const char *new_spool_path, char *err, size_t err_len);
+DalnokStatus dalnok_capture_stop(DalnokEngine *engine, DalnokCaptureStats *stats, char *err, size_t err_len);
+bool dalnok_capture_active(const DalnokEngine *engine);
+/* Read status while recording; error flags require the caller to stop capture. */
+DalnokStatus dalnok_capture_status(const DalnokEngine *engine, DalnokCaptureStats *stats);
 
 /* Runs the live render path (transport fades, smoothing, meters) for `frames`
  * without a device. Fails if a device is running. For tests and simulation. */

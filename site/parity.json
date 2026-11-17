@@ -29,6 +29,14 @@
       "caption": "Arrangement: rainbow track colors from green, gain and pan knobs, M/S chips, vertical meters, control bar in the title bar."
     },
     {
+      "file": "screenshots/warm-analog.png",
+      "caption": "Warm Analog theme: warmer studio surfaces and type; selected in Settings and applied on reopening."
+    },
+    {
+      "file": "screenshots/settings.png",
+      "caption": "Settings: choose an appearance and whether saved projects copy their audio."
+    },
+    {
       "file": "screenshots/command-palette.png",
       "caption": "Command palette (⌘K): fuzzy search over every command, with its menu location and shortcut."
     },
@@ -458,7 +466,7 @@
       "why": "Core of the owner's workflow. Recording integrity matters more than anything else.",
       "steps": [
         [
-          "Bounded capture buffer tested independently (not yet connected to recording)",
+          "Experimental headless same-device mono capture to a recoverable spool",
           "verified"
         ],
         [
@@ -486,7 +494,7 @@
           "todo"
         ]
       ],
-      "evidence": "Capture buffer: scripts/ci/capture-ring.sh, including a ThreadSanitizer run. CaptureRecovery tests verify WAV sample values and preservation of the source; live recording remains unimplemented."
+      "evidence": "Scarlett Solo: automated hardware capture test and a 30-second headless capture with zero reported dropped frames. The capture writer, timestamp checks, and WAV recovery have tests. Track recording UI, monitoring, alignment, and crash-safe finalization remain unfinished."
     },
     {
       "id": "comping",
@@ -1172,6 +1180,10 @@
       "why": "Composition.",
       "steps": [
         [
+          "MIDI source discovery and independently tested MIDI 1 message parser",
+          "verified"
+        ],
+        [
           "MIDI tracks",
           "todo"
         ],
@@ -1192,7 +1204,7 @@
           "todo"
         ]
       ],
-      "evidence": "Planned for Phase 3."
+      "evidence": "MIDI source enumeration tests and scripts/ci/midi-parser.sh; a separate Core MIDI probe observed MiniLab note events. Parser-to-device integration and all musical features remain unimplemented."
     },
     {
       "id": "tempo",
@@ -1332,7 +1344,11 @@
           "todo"
         ],
         [
-          "Analog theme family",
+          "Warm Analog theme and Settings (applies on reopening)",
+          "verified"
+        ],
+        [
+          "Additional analog themes",
           "todo"
         ],
         [
@@ -1340,8 +1356,8 @@
           "todo"
         ]
       ],
-      "evidence": "06 - Design/UI Audit 2026-11-16; screenshots.",
-      "screenshot": "screenshots/empty-state.png"
+      "evidence": "UI audit, reviewed screenshots, and app self-tests in both themes. Theme changes require reopening; VoiceOver and all auxiliary windows are not yet verified.",
+      "screenshot": "screenshots/warm-analog.png"
     },
     {
       "id": "import",

@@ -41,6 +41,7 @@ let package = Package(
             linkerSettings: [
                 .linkedFramework("AudioToolbox"),
                 .linkedFramework("CoreAudio"),
+                .linkedFramework("CoreMIDI"),
                 .linkedFramework("CoreFoundation"),
                 .linkedLibrary("z"),
             ]

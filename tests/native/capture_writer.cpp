@@ -29,6 +29,17 @@ int main() {
         assert(sink.finished && sink.samples == std::vector<float>(input, input + 4));
         assert(!w.push(input, 2));
     }
+    // Repeated immediate stops exercise the empty-check versus final write race.
+    for (int i = 0; i < 500; ++i) {
+        Sink sink;
+        Writer w(2, 2, sink);
+        w.start();
+        float input[] = {0.25f, -0.5f};
+        assert(w.push(input, 1));
+        w.stop();
+        assert(w.ok() && w.capturedFrames() == 1 && w.writtenFrames() == 1);
+        assert(sink.samples == std::vector<float>(input, input + 2));
+    }
     {
         Sink sink;
         Writer w(2, 2, sink);
@@ -36,6 +47,7 @@ int main() {
         assert(!w.push(input, 3));
         assert(w.hasError(Writer::Error::overflow) && w.droppedFrames() == 3);
         assert(!w.push(input, 1));
+        assert(w.droppedFrames() == 4);
         w.start(); w.stop();
         assert(sink.finished && w.writtenFrames() == 0);
     }

@@ -25,12 +25,15 @@ usage:
   dalnok-cli recover-capture <spool> <new-output.wav>
   dalnok-cli command <project.dalnok> <command> [args-json] [--save]   run a catalog command
   dalnok-cli commands                                                  list the command catalog
+  dalnok-cli inputs                                                    list audio input devices
+  dalnok-cli midi-inputs                                               list MIDI sources
+  dalnok-cli capture-test <device-name> <channel> <seconds> <new-spool>  experimental duplex capture
   dalnok-cli bench [--tracks N] [--seconds S]                          render-cost benchmark (no device)
   dalnok-cli import <project.rpp|.als|.logicx|.fcpxml|stems-folder> [--save out.dalnok] [--render out.wav] [--quiet]
 """
 
 let args = Array(CommandLine.arguments.dropFirst())
-guard let cmd = args.first, args.count >= 2 || cmd == "commands" || cmd == "bench" else { print(usage); exit(2) }
+guard let cmd = args.first, args.count >= 2 || cmd == "commands" || cmd == "bench" || cmd == "inputs" || cmd == "midi-inputs" else { print(usage); exit(2) }
 
 func openProject(_ path: String) -> OpaquePointer {
     let engine = dalnok_engine_create(48_000)!
@@ -43,6 +46,54 @@ func openProject(_ path: String) -> OpaquePointer {
 func opt(_ name: String) -> String? { args.firstIndex(of: name).flatMap { $0 + 1 < args.count ? args[$0 + 1] : nil } }
 
 switch cmd {
+case "capture-test":
+    guard args.count == 5, let channel = Int32(args[2]), channel > 0,
+          let seconds = Double(args[3]), seconds > 0, seconds <= 60 else { print(usage); exit(2) }
+    let count = dalnok_input_devices(nil, 0)
+    var devices = [DalnokInputDeviceInfo](repeating: DalnokInputDeviceInfo(), count: Int(max(count, 0)))
+    let current = devices.withUnsafeMutableBufferPointer { dalnok_input_devices($0.baseAddress, Int32($0.count)) }
+    guard let device = devices.prefix(Int(max(0, min(count, current)))).first(where: {
+        withUnsafeBytes(of: $0.name) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) } == args[1]
+    }) else { fail("input device not found") }
+    let uid = withUnsafeBytes(of: device.uid) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }
+    guard channel <= device.input_channels else { fail("input channel is out of range") }
+    guard let engine = dalnok_engine_create(device.sample_rate) else { fail("engine creation failed") }
+    defer { dalnok_engine_destroy(engine) }
+    var err = [CChar](repeating: 0, count: 512)
+    guard dalnok_engine_set_output_device(engine, uid, &err, err.count) == DALNOK_OK else { fail(cstr(err)) }
+    guard dalnok_capture_start(engine, uid, channel - 1, args[4], &err, err.count) == DALNOK_OK else { fail(cstr(err)) }
+    let deadline = Date().addingTimeInterval(seconds)
+    var live = DalnokCaptureStats()
+    while Date() < deadline {
+        Thread.sleep(forTimeInterval: 0.02)
+        guard dalnok_capture_status(engine, &live) == DALNOK_OK else { break }
+        if live.input_error || live.overflow || live.write_error || live.finalize_error { break }
+    }
+    var stats = DalnokCaptureStats()
+    let result = dalnok_capture_stop(engine, &stats, &err, err.count)
+    print("captured \(stats.captured_frames), wrote \(stats.written_frames), dropped \(stats.dropped_frames) frames")
+    guard result == DALNOK_OK, stats.captured_frames > 0 else { fail(cstr(err).isEmpty ? "no captured frames" : cstr(err)) }
+    print("experimental capture: PASS; spool retained at \(args[4])")
+
+case "midi-inputs":
+    let count = dalnok_midi_sources(nil, 0)
+    var sources = [DalnokMidiSourceInfo](repeating: DalnokMidiSourceInfo(), count: Int(max(count, 0)))
+    let current = sources.withUnsafeMutableBufferPointer { dalnok_midi_sources($0.baseAddress, Int32($0.count)) }
+    for source in sources.prefix(Int(max(0, min(count, current)))) {
+        let name = withUnsafeBytes(of: source.name) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }
+        print("\(name) [ID \(source.unique_id)]")
+    }
+
+case "inputs":
+    let count = dalnok_input_devices(nil, 0)
+    var devices = [DalnokInputDeviceInfo](repeating: DalnokInputDeviceInfo(), count: Int(max(count, 0)))
+    let current = devices.withUnsafeMutableBufferPointer { dalnok_input_devices($0.baseAddress, Int32($0.count)) }
+    for d in devices.prefix(Int(max(0, min(count, current)))) {
+        let name = withUnsafeBytes(of: d.name) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }
+        let uid = withUnsafeBytes(of: d.uid) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }
+        print("\(name): \(d.input_channels) input channels, \(Int(d.sample_rate)) Hz\(d.is_default ? " (default)" : "") [\(uid)]")
+    }
+
 case "play":
     let seconds = Double(opt("--seconds") ?? "3") ?? 3
     let churn = args.contains("--churn")

@@ -13,10 +13,10 @@ final class EmptyStateView: NSView {
         let cfg = NSImage.SymbolConfiguration(pointSize: 34, weight: .light)
         let icon = NSImageView(image: NSImage(systemSymbolName: "waveform", accessibilityDescription: nil)!.withSymbolConfiguration(cfg)!)
         icon.contentTintColor = Theme.textFaint
-        let title = NSTextField(labelWithString: "Drop audio files here")
+        let title = NSTextField(labelWithString: "Start your session")
         title.font = Theme.ui(17, .semibold)
         title.textColor = Theme.text
-        let sub = NSTextField(labelWithString: "Each file becomes a track. Logic, Ableton and REAPER projects can be dropped too.")
+        let sub = NSTextField(labelWithString: "Drop audio files or open a project to get started.")
         sub.font = Theme.ui(12)
         sub.textColor = Theme.textDim
         func button(_ title: String, _ key: String, _ sel: Selector, primary: Bool = false) -> NSButton {

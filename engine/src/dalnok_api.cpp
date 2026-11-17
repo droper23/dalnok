@@ -4,6 +4,7 @@
 #include "commands.hpp"
 #include "capture_recovery.hpp"
 #include "engine.hpp"
+#include "midi.hpp"
 #include "import/import.hpp"
 
 #include <algorithm>
@@ -76,6 +77,20 @@ int32_t dalnok_output_devices(DalnokDeviceInfo *out, int32_t capacity) {
     return static_cast<int32_t>(list.size());
 }
 
+int32_t dalnok_input_devices(DalnokInputDeviceInfo *out, int32_t capacity) {
+    const auto list = listInputDevices();
+    for (int32_t i = 0; out && i < capacity && i < static_cast<int32_t>(list.size()); ++i) {
+        const auto &d = list[static_cast<size_t>(i)];
+        out[i] = DalnokInputDeviceInfo{};
+        copyOut(out[i].uid, sizeof out[i].uid, d.uid);
+        copyOut(out[i].name, sizeof out[i].name, d.name);
+        out[i].sample_rate = d.sampleRate;
+        out[i].input_channels = d.inputChannels;
+        out[i].is_default = d.isDefault;
+    }
+    return static_cast<int32_t>(list.size());
+}
+
 DalnokStatus dalnok_engine_set_output_device(DalnokEngine *e, const char *uid, char *err, size_t err_len) {
     if (!e) return DALNOK_ERR_INVALID_ARG;
     std::string msg;
@@ -90,6 +105,38 @@ size_t dalnok_engine_output_device(const DalnokEngine *e, char *buf, size_t len)
 }
 bool dalnok_engine_device_alive(const DalnokEngine *e) { return e && e->impl.deviceAlive(); }
 double dalnok_engine_hardware_sample_rate(const DalnokEngine *e) { return e ? e->impl.hardwareSampleRate() : 0; }
+
+int32_t dalnok_midi_sources(DalnokMidiSourceInfo *out, int32_t capacity) {
+    const auto list = listMidiSources();
+    for (int32_t i = 0; out && i < capacity && i < static_cast<int32_t>(list.size()); ++i) {
+        const auto &source = list[static_cast<size_t>(i)];
+        out[i] = DalnokMidiSourceInfo{};
+        out[i].unique_id = source.uniqueId;
+        copyOut(out[i].name, sizeof out[i].name, source.name);
+    }
+    return static_cast<int32_t>(list.size());
+}
+
+DalnokStatus dalnok_capture_start(DalnokEngine *e, const char *uid, int32_t channel, const char *path,
+                                  char *err, size_t err_len) {
+    if (!e || !uid || !path || channel < 0) return DALNOK_ERR_INVALID_ARG;
+    std::string msg;
+    if (!e->impl.startCapture(uid, channel, path, msg)) { copyOut(err, err_len, msg); return DALNOK_ERR_DEVICE; }
+    return DALNOK_OK;
+}
+DalnokStatus dalnok_capture_stop(DalnokEngine *e, DalnokCaptureStats *stats, char *err, size_t err_len) {
+    if (!e) return DALNOK_ERR_INVALID_ARG;
+    DalnokCaptureStats result{}; std::string msg;
+    const bool ok = e->impl.stopCapture(result, msg);
+    if (stats) *stats = result;
+    if (!ok) { copyOut(err, err_len, msg); return DALNOK_ERR_DEVICE; }
+    return DALNOK_OK;
+}
+bool dalnok_capture_active(const DalnokEngine *e) { return e && e->impl.captureActive(); }
+DalnokStatus dalnok_capture_status(const DalnokEngine *e, DalnokCaptureStats *stats) {
+    if (!e || !stats) return DALNOK_ERR_INVALID_ARG;
+    return e->impl.captureStatus(*stats) ? DALNOK_OK : DALNOK_ERR_DEVICE;
+}
 
 DalnokStatus dalnok_engine_pump(DalnokEngine *e, float *l, float *r, int32_t frames) {
     return e && e->impl.pump(l, r, frames) ? DALNOK_OK : DALNOK_ERR_INVALID_ARG;

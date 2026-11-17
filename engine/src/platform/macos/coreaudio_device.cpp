@@ -2,9 +2,12 @@
 // default) or the HAL output unit bound to a specific device.
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "device.hpp"
+#include "sample_clock.hpp"
 
 #include <AudioToolbox/AudioToolbox.h>
 #include <CoreAudio/CoreAudio.h>
+#include <atomic>
+#include <cmath>
 
 namespace dalnok {
 
@@ -38,6 +41,14 @@ AudioDeviceID defaultOutputID() {
     return dev;
 }
 
+AudioDeviceID defaultInputID() {
+    auto a = addr(kAudioHardwarePropertyDefaultInputDevice);
+    AudioDeviceID dev = 0;
+    UInt32 size = sizeof(dev);
+    if (AudioObjectGetPropertyData(kAudioObjectSystemObject, &a, 0, nullptr, &size, &dev) != noErr) return 0;
+    return dev;
+}
+
 double nominalRate(AudioDeviceID dev) {
     auto a = addr(kAudioDevicePropertyNominalSampleRate);
     Float64 sr = 0;
@@ -46,8 +57,8 @@ double nominalRate(AudioDeviceID dev) {
     return sr;
 }
 
-int outputChannels(AudioDeviceID dev) {
-    auto a = addr(kAudioDevicePropertyStreamConfiguration, kAudioObjectPropertyScopeOutput);
+int channelCount(AudioDeviceID dev, AudioObjectPropertyScope scope) {
+    auto a = addr(kAudioDevicePropertyStreamConfiguration, scope);
     UInt32 size = 0;
     if (AudioObjectGetPropertyDataSize(dev, &a, 0, nullptr, &size) != noErr || size == 0) return 0;
     std::vector<char> buf(size);
@@ -172,19 +183,153 @@ private:
     void *ctx_ = nullptr;
 };
 
+// One AUHAL instance keeps capture and playback on a single device clock.
+class CoreAudioDuplex final : public AudioDuplexDevice {
+public:
+    CoreAudioDuplex(AudioDeviceID device, double rate, int channel, int channels)
+        : device_(device), sampleRate_(rate), selected_(channel), channels_(channels) {}
+    ~CoreAudioDuplex() override { stop(); }
+
+    bool start(Callback cb, void *ctx, std::string &err) override {
+        if (unit_) { err = "duplex device already started"; return false; }
+        if (!cb) { err = "missing duplex callback"; return false; }
+        cb_ = cb; ctx_ = ctx;
+        failed_.store(false, std::memory_order_relaxed);
+        clock_.reset();
+        AudioComponentDescription desc{};
+        desc.componentType = kAudioUnitType_Output;
+        desc.componentSubType = kAudioUnitSubType_HALOutput;
+        desc.componentManufacturer = kAudioUnitManufacturer_Apple;
+        auto comp = AudioComponentFindNext(nullptr, &desc);
+        if (!comp) { err = "duplex AudioUnit not found"; return false; }
+        OSStatus s = AudioComponentInstanceNew(comp, &unit_);
+        if (s != noErr) return fail("create duplex unit", s, err);
+        UInt32 enabled = 1;
+        s = AudioUnitSetProperty(unit_, kAudioOutputUnitProperty_EnableIO, kAudioUnitScope_Input, 1, &enabled, sizeof(enabled));
+        if (s != noErr) return fail("enable input", s, err);
+        s = AudioUnitSetProperty(unit_, kAudioOutputUnitProperty_EnableIO, kAudioUnitScope_Output, 0, &enabled, sizeof(enabled));
+        if (s != noErr) return fail("enable output", s, err);
+        s = AudioUnitSetProperty(unit_, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0, &device_, sizeof(device_));
+        if (s != noErr) return fail("select duplex device", s, err);
+        AudioStreamBasicDescription fmt{};
+        fmt.mSampleRate = sampleRate_;
+        fmt.mFormatID = kAudioFormatLinearPCM;
+        fmt.mFormatFlags = static_cast<AudioFormatFlags>(kAudioFormatFlagsNativeFloatPacked) | kAudioFormatFlagIsNonInterleaved;
+        fmt.mChannelsPerFrame = static_cast<UInt32>(channels_);
+        fmt.mFramesPerPacket = 1; fmt.mBitsPerChannel = 32; fmt.mBytesPerFrame = 4; fmt.mBytesPerPacket = 4;
+        s = AudioUnitSetProperty(unit_, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Output, 1, &fmt, sizeof(fmt));
+        if (s != noErr) return fail("set input format", s, err);
+        fmt.mChannelsPerFrame = 2;
+        s = AudioUnitSetProperty(unit_, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Input, 0, &fmt, sizeof(fmt));
+        if (s != noErr) return fail("set output format", s, err);
+        UInt32 size = sizeof(maxFrames_);
+        s = AudioUnitGetProperty(unit_, kAudioUnitProperty_MaximumFramesPerSlice, kAudioUnitScope_Global, 0, &maxFrames_, &size);
+        if (s != noErr) return fail("get maximum callback size", s, err);
+        if (maxFrames_ == 0 || maxFrames_ > 65536) return fail("invalid maximum callback size", kAudio_ParamError, err);
+        input_.resize(static_cast<size_t>(maxFrames_) * static_cast<size_t>(channels_));
+        inputData_ = input_.data();
+        AURenderCallbackStruct callback{&CoreAudioDuplex::render, this};
+        s = AudioUnitSetProperty(unit_, kAudioUnitProperty_SetRenderCallback, kAudioUnitScope_Input, 0, &callback, sizeof(callback));
+        if (s != noErr) return fail("set duplex callback", s, err);
+        if ((s = AudioUnitInitialize(unit_)) != noErr) return fail("initialize duplex unit", s, err);
+        if ((s = AudioOutputUnitStart(unit_)) != noErr) { AudioUnitUninitialize(unit_); return fail("start duplex unit", s, err); }
+        return true;
+    }
+    void stop() override {
+        if (!unit_) return;
+        AudioOutputUnitStop(unit_);
+        AudioUnitUninitialize(unit_);
+        AudioComponentInstanceDispose(unit_);
+        unit_ = nullptr;
+    }
+    bool captureFailed() const override { return failed_.load(std::memory_order_acquire); }
+    bool alive() const override {
+        auto a = addr(kAudioDevicePropertyDeviceIsAlive);
+        UInt32 value = 0, size = sizeof(value);
+        return AudioObjectGetPropertyData(device_, &a, 0, nullptr, &size, &value) == noErr && value;
+    }
+    double hardwareSampleRate() const override { return nominalRate(device_); }
+
+private:
+    bool fail(const char *what, OSStatus status, std::string &err) {
+        err = osStatusString(what, status);
+        if (unit_) { AudioComponentInstanceDispose(unit_); unit_ = nullptr; }
+        return false;
+    }
+    static OSStatus render(void *ref, AudioUnitRenderActionFlags *, const AudioTimeStamp *time,
+                           UInt32, UInt32 frames, AudioBufferList *output) DALNOK_NONBLOCKING {
+        auto *self = static_cast<CoreAudioDuplex *>(ref);
+        if (!output || output->mNumberBuffers < 2) { self->failed_.store(true, std::memory_order_release); return kAudio_ParamError; }
+        auto *left = static_cast<float *>(output->mBuffers[0].mData);
+        auto *right = static_cast<float *>(output->mBuffers[1].mData);
+        if (!left || !right || output->mBuffers[0].mDataByteSize < frames * sizeof(float) ||
+            output->mBuffers[1].mDataByteSize < frames * sizeof(float)) {
+            self->failed_.store(true, std::memory_order_release); return kAudio_ParamError;
+        }
+        const float *selected = nullptr;
+        const bool continuous = self->clock_.accept(time && (time->mFlags & kAudioTimeStampSampleTimeValid),
+                                                    time ? time->mSampleTime : 0, frames);
+        if (continuous && frames <= self->maxFrames_) {
+            struct InputBuffers { UInt32 count; AudioBuffer buffers[64]; } input{};
+            input.count = static_cast<UInt32>(self->channels_);
+            for (int c = 0; c < self->channels_; ++c) {
+                input.buffers[c].mNumberChannels = 1;
+                input.buffers[c].mDataByteSize = frames * sizeof(float);
+                input.buffers[c].mData = self->inputData_ + static_cast<size_t>(c) * self->maxFrames_;
+            }
+            AudioUnitRenderActionFlags inputFlags = 0;
+            const OSStatus s = AudioUnitRender(self->unit_, &inputFlags, time, 1, frames, reinterpret_cast<AudioBufferList *>(&input));
+            if (s == noErr && input.count > static_cast<UInt32>(self->selected_) &&
+                input.buffers[self->selected_].mDataByteSize >= frames * sizeof(float))
+                selected = static_cast<const float *>(input.buffers[self->selected_].mData);
+        }
+        if (!selected) self->failed_.store(true, std::memory_order_release);
+        self->cb_(self->ctx_, left, right, selected, static_cast<int>(frames));
+        return noErr;
+    }
+    AudioDeviceID device_;
+    double sampleRate_;
+    int selected_, channels_;
+    UInt32 maxFrames_ = 0;
+    AudioComponentInstance unit_ = nullptr;
+    std::vector<float> input_;
+    float *inputData_ = nullptr;
+    Callback cb_ = nullptr;
+    void *ctx_ = nullptr;
+    std::atomic<bool> failed_{false};
+    SampleClock clock_;
+};
+
 } // namespace
 
 std::vector<DeviceInfo> listOutputDevices() {
     std::vector<DeviceInfo> out;
     const AudioDeviceID def = defaultOutputID();
     for (auto id : allDevices()) {
-        const int ch = outputChannels(id);
+        const int ch = channelCount(id, kAudioObjectPropertyScopeOutput);
         if (ch <= 0) continue;
         DeviceInfo d;
         d.uid = cfString(id, kAudioDevicePropertyDeviceUID);
         d.name = cfString(id, kAudioObjectPropertyName);
         d.sampleRate = nominalRate(id);
         d.outputChannels = ch;
+        d.isDefault = id == def;
+        if (!d.uid.empty()) out.push_back(std::move(d));
+    }
+    return out;
+}
+
+std::vector<DeviceInfo> listInputDevices() {
+    std::vector<DeviceInfo> out;
+    const AudioDeviceID def = defaultInputID();
+    for (auto id : allDevices()) {
+        const int ch = channelCount(id, kAudioObjectPropertyScopeInput);
+        if (ch <= 0) continue;
+        DeviceInfo d;
+        d.uid = cfString(id, kAudioDevicePropertyDeviceUID);
+        d.name = cfString(id, kAudioObjectPropertyName);
+        d.sampleRate = nominalRate(id);
+        d.inputChannels = ch;
         d.isDefault = id == def;
         if (!d.uid.empty()) out.push_back(std::move(d));
     }
@@ -201,6 +346,22 @@ std::unique_ptr<AudioDevice> createOutputDevice(const std::string &uid, double s
         }
     }
     return std::make_unique<CoreAudioOutput>(dev, sampleRate);
+}
+
+std::unique_ptr<AudioDuplexDevice> createDuplexDevice(const std::string &uid, double sampleRate,
+                                                      int inputChannel, std::string &err) {
+    const AudioDeviceID device = uid.empty() ? 0 : deviceForUID(uid);
+    if (!device) { err = "select an available duplex device"; return nullptr; }
+    const int inputs = channelCount(device, kAudioObjectPropertyScopeInput);
+    const int outputs = channelCount(device, kAudioObjectPropertyScopeOutput);
+    if (inputs <= 0 || inputs > 64 || outputs < 2 || inputChannel < 0 || inputChannel >= inputs) {
+        err = "device does not support the requested input and stereo output"; return nullptr;
+    }
+    const double rate = nominalRate(device);
+    if (rate <= 0 || std::abs(rate - sampleRate) > 0.5) {
+        err = "engine and duplex device sample rates do not match"; return nullptr;
+    }
+    return std::make_unique<CoreAudioDuplex>(device, rate, inputChannel, inputs);
 }
 
 double defaultOutputSampleRate() { return nominalRate(defaultOutputID()); }

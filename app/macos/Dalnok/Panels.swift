@@ -152,7 +152,7 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
         pan.onPanChange = { [weak self] p in guard let self else { return }; self.session.setPan(self.trackId, p) }
         pan.onEnd = { [weak self] in self?.session.engine.endGroup() }
         for label in [gainLabel, panLabel] {
-            label.font = Theme.mono(9, .medium)
+            label.font = Theme.mono(10, .medium)
             label.textColor = Theme.textDim
             label.alignment = .center
         }
@@ -219,7 +219,7 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        (isSelected ? Theme.hex(0x262930) : Theme.panelRaised).setFill()
+        (isSelected ? Theme.selectedHeader : Theme.panelRaised).setFill()
         bounds.fill()
         // Color strip: the track's identity, full height; desaturated when muted.
         (muted ? TrackTint(base: color).muted : color).setFill()

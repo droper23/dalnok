@@ -6,21 +6,13 @@ milestone: Phase 1 + Migration (M5) + Time stretch (M6) + UI pass 1 (M7) done; P
 # Current State
 
 ## Latest session
-- Capture spool recovery now converts a stopped mono/stereo spool into a new float WAV via C API v7 or `dalnok-cli recover-capture`; tests verify samples, incomplete frame reporting, and no overwrite. Device recording and UI integration remain unimplemented.
-- Atomic project saves use unique temporary files and preserve existing project permissions; targeted persistence tests pass.
-- Periodic recovery snapshots and File ▸ Recover Snapshot are implemented. The app self-test verifies snapshot creation and manual restore as a new unsaved project; scripts/ci/recovery-smoke.sh verifies the automatic timer and rendering a snapshot after killing an isolated app process. Power-loss durability and automatic recovery prompting remain unverified. Copies are retained in Application Support/Dalnok/Recovery.
-- A tested project snapshot API writes a recovery copy without changing the model revision or saved/dirty state. Periodic scheduling and manual recovery UI are implemented; the isolated process-kill smoke test passes.
-- Added independently tested off-thread capture draining and an exclusive temporary PCM spool with read-only inspection of complete frames and partial tails. A process-kill test verifies that the spool’s complete-frame prefix remains inspectable, and a synthetic ten-second capture has the expected frames and samples. This is not yet a recorder, a project import path, or end-to-end crash recovery. Normal, AddressSanitizer, and ThreadSanitizer native tests pass.
-- Scarlett recheck through AVFoundation: a short capture peaked at -29.2 dBFS on channels 1 and 2, with exactly identical samples; channels 3 and 4 were silent. The capture path may duplicate a channel, so independent inputs remain unverified.
-- Added an independent bounded SPSC audio capture buffer with all-or-nothing writes and dropped-frame accounting. Native tests pass normally and under ThreadSanitizer; it is not integrated into device capture or disk writing.
-- Open selects foreign projects and asks before import; Logic packages and stem folders are accepted. GUI self-test covers cancel and confirm.
-- Scarlett Solo 4th Gen detected over USB at 48 kHz (4 inputs, 2 outputs). An external 2.66 s capture recorded a very low signal; microphone operation and Dalnok capture are not yet established.
-- ADR-0008 defines the first recording path, failure handling, recovery, and verification gates. Capture is not implemented.
-- Logic import rejects oversized chunk/name lengths; its report no longer presents uncertain events as MIDI counts or XML as exact. Three Logic importer tests pass.
-- GUI self-test verifies Space starts and pauses playback, including with gain knob focus.
-- Track gain and pan use labeled rotary knobs. Gain halo follows post-fader peak level; knob interaction shows gain. Build and GUI self-test passed.
-- A synthetic Logic 12.2 project and its Final Cut Pro XML export both import (one track, one clip, no missing media). The XML export rendered and shortened the audio, so exact native placement remains unverified.
-- Space is assigned to Play / Pause and is covered by the typing and playback self-test. More shortcut coverage remains requested.
+- Paused at the owner’s request; see `HANDOFF.md`. The optional full hardware ThreadSanitizer test was interrupted during its build and has no result. Site updates are local and have not been published.
+- Experimental headless mono capture uses one selected duplex device and requires matching engine and device rates. Scarlett Solo at 44.1 kHz: both inputs captured and recovered; a 30-second take wrote 1,323,520 frames with zero reported drops. The opt-in hardware test passes. No track recording UI, monitoring, clip placement, latency calibration, durable journal, or power-loss guarantee yet.
+- The capture writer's immediate-stop race was fixed; stress and ThreadSanitizer tests pass. Timestamp discontinuity and input failure are reported. `dalnok-cli inputs`, `capture-test`, and `recover-capture` are diagnostic paths, not a finished recording workflow.
+- C API v9 discovers MIDI sources. Dalnok lists the Arturia MiniLab mkII; a separate 15-second Core MIDI probe observed nine note-on and eight note-off events without saving them. The MIDI 1 byte parser has native and ThreadSanitizer tests but is not connected to a device, model, or playback.
+- Settings (⌘,) exposes appearance and copy-audio preference. Warm Analog and Graphite are available; theme changes apply on reopening. App self-tests and synthetic snapshots cover both themes. See [[UI Audit 2026-11-16 follow-up]] for the multi-perspective review and limitations.
+- Periodic recovery snapshots and File ▸ Recover Snapshot are implemented. The app self-test verifies manual restore as a new unsaved project; `scripts/ci/recovery-smoke.sh` verifies the timer and rendering after killing an isolated app process. Power-loss validation, automatic prompting, and retention controls remain open. Snapshots are retained in Application Support/Dalnok/Recovery.
+- Open accepts foreign projects and asks before import; the Logic package picker and experimental importer still need broader real-project validation. Exact Logic region placement remains unverified.
 
 ## Latest verified build
 - `main`, 2026-11-16. macOS 27.3, Xcode 27.2, Swift 6.4.2, Apple clang 21, M3 Max.
@@ -33,7 +25,7 @@ milestone: Phase 1 + Migration (M5) + Time stretch (M6) + UI pass 1 (M7) done; P
 - CI has two jobs: build + test, and real-time effect analysis with Homebrew LLVM.
 
 ## Architecture (now)
-C++20 engine (`engine/`) → C API (`dalnok.h`, v7) → AppKit UI (`app/macos/`). The **engine owns the
+C++20 engine (`engine/`) → C API (`dalnok.h`, v9) → AppKit UI (`app/macos/`). The **engine owns the
 project model**: tracks, clips in z-order, and a media pool. Every edit is a named, undoable command with
 whole-model snapshot undo, also reachable as JSON through the command catalog. The UI is a read-only view
 that refreshes on `dalnok_model_revision`. Render snapshots reach the audio thread through an atomic
@@ -82,7 +74,7 @@ slot, and retired ones come back through an SPSC queue. See [[System Overview]],
 ## Not yet / incomplete
 - Automatic recovery prompting, power-loss validation, and retention controls (Phase 2).
 - Disk streaming. Media is fully decoded into RAM, about 23 MB per stereo minute at 48 kHz.
-- Device selection and handling sample-rate changes. The default output only; the engine rate is fixed at launch.
+- Input selection in the UI and handling sample-rate changes; the engine rate is fixed at launch.
 
 ## Known defects
 - Seeking while playing fades out and in (correct), but there's no automated test for click-free behavior.
@@ -92,11 +84,11 @@ slot, and retired ones come back through an SPSC queue. See [[System Overview]],
 - Peak meters only. No LUFS or RMS yet.
 
 ## Active objective
-Phase 2: recording. Recording integrity outranks everything else. Time-stretch landed first (M6,
+Phase 2: recording, with Phase 3 MIDI foundations underway. Recording integrity outranks everything else. Time-stretch landed first (M6,
 [[ADR-0007 Time stretch]]) because real imports needed it.
 
 ## Next recommended action
-Integrate the capture buffer, spool, and recovery converter with same-device AUHAL input, record-arm, monitoring, and the model; add durable journal and power-loss testing. The Scarlett is needed for hardware and loopback validation.
+Connect experimental duplex capture to track arm, monitoring, take placement and the model; add a durable journal, latency calibration and power-loss testing. Connect the MIDI parser to a Core MIDI port, then implement a MIDI model, recording and playback. The Scarlett is needed for hardware and loopback validation.
 
 ## Open migration items
 - Verify Logic `.logicx` placement against a real Logic **Final Cut Pro XML export** of the same project
