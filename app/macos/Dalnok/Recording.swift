@@ -134,6 +134,7 @@ extension MainWindowController {
         }
         dalnok_record_set_punch(e.handle, punchIn != nil, punchIn ?? 0, punchIn != nil ? punchOut : 0)
         dalnok_metronome_count_in(e.handle, countInEnd)
+        countInUntil = countInEnd
         do {
             try e.startRecording(input: uid, folder: audio == nil ? nil : recordingFolder)
         } catch {
@@ -151,6 +152,7 @@ extension MainWindowController {
         let (result, problem) = e.stopRecording()
         dalnok_record_set_punch(e.handle, false, 0, 0)
         dalnok_metronome_count_in(e.handle, 0)
+        countInUntil = 0
         transport.setRecording(false)
         timeline.recording = nil
         session.refresh()

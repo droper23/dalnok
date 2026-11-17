@@ -98,6 +98,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         set { UserDefaults.standard.set(newValue, forKey: "showDevicePanel") }
     }
     private var timer: Timer?
+    /// Count-in end (the record point) while a count-in take is starting; 0 otherwise.
+    var countInUntil: Int64 = 0
+    /// Warm Analog power-on lamp test of the position display.
+    var vfdTestUntil = Date.distantPast
     private var wasPlaying = false
     private var wasRecording = false
     private var didShowContent = false
@@ -446,7 +450,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         } else {
             lastBeat = -1
         }
-        let position = timeline.positionText(e.position)
+        var position = timeline.positionText(e.position)
+        // Count-in: the display counts the beats down to the record point.
+        if e.isRecording, countInUntil > 0, e.position < countInUntil {
+            let b = session.bar(atBeat: session.frameToBeat(Double(e.position)))
+            let beatLen = 4.0 / Double(b.den)
+            let left = Int(((session.frameToBeat(Double(countInUntil)) - session.frameToBeat(Double(e.position))) / beatLen).rounded(.up))
+            position = "COUNT \(max(1, left))"
+        }
+        // Warm Analog power-on: every segment lit for a moment, like a display's lamp test.
+        if Date() < vfdTestUntil { position = String(position.map { $0.isNumber ? "8" : $0 }) }
         transport.timeLabel.stringValue = position
         if Analog.on { transport.ghost.stringValue = String(position.map { $0.isNumber ? "8" : $0 }) } // unlit segments
         timeline.followPlayhead()
