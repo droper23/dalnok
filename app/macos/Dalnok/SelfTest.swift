@@ -651,13 +651,29 @@ final class SelfTest {
         // The test bundle's first class is an effect: it becomes an insert after Dalnok Poly.
         check(w.headers.row(keys.id)?.inputButton.title.contains("1 FX") == true, "header shows the insert (\(w.headers.row(keys.id)?.inputButton.title ?? "-"))")
         let menu = w.pluginsMenu(for: t!)
-        check(menu.items.first?.title.hasPrefix("Remove Dalnok Test Gain") == true, "track menu offers to remove it")
-        if let remove = menu.items.first { menu.performActionForItem(at: menu.index(of: remove)) }
+        let remove = menu.items.first { $0.title.hasPrefix("Remove Dalnok Test Gain") }
+        check(remove != nil, "track menu offers to remove it")
+        if let remove { menu.performActionForItem(at: menu.index(of: remove)) }
         t = s.track(keys.id)
         check(t?.plugins.isEmpty == true && s.engine.undoName == "Remove Plug-in", "removed through the track menu as one undo step")
         _ = perform("Undo")
         check(s.track(keys.id)?.plugins.count == 1, "undo brings the plug-in back")
         pm.window?.orderOut(nil)
+        // Plug-in window: no editor view in the test plug-in, so the generic parameter panel opens.
+        guard let slot = s.track(keys.id)?.plugins.first?.id else { return }
+        let trackMenu = w.pluginsMenu(for: s.track(keys.id)!) // held: items reference their menu weakly
+        let open = trackMenu.items.first { $0.title == "Open Dalnok Test Gain" }
+        check(open != nil, "track menu offers to open the plug-in")
+        if let open { trackMenu.performActionForItem(at: trackMenu.index(of: open)) }
+        guard let pw = w.pluginWindows[slot] else { return check(false, "plug-in window opened") }
+        check(!pw.editorOpen && pw.parameters.count == 1 && fixedString(pw.parameters[0].title) == "Gain",
+              "parameter panel lists the plug-in's parameters (\(pw.parameters.map { fixedString($0.title) }))")
+        pw.set(1, 0.25)
+        check(pw.current(1)?.value == 0.25 && fixedString(pw.current(1)!.display) == "25 %", "panel sets a parameter and shows the plug-in's text")
+        pw.filter("xyz")
+        check(pw.rows.isEmpty, "parameter search filters")
+        pw.window?.close()
+        check(w.pluginWindows[slot] == nil, "closing the plug-in window releases it")
     }
 
     /// Animations run when motion is allowed and are skipped with Reduce Motion.

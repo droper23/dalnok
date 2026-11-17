@@ -12,12 +12,17 @@
 #include "pluginterfaces/vst/ivstcomponent.h"
 #include "pluginterfaces/vst/ivstevents.h"
 #include "pluginterfaces/vst/ivsthostapplication.h"
+#include "pluginterfaces/vst/ivsteditcontroller.h"
+#include "pluginterfaces/vst/ivstmessage.h"
+#include "pluginterfaces/vst/ivstparameterchanges.h"
 #include "pluginterfaces/vst/vstspeaker.h"
+#include "pluginterfaces/gui/iplugview.h"
 #pragma clang diagnostic pop
 
 #include <CoreFoundation/CoreFoundation.h>
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstring>
 #include <map>
 #include <mutex>
@@ -116,6 +121,69 @@ public:
     tresult PLUGIN_API addEvent(Event &) override { return kResultFalse; } // output events are not collected yet
 };
 
+// Fixed-capacity parameter changes for one block: one point per parameter (the latest value).
+class BlockParamQueue final : public IParamValueQueue {
+public:
+    ParamID id = 0;
+    ParamValue value = 0;
+    tresult PLUGIN_API queryInterface(const TUID iid, void **obj) override {
+        if (FUnknownPrivate::iidEqual(iid, IParamValueQueue::iid) || FUnknownPrivate::iidEqual(iid, FUnknown::iid)) { *obj = this; return kResultOk; }
+        *obj = nullptr;
+        return kNoInterface;
+    }
+    uint32 PLUGIN_API addRef() override { return 1; }
+    uint32 PLUGIN_API release() override { return 1; }
+    ParamID PLUGIN_API getParameterId() override { return id; }
+    int32 PLUGIN_API getPointCount() override { return 1; }
+    tresult PLUGIN_API getPoint(int32 index, int32 &offset, ParamValue &v) override {
+        if (index != 0) return kInvalidArgument;
+        offset = 0;
+        v = value;
+        return kResultOk;
+    }
+    tresult PLUGIN_API addPoint(int32, ParamValue, int32 &) override { return kResultFalse; }
+};
+class BlockParamChanges final : public IParameterChanges {
+public:
+    std::array<BlockParamQueue, 64> queues;
+    int32 count = 0;
+    tresult PLUGIN_API queryInterface(const TUID iid, void **obj) override {
+        if (FUnknownPrivate::iidEqual(iid, IParameterChanges::iid) || FUnknownPrivate::iidEqual(iid, FUnknown::iid)) { *obj = this; return kResultOk; }
+        *obj = nullptr;
+        return kNoInterface;
+    }
+    uint32 PLUGIN_API addRef() override { return 1; }
+    uint32 PLUGIN_API release() override { return 1; }
+    int32 PLUGIN_API getParameterCount() override { return count; }
+    IParamValueQueue *PLUGIN_API getParameterData(int32 index) override {
+        return index >= 0 && index < count ? &queues[static_cast<size_t>(index)] : nullptr;
+    }
+    IParamValueQueue *PLUGIN_API addParameterData(const ParamID &, int32 &index) override { index = -1; return nullptr; }
+    // Audio thread: returns false when full (the change waits for the next block).
+    bool set(ParamID id, ParamValue v) DALNOK_NONBLOCKING {
+        for (int32 i = 0; i < count; ++i)
+            if (queues[static_cast<size_t>(i)].id == id) { queues[static_cast<size_t>(i)].value = v; return true; }
+        if (count >= static_cast<int32>(queues.size())) return false;
+        queues[static_cast<size_t>(count)].id = id;
+        queues[static_cast<size_t>(count)].value = v;
+        ++count;
+        return true;
+    }
+};
+
+struct ParamChange { uint32 id; double value; };
+
+std::string utf8(const char16 *s, size_t max) {
+    std::string out;
+    for (size_t i = 0; i < max && s[i]; ++i) {
+        const uint32_t c = static_cast<uint16_t>(s[i]);
+        if (c < 0x80) out += static_cast<char>(c);
+        else if (c < 0x800) { out += static_cast<char>(0xC0 | (c >> 6)); out += static_cast<char>(0x80 | (c & 63)); }
+        else { out += static_cast<char>(0xE0 | (c >> 12)); out += static_cast<char>(0x80 | ((c >> 6) & 63)); out += static_cast<char>(0x80 | (c & 63)); }
+    }
+    return out;
+}
+
 // Loaded bundles stay loaded for the process lifetime: unloading plugin code is a common crash source,
 // and instances may outlive each other in undo history and render snapshots.
 struct Module {
@@ -157,11 +225,68 @@ std::string hexId(const TUID id) {
     return s;
 }
 
+class Vst3Processor;
+
+// Receives edits from the plugin's controller (its editor) and forwards them to the processor.
+class ComponentHandler final : public IComponentHandler {
+public:
+    Vst3Processor *owner = nullptr;
+    tresult PLUGIN_API queryInterface(const TUID iid, void **obj) override {
+        if (FUnknownPrivate::iidEqual(iid, IComponentHandler::iid) || FUnknownPrivate::iidEqual(iid, FUnknown::iid)) { *obj = this; return kResultOk; }
+        *obj = nullptr;
+        return kNoInterface;
+    }
+    uint32 PLUGIN_API addRef() override { return 1; }
+    uint32 PLUGIN_API release() override { return 1; }
+    tresult PLUGIN_API beginEdit(ParamID) override { return kResultOk; }
+    tresult PLUGIN_API performEdit(ParamID id, ParamValue v) override;
+    tresult PLUGIN_API endEdit(ParamID) override { return kResultOk; }
+    tresult PLUGIN_API restartComponent(int32) override { return kResultOk; }
+};
+
+// Hosts the editor view and passes its resize requests to the window.
+class PlugFrame final : public IPlugFrame {
+public:
+    void (*onResize)(void *, int32_t, int32_t) = nullptr;
+    void *ctx = nullptr;
+    tresult PLUGIN_API queryInterface(const TUID iid, void **obj) override {
+        if (FUnknownPrivate::iidEqual(iid, IPlugFrame::iid) || FUnknownPrivate::iidEqual(iid, FUnknown::iid)) { *obj = this; return kResultOk; }
+        *obj = nullptr;
+        return kNoInterface;
+    }
+    uint32 PLUGIN_API addRef() override { return 1; }
+    uint32 PLUGIN_API release() override { return 1; }
+    tresult PLUGIN_API resizeView(IPlugView *view, ViewRect *r) override {
+        if (!view || !r) return kInvalidArgument;
+        if (onResize) onResize(ctx, r->getWidth(), r->getHeight());
+        view->onSize(r);
+        return kResultOk;
+    }
+};
+
 class Vst3Processor final : public PluginProcessor {
 public:
     ~Vst3Processor() override {
+        closeEditor();
+        if (cpComponent_ && cpController_) { cpComponent_->disconnect(cpController_); cpController_->disconnect(cpComponent_); }
+        if (cpComponent_) cpComponent_->release();
+        if (cpController_) cpController_->release();
+        if (controller_) {
+            controller_->setComponentHandler(nullptr);
+            if (!singleComponent_) controller_->terminate();
+            controller_->release();
+        }
         if (processor_) { processor_->setProcessing(false); processor_->release(); }
         if (component_) { component_->setActive(false); component_->terminate(); component_->release(); }
+    }
+
+    // Control side (main thread, or a plugin thread inside performEdit): serialized by a lock that the
+    // audio thread never takes; the queue itself is single-producer/single-consumer.
+    void pushChange(uint32 id, double v, bool fromEditor) {
+        std::lock_guard<std::mutex> g(producer_);
+        touched_[id] = v;
+        if (!changes_.push(ParamChange{id, v})) dropped_.fetch_add(1, std::memory_order_relaxed);
+        if (fromEditor) edits_.fetch_add(1, std::memory_order_relaxed);
     }
     bool open(const Module &m, const std::string &wantedId, double rate, int maxBlock, bool offline, std::string &err) {
         IPluginFactory2 *f2 = nullptr;
@@ -188,6 +313,28 @@ public:
             return false;
         }
         if (component_->initialize(&gHost) != kResultOk) { err = "the plugin failed to initialize"; return false; }
+        // Edit controller: the same object (single component) or a separate class, connected both ways.
+        if (component_->queryInterface(IEditController::iid, reinterpret_cast<void **>(&controller_)) == kResultOk && controller_) {
+            singleComponent_ = true;
+        } else {
+            controller_ = nullptr;
+            TUID ccid{};
+            if (component_->getControllerClassId(ccid) == kResultOk &&
+                m.factory->createInstance(ccid, IEditController::iid, reinterpret_cast<void **>(&controller_)) == kResultOk && controller_) {
+                if (controller_->initialize(&gHost) != kResultOk) { controller_->release(); controller_ = nullptr; }
+            } else {
+                controller_ = nullptr;
+            }
+            if (controller_ &&
+                component_->queryInterface(IConnectionPoint::iid, reinterpret_cast<void **>(&cpComponent_)) == kResultOk &&
+                controller_->queryInterface(IConnectionPoint::iid, reinterpret_cast<void **>(&cpController_)) == kResultOk &&
+                cpComponent_ && cpController_) {
+                cpComponent_->connect(cpController_);
+                cpController_->connect(cpComponent_);
+            }
+        }
+        handler_.owner = this;
+        if (controller_) controller_->setComponentHandler(&handler_);
         if (component_->queryInterface(IAudioProcessor::iid, reinterpret_cast<void **>(&processor_)) != kResultOk || !processor_) {
             err = "the plugin has no audio processor interface";
             return false;
@@ -210,7 +357,17 @@ public:
         hasEvents_ = eventIn > 0;
         scratchL_.assign(static_cast<size_t>(maxBlock), 0.0f);
         scratchR_.assign(static_cast<size_t>(maxBlock), 0.0f);
+        syncController();
         return true;
+    }
+
+    // The controller mirrors the component's state (parameter values shown in editors and panels).
+    void syncController() {
+        if (!controller_ || singleComponent_) return;
+        MemoryStream s;
+        if (component_->getState(&s) != kResultOk) return;
+        s.pos = 0;
+        controller_->setComponentState(&s);
     }
 
     bool instrument() const override { return instrument_; }
@@ -235,6 +392,10 @@ public:
         }
         // Effects get the input in separate buffers so plugins that read after writing still see it.
         for (int i = 0; i < frames; ++i) { scratchL_[static_cast<size_t>(i)] = left[i]; scratchR_[static_cast<size_t>(i)] = right[i]; }
+        // Parameter changes since the last block (latest value per parameter).
+        paramChanges_.count = 0;
+        ParamChange c;
+        while (paramChanges_.count < static_cast<int32>(paramChanges_.queues.size()) && changes_.pop(c)) paramChanges_.set(c.id, c.value);
         float *inPtr[2] = {scratchL_.data(), scratchR_.data()};
         float *outPtr[2] = {left, right};
         AudioBusBuffers in, out;
@@ -251,6 +412,7 @@ public:
         data.inputs = hasInput_ ? &in : nullptr;
         data.outputs = &out;
         data.inputEvents = hasEvents_ ? &events_ : nullptr;
+        data.inputParameterChanges = paramChanges_.count ? &paramChanges_ : nullptr;
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wfunction-effects"
         // The one call into plugin code (ADR-0009): it cannot be verified, so it is the explicit exception.
@@ -269,17 +431,99 @@ public:
     bool setState(const std::string &bytes) override {
         MemoryStream s;
         s.data = bytes;
-        return component_->setState(&s) == kResultOk;
+        if (component_->setState(&s) != kResultOk) return false;
+        syncController();
+        std::lock_guard<std::mutex> g(producer_);
+        touched_.clear();
+        return true;
+    }
+
+    int32_t parameterCount() override { return controller_ ? controller_->getParameterCount() : 0; }
+    bool parameter(int32_t index, PluginParameter &out) override {
+        ParameterInfo info{};
+        if (!controller_ || controller_->getParameterInfo(index, info) != kResultOk) return false;
+        out.id = info.id;
+        out.title = utf8(info.title, 128);
+        out.units = utf8(info.units, 128);
+        out.stepCount = info.stepCount;
+        out.defaultValue = info.defaultNormalizedValue;
+        out.value = controller_->getParamNormalized(info.id);
+        out.automatable = info.flags & ParameterInfo::kCanAutomate;
+        out.readOnly = info.flags & ParameterInfo::kIsReadOnly;
+        out.hidden = info.flags & ParameterInfo::kIsHidden;
+        String128 text{};
+        if (controller_->getParamStringByValue(info.id, out.value, text) == kResultOk) out.display = utf8(text, 128);
+        return true;
+    }
+    bool setParameter(uint32_t id, double v) override {
+        if (!(v >= 0 && v <= 1)) return false;
+        if (controller_) controller_->setParamNormalized(id, v);
+        pushChange(id, v, false);
+        return true;
+    }
+    void touchedParameters(std::vector<std::pair<uint32_t, double>> &out) override {
+        std::lock_guard<std::mutex> g(producer_);
+        out.assign(touched_.begin(), touched_.end());
+    }
+    uint64_t editCount() const override { return edits_.load(std::memory_order_relaxed); }
+
+    bool hasEditor() override { return controller_ != nullptr; }
+    bool openEditor(void *parent, int32_t &w, int32_t &h, void (*onResize)(void *, int32_t, int32_t), void *ctx,
+                    std::string &err) override {
+        closeEditor();
+        if (!controller_) { err = "this plug-in has no editor"; return false; }
+        view_ = controller_->createView(ViewType::kEditor);
+        if (!view_) { err = "this plug-in has no editor"; return false; }
+        if (view_->isPlatformTypeSupported(kPlatformTypeNSView) != kResultTrue) {
+            view_->release(); view_ = nullptr;
+            err = "the editor does not support macOS views";
+            return false;
+        }
+        frame_.onResize = onResize;
+        frame_.ctx = ctx;
+        view_->setFrame(&frame_);
+        if (view_->attached(parent, kPlatformTypeNSView) != kResultOk) {
+            view_->release(); view_ = nullptr;
+            err = "the editor could not be opened";
+            return false;
+        }
+        ViewRect r{};
+        view_->getSize(&r);
+        w = r.getWidth();
+        h = r.getHeight();
+        return true;
+    }
+    void closeEditor() override {
+        if (!view_) return;
+        view_->removed();
+        view_->setFrame(nullptr);
+        view_->release();
+        view_ = nullptr;
     }
 
 private:
     IComponent *component_ = nullptr;
     IAudioProcessor *processor_ = nullptr;
+    IEditController *controller_ = nullptr;
+    IConnectionPoint *cpComponent_ = nullptr, *cpController_ = nullptr;
+    IPlugView *view_ = nullptr;
+    bool singleComponent_ = false;
+    ComponentHandler handler_;
+    PlugFrame frame_;
+    SpscQueue<ParamChange, 1024> changes_;
+    BlockParamChanges paramChanges_;
+    std::mutex producer_;
+    std::map<uint32_t, double> touched_;
+    std::atomic<uint64_t> edits_{0}, dropped_{0};
     BlockEvents events_;
     std::vector<float> scratchL_, scratchR_;
     std::string name_, vendor_, classId_, subCategories_;
     bool instrument_ = false, hasInput_ = false, hasEvents_ = false;
 };
+tresult PLUGIN_API ComponentHandler::performEdit(ParamID id, ParamValue v) {
+    if (owner) owner->pushChange(id, v, true);
+    return kResultOk;
+}
 } // namespace
 
 std::unique_ptr<PluginProcessor> loadVst3(const std::string &bundle, const std::string &classId, double sampleRate,

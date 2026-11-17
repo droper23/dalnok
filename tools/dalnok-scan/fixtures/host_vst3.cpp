@@ -1,6 +1,8 @@
 // Test-only VST3 module with real processing, for scripts/ci/plugin-host.sh:
-//   "Dalnok Test Gain"  (effect): out = in × gain; gain is the plugin state (float, default 0.5);
-//                                  reports 7 frames of latency (not applied, only reported).
+//   "Dalnok Test Gain"  (effect): out = in × gain; gain is the plugin state (float, default 0.5) and
+//                                  parameter 1 "Gain" (normalized = gain). The processor sees parameter
+//                                  changes only through process() (as with a separate controller);
+//                                  reports 7 frames of latency (not applied, only reported). No editor view.
 //   "Dalnok Test Synth" (instrument): outputs a constant level = velocity/127 while a note is held,
 //                                  switching at the exact event sample offset; 0 otherwise.
 // SPDX-License-Identifier: GPL-3.0-or-later
@@ -9,6 +11,9 @@
 #include "pluginterfaces/vst/ivstaudioprocessor.h"
 #include "pluginterfaces/vst/ivstcomponent.h"
 #include "pluginterfaces/vst/ivstevents.h"
+#include "pluginterfaces/vst/ivsteditcontroller.h"
+#include "pluginterfaces/vst/ivstparameterchanges.h"
+#include <cstdio>
 #include "pluginterfaces/vst/vstspeaker.h"
 #include <CoreFoundation/CoreFoundation.h>
 #include <cstring>
@@ -20,6 +25,9 @@ namespace Steinberg::Vst {
 DEF_CLASS_IID(IComponent)
 DEF_CLASS_IID(IAudioProcessor)
 DEF_CLASS_IID(IEventList)
+DEF_CLASS_IID(IEditController)
+DEF_CLASS_IID(IParameterChanges)
+DEF_CLASS_IID(IParamValueQueue)
 }
 
 namespace {
@@ -32,11 +40,12 @@ void setName(String128 out, const char *s) {
     out[i] = 0;
 }
 
-class TestPlugin final : public IComponent, public IAudioProcessor {
+class TestPlugin final : public IComponent, public IAudioProcessor, public IEditController {
 public:
     explicit TestPlugin(bool synth) : synth_(synth) {}
     tresult PLUGIN_API queryInterface(const TUID iid, void **obj) override {
         if (FUnknownPrivate::iidEqual(iid, IAudioProcessor::iid)) { *obj = static_cast<IAudioProcessor *>(this); addRef(); return kResultOk; }
+        if (FUnknownPrivate::iidEqual(iid, IEditController::iid)) { *obj = static_cast<IEditController *>(this); addRef(); return kResultOk; }
         if (FUnknownPrivate::iidEqual(iid, IComponent::iid) || FUnknownPrivate::iidEqual(iid, IPluginBase::iid) ||
             FUnknownPrivate::iidEqual(iid, FUnknown::iid)) {
             *obj = static_cast<IComponent *>(this);
@@ -94,8 +103,50 @@ public:
     tresult PLUGIN_API setupProcessing(ProcessSetup &) override { return kResultOk; }
     tresult PLUGIN_API setProcessing(TBool) override { return kResultOk; }
     uint32 PLUGIN_API getTailSamples() override { return 0; }
+    // IEditController (single component). The displayed value is separate from the processor's gain.
+    tresult PLUGIN_API setComponentState(IBStream *s) override {
+        float g = 0;
+        int32 got = 0;
+        if (s && s->read(&g, sizeof g, &got) == kResultOk && got == sizeof g) shown_ = g;
+        return kResultOk;
+    }
+    int32 PLUGIN_API getParameterCount() override { return synth_ ? 0 : 1; }
+    tresult PLUGIN_API getParameterInfo(int32 index, ParameterInfo &info) override {
+        if (synth_ || index != 0) return kInvalidArgument;
+        info = ParameterInfo{};
+        info.id = 1;
+        setName(info.title, "Gain");
+        setName(info.units, "%");
+        info.defaultNormalizedValue = 0.5;
+        info.flags = ParameterInfo::kCanAutomate;
+        return kResultOk;
+    }
+    tresult PLUGIN_API getParamStringByValue(ParamID id, ParamValue v, String128 out) override {
+        if (id != 1) return kInvalidArgument;
+        char buf[32];
+        std::snprintf(buf, sizeof buf, "%.0f %%", v * 100);
+        setName(out, buf);
+        return kResultOk;
+    }
+    tresult PLUGIN_API getParamValueByString(ParamID, TChar *, ParamValue &) override { return kNotImplemented; }
+    ParamValue PLUGIN_API normalizedParamToPlain(ParamID, ParamValue v) override { return v; }
+    ParamValue PLUGIN_API plainParamToNormalized(ParamID, ParamValue v) override { return v; }
+    ParamValue PLUGIN_API getParamNormalized(ParamID id) override { return id == 1 ? shown_ : 0; }
+    tresult PLUGIN_API setParamNormalized(ParamID id, ParamValue v) override { if (id == 1) shown_ = v; return kResultOk; }
+    tresult PLUGIN_API setComponentHandler(IComponentHandler *) override { return kResultOk; }
+    IPlugView *PLUGIN_API createView(FIDString) override { return nullptr; }
+
     tresult PLUGIN_API process(ProcessData &data) override {
         if (data.numOutputs < 1) return kResultOk;
+        if (IParameterChanges *pc = data.inputParameterChanges) {
+            for (int32 i = 0; i < pc->getParameterCount(); ++i) {
+                IParamValueQueue *q = pc->getParameterData(i);
+                int32 offset = 0;
+                ParamValue v = 0;
+                if (q && q->getParameterId() == 1 && q->getPointCount() > 0 && q->getPoint(q->getPointCount() - 1, offset, v) == kResultOk)
+                    gain_ = static_cast<float>(v);
+            }
+        }
         Sample32 **out = data.outputs[0].channelBuffers32;
         if (!synth_) {
             Sample32 **in = data.inputs[0].channelBuffers32;
@@ -119,6 +170,7 @@ public:
 private:
     bool synth_;
     float gain_ = 0.5f, level_ = 0;
+    double shown_ = 0.5;
     int16 pitch_ = -1;
     uint32 refs_ = 1;
 };

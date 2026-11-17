@@ -183,6 +183,15 @@ extension MainWindowController {
     func showInputMenu(for row: TrackHeaderRow) {
         guard let track = session.track(row.trackId) else { return }
         let menu = NSMenu()
+        // Plug-ins on this track: open their windows.
+        for p in track.plugins {
+            let it = NSMenuItem(title: "Open \(p.name)\(p.instrument ? "" : " (insert)")", action: #selector(openPluginItem(_:)), keyEquivalent: "")
+            it.representedObject = (track.id, p.id)
+            it.target = self
+            it.isEnabled = p.loaded
+            menu.addItem(it)
+        }
+        if !track.plugins.isEmpty { menu.addItem(.separator()) }
         if track.isInstrument {
             let sources = Engine.midiSources()
             let title = sources.isEmpty ? "No MIDI inputs connected" : "All MIDI inputs (\(sources.map(\.name).joined(separator: ", ")))"

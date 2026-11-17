@@ -218,6 +218,10 @@ void Engine::stopDevice() {
 void Engine::collectGarbage() {
     RenderState *s = nullptr;
     while (retired_.pop(s)) delete s;
+    // Edits made in plugin editors change what the project will save.
+    uint64_t edits = 0;
+    for (const auto &[id, p] : plugins_) edits += p ? p->editCount() : 0;
+    if (edits != pluginEdits_) { pluginEdits_ = edits; ++revision_; }
     if (recording_) drainRecordedMidi();
 }
 
@@ -597,6 +601,11 @@ Engine::PluginMap Engine::offlinePlugins() const {
             std::shared_ptr<PluginProcessor> p(loadVst3(slot.path, slot.classId, sampleRate_, kMaxBlock, true, err));
             if (!p) continue;
             if (pluginState(slot.id, state)) p->setState(state);
+            // Parameters set since the state was captured may not be in it yet (the live processor applies
+            // them on its next block), so replay them; the offline instance applies them before its first block.
+            std::vector<std::pair<uint32_t, double>> touched;
+            pluginInstance(slot.id)->touchedParameters(touched);
+            for (const auto &[id, v] : touched) p->setParameter(id, v);
             out[slot.id] = std::move(p);
         }
     return out;

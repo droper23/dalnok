@@ -1035,19 +1035,23 @@
           "verified"
         ],
         [
-          "Plugin editor window",
-          "todo"
+          "Plugin editor window (the plug-in's own interface)",
+          "implemented"
         ],
         [
-          "Parameter automation and generic parameter panel",
-          "todo"
+          "Parameter changes from editors and Dalnok reach the processor",
+          "verified"
         ],
         [
           "Latency compensation (latency is reported only)",
           "todo"
+        ],
+        [
+          "Parameter automation",
+          "todo"
         ]
       ],
-      "evidence": "scripts/ci/plugin-host.sh builds a test VST3 (gain effect, note-driven synth) and checks exact gain, a bit-exact passthrough null test, note on/off on the exact sample across block boundaries, live input, undo/redo, state through save and reopen, and a missing plugin keeping its state (also under ThreadSanitizer). Vital (VST3, third-party) loads as an instrument through the command catalog and renders its notes offline (0.28 RMS during clips, 0.0007 in the gap). Offline renders and exports use separate plugin instances. The app adds and removes VST3 plug-ins from Audio ▸ Plug-ins and the track menu (self-test with the test plugin)."
+      "evidence": "scripts/ci/plugin-host.sh builds a test VST3 (gain effect, note-driven synth) and checks exact gain, a bit-exact passthrough null test, note on/off on the exact sample across block boundaries, live input, undo/redo, state through save and reopen, and a missing plugin keeping its state (also under ThreadSanitizer). Vital (VST3, third-party) loads as an instrument through the command catalog and renders its notes offline (0.28 RMS during clips, 0.0007 in the gap). Offline renders and exports use separate plugin instances. The app adds and removes VST3 plug-ins from Audio ▸ Plug-ins and the track menu (self-test with the test plugin). Parameters: the test plug-in's processor sees changes only through process(); they apply live from the next block and in exports (replayed into the export's instance). Vital's editor opened inside Dalnok's plug-in window (1440×907 pt, checked by a window capture), with 2,855 parameters in the generic panel; editor edits were not exercised automatically."
     },
     {
       "id": "genericui",
@@ -1061,19 +1065,19 @@
       "why": "Owner request: edit any plugin's parameters without opening its window.",
       "steps": [
         [
-          "Parameter list",
-          "todo"
+          "Parameter list with sliders and the plug-in's own value text",
+          "verified"
         ],
         [
           "Search",
-          "todo"
+          "verified"
         ],
         [
           "Automate and map from the panel",
           "todo"
         ]
       ],
-      "evidence": "Planned with VST3 hosting."
+      "evidence": "App self-test with the test plug-in: the panel lists its parameter, sets it, shows the plug-in's text, and filters. Works for any VST3 (Vital: 2,855 parameters)."
     },
     {
       "id": "au",

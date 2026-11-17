@@ -201,6 +201,7 @@ public:
     std::string pluginError(int32_t slot) const;
     bool pluginState(int32_t slot, std::string &bytes) const;
     bool setPluginState(int32_t slot, const std::string &bytes, std::string &err);
+    void touchPlugin() { ++revision_; } // a parameter changed: the project has unsaved changes
     bool recolorAsGradient(std::string &err); // automatic tracks get gradient steps in display order
     DalnokClipId addClip(DalnokTrackId track, DalnokMediaId media, int64_t start, int64_t offset, int64_t length,
                          std::string &err);
@@ -315,6 +316,7 @@ private:
     PluginMap plugins_;                       // live instances by slot id
     std::map<int32_t, std::string> pluginErrors_;
     int32_t nextPlugin_ = 1;
+    uint64_t pluginEdits_ = 0;
     // Recording (control thread)
     bool recording_ = false;
     DalnokTrackId recordAudioTrack_ = 0, recordMidiTrack_ = 0;

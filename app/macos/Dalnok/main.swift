@@ -34,10 +34,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let args = Array(CommandLine.arguments.dropFirst())
         func value(_ flag: String) -> String? { args.firstIndex(of: flag).flatMap { $0 + 1 < args.count ? args[$0 + 1] : nil } }
-        let flagValues = Set(["--snapshot", "--selftest", "--screenshots"].compactMap(value))
+        let flagValues = Set(["--snapshot", "--selftest", "--screenshots", "--plugin-snapshot"].compactMap(value))
         let files = args.filter { !$0.hasPrefix("-") && !flagValues.contains($0) }.map { URL(fileURLWithPath: $0) }
         let snapshot = value("--snapshot").map { URL(fileURLWithPath: $0) }
 
+        // Developer check: --plugin-snapshot <bundle.vst3> <out.png> opens the plug-in's editor and captures it.
+        if let i = args.firstIndex(of: "--plugin-snapshot"), i + 2 < args.count {
+            let bundle = args[i + 1], out = URL(fileURLWithPath: args[i + 2])
+            let track = session.addInstrumentTrack("Plug-in")
+            do {
+                let slot = try session.addPlugin(track, path: bundle)
+                main.openPluginWindow(track: track, slot: slot)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                    let pw = self.main.pluginWindows[slot], w = pw?.window
+                    // GPU-drawn editors need a window capture; screencapture may require Screen Recording access.
+                    let p = Process()
+                    p.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+                    p.arguments = ["-x", "-o", "-l", "\(w?.windowNumber ?? 0)", out.path]
+                    try? p.run()
+                    p.waitUntilExit()
+                    print("plug-in window: \(Int(w?.frame.width ?? 0))×\(Int(w?.frame.height ?? 0)) pt, editor \(pw?.editorOpen == true ? "open" : "not open"), \(pw?.parameters.count ?? 0) parameters, capture exit \(p.terminationStatus)")
+                    fflush(stdout)
+                    exit(0) // skip the unsaved-changes prompt
+                }
+            } catch {
+                print("plug-in failed: \(error)")
+                NSApp.terminate(nil)
+            }
+            return
+        }
         if let dir = value("--screenshots") {
             Screenshots.run(app: self, files: files, dir: URL(fileURLWithPath: dir))
             return

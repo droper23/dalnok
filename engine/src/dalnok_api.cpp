@@ -263,6 +263,54 @@ DalnokStatus dalnok_plugin_set_state(DalnokEngine *e, int32_t slot, const char *
     return statusFor(e->impl.setPluginState(slot, bytes, err), err);
 }
 
+int32_t dalnok_plugin_parameter_count(const DalnokEngine *e, int32_t slot) {
+    PluginProcessor *p = e ? e->impl.pluginInstance(slot) : nullptr;
+    return p ? p->parameterCount() : 0;
+}
+DalnokStatus dalnok_plugin_parameter(const DalnokEngine *e, int32_t slot, int32_t index, DalnokPluginParameter *out) {
+    PluginProcessor *p = e ? e->impl.pluginInstance(slot) : nullptr;
+    PluginParameter pp;
+    if (!p || !out) return DALNOK_ERR_INVALID_ARG;
+    if (!p->parameter(index, pp)) return DALNOK_ERR_NOT_FOUND;
+    *out = DalnokPluginParameter{};
+    out->id = pp.id;
+    copyOut(out->title, sizeof out->title, pp.title);
+    copyOut(out->units, sizeof out->units, pp.units);
+    copyOut(out->display, sizeof out->display, pp.display);
+    out->value = pp.value;
+    out->default_value = pp.defaultValue;
+    out->step_count = pp.stepCount;
+    out->automatable = pp.automatable;
+    out->read_only = pp.readOnly;
+    out->hidden = pp.hidden;
+    return DALNOK_OK;
+}
+DalnokStatus dalnok_plugin_set_parameter(DalnokEngine *e, int32_t slot, uint32_t id, double v) {
+    PluginProcessor *p = e ? e->impl.pluginInstance(slot) : nullptr;
+    if (!p) return DALNOK_ERR_NOT_FOUND;
+    if (!p->setParameter(id, v)) return DALNOK_ERR_INVALID_ARG;
+    e->impl.touchPlugin();
+    return DALNOK_OK;
+}
+bool dalnok_plugin_has_editor(const DalnokEngine *e, int32_t slot) {
+    PluginProcessor *p = e ? e->impl.pluginInstance(slot) : nullptr;
+    return p && p->hasEditor();
+}
+DalnokStatus dalnok_plugin_open_editor(DalnokEngine *e, int32_t slot, void *parent, int32_t *w, int32_t *h,
+                                       void (*onResize)(void *, int32_t, int32_t), void *ctx, char *err, size_t len) {
+    PluginProcessor *p = e ? e->impl.pluginInstance(slot) : nullptr;
+    if (!p || !parent) return DALNOK_ERR_INVALID_ARG;
+    int32_t width = 0, height = 0;
+    std::string msg;
+    if (!p->openEditor(parent, width, height, onResize, ctx, msg)) { copyOut(err, len, msg); return DALNOK_ERR_UNSUPPORTED; }
+    if (w) *w = width;
+    if (h) *h = height;
+    return DALNOK_OK;
+}
+void dalnok_plugin_close_editor(DalnokEngine *e, int32_t slot) {
+    if (PluginProcessor *p = e ? e->impl.pluginInstance(slot) : nullptr) p->closeEditor();
+}
+
 size_t dalnok_plugins_validate(const char *scanner, const char *cache, const char *extra, bool onlyExtra, bool au,
                                const char *filter, int32_t timeoutMs, bool rescan, char *out, size_t len) {
     if (!scanner || !*scanner) return copyOut(out, len, "[]");

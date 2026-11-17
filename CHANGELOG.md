@@ -1,6 +1,10 @@
 # Changelog
 
 ## [Unreleased]
+### Added (2026-11-16, plug-in editors and parameters)
+- Plug-in windows (Open … in the track's Plug-ins menu or the header input menu): the plug-in's own editor, sized by the plug-in, and a generic, searchable parameter panel with sliders and the plug-in's value text for every VST3.
+- Parameter changes from editors and the panel reach the audio thread through a bounded queue (applied at the next block) and are replayed into export instances; editor edits mark the project changed.
+- C API: `dalnok_plugin_parameter_count/parameter/set_parameter`, `dalnok_plugin_has_editor/open_editor/close_editor`.
 ### Added (2026-11-16, VST3 hosting, ADR-0009 stage 3)
 - VST3 plug-ins on tracks: instruments on instrument tracks (notes from clips and live MIDI, sample-accurate) and insert effects on any track, processed every block so tails continue. Add from Audio ▸ Plug-ins (Add to Selected Track); remove from the track's context menu. Adding and removing are undo steps.
 - Plug-in state is saved in the project (base64) and restored on open; a missing plug-in keeps its state and is bypassed. Offline renders and exports use separate instances with the same state.

@@ -16,6 +16,22 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     lazy var settings = SettingsController()
     lazy var pianoRoll = PianoRollController(session: session)
     lazy var pluginManager = PluginManagerController()
+    var pluginWindows: [Int32: PluginWindowController] = [:]
+
+    /// Opens (or brings forward) a hosted plug-in's window: its editor and the generic parameter panel.
+    func openPluginWindow(track: DalnokTrackId, slot: Int32) {
+        if let existing = pluginWindows[slot] { existing.window?.makeKeyAndOrderFront(nil); return }
+        guard let t = session.track(track), let p = t.plugins.first(where: { $0.id == slot }) else { return }
+        guard p.loaded else { return flash("\(p.name) is not loaded: \(p.error)") }
+        let w = PluginWindowController(engine: session.engine, slot: slot, title: "\(p.name) — \(t.name)")
+        w.onClose = { [weak self] in self?.pluginWindows[slot] = nil }
+        pluginWindows[slot] = w
+        w.show()
+    }
+    @objc func openPluginItem(_ sender: NSMenuItem) {
+        guard let (track, slot) = sender.representedObject as? (DalnokTrackId, Int32) else { return }
+        openPluginWindow(track: track, slot: slot)
+    }
     @objc func showPlugins(_ sender: Any?) {
         pluginManager.onAdd = { [weak self] path in
             guard let self, let track = self.selectedTrack else { return "no track selected" }
@@ -34,6 +50,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     /// Track context menu: the track's plug-ins (remove) and a way to add more.
     func pluginsMenu(for track: TrackView) -> NSMenu {
         let m = NSMenu(title: "Plug-ins")
+        for p in track.plugins {
+            let open = NSMenuItem(title: "Open \(p.name)", action: #selector(openPluginItem(_:)), keyEquivalent: "")
+            open.representedObject = (track.id, p.id)
+            open.target = self
+            open.isEnabled = p.loaded
+            m.addItem(open)
+        }
+        if !track.plugins.isEmpty { m.addItem(.separator()) }
         for p in track.plugins {
             let it = NSMenuItem(title: "Remove \(p.name)\(p.instrument ? " (instrument)" : "")\(p.loaded ? "" : " — not loaded")",
                                 action: #selector(removePluginItem(_:)), keyEquivalent: "")

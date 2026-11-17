@@ -62,6 +62,34 @@ struct PluginHosting {
         #expect(l[100] == dry.0[1_536 + 100] * 0.25, "fourth live block = frames 1536…2047")
     }
 
+    @Test func parametersReachTheProcessorLiveAndOffline() {
+        let (e, t) = audioSession(); defer { dalnok_engine_destroy(e) }
+        let dry = renderStereo(e, 4_800)
+        let slot = dalnok_plugin_add(e, t, testVst3, gainClass, nil, 0)
+        #expect(dalnok_plugin_parameter_count(e, slot) == 1)
+        var p = DalnokPluginParameter()
+        #expect(dalnok_plugin_parameter(e, slot, 0, &p) == DALNOK_OK)
+        #expect(name(p.title) == "Gain" && p.id == 1 && p.value == 0.5 && name(p.display) == "50 %" && p.automatable)
+        // Offline: the parameter set a moment ago is replayed into the export's own instance.
+        #expect(dalnok_plugin_set_parameter(e, slot, 1, 0.25) == DALNOK_OK)
+        #expect(dalnok_project_dirty(e))
+        #expect(renderStereo(e, 4_800).0 == dry.0.map { $0 * 0.25 })
+        dalnok_plugin_parameter(e, slot, 0, &p)
+        #expect(p.value == 0.25 && name(p.display) == "25 %")
+        // Live: applied from the next block.
+        dalnok_transport_play(e)
+        var l = [Float](repeating: 0, count: 512), r = l
+        for _ in 0..<4 { dalnok_engine_pump(e, &l, &r, 512) }
+        #expect(l[100] == dry.0[1_536 + 100] * 0.25)
+        #expect(dalnok_plugin_set_parameter(e, slot, 1, 2) != DALNOK_OK) // out of range
+        // No editor view: opening fails cleanly.
+        #expect(dalnok_plugin_has_editor(e, slot))
+        var err = [CChar](repeating: 0, count: 128)
+        let dummy = UnsafeMutableRawPointer.allocate(byteCount: 8, alignment: 8); defer { dummy.deallocate() }
+        #expect(dalnok_plugin_open_editor(e, slot, dummy, nil, nil, nil, nil, &err, 128) == DALNOK_ERR_UNSUPPORTED)
+        #expect(cstr(err).contains("no editor"))
+    }
+
     @Test func instrumentPluginPlaysNotesSampleAccurately() {
         let e = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(e) }
         let t = dalnok_track_add_instrument(e, "Synth")

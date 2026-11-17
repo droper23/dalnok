@@ -383,6 +383,29 @@ DalnokStatus dalnok_track_plugin_info(const DalnokEngine *engine, DalnokTrackId 
 size_t dalnok_plugin_get_state(const DalnokEngine *engine, int32_t slot, char *base64, size_t len);
 DalnokStatus dalnok_plugin_set_state(DalnokEngine *engine, int32_t slot, const char *base64);
 
+/* Parameters (main thread). Values are normalized 0…1; changes reach the audio
+ * thread at the start of the next block. Editor edits also count as project changes. */
+typedef struct {
+    uint32_t id;
+    char title[128];
+    char units[32];
+    char display[64];    /* the plugin's own text for the current value */
+    double value, default_value;
+    int32_t step_count;  /* 0 = continuous, 1 = toggle, n = n+1 positions */
+    bool automatable, read_only, hidden;
+} DalnokPluginParameter;
+int32_t dalnok_plugin_parameter_count(const DalnokEngine *engine, int32_t slot);
+DalnokStatus dalnok_plugin_parameter(const DalnokEngine *engine, int32_t slot, int32_t index, DalnokPluginParameter *out);
+DalnokStatus dalnok_plugin_set_parameter(DalnokEngine *engine, int32_t slot, uint32_t id, double normalized);
+
+/* The plugin's own editor, attached to `parent_view` (an NSView). `on_resize`
+ * is called when the editor asks for a new size. Main thread. */
+bool dalnok_plugin_has_editor(const DalnokEngine *engine, int32_t slot);
+DalnokStatus dalnok_plugin_open_editor(DalnokEngine *engine, int32_t slot, void *parent_view, int32_t *width,
+                                       int32_t *height, void (*on_resize)(void *ctx, int32_t width, int32_t height),
+                                       void *ctx, char *err, size_t err_len);
+void dalnok_plugin_close_editor(DalnokEngine *engine, int32_t slot);
+
 /* ---- Instruments, MIDI clips, tempo --------------------------------- */
 
 /* Adds a track that plays MIDI clips through the built-in Dalnok Poly synth.
