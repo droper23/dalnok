@@ -58,6 +58,8 @@ final class TimelineView: NSView {
         var stretch = false // ⌥-drag on the right edge: time-stretch instead of trim
     }
     private var drag: Drag?
+    private struct Marquee { let start: CGPoint; var end: CGPoint; let initial: Set<DalnokClipId>; var moved = false }
+    private var marquee: Marquee?
     private let edgeWidth: CGFloat = 7
 
     init(session: Session) {
@@ -246,6 +248,14 @@ final class TimelineView: NSView {
             guard y + Theme.trackHeight > Theme.rulerHeight, y < bounds.height else { continue }
             for clip in track.clips { drawClip(ctx, clip, track: track, laneY: y, scale: scale) }
             if let rec = recording, rec.tracks.contains(track.id) { drawRecording(ctx, rec, laneY: y) }
+        }
+        if let m = marquee, m.moved {
+            let r = CGRect(x: min(m.start.x, m.end.x), y: min(m.start.y, m.end.y),
+                           width: abs(m.end.x - m.start.x), height: abs(m.end.y - m.start.y))
+            ctx.saveGState(); ctx.clip(to: CGRect(x: 0, y: Theme.rulerHeight, width: bounds.width, height: max(0, bounds.height - Theme.rulerHeight)))
+            ctx.setFillColor(Theme.selection.withAlphaComponent(0.18).cgColor); ctx.fill(r)
+            ctx.setStrokeColor(Theme.selection.cgColor); ctx.setLineWidth(1); ctx.stroke(r)
+            ctx.restoreGState()
         }
         drawRuler(ctx, scale: scale)
         updateSelectionGlow()
@@ -590,8 +600,9 @@ final class TimelineView: NSView {
         let p = convert(event.locationInWindow, from: nil)
         if p.y < Theme.rulerHeight { seek(toX: p.x); return }
         guard let (clip, zone) = hit(p) else {
-            selectedClip = nil
-            seek(toX: p.x)
+            let initial = event.modifierFlags.contains(.shift) ? selectedClips : []
+            if initial.isEmpty { selectedClip = nil }
+            marquee = Marquee(start: p, end: p, initial: initial)
             return
         }
         if event.modifierFlags.contains(.shift) {
@@ -619,6 +630,22 @@ final class TimelineView: NSView {
 
     override func mouseDragged(with event: NSEvent) {
         let p = convert(event.locationInWindow, from: nil)
+        if var m = marquee {
+            m.end = CGPoint(x: min(max(p.x, 0), bounds.width), y: min(max(p.y, Theme.rulerHeight), bounds.height))
+            m.moved = m.moved || hypot(m.end.x - m.start.x, m.end.y - m.start.y) >= 3
+            if m.moved {
+                let r = CGRect(x: min(m.start.x, m.end.x), y: min(m.start.y, m.end.y),
+                               width: abs(m.end.x - m.start.x), height: abs(m.end.y - m.start.y))
+                var ids = m.initial
+                for (i, track) in session.tracks.enumerated() {
+                    for clip in track.clips where clipRect(clip, laneY: laneY(i)).intersects(r) { ids.insert(clip.id) }
+                }
+                let primary = selectedClip.flatMap { ids.contains($0) ? $0 : nil } ?? ids.sorted().first
+                select(ids, primary: primary)
+            }
+            marquee = m; needsDisplay = true
+            return
+        }
         guard var d = drag else {
             if p.y < Theme.rulerHeight { seek(toX: p.x) }
             return
@@ -694,6 +721,12 @@ final class TimelineView: NSView {
     }
 
     override func mouseUp(with event: NSEvent) {
+        if let m = marquee {
+            marquee = nil; needsDisplay = true
+            if !m.moved { seek(toX: m.start.x) }
+            else if let id = selectedClip, let clip = session.clip(id) { onClipSelected?(clip) }
+            return
+        }
         guard drag != nil else { return }
         session.engine.endGroup()
         drag = nil

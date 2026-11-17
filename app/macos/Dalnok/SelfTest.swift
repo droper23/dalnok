@@ -138,6 +138,16 @@ final class SelfTest {
             _ = perform("Undo")
             check(perform("Delete") && s.clip(first.id) == nil && s.clip(other.id) == nil, "Delete removes selected clips together")
             check(perform("Undo") && s.clip(first.id) != nil && s.clip(other.id) != nil, "one undo restores deleted clips")
+            w.timeline.selectedClip = nil
+            let from = w.timeline.convert(CGPoint(x: w.timeline.bounds.maxX - 5, y: w.timeline.laneY(2) + 5), to: nil)
+            let to = w.timeline.convert(CGPoint(x: 1, y: w.timeline.laneY(0) + 5), to: nil)
+            w.timeline.mouseDown(with: mouse(.leftMouseDown, from))
+            for k in 1...8 {
+                w.timeline.mouseDragged(with: mouse(.leftMouseDragged, CGPoint(x: from.x + (to.x - from.x) * CGFloat(k) / 8,
+                                                                              y: from.y + (to.y - from.y) * CGFloat(k) / 8)))
+            }
+            w.timeline.mouseUp(with: mouse(.leftMouseUp, to))
+            check(w.timeline.selectedClips == [first.id, other.id], "marquee selects clips across tracks")
             w.timeline.selectedClip = first.id
         } else { check(false, "two clips available for multi-selection") }
 
