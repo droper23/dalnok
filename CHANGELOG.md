@@ -1,6 +1,10 @@
 # Changelog
 
 ## [Unreleased]
+### Added and fixed (2026-11-16, MIDI editing and Logic import)
+- Piano roll supports marquee selection and keyboard step entry; eighth-note meters use the correct metronome beat and ruler numbering.
+- Logic import preserves constant tempo and meter, reads supplementary Unicode filenames, and counts distinct unplaced regions when placements repeat.
+
 ### Fixed (2026-11-16, Logic import)
 - Resolve audio placements by region ID and use arrange rows and channel names for track order and names. Logic import remains experimental; mixer settings, routing, plug-ins and automation are not imported.
 

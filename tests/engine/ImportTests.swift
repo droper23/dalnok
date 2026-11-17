@@ -260,9 +260,9 @@ func skipped(_ r: [String: Any], _ key: String) -> Int { (r["skipped"] as? [Stri
         let alt = pkg.appendingPathComponent("Alternatives/000"), media = pkg.appendingPathComponent("Media/Audio Files")
         try FileManager.default.createDirectory(at: alt, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: media, withIntermediateDirectories: true)
-        try writeTestWav(media.appendingPathComponent("Take 1.wav"), frames: 480_000)
+        try writeTestWav(media.appendingPathComponent("Take 🎵.wav"), frames: 480_000)
         // AuFl: 8 bytes, then UTF-16LE name with u16 char count.
-        var fl = Data(repeating: 0, count: 8); let nm = "Take 1.wav"
+        var fl = Data(repeating: 0, count: 8); let nm = "Take 🎵.wav"
         fl.append(contentsOf: le(UInt16(nm.utf16.count))); for u in nm.utf16 { fl.append(contentsOf: le(u)) }
         // AuRg: offset @6, length @22, name length @74, name @76.
         var rg = Data(repeating: 0, count: 120)
@@ -280,17 +280,20 @@ func skipped(_ r: [String: Any], _ key: String) -> Int { (r["skipped"] as? [Stri
         var file = Data([0x23, 0x47, 0xc0, 0xab]); file.append(Data(repeating: 0, count: 12))
         file.append(contentsOf: le(UInt64(body.count))); file.append(body)
         try file.write(to: alt.appendingPathComponent("ProjectData"))
-        let plist = ["BeatsPerMinute": 120, "SampleRate": 48_000, "SongKey": "A", "SongGenderKey": "minor",
-                     "SongSignatureNumerator": 4, "SongSignatureDenominator": 4] as [String: Any]
+        let plist = ["BeatsPerMinute": 90, "SampleRate": 48_000, "SongKey": "A", "SongGenderKey": "minor",
+                     "SongSignatureNumerator": 3, "SongSignatureDenominator": 8] as [String: Any]
         try PropertyListSerialization.data(fromPropertyList: plist, format: .binary, options: 0)
             .write(to: alt.appendingPathComponent("MetaData.plist"))
 
         let (e, r) = try importInto(pkg.path); defer { dalnok_engine_destroy(e) }
         #expect(r["app"] as? String == "Logic Pro")
+        var num: Int32 = 0, den: Int32 = 0
+        dalnok_meter(e, &num, &den)
+        #expect(dalnok_tempo_bpm(e) == 90 && num == 3 && den == 8)
         #expect((r["notes"] as? [String])?.first?.contains("key A minor") == true)
         let c = clips(e).map(\.info)
-        // 2 bars at 120 BPM 4/4 = 4 s = 192000 frames.
-        #expect(c.count == 1 && c[0].start == 192_000 && c[0].offset == 24_000 && c[0].length == 96_000 && !c[0].offline,
+        // 7680 quarter-note ticks at 90 BPM = 256000 frames.
+        #expect(c.count == 1 && c[0].start == 256_000 && c[0].offset == 24_000 && c[0].length == 96_000 && !c[0].offline,
                 "\(c.map { ($0.start, $0.offset, $0.length) })")
     }
 
@@ -334,7 +337,7 @@ func skipped(_ r: [String: Any], _ key: String) -> Int { (r["skipped"] as? [Stri
         }
         var ev = Data()
         // Stored in time order: row 4 ("Rhythm") plays first, row 2 ("Lead") second.
-        for (bars, track, link) in [(0, 4, 0), (4, 2, 4)] as [(UInt32, UInt8, UInt32)] {
+        for (bars, track, link) in [(0, 4, 0), (4, 2, 4), (8, 2, 4)] as [(UInt32, UInt8, UInt32)] {
             var e = Data(repeating: 0, count: 80)
             e.replaceSubrange(0..<4, with: le(UInt32(0x24))); e.replaceSubrange(4..<8, with: le(UInt32(34_560) + bars * 3_840))
             e[0x14] = track; e.replaceSubrange(0x2c..<0x30, with: le(link))
@@ -358,8 +361,9 @@ func skipped(_ r: [String: Any], _ key: String) -> Int { (r["skipped"] as? [Stri
         }
         #expect(names == ["Lead", "Rhythm"], "\(names)")
         // Link 4 is region "B" (offset 1000, length 200000) at bar 5 = 8 s at 120 BPM; document index 1 would be "A.1".
-        #expect(c.count == 2 && c[0].start == 0 && c[0].offset == 0 && c[0].length == 300_000 &&
-                c[1].start == 384_000 && c[1].offset == 1_000 && c[1].length == 200_000,
+        #expect(c.count == 3 && c[0].start == 0 && c[0].offset == 0 && c[0].length == 300_000 &&
+                c[1].start == 384_000 && c[1].offset == 1_000 && c[1].length == 200_000 &&
+                c[2].start == 768_000 && c[2].offset == 1_000 && c[2].length == 200_000,
                 "\(c.map { ($0.start, $0.offset, $0.length) })")
         #expect((r["skipped"] as? [String: Any])?["unplacedRegions"] as? Int == 1)
     }

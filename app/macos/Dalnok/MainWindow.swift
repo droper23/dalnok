@@ -349,9 +349,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         }
         // Visual metronome: the button ticks on each beat, harder on the downbeat.
         if playing && Self.metronomeOn {
-            let beat = Int(Double(e.position) / timeline.framesPerBeat)
+            let beat = Int(Double(e.position) / (timeline.framesPerBeat * 4 / Double(session.meter.1)))
             if beat != lastBeat {
-                let downbeat = beat % max(1, Int(timeline.beatsPerBar.rounded())) == 0
+                let downbeat = beat % max(1, Int(session.meter.0)) == 0
                 Motion.centerAnchor(transport.metronomeButton.layer)
                 Motion.bounce(transport.metronomeButton.layer, scale: downbeat ? 1.3 : 1.14, duration: 0.16)
                 lastBeat = beat

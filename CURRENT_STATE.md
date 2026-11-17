@@ -5,7 +5,12 @@ milestone: M11 VST3 hosting (ADR-0009 stage 3) done; editors, parameters and AU 
 ---
 # Current State
 
-## Latest session (Logic import)
+## Latest session (MIDI and Logic import)
+- Piano roll supports drag marquee (Shift adds) and step entry (Option-arrows move the cursor, Return inserts); GUI self-test covers both. The metronome and ruler count eighth-note meters correctly.
+- Logic import now preserves constant tempo and meter, supports supplementary Unicode filenames, and reports unplaced regions correctly when regions repeat. Generated LogicImport tests pass.
+- Phase 3 is still in progress: tempo/meter maps and remaining MIDI features are not complete.
+
+## Earlier (Logic import)
 - Fixed region ID links and imported track names and order; generated LogicImport regression tests pass. Logic import remains experimental: volume, pan, stacks, routing, plug-ins, automation and take folders are missing.
 - GUI self-test has intermittently failed two timing checks and once crashed at launch with an index out of range; investigate.
 

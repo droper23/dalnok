@@ -608,10 +608,10 @@ final class SelfTest {
                                                 windowNumber: win.windowNumber, context: nil, characters: chars,
                                                 charactersIgnoringModifiers: chars, isARepeat: false, keyCode: code)!)
         }
-        func drag(from a: CGPoint, to b: CGPoint) {
-            roll.mouseDown(with: ev(.leftMouseDown, a))
-            for k in 1...8 { roll.mouseDragged(with: ev(.leftMouseDragged, CGPoint(x: a.x + (b.x - a.x) * CGFloat(k) / 8, y: a.y + (b.y - a.y) * CGFloat(k) / 8))) }
-            roll.mouseUp(with: ev(.leftMouseUp, b))
+        func drag(from a: CGPoint, to b: CGPoint, mods: NSEvent.ModifierFlags = []) {
+            roll.mouseDown(with: ev(.leftMouseDown, a, mods: mods))
+            for k in 1...8 { roll.mouseDragged(with: ev(.leftMouseDragged, CGPoint(x: a.x + (b.x - a.x) * CGFloat(k) / 8, y: a.y + (b.y - a.y) * CGFloat(k) / 8), mods: mods)) }
+            roll.mouseUp(with: ev(.leftMouseUp, b, mods: mods))
         }
         guard let c = s.clip(clip) else { return }
         let before = c.notes.count
@@ -658,6 +658,27 @@ final class SelfTest {
         check(s.clip(clip)?.notes.count == count, "undo restores the note")
         key(0, "a", mods: .command)
         check(roll.selection.count == s.clip(clip)?.notes.count, "⌘A selects all notes")
+        if let cur = s.clip(clip), let targetNote = cur.notes.first(where: { $0.pitch == 64 && $0.start > c.offset + 2 * beat }) {
+            let box = roll.rect(targetNote, cur)
+            drag(from: CGPoint(x: box.minX - 3, y: box.minY - 2), to: CGPoint(x: box.maxX + 3, y: box.maxY + 2))
+            check(roll.selection == [roll.key(targetNote)], "marquee selects intersecting notes")
+            if let other = cur.notes.first(where: { $0.pitch == 60 }) {
+                let box2 = roll.rect(other, cur)
+                drag(from: CGPoint(x: box2.minX - 3, y: box2.minY - 2), to: CGPoint(x: box2.maxX + 3, y: box2.maxY + 2), mods: .shift)
+                check(roll.selection.contains(roll.key(targetNote)) && roll.selection.contains(roll.key(other)), "shift-marquee adds to selection")
+            } else { check(false, "shift-marquee fixture exists") }
+        } else { check(false, "marquee fixture exists") }
+        roll.entryFrame = Double(c.start)
+        roll.entryPitch = 70
+        key(124, "", mods: .option)
+        key(126, "", mods: .option)
+        let entry = Int64(roll.snapFrames)
+        key(36, "\r")
+        check(s.clip(clip)?.notes.contains { $0.pitch == 71 && $0.start == c.offset + entry && $0.length == entry } == true,
+              "option arrows and Return enter a note at the cursor")
+        check(roll.entryFrame == Double(c.start + 2 * entry), "step entry advances by the grid")
+        _ = perform("Undo")
+        check(s.clip(clip)?.notes.contains { $0.pitch == 71 && $0.start == c.offset + entry } == false, "undo removes the entered note")
         win.close()
         check(!w.pianoRollIsKey, "closing the piano roll returns Delete to the arrangement")
         w.window?.makeKey()
@@ -811,6 +832,11 @@ final class SelfTest {
         try? await Task.sleep(for: .milliseconds(150))
         check(w.transport.timeLabel.stringValue.hasPrefix("2.2.1."), "LCD shows bars and beats (\(w.transport.timeLabel.stringValue))")
         check(w.timeline.barsLabel(e.sampleRate * 60 / 96 * 3, wholeBars: false) == "2", "ruler labels bar 2 at its downbeat")
+        _ = s.setTempo(96, 3, 8)
+        let eighth = e.sampleRate * 60 / 96 / 2
+        check(w.timeline.positionText(Int64(eighth * 2)) == "1.3.1.000" &&
+              w.timeline.barsLabel(eighth * 2, wholeBars: false) == "1.3", "3/8 ruler and LCD count eighth-note beats")
+        _ = s.setTempo(96, 3, 4)
         check(perform("Bars and Beats Ruler") && !TimelineView.barsAndBeats, "View > Bars and Beats Ruler toggles to time")
         try? await Task.sleep(for: .milliseconds(100))
         check(w.transport.timeLabel.stringValue.contains(":"), "LCD shows minutes and seconds (\(w.transport.timeLabel.stringValue))")

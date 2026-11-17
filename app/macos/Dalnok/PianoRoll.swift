@@ -1,9 +1,10 @@
 // Piano roll: edit the notes of one MIDI clip. Every gesture is one undo step through the
 // engine's midi.setNotes command; the view never caches notes beyond the current gesture.
-//   Double-click empty grid: add a note (grid length). Click a note: select (⇧ adds).
+//   Double-click empty grid: add a note (grid length). Drag empty grid: select notes (⇧ adds).
 //   Drag a note: move in time and pitch (snapped; ⌃ bypasses). Drag its right edge: resize.
 //   Velocity lane: drag a stem. Delete removes, ↑/↓ transpose (⇧ = octave), ←/→ move by the grid,
 //   ⌘A selects all, Q quantizes the selection. Scroll to pan, ⌘-scroll or pinch to zoom.
+//   ⌥ arrows move the step-entry cursor; Return inserts a note at the cursor and advances it.
 // SPDX-License-Identifier: GPL-3.0-or-later
 import AppKit
 import DalnokEngine
@@ -34,6 +35,8 @@ final class PianoRollController: NSWindowController, NSWindowDelegate {
         focused = true
         roll.clipId = clip
         roll.selection = []
+        roll.entryFrame = nil
+        roll.entryPitch = 60
         roll.fitToClip()
         updateTitle()
         if window?.isVisible != true { window?.center() }
@@ -66,6 +69,8 @@ final class PianoRollView: NSView {
     /// Selected notes, identified by their values (notes have no ids; values are unique in practice).
     var selection: Set<NoteKey> = [] { didSet { needsDisplay = true } }
     struct NoteKey: Hashable { let start: Int64, pitch: UInt8 }
+    var entryFrame: Double? { didSet { needsDisplay = true } }
+    var entryPitch = 60 { didSet { needsDisplay = true } }
 
     // Layout
     static let keyWidth: CGFloat = 48, rulerHeight: CGFloat = 22, velocityHeight: CGFloat = 72, edge: CGFloat = 6
@@ -78,6 +83,7 @@ final class PianoRollView: NSView {
         self.session = session
         super.init(frame: .zero)
         wantsLayer = true
+        toolTip = "Drag empty space to select notes. Option-arrow keys move the entry cursor; Return inserts a note."
     }
     required init?(coder: NSCoder) { fatalError() }
     override var isFlipped: Bool { true }
@@ -168,6 +174,16 @@ final class PianoRollView: NSView {
             ctx.setStrokeColor((sel ? Theme.selection : tint.border).cgColor)
             ctx.setLineWidth(sel ? 1.5 : 1)
             ctx.strokePath()
+        }
+        if let f = entryFrame {
+            let cursor = CGRect(x: x(f), y: y(entryPitch) + 1, width: max(3, CGFloat(snapFrames / framesPerPoint)), height: rowHeight - 2)
+            ctx.setStrokeColor(Theme.selection.cgColor); ctx.setLineWidth(1.5); ctx.stroke(cursor)
+        }
+        if let m = marquee {
+            let r = CGRect(x: min(m.start.x, m.end.x), y: min(m.start.y, m.end.y),
+                           width: abs(m.end.x - m.start.x), height: abs(m.end.y - m.start.y))
+            ctx.setFillColor(Theme.selection.withAlphaComponent(0.18).cgColor); ctx.fill(r)
+            ctx.setStrokeColor(Theme.selection.cgColor); ctx.setLineWidth(1); ctx.stroke(r)
         }
         ctx.restoreGState()
 
@@ -268,6 +284,8 @@ final class PianoRollView: NSView {
         var previewed: UInt8?
     }
     private var drag: Drag?
+    private struct Marquee { let start: CGPoint; var end: CGPoint; let initial: Set<NoteKey> }
+    private var marquee: Marquee?
 
     func key(_ n: DalnokNote) -> NoteKey { NoteKey(start: n.start, pitch: n.pitch) }
 
@@ -320,7 +338,9 @@ final class PianoRollView: NSView {
         if event.clickCount == 2 {
             addNote(at: p, bypass: event.modifierFlags.contains(.control))
         } else {
-            selection = []
+            let initial = event.modifierFlags.contains(.shift) ? selection : []
+            selection = initial
+            marquee = Marquee(start: p, end: p, initial: initial)
         }
     }
 
@@ -336,6 +356,16 @@ final class PianoRollView: NSView {
     }
 
     override func mouseDragged(with event: NSEvent) {
+        if var m = marquee, let c = clip {
+            let p = convert(event.locationInWindow, from: nil)
+            m.end = CGPoint(x: min(max(p.x, grid.minX), grid.maxX), y: min(max(p.y, grid.minY), grid.maxY))
+            let r = CGRect(x: min(m.start.x, m.end.x), y: min(m.start.y, m.end.y),
+                           width: abs(m.end.x - m.start.x), height: abs(m.end.y - m.start.y))
+            selection = m.initial.union(visibleNotes(c).filter { rect($0, c).intersects(r) }.map(key))
+            marquee = m
+            needsDisplay = true
+            return
+        }
         guard var d = drag else { return }
         let p = convert(event.locationInWindow, from: nil)
         let bypass = event.modifierFlags.contains(.control)
@@ -382,6 +412,8 @@ final class PianoRollView: NSView {
     override func mouseUp(with event: NSEvent) {
         if drag != nil { session.engine.endGroup() }
         drag = nil
+        marquee = nil
+        needsDisplay = true
         NSCursor.arrow.set()
     }
 
@@ -389,7 +421,26 @@ final class PianoRollView: NSView {
         guard let c = clip else { return super.keyDown(with: event) }
         let chars = event.charactersIgnoringModifiers ?? ""
         let shift = event.modifierFlags.contains(.shift)
+        if event.modifierFlags.contains(.option), (123...126).contains(event.keyCode) {
+            let f = entryFrame ?? Double(c.start)
+            if event.keyCode == 123 || event.keyCode == 124 {
+                let direction = event.keyCode == 124 ? 1.0 : -1.0
+                entryFrame = min(Double(c.end - 1), max(Double(c.start), f + direction * snapFrames))
+            } else {
+                entryFrame = f
+                entryPitch = max(0, min(127, entryPitch + (event.keyCode == 126 ? 1 : -1) * (shift ? 12 : 1)))
+            }
+            return
+        }
         switch event.keyCode {
+        case 36, 76: // Return / keypad Enter: step entry inside the clip
+            let f = entryFrame ?? Double(c.start)
+            let rel = Int64(f.rounded()) - c.start + c.offset
+            guard rel >= c.offset, rel < c.offset + c.length else { return }
+            let n = DalnokNote(start: rel, length: min(Int64(snapFrames), c.offset + c.length - rel), pitch: UInt8(entryPitch), velocity: 100)
+            commit(c.notes.filter { key($0) != key(n) } + [n], select: [key(n)])
+            previewNote(n.pitch, n.velocity)
+            entryFrame = min(Double(c.end), f + snapFrames)
         case 51, 117: // delete, forward delete (usually arrives through Edit ▸ Delete)
             deleteSelection()
         case 126, 125: // up, down

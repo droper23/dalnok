@@ -191,7 +191,7 @@ final class TimelineView: NSView {
         guard Self.barsAndBeats else { return gridStep() * sampleRate }
         let target = framesPerPoint * 90 / framesPerBeat
         let bar = beatsPerBar
-        let steps = [0.0625, 0.125, 0.25, 0.5, 1] + [1.0, 2, 4, 8, 16, 32, 64, 128, 256].map { $0 * bar }
+        let steps = ([0.0625, 0.125, 0.25, 0.5, 1] + [1.0, 2, 4, 8, 16, 32, 64, 128, 256].map { $0 * bar }).sorted()
         return (steps.first { $0 >= target } ?? steps.last!) * framesPerBeat
     }
 
@@ -204,7 +204,9 @@ final class TimelineView: NSView {
         let bar = Int((beats / beatsPerBar + 1e-9).rounded(.down))
         let inBar = beats - Double(bar) * beatsPerBar
         if wholeBars || inBar < 1e-9 { return "\(bar + 1)" }
-        let beat = Int(inBar + 1e-9), sixteenth = Int(((inBar - Double(beat)) * 4).rounded())
+        let beatLength = 4.0 / Double(session.meter.1)
+        let beat = Int((inBar / beatLength + 1e-9).rounded(.down))
+        let sixteenth = Int(((inBar - Double(beat) * beatLength) * 4).rounded())
         return sixteenth == 0 ? "\(bar + 1).\(beat + 1)" : "\(bar + 1).\(beat + 1).\(sixteenth + 1)"
     }
 
@@ -358,7 +360,8 @@ final class TimelineView: NSView {
         let whole = Int(sixteenths.rounded(.down)), ticks = Int((sixteenths - Double(whole)) * 240)
         let perBar = Int((beatsPerBar * 4).rounded())
         let bar = whole / max(perBar, 1), inBar = whole % max(perBar, 1)
-        return String(format: "%d.%d.%d.%03d", bar + 1, inBar / 4 + 1, inBar % 4 + 1, ticks)
+        let perBeat = max(1, 16 / Int(session.meter.1))
+        return String(format: "%d.%d.%d.%03d", bar + 1, inBar / perBeat + 1, inBar % perBeat + 1, ticks)
     }
 
     static func formatTime(_ t: Double, step: Double = 0.001) -> String {

@@ -281,9 +281,9 @@ bool Engine::edit(const char *name, bool structural, F &&fn) {
 
 void Engine::syncRuntimes() {
     // Metronome timing and click oscillators (beats: 1 kHz, bar starts: 1.6 kHz; 35 ms decay).
-    const double beat = sampleRate_ * 60.0 / model_.bpm;
+    const double beat = sampleRate_ * 60.0 / model_.bpm * 4.0 / model_.meterDen;
     beatFrames_.store(beat, std::memory_order_relaxed);
-    beatsPerBar_.store(std::max(1, static_cast<int32_t>(std::lround(model_.meterNum * 4.0 / model_.meterDen))), std::memory_order_relaxed);
+    beatsPerBar_.store(model_.meterNum, std::memory_order_relaxed);
     const double w = 2 * 3.14159265358979 * 1000.0 / sampleRate_, wa = 2 * 3.14159265358979 * 1600.0 / sampleRate_;
     clickCoef_.store(static_cast<float>(2 * std::cos(w)), std::memory_order_relaxed);
     clickSin_.store(static_cast<float>(std::sin(w)), std::memory_order_relaxed);

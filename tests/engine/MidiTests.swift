@@ -260,4 +260,16 @@ func oneNoteSession(pitch: UInt8 = 69, velocity: UInt8 = 127) -> (OpaquePointer,
         #expect(live(e, 48_000).allSatisfy { $0 == 0 })
         #expect(runCommand(e, "transport.setMetronome", #"{"on":true}"#).0 == DALNOK_OK && dalnok_metronome_enabled(e))
     }
+
+    @Test func eighthNoteMeterClicksAndAccentsAtBarBoundary() {
+        let e = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(e) }
+        dalnok_tempo_set(e, 120, 3, 8) // eighth-note beats: 12,000 frames, bar: 36,000
+        dalnok_metronome_set(e, true, 0.5)
+        let out = live(e, 48_000)
+        for at in stride(from: 0, to: 48_000, by: 12_000) {
+            #expect(out[at] != 0 && (at == 0 || out[at - 1] == 0))
+        }
+        let accent = frequency(out[36_000..<38_000][...]), normal = frequency(out[24_000..<26_000][...])
+        #expect(abs(accent - 1_600) < 40 && abs(normal - 1_000) < 40)
+    }
 }

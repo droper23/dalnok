@@ -19,6 +19,7 @@
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <set>
 #include <sstream>
 
 namespace fs = std::filesystem;
@@ -60,10 +61,16 @@ bool walk(const std::string &d, std::vector<Chunk> &out) {
 std::string utf16le(const std::string &d, size_t off, size_t chars) {
     std::string out;
     for (size_t i = 0; i < chars; ++i) {
-        const auto c = rd<uint16_t>(d, off + 2 * i);
+        uint32_t c = rd<uint16_t>(d, off + 2 * i);
+        if (c >= 0xD800 && c <= 0xDBFF && i + 1 < chars) {
+            const uint32_t low = rd<uint16_t>(d, off + 2 * (i + 1));
+            if (low >= 0xDC00 && low <= 0xDFFF) { c = 0x10000 + ((c - 0xD800) << 10) + low - 0xDC00; ++i; }
+            else c = 0xFFFD;
+        } else if (c >= 0xD800 && c <= 0xDFFF) c = 0xFFFD;
         if (c < 0x80) out += static_cast<char>(c);
         else if (c < 0x800) { out += static_cast<char>(0xC0 | (c >> 6)); out += static_cast<char>(0x80 | (c & 0x3F)); }
-        else { out += static_cast<char>(0xE0 | (c >> 12)); out += static_cast<char>(0x80 | ((c >> 6) & 0x3F)); out += static_cast<char>(0x80 | (c & 0x3F)); }
+        else if (c < 0x10000) { out += static_cast<char>(0xE0 | (c >> 12)); out += static_cast<char>(0x80 | ((c >> 6) & 0x3F)); out += static_cast<char>(0x80 | (c & 0x3F)); }
+        else { out += static_cast<char>(0xF0 | (c >> 18)); out += static_cast<char>(0x80 | ((c >> 12) & 0x3F)); out += static_cast<char>(0x80 | ((c >> 6) & 0x3F)); out += static_cast<char>(0x80 | (c & 0x3F)); }
     }
     return out;
 }
@@ -99,19 +106,24 @@ bool importLogic(const std::string &path, Result &out, std::string &err) {
     json::Value meta, info;
     std::string e2;
     double bpm = 120, rate = 48000;
+    int meterNum = 4, meterDen = 4;
     if (readPropertyList((alt / "MetaData.plist").string(), meta, e2)) {
         bpm = meta.getNumber("BeatsPerMinute", 120);
         rate = meta.getNumber("SampleRate", 48000);
+        if (!(rate >= 8000 && rate <= 384000)) rate = 48000;
+        if (!(bpm >= 20 && bpm <= 400)) bpm = 120;
+        const double num = meta.getNumber("SongSignatureNumerator", 4), den = meta.getNumber("SongSignatureDenominator", 4);
+        if (num >= 1 && num <= 32 && std::floor(num) == num) meterNum = static_cast<int>(num);
+        if (den == 1 || den == 2 || den == 4 || den == 8 || den == 16) meterDen = static_cast<int>(den);
         const std::string key = meta.getString("SongKey", ""), mode = meta.getString("SongGenderKey", "");
         rep.notes.push_back("Tempo " + std::to_string(bpm).substr(0, 6) + " BPM, " +
-                            std::to_string(static_cast<int>(meta.getNumber("SongSignatureNumerator", 4))) + "/" +
-                            std::to_string(static_cast<int>(meta.getNumber("SongSignatureDenominator", 4))) +
-                            (key.empty() ? "" : ", key " + key + " " + mode) + ", " + std::to_string(static_cast<int>(rate)) + " Hz.");
+                            std::to_string(meterNum) + "/" + std::to_string(meterDen) +
+                            (key.empty() ? "" : ", key " + key + " " + mode) + ".");
     }
     if (readPropertyList((pkg / "Resources" / "ProjectInformation.plist").string(), info, e2))
         rep.version = info.getString("LastSavedFrom", "");
-    if (!(rate >= 8000)) rate = 48000;
-    if (!(bpm > 0)) bpm = 120;
+    if (!(rate >= 8000 && rate <= 384000)) rate = 48000;
+    if (!(bpm >= 20 && bpm <= 400)) bpm = 120;
 
     // Audio files and their regions (regions follow their file in document order).
     std::vector<Region> regions;
@@ -168,7 +180,8 @@ bool importLogic(const std::string &path, Result &out, std::string &err) {
     Builder b(rep, rate);
     const fs::path audioDir = pkg / "Media" / "Audio Files";
     std::map<int, int32_t> tracks;
-    int placed = 0, unresolved = 0;
+    std::set<size_t> placedRegions;
+    int unresolved = 0;
     const double secPerTick = 60.0 / (bpm * kPpq);
     // Placements link to a region's header id, not document order: leftover split regions
     // can sit between real ones and shift later indices.
@@ -193,9 +206,9 @@ bool importLogic(const std::string &path, Result &out, std::string &err) {
         const int32_t media = b.addMedia(fs::exists(file) ? file : locateMedia(r.file, pkg.parent_path().string()));
         b.addClip(tracks[p.track], media, (p.pos - kTickOrigin) * secPerTick, r.offset / rate, r.length / rate,
                   r.name.empty() ? r.file : r.name);
-        ++placed;
+        placedRegions.insert(it->second);
     }
-    rep.skip("unplacedRegions", static_cast<int>(regions.size()) - placed);
+    rep.skip("unplacedRegions", static_cast<int>(regions.size() - placedRegions.size()));
     rep.skip("unresolvedPlacements", unresolved);
     if (midiRegions > 0)
         rep.notes.push_back("Some event records may represent MIDI; MIDI regions are not imported and their count is not verified.");
@@ -205,6 +218,10 @@ bool importLogic(const std::string &path, Result &out, std::string &err) {
                         "levels differ from Logic. Logic's File ▸ Export ▸ Project to Final Cut Pro XML "
                         "is an alternative, but may render audio and change clip boundaries; compare the result with the original.");
     out.document = b.document();
+    out.document.set("tempo", bpm);
+    json::Value meter = json::Value::makeArray();
+    meter.push(meterNum); meter.push(meterDen);
+    out.document.set("meter", std::move(meter));
     return true;
 }
 
