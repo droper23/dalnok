@@ -438,10 +438,41 @@ bool Engine::setInputChannel(DalnokTrackId id, int32_t channel, std::string &err
 }
 
 bool Engine::setTempo(double bpm, int32_t num, int32_t den, std::string &err) {
-    return edit("Tempo", false, [&](Model &m) {
+    return edit("Tempo", true, [&](Model &m) {
         if (!(bpm >= 20 && bpm <= 400)) return fail(err, "tempo must be 20-400 BPM");
         if (num < 1 || num > 32 || (den != 1 && den != 2 && den != 4 && den != 8 && den != 16))
             return fail(err, "meter must be 1-32 over 1, 2, 4, 8 or 16");
+        if (bpm != m.bpm) {
+            const long double ratio = static_cast<long double>(m.bpm) / bpm;
+            std::map<const std::vector<MidiNote> *, NoteList> scaledLists;
+            auto scale = [ratio](int64_t frame, int64_t &out) {
+                const long double value = static_cast<long double>(frame) * ratio;
+                if (frame < 0 || value > static_cast<long double>(INT64_MAX / 2)) return false;
+                out = static_cast<int64_t>(std::llround(value));
+                return true;
+            };
+            for (auto &clip : m.clips) {
+                if (!clip.midi()) continue;
+                int64_t start, offset, end;
+                if (clip.length > INT64_MAX - clip.start || !scale(clip.start, start) || !scale(clip.offset, offset) ||
+                    !scale(clip.start + clip.length, end))
+                    return fail(err, "tempo change would move MIDI beyond the supported timeline");
+                auto found = scaledLists.find(clip.notes.get());
+                if (found == scaledLists.end()) {
+                    std::vector<MidiNote> notes = *clip.notes;
+                    for (auto &note : notes) {
+                        int64_t noteStart, noteLength;
+                        if (!scale(note.start, noteStart) || !scale(note.length, noteLength))
+                            return fail(err, "tempo change would move MIDI beyond the supported timeline");
+                        note.start = noteStart;
+                        note.length = std::max<int64_t>(1, noteLength);
+                    }
+                    found = scaledLists.emplace(clip.notes.get(), std::make_shared<const std::vector<MidiNote>>(std::move(notes))).first;
+                }
+                clip.start = start; clip.offset = offset; clip.length = std::max<int64_t>(1, end - start);
+                clip.notes = found->second;
+            }
+        }
         m.bpm = bpm;
         m.meterNum = num;
         m.meterDen = den;
@@ -922,8 +953,21 @@ std::unique_ptr<RenderState> Engine::compile(std::vector<StretchJob> *needed, co
                 if (!rt.instrument) continue;
                 for (const auto &n : *c.notes) {
                     if (n.start < c.offset || n.start >= c.offset + c.length) continue; // outside the clip window
-                    const int64_t at = c.start + n.start - c.offset;
-                    const int64_t end = c.start + std::min(n.start + n.length, c.offset + c.length) - c.offset;
+                    const int64_t at = c.start + (n.start - c.offset);
+                    int64_t sourceEnd = c.offset + c.length;
+                    int64_t timelineEnd = c.start + c.length;
+                    // A split shares its note list and has contiguous source and timeline ranges.
+                    // Extend a crossing note through those pieces without retriggering it.
+                    while (timelineEnd - at < n.length) {
+                        const auto next = std::find_if(model_.clips.begin(), model_.clips.end(), [&](const ClipState &part) {
+                            return part.track == c.track && part.notes == c.notes && part.start == timelineEnd &&
+                                   std::abs(part.offset - sourceEnd) <= 1;
+                        });
+                        if (next == model_.clips.end() || next->length <= 0) break;
+                        sourceEnd = next->offset + next->length;
+                        timelineEnd += next->length;
+                    }
+                    const int64_t end = at + std::min(n.length, timelineEnd - at);
                     rt.notes.push_back({at, end, n.pitch, n.velocity});
                 }
                 continue;

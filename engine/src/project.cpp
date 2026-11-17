@@ -30,7 +30,7 @@ namespace fs = std::filesystem;
 namespace dalnok {
 
 namespace {
-constexpr int kFormatVersion = 2; // 2: instrument tracks, MIDI clips, tempo and meter
+constexpr int kFormatVersion = 3; // 3: shared MIDI sources preserve notes crossing split clips
 
 bool readFile(const std::string &path, std::string &out, std::string &err) {
     std::ifstream in(path, std::ios::binary);
@@ -132,6 +132,7 @@ json::Value Engine::describe() const {
     root.set("media", std::move(media));
 
     Value tracks = Value::makeArray();
+    std::map<const std::vector<MidiNote> *, int64_t> noteSources;
     for (const auto &t : model_.tracks) {
         Value tv = Value::makeObject();
         tv.set("id", t.id);
@@ -179,6 +180,8 @@ json::Value Engine::describe() const {
             cv.set("id", c.id);
             if (c.midi()) {
                 cv.set("kind", "midi");
+                const auto source = noteSources.emplace(c.notes.get(), c.id).first;
+                cv.set("noteSource", source->second);
                 Value notes = Value::makeArray();
                 for (const auto &n : *c.notes) {
                     Value nv = Value::makeArray();
@@ -360,6 +363,7 @@ std::unique_ptr<Engine::PreparedProject> Engine::prepareDocument(const json::Val
     }
 
     Model model;
+    std::map<int64_t, NoteList> noteSources;
     DalnokTrackId maxTrack = 0;
     DalnokClipId maxClip = 0;
     int32_t maxColor = -1;
@@ -439,7 +443,22 @@ std::unique_ptr<Engine::PreparedProject> Engine::prepareDocument(const json::Val
                             }
                         std::stable_sort(notes.begin(), notes.end(), [](const MidiNote &a, const MidiNote &b) { return a.start < b.start; });
                         c.media = 0;
-                        c.notes = std::make_shared<const std::vector<MidiNote>>(std::move(notes));
+                        const int64_t source = toInt(cv, "noteSource", 0);
+                        auto it = noteSources.find(source);
+                        if (source > 0 && it != noteSources.end()) {
+                            const auto &existing = *it->second;
+                            if (existing.size() != notes.size() || !std::equal(existing.begin(), existing.end(), notes.begin(),
+                                    [](const MidiNote &a, const MidiNote &b) {
+                                        return a.start == b.start && a.length == b.length && a.pitch == b.pitch && a.velocity == b.velocity;
+                                    })) {
+                                err = "inconsistent shared MIDI source";
+                                return nullptr;
+                            }
+                            c.notes = it->second;
+                        } else {
+                            c.notes = std::make_shared<const std::vector<MidiNote>>(std::move(notes));
+                            if (source > 0) noteSources.emplace(source, c.notes);
+                        }
                         if (c.id <= 0 || !clipIds.insert(c.id).second || t.kind != kTrackInstrument || c.start < 0 ||
                             c.offset < 0 || c.length <= 0) {
                             err = "invalid MIDI clip";

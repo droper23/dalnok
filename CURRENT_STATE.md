@@ -5,7 +5,11 @@ milestone: M11 VST3 hosting (ADR-0009 stage 3) done; editors, parameters and AU 
 ---
 # Current State
 
-## Latest session (import reliability)
+## Latest session (MIDI timing)
+- Constant tempo changes keep MIDI clips and notes on their beats, while audio remains time-locked. Split MIDI notes continue across adjacent pieces and after save/reopen; offline-render tests and the full `scripts/check.sh` pass. Project format is now version 3; old projects load, but old splits do not retain shared-source identity.
+- Tempo and meter maps remain unimplemented; Phase 3 is not complete. MIDI is still stored in frames and repeated tempo changes round to frames.
+
+## Earlier (import reliability)
 - REAPER imports retain constant tempo and meter; Ableton imports retain constant tempo. Logic sequence rows with different channel strips no longer merge. Generated import tests pass. Logic multi-sequence and take-folder semantics still need further validation.
 - Full `scripts/check.sh` passed after the preceding MIDI and Logic changes. Phone Remote access was restored by moving the active remote connection to the shared daemon.
 

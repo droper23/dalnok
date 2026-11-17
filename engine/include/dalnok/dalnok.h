@@ -431,7 +431,8 @@ DalnokStatus dalnok_midi_clip_set_notes(DalnokEngine *engine, DalnokClipId clip,
 int32_t dalnok_midi_clip_notes(const DalnokEngine *engine, DalnokClipId clip, DalnokNote *out, int32_t capacity);
 /* Moves note starts toward a grid of `grid_beats` anchored at frame 0 (strength 0-1). */
 DalnokStatus dalnok_midi_quantize(DalnokEngine *engine, DalnokClipId clip, double grid_beats, double strength);
-/* Constant tempo and meter (no tempo changes yet). */
+/* Constant tempo and meter (no tempo map yet). Changing BPM scales MIDI clip and note
+ * timing to preserve their beat positions; audio clips remain at their time positions. */
 DalnokStatus dalnok_tempo_set(DalnokEngine *engine, double bpm, int32_t numerator, int32_t denominator);
 double dalnok_tempo_bpm(const DalnokEngine *engine);
 void dalnok_meter(const DalnokEngine *engine, int32_t *numerator, int32_t *denominator);

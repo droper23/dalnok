@@ -149,6 +149,65 @@ func oneNoteSession(pitch: UInt8 = 69, velocity: UInt8 = 127) -> (OpaquePointer,
         #expect(render(e, 60_000, 20_000).allSatisfy { abs($0) < 1e-6 })
     }
 
+    @Test func tempoChangesKeepMidiOnBeatsAndAudioInTime() throws {
+        let e = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(e) }
+        let keys = dalnok_track_add_instrument(e, "Keys")
+        let clip = dalnok_midi_clip_add(e, keys, 24_000, 48_000)
+        var note = DalnokNote(start: 24_000, length: 12_000, pitch: 69, velocity: 127)
+        #expect(dalnok_midi_clip_set_notes(e, clip, &note, 1) == DALNOK_OK)
+        let dir = tempDir(), audioPath = dir.appendingPathComponent("audio.wav")
+        try writeTestWav(audioPath, frames: 48_000)
+        let audioTrack = dalnok_track_add(e, "Audio")
+        var handle: OpaquePointer?
+        #expect(dalnok_media_load(audioPath.path, 48_000, &handle, nil, 0) == DALNOK_OK)
+        defer { dalnok_media_release(handle) }
+        let media = dalnok_pool_add(e, handle, audioPath.path)
+        let audio = dalnok_clip_add(e, audioTrack, media, 24_000, 0, 24_000)
+        #expect(audio != 0 && dalnok_tempo_set(e, 60, 4, 4) == DALNOK_OK)
+        let moved = clipInfo(e, clip), audioInfo = clipInfo(e, audio)
+        #expect(moved.start == 48_000 && moved.length == 96_000 && audioInfo.start == 24_000 && audioInfo.length == 24_000)
+        #expect(dalnok_midi_clip_notes(e, clip, &note, 1) == 1 && note.start == 48_000 && note.length == 24_000)
+        // Mute audio so the offline signal measures the MIDI onset.
+        dalnok_track_set_mute(e, audioTrack, true)
+        let out = render(e, 0, 120_000)
+        let onset = out.firstIndex { $0 != 0 } ?? -1
+        #expect(onset >= 96_000 && onset <= 96_002)
+        dalnok_undo(e) // mute
+        dalnok_undo(e) // tempo
+        #expect(dalnok_tempo_bpm(e) == 120 && clipInfo(e, clip).start == 24_000)
+        #expect(dalnok_midi_clip_notes(e, clip, &note, 1) == 1 && note.start == 24_000 && note.length == 12_000)
+    }
+
+    @Test func tempoChangeKeepsSplitMidiContinuous() throws {
+        let (e, track, clip) = oneNoteSession(); defer { dalnok_engine_destroy(e) }
+        #expect(dalnok_clip_move(e, clip, track, 1) == DALNOK_OK)
+        #expect(dalnok_tempo_set(e, 96, 4, 4) == DALNOK_OK)
+        let unsplit = render(e, 0, 120_000)
+        #expect(dalnok_undo(e))
+        var right: DalnokClipId = 0
+        #expect(dalnok_clip_split(e, clip, 24_002, &right) == DALNOK_OK)
+        #expect(dalnok_tempo_set(e, 96, 4, 4) == DALNOK_OK)
+        let split = render(e, 0, 120_000)
+        #expect(zip(unsplit, split).allSatisfy { abs($0 - $1) < 1e-6 })
+        let project = tempDir().appendingPathComponent("split.dalnok")
+        var err = [CChar](repeating: 0, count: 256)
+        #expect(dalnok_project_save(e, project.path, &err, err.count) == DALNOK_OK)
+        let doc = try JSONSerialization.jsonObject(with: Data(contentsOf: project)) as? [String: Any]
+        #expect(doc?["version"] as? Int == 3)
+        let reopened = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(reopened) }
+        #expect(dalnok_project_load(reopened, project.path, nil, &err, err.count) == DALNOK_OK)
+        let restored = render(reopened, 0, 120_000)
+        #expect(zip(unsplit, restored).allSatisfy { abs($0 - $1) < 1e-6 })
+    }
+
+    @Test func tempoChangeRejectsTimelineOverflowWithoutMutation() {
+        let e = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(e) }
+        let track = dalnok_track_add_instrument(e, "Keys")
+        let clip = dalnok_midi_clip_add(e, track, Int64.max / 4, 100)
+        #expect(clip != 0 && dalnok_tempo_set(e, 20, 4, 4) != DALNOK_OK)
+        #expect(dalnok_tempo_bpm(e) == 120 && clipInfo(e, clip).start == Int64.max / 4)
+    }
+
     @Test func modelRulesAndPersistence() throws {
         let e = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(e) }
         let audio = dalnok_track_add(e, "Audio")
@@ -182,8 +241,8 @@ func oneNoteSession(pitch: UInt8 = 69, velocity: UInt8 = 127) -> (OpaquePointer,
         var notes = [DalnokNote](repeating: DalnokNote(), count: 2)
         #expect(dalnok_midi_clip_notes(e2, c2, &notes, 2) == 2)
         // Rescaled 48 kHz -> 44.1 kHz.
-        #expect(notes[0].start == 0 && notes[0].length == 46 && notes[0].pitch == 72 && notes[0].velocity == 127)
-        #expect(notes[1].start == 92 && notes[1].length == 184)
+        #expect(notes[0].start == 0 && notes[0].length == 58 && notes[0].pitch == 72 && notes[0].velocity == 127)
+        #expect(notes[1].start == 115 && notes[1].length == 230)
     }
 
     /// A virtual Core MIDI source exercises the real input port and receive thread.

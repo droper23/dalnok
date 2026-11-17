@@ -1,4 +1,4 @@
-# Project Format (version 2)
+# Project Format (version 3)
 
 A single JSON file (`.dalnok`), written atomically: temp file, then `fsync`, then `rename`.
 Media is **referenced**, not copied, by absolute path plus a path relative to the project file.
@@ -6,7 +6,7 @@ On load, the relative path is tried first, so moving a project folder together w
 
 ```json
 {
-  "format": "dalnok-project", "version": 2, "sampleRate": 48000, "tempo": 120, "meter": [4, 4],
+  "format": "dalnok-project", "version": 3, "sampleRate": 48000, "tempo": 120, "meter": [4, 4],
   "media":  [{ "id": 1, "path": "/abs/a.wav", "relativePath": "Audio/a.wav", "frames": 1152000, "channels": 2 }],
   "tracks": [{ "id": 1, "name": "Kick", "color": 0, "gainDb": 0, "pan": 0, "mute": false,
                "solo": false,
@@ -14,7 +14,7 @@ On load, the relative path is tried first, so moving a project folder together w
                            "fadeIn": 480, "fadeOut": 4800, "fadeCurve": "equalPower" }] },
              { "id": 2, "name": "Keys", "kind": "instrument", "instrument": "dalnok.poly", "armed": true,
                "clips": [{ "id": 2, "kind": "midi", "start": 0, "offset": 0, "length": 96000, "name": "MIDI",
-                           "notes": [[0, 24000, 60, 100]] }] }]
+                           "noteSource": 2, "notes": [[0, 24000, 60, 100]] }] }]
 }
 ```
 
@@ -32,6 +32,12 @@ On load, the relative path is tried first, so moving a project folder together w
   `[start, length, pitch, velocity]` in frames relative to the clip's source origin, so `offset` and `length`
   window the notes like an audio region. MIDI clips are only valid on instrument tracks. Version 1 files load
   unchanged; a version 1 reader rejects version 2 files instead of dropping MIDI silently.
+- **Version 3** records a `noteSource` identity for MIDI clips sharing the same notes, so notes crossing a
+  split continue without retriggering after reopen. Shared sources must contain identical note lists.
+  Version 1 and 2 files still load; older readers reject version 3 rather than silently losing split continuity.
+  Earlier files have no source identity, so their existing splits cannot be linked automatically.
+- Changing constant BPM scales MIDI clip and note frames to preserve beat positions; audio remains time-locked.
+  Frame rounding applies at each tempo edit. Tempo and meter maps remain unimplemented.
 - **Missing media** loads as *offline*: the clip is kept and renders silence, and the reference is kept on
   the next save. `dalnok_project_load` reports the count.
 - **Rejected files** (bad JSON, wrong format, a newer `version`, dangling references) leave the open project untouched.

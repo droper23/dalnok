@@ -1,6 +1,9 @@
 # Changelog
 
 ## [Unreleased]
+### Fixed (2026-11-16, MIDI tempo and split continuity)
+- Changing constant tempo keeps MIDI clips and notes on their beats while audio remains time-locked. Notes crossing adjacent split MIDI clips continue without retriggering. Project format version 3 preserves shared MIDI source identity on save.
+
 ### Fixed (2026-11-16, import timing and tracks)
 - Preserve REAPER tempo and meter and Ableton constant tempo when importing; distinguish Logic sequence rows that point to different channel strips.
 

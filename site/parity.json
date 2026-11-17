@@ -1323,6 +1323,10 @@
           "verified"
         ],
         [
+          "Constant-tempo edits preserve MIDI beat placement while audio stays time-locked",
+          "verified"
+        ],
+        [
           "Bars-and-beats ruler, grid, snapping and position display",
           "verified"
         ],
@@ -1343,7 +1347,7 @@
           "todo"
         ]
       ],
-      "evidence": "MidiTests (tempo validation, persistence, quantize grid) and Metronome tests (click on the exact beat sample, 1.6 kHz accent / 1 kHz beat, silent in offline renders). The self-test edits tempo and meter in the control bar, checks the bars-and-beats position display and toggles the metronome, confirming it reaches the output past the end of the session. One constant tempo only."
+      "evidence": "MidiTests (tempo validation, persistence, quantize grid) and Metronome tests (click on the exact beat sample, 1.6 kHz accent / 1 kHz beat, silent in offline renders). The self-test edits tempo and meter in the control bar, checks the bars-and-beats position display and toggles the metronome, confirming it reaches the output past the end of the session. One constant tempo only. Offline-render MIDI tests verify tempo edits, split-note continuity, undo and reopening."
     },
     {
       "id": "palette",
