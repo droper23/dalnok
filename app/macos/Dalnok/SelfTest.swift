@@ -1079,6 +1079,14 @@ final class SelfTest {
         await wait(2.3) // the stop lands on the next bar (2 s at 120 BPM)
         check(dalnok_launcher_playing(e.handle, track.id) == -1, "clicking it again goes back to the arrangement on the bar")
         e.pause()
+        if Analog.on { // tape reels: the take-up pack follows the playhead
+            e.seek(0); await wait(0.15)
+            let start = w.transport.reels.tapeFraction
+            e.seek(Int64(e.sampleRate * 20)); await wait(0.15)
+            check(w.transport.reels.superview != nil && start < 0.01 && w.transport.reels.tapeFraction > 0.05,
+                  "the tape reels wind with the playhead (\(start) → \(w.transport.reels.tapeFraction))")
+            e.seek(0)
+        }
         // Follow action from the slot's menu, then drag the slot clip out onto the timeline.
         if let slotClip = s.slotClip(track.id, 0) {
             let item = NSMenuItem(); item.representedObject = [Int(slotClip.id), 1, 2]

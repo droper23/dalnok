@@ -34,6 +34,7 @@ final class TransportBar: NSView {
     /// Warm Analog: unlit display segments behind the digits, as on a vacuum-fluorescent display.
     let ghost = NSTextField(labelWithString: "")
     let masterMeter = MeterView()
+    let reels = TapeReels() // Warm Analog only
     let playButton = IconButton("play.fill", help: "Play / Pause (Space)")
     let recordButton = IconButton("circle.fill", help: "Record (R)")
     let metronomeButton = IconButton("metronome.fill", help: "Metronome (K)")
@@ -135,7 +136,9 @@ final class TransportBar: NSView {
         tempo.spacing = 3
         tempo.edgeInsets = NSEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
         tempoField.widthAnchor.constraint(equalToConstant: 44).isActive = true
-        let transport = NSStackView(views: [rewind, playButton, recordButton, cycleButton, lcd, tempo])
+        reels.setAccessibilityElement(false)
+        let transport = NSStackView(views: Analog.on ? [rewind, playButton, recordButton, cycleButton, reels, lcd, tempo]
+                                                     : [rewind, playButton, recordButton, cycleButton, lcd, tempo])
         transport.spacing = 6
 
         masterMeter.toolTip = "Output level (click to reset the clip indicator)"

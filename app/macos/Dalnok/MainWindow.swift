@@ -514,6 +514,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         // Warm Analog power-on: every segment lit for a moment, like a display's lamp test.
         if Date() < vfdTestUntil { position = String(position.map { $0.isNumber ? "8" : $0 }) }
         transport.timeLabel.stringValue = position
+        if Analog.on {
+            if tickCount % 60 == 0 { // project length sets how full the reels are
+                let end = session.tracks.flatMap(\.clips).map(\.end).max() ?? 0
+                transport.reels.length = max(60, Double(end) / e.sampleRate * 1.1)
+            }
+            transport.reels.update(seconds: Double(e.position) / e.sampleRate)
+        }
         if Analog.on { transport.ghost.stringValue = String(position.map { $0.isNumber ? "8" : $0 }) } // unlit segments
         timeline.followPlayhead()
         timeline.updatePlayhead()

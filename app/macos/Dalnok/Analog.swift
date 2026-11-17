@@ -248,3 +248,86 @@ final class NeedleMeter: NSView {
         Analog.led(ctx, in: CGRect(x: face.maxX - 9, y: face.minY + 3, width: 6, height: 6), color: Theme.recordOn, lit: lit)
     }
 }
+
+/// Warm Analog: two tape reels beside the position display. The tape moves with the playhead (each reel turns at
+/// the speed its pack radius needs), the packs trade size across the project, and a jump winds fast to the new
+/// spot. With Reduce Motion the reels never turn; the packs still show where you are.
+@MainActor
+final class TapeReels: NSView {
+    private var shown: Double = 0 // seconds of tape on the take-up reel (eases toward the playhead after a jump)
+    private var angles: (CGFloat, CGFloat) = (0, 0)
+    private var last = CACurrentMediaTime()
+    /// Project length in seconds (sets how full each reel is).
+    var length: Double = 120 { didSet { needsDisplay = true } }
+
+    override var isFlipped: Bool { true }
+    override var intrinsicContentSize: NSSize { NSSize(width: 84, height: 34) }
+
+    var tapeFraction: CGFloat { fraction } // for tests
+    private var fraction: CGFloat { CGFloat(max(0, min(1, shown / max(1, length)))) }
+    private var radii: (CGFloat, CGFloat) {
+        let hub: CGFloat = 5, full: CGFloat = 15
+        // Tape area is conserved: r² goes linearly from hub² to full² as tape moves across.
+        let f = fraction
+        return (sqrt(hub * hub + (full * full - hub * hub) * (1 - f)), sqrt(hub * hub + (full * full - hub * hub) * f))
+    }
+
+    func update(seconds: Double) {
+        let now = CACurrentMediaTime(), dt = min(0.1, now - last)
+        last = now
+        let target = max(0, seconds)
+        var next = target
+        if abs(target - shown) > 1, !Motion.reduced { next = shown + (target - shown) * min(1, dt * 9) } // fast wind
+        let moved = next - shown
+        guard abs(moved) > 1e-4 else { return }
+        if !Motion.reduced {
+            let (rl, rr) = radii
+            let tape = CGFloat(moved) * 1.2 // points of tape per second of audio
+            angles = (angles.0 + tape / rl, angles.1 + tape / rr)
+        }
+        shown = next
+        needsDisplay = true
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+        let (rl, rr) = radii
+        let cy = bounds.midY, left = CGPoint(x: 17, y: cy), right = CGPoint(x: bounds.width - 17, y: cy)
+        // The tape path: from the bottom of one pack, over a head between them, to the other.
+        ctx.setStrokeColor(Theme.hex(0x7A5A40).cgColor); ctx.setLineWidth(1)
+        ctx.move(to: CGPoint(x: left.x, y: cy + rl)); ctx.addLine(to: CGPoint(x: bounds.midX, y: bounds.height - 2))
+        ctx.addLine(to: CGPoint(x: right.x, y: cy + rr)); ctx.strokePath()
+        ctx.setFillColor(Theme.hex(0x8A7A6A).cgColor)
+        ctx.fill(CGRect(x: bounds.midX - 4, y: bounds.height - 4, width: 8, height: 3)) // the head
+        for (c, r, a) in [(left, rl, angles.0), (right, rr, angles.1)] { reel(ctx, at: c, pack: r, angle: a) }
+    }
+
+    private func reel(_ ctx: CGContext, at c: CGPoint, pack: CGFloat, angle: CGFloat) {
+        let flange: CGFloat = 16
+        // Tape pack: dark oxide with faint winding rings.
+        ctx.setFillColor(Theme.hex(0x5A3D2A).cgColor)
+        ctx.fillEllipse(in: CGRect(x: c.x - pack, y: c.y - pack, width: pack * 2, height: pack * 2))
+        ctx.setStrokeColor(Theme.hex(0x7E5A40, 0.7).cgColor); ctx.setLineWidth(0.5)
+        var r: CGFloat = 6.5
+        while r < pack - 0.5 { ctx.strokeEllipse(in: CGRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2)); r += 2.5 }
+        // Clear flange with three windows, turning with the reel.
+        ctx.setStrokeColor(NSColor(white: 0.75, alpha: 0.55).cgColor); ctx.setLineWidth(1)
+        ctx.strokeEllipse(in: CGRect(x: c.x - flange, y: c.y - flange, width: flange * 2, height: flange * 2))
+        ctx.setStrokeColor(NSColor(white: 0.8, alpha: 0.35).cgColor); ctx.setLineWidth(0.8)
+        for k in 0..<3 {
+            let a = angle + CGFloat(k) * 2 * .pi / 3
+            ctx.move(to: CGPoint(x: c.x + cos(a) * 5, y: c.y + sin(a) * 5))
+            ctx.addLine(to: CGPoint(x: c.x + cos(a) * (flange - 1), y: c.y + sin(a) * (flange - 1)))
+        }
+        ctx.strokePath()
+        // Hub with three drive teeth.
+        ctx.setFillColor(NSColor(white: 0.7, alpha: 1).cgColor)
+        ctx.fillEllipse(in: CGRect(x: c.x - 4.5, y: c.y - 4.5, width: 9, height: 9))
+        ctx.setFillColor(Theme.hex(0x15100C).cgColor)
+        ctx.fillEllipse(in: CGRect(x: c.x - 2, y: c.y - 2, width: 4, height: 4))
+        for k in 0..<3 {
+            let a = angle + .pi / 3 + CGFloat(k) * 2 * .pi / 3
+            ctx.fill(CGRect(x: c.x + cos(a) * 3.2 - 0.8, y: c.y + sin(a) * 3.2 - 0.8, width: 1.6, height: 1.6))
+        }
+    }
+}
