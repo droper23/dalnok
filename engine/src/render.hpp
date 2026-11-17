@@ -58,8 +58,20 @@ struct RenderNote {
     uint8_t pitch = 0, velocity = 0;
 };
 
+// A send into a bus's input (slot = bus index in RenderState::busL/busR).
+struct RenderSend {
+    int32_t slot = -1;
+    float gain = 1.0f; // linear
+    bool pre = false;  // before the fader and pan
+};
+
 struct RenderTrack {
     std::shared_ptr<TrackRuntime> runtime;
+    bool bus = false;      // mixes its input slot instead of clips
+    int32_t busSlot = -1;  // this bus's input slot
+    int32_t output = -1;   // destination bus slot, -1 = master
+    std::vector<RenderSend> sends;
+    std::vector<TrackRuntime *> soloLinks; // tracks upstream and downstream in the routing (solo follows them)
     std::vector<RenderClip> clips; // z-order: later clips overwrite earlier ones
     bool monoSource = true;        // every clip is mono -> constant-power pan law
     bool instrument = false;       // MIDI track (built-in synth unless instrumentPlugin is set)
@@ -77,6 +89,9 @@ struct ClickMeter { double beat, step; int32_t num; }; // step: quarter notes pe
 struct RenderState {
     std::vector<RenderTrack> tracks;
     std::vector<ClickTempo> clickTempo;
+    // Bus inputs, kMaxBlock frames per bus. Written only by the thread rendering this snapshot (the audio
+    // thread for the live snapshot, the exporting thread for an offline one).
+    mutable std::vector<float> busL, busR;
     std::vector<ClickMeter> clickMeter;
     SynthParams synth;
     int32_t liveTrack = -1; // index of the track that plays live MIDI input (-1 = none)

@@ -782,10 +782,98 @@ void Engine::captureLiveState(Model &m) const {
         }
 }
 
+namespace {
+// True if routing `from` into `to` (as its output or a send) would let `to` reach `from` again.
+bool feedsBack(const Model &m, DalnokTrackId from, DalnokTrackId to) {
+    std::vector<DalnokTrackId> stack{to};
+    std::set<DalnokTrackId> seen;
+    while (!stack.empty()) {
+        const auto id = stack.back();
+        stack.pop_back();
+        if (id == from) return true;
+        if (!seen.insert(id).second) continue;
+        const TrackState *t = m.track(id);
+        if (!t) continue;
+        if (t->output) stack.push_back(t->output);
+        for (const auto &s : t->sends) stack.push_back(s.bus);
+    }
+    return false;
+}
+} // namespace
+
+DalnokTrackId Engine::addBusTrack(const std::string &name, std::string &err) {
+    const auto id = nextTrack_;
+    const bool ok = edit("New Bus", true, [&](Model &m) {
+        TrackState t;
+        t.id = id;
+        t.kind = kTrackBus;
+        int buses = 0;
+        for (const auto &o : m.tracks) buses += o.kind == kTrackBus;
+        t.name = name.empty() ? "Bus " + std::to_string(buses + 1) : name;
+        t.color = m.tracks.empty() ? 0 : m.tracks.back().color + 1;
+        t.runtime = std::make_shared<TrackRuntime>();
+        m.tracks.push_back(std::move(t));
+        return true;
+    });
+    if (!ok) return fail(err, "could not add bus"), 0;
+    ++nextTrack_;
+    ++nextColor_;
+    return id;
+}
+
+bool Engine::setTrackOutput(DalnokTrackId track, DalnokTrackId bus, std::string &err) {
+    return edit("Set Output", true, [&](Model &m) {
+        TrackState *t = m.track(track);
+        if (!t) return fail(err, "no such track");
+        if (bus) {
+            const TrackState *b = m.track(bus);
+            if (!b || b->kind != kTrackBus) return fail(err, "outputs go to the master or a bus");
+            if (feedsBack(m, track, bus)) return fail(err, "that routing would feed the bus back into itself");
+        }
+        t->output = bus;
+        return true;
+    });
+}
+
+bool Engine::setSend(DalnokTrackId track, DalnokTrackId bus, float db, bool pre, std::string &err) {
+    return edit("Send", true, [&](Model &m) {
+        TrackState *t = m.track(track);
+        const TrackState *b = m.track(bus);
+        if (!t) return fail(err, "no such track");
+        if (!b || b->kind != kTrackBus) return fail(err, "sends go to a bus");
+        if (!(db <= 6.0f) || std::isnan(db)) return fail(err, "send level must be at most +6 dB");
+        auto it = std::find_if(t->sends.begin(), t->sends.end(), [bus](const Send &s) { return s.bus == bus; });
+        if (it == t->sends.end()) {
+            if (t->sends.size() >= 16) return fail(err, "16 sends per track at most");
+            if (feedsBack(m, track, bus)) return fail(err, "that send would feed the bus back into itself");
+            t->sends.push_back({bus, db, pre});
+        } else {
+            it->db = db;
+            it->pre = pre;
+        }
+        return true;
+    });
+}
+
+bool Engine::removeSend(DalnokTrackId track, DalnokTrackId bus, std::string &err) {
+    return edit("Remove Send", true, [&](Model &m) {
+        TrackState *t = m.track(track);
+        if (!t) return fail(err, "no such track");
+        const auto before = t->sends.size();
+        std::erase_if(t->sends, [bus](const Send &s) { return s.bus == bus; });
+        if (t->sends.size() == before) return fail(err, "no such send");
+        return true;
+    });
+}
+
 bool Engine::removeTrack(DalnokTrackId id, std::string &err) {
     return edit("Delete Track", true, [&](Model &m) {
         if (!m.track(id)) return fail(err, "no such track");
         std::erase_if(m.tracks, [id](const TrackState &t) { return t.id == id; });
+        for (auto &t : m.tracks) { // whatever fed a deleted bus goes to the master instead
+            if (t.output == id) t.output = 0;
+            std::erase_if(t.sends, [id](const Send &s) { return s.bus == id; });
+        }
         std::erase_if(m.clips, [id](const ClipState &c) { return c.track == id; });
         return true;
     });
@@ -973,6 +1061,7 @@ bool Engine::moveClip(DalnokClipId id, DalnokTrackId track, int64_t start, std::
         if (it == m.clips.end()) return fail(err, "no such clip");
         if (!m.track(track)) return fail(err, "no such track");
         if (start < 0) return fail(err, "start must be >= 0");
+        if (m.track(track)->kind == kTrackBus) return fail(err, "buses don't hold clips");
         if ((m.track(track)->kind == kTrackInstrument) != it->midi())
             return fail(err, it->midi() ? "MIDI clips go on instrument tracks" : "audio clips go on audio tracks");
         ClipState c = *it;
@@ -1043,9 +1132,36 @@ std::unique_ptr<RenderState> Engine::compile(std::vector<StretchJob> *needed, co
         s->clickTempo.push_back({seg.beat, static_cast<double>(seg.frame), static_cast<double>(seg.framesPerBeat)});
     for (const auto &m : model_.meters)
         s->clickMeter.push_back({barToBeat(model_.meters, m.bar), 4.0 / m.den, m.num});
-    for (const auto &t : model_.tracks) {
+    // Processing order: every source track, then buses so that each bus runs after everything feeding it.
+    std::vector<const TrackState *> order;
+    for (const auto &t : model_.tracks) if (t.kind != kTrackBus) order.push_back(&t);
+    {
+        std::vector<const TrackState *> buses;
+        for (const auto &t : model_.tracks) if (t.kind == kTrackBus) buses.push_back(&t);
+        std::set<DalnokTrackId> placed;
+        auto feeds = [](const TrackState &from, DalnokTrackId bus) {
+            if (from.output == bus) return true;
+            for (const auto &snd : from.sends) if (snd.bus == bus) return true;
+            return false;
+        };
+        while (!buses.empty()) { // Kahn's algorithm; edits keep routing acyclic, so this always progresses
+            auto ready = std::find_if(buses.begin(), buses.end(), [&](const TrackState *b) {
+                return std::none_of(buses.begin(), buses.end(), [&](const TrackState *o) { return o != b && feeds(*o, b->id); });
+            });
+            if (ready == buses.end()) ready = buses.begin(); // defensive: never loop forever
+            order.push_back(*ready);
+            placed.insert((*ready)->id);
+            buses.erase(ready);
+        }
+    }
+    std::map<DalnokTrackId, int32_t> indexOf;
+    for (const TrackState *tp : order) {
+        const TrackState &t = *tp;
+        indexOf[t.id] = static_cast<int32_t>(s->tracks.size());
         RenderTrack rt;
         rt.runtime = t.runtime;
+        rt.bus = t.kind == kTrackBus;
+        rt.monoSource = !rt.bus; // buses are stereo (balance pan)
         rt.instrument = t.kind == kTrackInstrument;
         if (rt.instrument && t.armed) s->liveTrack = static_cast<int32_t>(s->tracks.size());
         for (const auto &slot : t.plugins) {
@@ -1114,6 +1230,46 @@ std::unique_ptr<RenderState> Engine::compile(std::vector<StretchJob> *needed, co
                          [](const RenderNote &a, const RenderNote &b) { return a.end < b.end; });
         s->tracks.push_back(std::move(rt));
     }
+    // Resolve outputs and sends to processing indices (a missing destination falls back to the master).
+    int32_t buses = 0;
+    for (size_t i = 0; i < order.size(); ++i) {
+        RenderTrack &rt = s->tracks[i];
+        const TrackState &t = *order[i];
+        if (rt.bus) rt.busSlot = buses++;
+        auto out = indexOf.find(t.output);
+        rt.output = t.output && out != indexOf.end() ? out->second : -1;
+        for (const auto &snd : t.sends)
+            if (auto d = indexOf.find(snd.bus); d != indexOf.end())
+                rt.sends.push_back({d->second, dbToGain(snd.db), snd.pre});
+    }
+    for (auto &rt : s->tracks) {
+        if (rt.output >= 0) rt.output = s->tracks[static_cast<size_t>(rt.output)].busSlot;
+        for (auto &snd : rt.sends) snd.slot = s->tracks[static_cast<size_t>(snd.slot)].busSlot;
+    }
+    // Solo links: everything reachable downstream (outputs, sends) and upstream (what feeds this track).
+    std::map<DalnokTrackId, std::vector<DalnokTrackId>> down, up;
+    for (const TrackState *tp : order) {
+        if (tp->output) { down[tp->id].push_back(tp->output); up[tp->output].push_back(tp->id); }
+        for (const auto &snd : tp->sends) { down[tp->id].push_back(snd.bus); up[snd.bus].push_back(tp->id); }
+    }
+    auto reach = [](const std::map<DalnokTrackId, std::vector<DalnokTrackId>> &g, DalnokTrackId from, std::set<DalnokTrackId> &out) {
+        std::vector<DalnokTrackId> stack{from};
+        while (!stack.empty()) {
+            const auto id = stack.back(); stack.pop_back();
+            if (auto it = g.find(id); it != g.end())
+                for (auto n : it->second) if (out.insert(n).second) stack.push_back(n);
+        }
+    };
+    for (size_t i = 0; i < order.size(); ++i) {
+        std::set<DalnokTrackId> linked;
+        reach(down, order[i]->id, linked);
+        reach(up, order[i]->id, linked);
+        linked.erase(order[i]->id);
+        for (auto id : linked)
+            if (auto it = indexOf.find(id); it != indexOf.end()) s->tracks[i].soloLinks.push_back(s->tracks[static_cast<size_t>(it->second)].runtime.get());
+    }
+    s->busL.assign(static_cast<size_t>(buses) * kMaxBlock, 0.0f);
+    s->busR.assign(static_cast<size_t>(buses) * kMaxBlock, 0.0f);
     return s;
 }
 

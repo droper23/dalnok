@@ -28,7 +28,7 @@
 extern "C" {
 #endif
 
-#define DALNOK_API_VERSION 13
+#define DALNOK_API_VERSION 14
 
 typedef enum {
     DALNOK_OK = 0,
@@ -264,7 +264,19 @@ typedef struct {
     bool armed;            /* record-enabled */
     int32_t input_channel; /* zero-based audio input (audio tracks) */
 } DalnokTrackInfo;
-typedef enum { DALNOK_TRACK_AUDIO = 0, DALNOK_TRACK_INSTRUMENT = 1 } DalnokTrackKind;
+typedef enum { DALNOK_TRACK_AUDIO = 0, DALNOK_TRACK_INSTRUMENT = 1, DALNOK_TRACK_BUS = 2 } DalnokTrackKind;
+
+/* ---- Routing: buses, outputs and sends --------------------------------
+ * A bus track holds no clips; it mixes what is routed (output) or sent to it, then runs its inserts,
+ * fader and pan into its own output. Edits that would feed a bus back into itself fail. Solo follows
+ * routing: soloing a bus keeps its sources audible; soloing a source keeps its buses audible. */
+DalnokTrackId dalnok_track_add_bus(DalnokEngine *engine, const char *name);
+DalnokStatus dalnok_track_set_output(DalnokEngine *engine, DalnokTrackId track, DalnokTrackId bus); /* 0 = master */
+DalnokTrackId dalnok_track_output(const DalnokEngine *engine, DalnokTrackId track);
+typedef struct { DalnokTrackId bus; float db; bool pre; } DalnokSend; /* pre: before the fader and pan */
+DalnokStatus dalnok_track_set_send(DalnokEngine *engine, DalnokTrackId track, DalnokTrackId bus, float db, bool pre);
+DalnokStatus dalnok_track_remove_send(DalnokEngine *engine, DalnokTrackId track, DalnokTrackId bus);
+int32_t dalnok_track_sends(const DalnokEngine *engine, DalnokTrackId track, DalnokSend *out, int32_t capacity);
 DalnokStatus dalnok_track_info(const DalnokEngine *engine, DalnokTrackId track, DalnokTrackInfo *out);
 
 /* Clips of a track in z-order (later = on top; overlapping clips: top wins). */

@@ -86,6 +86,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     let timeline: TimelineView
     let devicePanel: DevicePanel
     private var devicePanelHeight: NSLayoutConstraint!
+    let mixer: MixerPanel
+    private var mixerHeight: NSLayoutConstraint!
+    static var showMixer: Bool {
+        get { UserDefaults.standard.bool(forKey: "showMixer") }
+        set { UserDefaults.standard.set(newValue, forKey: "showMixer") }
+    }
     static var showDevicePanel: Bool {
         get { UserDefaults.standard.object(forKey: "showDevicePanel") as? Bool ?? true }
         set { UserDefaults.standard.set(newValue, forKey: "showDevicePanel") }
@@ -108,6 +114,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         headers = TrackHeaderColumn(session: session)
         timeline = TimelineView(session: session)
         devicePanel = DevicePanel(session: session)
+        mixer = MixerPanel(session: session)
 
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1280, height: 760),
                               styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
@@ -131,7 +138,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             }
         }
         window.contentView = root
-        for v in [transport, headers, timeline, devicePanel, emptyState] as [NSView] {
+        for v in [transport, headers, timeline, mixer, devicePanel, emptyState] as [NSView] {
             v.translatesAutoresizingMaskIntoConstraints = false
             root.addSubview(v)
         }
@@ -142,12 +149,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             transport.heightAnchor.constraint(equalToConstant: Theme.transportHeight),
             headers.topAnchor.constraint(equalTo: transport.bottomAnchor),
             headers.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            headers.bottomAnchor.constraint(equalTo: devicePanel.topAnchor),
+            headers.bottomAnchor.constraint(equalTo: mixer.topAnchor),
             headers.widthAnchor.constraint(equalToConstant: Theme.headerWidth),
             timeline.topAnchor.constraint(equalTo: transport.bottomAnchor),
             timeline.leadingAnchor.constraint(equalTo: headers.trailingAnchor),
             timeline.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            timeline.bottomAnchor.constraint(equalTo: devicePanel.topAnchor),
+            timeline.bottomAnchor.constraint(equalTo: mixer.topAnchor),
+            mixer.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            mixer.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            mixer.bottomAnchor.constraint(equalTo: devicePanel.topAnchor),
             devicePanel.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             devicePanel.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             devicePanel.bottomAnchor.constraint(equalTo: root.bottomAnchor),
@@ -159,6 +169,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         devicePanelHeight = devicePanel.heightAnchor.constraint(equalToConstant: Self.showDevicePanel ? DevicePanel.height : 0)
         devicePanelHeight.isActive = true
         devicePanel.isHidden = !Self.showDevicePanel
+        mixerHeight = mixer.heightAnchor.constraint(equalToConstant: Self.showMixer ? MixerPanel.height : 0)
+        mixerHeight.isActive = true
+        mixer.isHidden = !Self.showMixer
+        mixer.onSelect = { [weak self] id in self?.headers.select(id) }
         devicePanel.onOpen = { [weak self] track, slot in self?.openPluginWindow(track: track, slot: slot) }
         devicePanel.onAdd = { [weak self] in self?.showPlugins(nil) }
         emptyState.onImportAudio = { [weak self] in self?.importAudio() }
@@ -355,6 +369,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         pianoRoll.modelChanged()
         if devicePanel.track == nil, let first = session.tracks.first?.id { headers.select(first) }
         devicePanel.rebuild()
+        if !mixer.isHidden { mixer.rebuild(); mixer.select(selectedTrack) }
         if transientMessageUntil < Date() { updateStatus() }
     }
 
@@ -430,11 +445,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         if Analog.on { transport.ghost.stringValue = String(position.map { $0.isNumber ? "8" : $0 }) } // unlit segments
         timeline.followPlayhead()
         timeline.updatePlayhead()
+        // Track meters reset on read: read each once and feed the headers and the mixer.
+        var levels: [DalnokTrackId: (Float, Float)] = [:]
+        for t in session.tracks { levels[t.id] = e.trackMeter(t.id) }
         for row in headers.rows {
-            let (l, r) = e.trackMeter(row.trackId)
+            let (l, r) = levels[row.trackId] ?? (0, 0)
             row.meter.push(l, r)
             row.gain.updateMeter(max(row.meter.levelDb.0, row.meter.levelDb.1))
         }
+        if !mixer.isHidden { mixer.pushMeters { levels[$0] ?? (0, 0) } }
         if e.isRecording { updateRecording() }
         let (ml, mr) = e.masterMeter()
         transport.masterMeter.push(ml, mr)
@@ -999,10 +1018,36 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         let show = Self.showDevicePanel
         if show { devicePanel.isHidden = false }
         let panel = devicePanel
+        if Motion.reduced {
+            devicePanelHeight.constant = show ? DevicePanel.height : 0
+            devicePanel.isHidden = !show
+            return
+        }
         Motion.views(Motion.gentle, { devicePanelHeight.animator().constant = show ? DevicePanel.height : 0 }, completion: {
             DispatchQueue.main.async { if !show { panel.isHidden = true } }
         })
-        if Motion.reduced { devicePanel.isHidden = !show }
+    }
+
+    /// View ▸ Mixer (X): channel strips for every track and bus above the device panel.
+    @objc func toggleMixer(_ sender: Any?) {
+        Self.showMixer.toggle()
+        let show = Self.showMixer
+        if show { mixer.isHidden = false; mixer.rebuild(); mixer.select(selectedTrack) }
+        let panel = mixer
+        if Motion.reduced { // no animation (and nothing waits on the display, which may be asleep)
+            mixerHeight.constant = show ? MixerPanel.height : 0
+            mixer.isHidden = !show
+            return
+        }
+        Motion.views(Motion.gentle, { mixerHeight.animator().constant = show ? MixerPanel.height : 0 }, completion: {
+            DispatchQueue.main.async { if !show { panel.isHidden = true } }
+        })
+    }
+
+    /// Track ▸ New Bus: an aux track; route outputs or sends to it from the mixer or the track menu.
+    @objc func newBus(_ sender: Any?) {
+        let id = session.addBus()
+        if id != 0 { headers.select(id); flash("New bus: send tracks to it from the mixer (View ▸ Mixer)") }
     }
 
     @objc func toggleBarsAndBeats(_ sender: Any?) {
@@ -1184,6 +1229,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             return true
         case #selector(toggleMetronome(_:)):
             item.state = Self.metronomeOn ? .on : .off
+            return true
+        case #selector(toggleMixer(_:)):
+            item.state = Self.showMixer ? .on : .off
             return true
         case #selector(toggleCycle(_:)):
             item.state = session.cycle.on ? .on : .off

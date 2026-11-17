@@ -193,18 +193,28 @@ void renderBlock(const RenderState &state, int64_t pos, int frames, float *left,
                  Scratch &s, bool smooth, bool anySolo, SynthState *synths) DALNOK_NONBLOCKING {
     clear(left, frames);
     clear(right, frames);
+    float *busL = state.busL.data(), *busR = state.busR.data();
+    const size_t busCount = state.busL.size() / kMaxBlock;
+    for (size_t b = 0; b < busCount; ++b) { clear(busL + b * kMaxBlock, frames); clear(busR + b * kMaxBlock, frames); }
     size_t index = 0;
     for (const RenderTrack &t : state.tracks) {
         TrackRuntime &rt = *t.runtime;
         SynthState &synth = synths ? synths[index] : rt.play;
         ++index;
+        // Solo follows routing: a soloed bus keeps what feeds it audible, and a soloed source keeps its buses.
+        bool linkedSolo = false;
+        for (const TrackRuntime *l : t.soloLinks) linkedSolo = linkedSolo || l->solo.load(std::memory_order_relaxed);
         float gl, gr;
         // A mono source keeps its pan law through inserts, so a passthrough insert is transparent;
-        // plugin instruments are stereo sources (balance).
-        panGains(rt, t.monoSource && !t.instrumentPlugin, anySolo, gl, gr);
+        // plugin instruments and buses are stereo sources (balance).
+        panGains(rt, t.monoSource && !t.instrumentPlugin, anySolo && !linkedSolo, gl, gr);
 
         bool any = false;
-        if (t.instrumentPlugin) {
+        if (t.bus) {
+            const float *inL = busL + static_cast<size_t>(t.busSlot) * kMaxBlock, *inR = busR + static_cast<size_t>(t.busSlot) * kMaxBlock;
+            for (int i = 0; i < frames; ++i) { s.trackL[i] = inL[i]; s.trackR[i] = inR[i]; }
+            any = true;
+        } else if (t.instrumentPlugin) {
             // Plugin instruments run every block (tails, internal state); live notes join on the live track.
             const bool liveHere = !synths && static_cast<int32_t>(index - 1) == state.liveTrack;
             const PluginNote *live = s.liveNotes;
@@ -238,11 +248,34 @@ void renderBlock(const RenderState &state, int64_t pos, int frames, float *left,
             runInserts(t, frames, s); // every block, so reverb and delay tails continue after clips end
         }
 
+        // Pre-fader sends take the signal before the fader and pan (still silenced by mute and solo).
+        if (any) {
+            const bool silent = rt.muted.load(std::memory_order_relaxed) ||
+                                (anySolo && !linkedSolo && !rt.solo.load(std::memory_order_relaxed));
+            for (const RenderSend &snd : t.sends) {
+                if (!snd.pre || silent || snd.slot < 0) continue;
+                float *dl = busL + static_cast<size_t>(snd.slot) * kMaxBlock, *dr = busR + static_cast<size_t>(snd.slot) * kMaxBlock;
+                for (int i = 0; i < frames; ++i) { dl[i] += s.trackL[i] * snd.gain; dr[i] += s.trackR[i] * snd.gain; }
+            }
+        }
+        float *outL = t.output < 0 ? left : busL + static_cast<size_t>(t.output) * kMaxBlock;
+        float *outR = t.output < 0 ? right : busR + static_cast<size_t>(t.output) * kMaxBlock;
+        // Post-fader sends receive the faded, panned signal.
+        auto postSends = [&](int i, float vl, float vr) DALNOK_NONBLOCKING {
+            for (const RenderSend &snd : t.sends) {
+                if (snd.pre || snd.slot < 0) continue;
+                busL[static_cast<size_t>(snd.slot) * kMaxBlock + static_cast<size_t>(i)] += vl * snd.gain;
+                busR[static_cast<size_t>(snd.slot) * kMaxBlock + static_cast<size_t>(i)] += vr * snd.gain;
+            }
+        };
+
         if (!smooth) {
             if (any)
                 for (int i = 0; i < frames; ++i) {
-                    left[i] += s.trackL[i] * gl;
-                    right[i] += s.trackR[i] * gr;
+                    const float vl = s.trackL[i] * gl, vr = s.trackR[i] * gr;
+                    outL[i] += vl;
+                    outR[i] += vr;
+                    postSends(i, vl, vr);
                 }
             continue;
         }
@@ -261,8 +294,9 @@ void renderBlock(const RenderState &state, int64_t pos, int frames, float *left,
                 cl += dl;
                 cr += dr;
                 const float vl = s.trackL[i] * cl, vr = s.trackR[i] * cr;
-                left[i] += vl;
-                right[i] += vr;
+                outL[i] += vl;
+                outR[i] += vr;
+                postSends(i, vl, vr);
                 pl = std::max(pl, std::fabs(vl));
                 pr = std::max(pr, std::fabs(vr));
             }

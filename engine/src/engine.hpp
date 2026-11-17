@@ -26,7 +26,14 @@ namespace dalnok {
 
 // ---- Project model (value type; copied wholesale for undo) ----------------
 
-enum TrackKind : int32_t { kTrackAudio = 0, kTrackInstrument = 1 };
+enum TrackKind : int32_t { kTrackAudio = 0, kTrackInstrument = 1, kTrackBus = 2 };
+
+// A send from a track to a bus: level in dB, before or after the track's fader and pan.
+struct Send {
+    DalnokTrackId bus = 0;
+    float db = 0;
+    bool pre = false;
+};
 
 // A plugin on a track: the instrument (instrument tracks) or an insert effect. The live instance
 // lives in Engine::plugins_ by id, outside the undoable model, so undo never reloads plugin code.
@@ -41,6 +48,8 @@ struct PluginSlot {
 struct TrackState {
     DalnokTrackId id = 0;
     int32_t kind = kTrackAudio;
+    DalnokTrackId output = 0;  // 0 = master; otherwise a bus track
+    std::vector<Send> sends;   // to bus tracks
     bool armed = false;       // record-enabled
     int32_t inputChannel = 0; // zero-based input of the recording device (audio tracks)
     std::vector<PluginSlot> plugins; // instrument first (if any), then inserts in processing order
@@ -213,6 +222,12 @@ public:
     bool removeClips(const std::vector<DalnokClipId> &ids, std::string &err);
     bool setTrackColor(DalnokTrackId id, int32_t customRgb, std::string &err); // -1 = automatic
     DalnokTrackId addInstrumentTrack(const std::string &name, std::string &err);
+    // Routing (Phase 4): bus tracks mix what is routed or sent to them. Edits that would feed a bus back
+    // into itself are rejected.
+    DalnokTrackId addBusTrack(const std::string &name, std::string &err);
+    bool setTrackOutput(DalnokTrackId track, DalnokTrackId bus, std::string &err); // bus 0 = master
+    bool setSend(DalnokTrackId track, DalnokTrackId bus, float db, bool pre, std::string &err); // adds or updates
+    bool removeSend(DalnokTrackId track, DalnokTrackId bus, std::string &err);
     bool setArmed(DalnokTrackId id, bool armed, std::string &err);
     bool setInputChannel(DalnokTrackId id, int32_t channel, std::string &err);
     // Sets the first tempo and meter; later changes keep their beat and bar positions.

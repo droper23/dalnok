@@ -30,7 +30,8 @@ namespace fs = std::filesystem;
 namespace dalnok {
 
 namespace {
-constexpr int kFormatVersion = 4; // 3: shared MIDI sources preserve notes crossing split clips; 4: tempo and meter maps
+constexpr int kFormatVersion = 5; // 3: shared MIDI sources preserve notes crossing split clips; 4: tempo and meter maps;
+                                   // 5: bus tracks, track outputs and sends
 constexpr int kConstantTempoVersion = 3; // written when there are no tempo or meter changes, so older builds still open it
 
 bool readFile(const std::string &path, std::string &out, std::string &err) {
@@ -167,6 +168,19 @@ json::Value Engine::describe() const {
         tv.set("id", t.id);
         tv.set("name", t.name);
         if (t.kind == kTrackInstrument) { tv.set("kind", "instrument"); tv.set("instrument", "dalnok.poly"); }
+        if (t.kind == kTrackBus) tv.set("kind", "bus");
+        if (t.output) tv.set("output", t.output);
+        if (!t.sends.empty()) {
+            json::Value sends = json::Value::makeArray();
+            for (const auto &snd : t.sends) {
+                json::Value v = json::Value::makeArray();
+                v.push(snd.bus);
+                v.push(static_cast<double>(snd.db));
+                v.push(snd.pre);
+                sends.push(std::move(v));
+            }
+            tv.set("sends", std::move(sends));
+        }
         if (t.armed) tv.set("armed", true);
         if (t.inputChannel != 0) tv.set("input", t.inputChannel);
         if (!t.plugins.empty()) {
@@ -305,7 +319,10 @@ bool Engine::saveProject(const std::string &path, std::string &err, bool copyMed
     }
     json::Value doc = json::Value::makeObject();
     doc.set("format", "dalnok-project");
-    doc.set("version", model_.tempo.size() > 1 || model_.meters.size() > 1 ? kFormatVersion : kConstantTempoVersion);
+    // The oldest version that holds everything in this project, so older builds open what they can play.
+    bool routing = false;
+    for (const auto &t : model_.tracks) routing = routing || t.kind == kTrackBus || t.output || !t.sends.empty();
+    doc.set("version", routing ? 5 : model_.tempo.size() > 1 || model_.meters.size() > 1 ? 4 : kConstantTempoVersion);
     json::Value body = describe();
     for (auto &[key, value] : body.object) {
         if (key != "media") continue;
@@ -406,7 +423,17 @@ std::unique_ptr<Engine::PreparedProject> Engine::prepareDocument(const json::Val
                 return nullptr;
             }
             t.name = tv.getString("name", "Track");
-            t.kind = tv.getString("kind", "audio") == "instrument" ? kTrackInstrument : kTrackAudio;
+            const std::string kind = tv.getString("kind", "audio");
+            t.kind = kind == "instrument" ? kTrackInstrument : kind == "bus" ? kTrackBus : kTrackAudio;
+            t.output = static_cast<DalnokTrackId>(std::max<int64_t>(0, toInt(tv, "output")));
+            if (const json::Value *sl = tv.get("sends"); sl && sl->isArray())
+                for (const auto &sv : sl->array) {
+                    if (!sv.isArray() || sv.array.size() != 3 || !sv.array[0].isNumber() || !sv.array[1].isNumber()) {
+                        err = "invalid send"; return nullptr;
+                    }
+                    t.sends.push_back({static_cast<DalnokTrackId>(sv.array[0].number), static_cast<float>(std::min(sv.array[1].number, 6.0)),
+                                       sv.array[2].isBool() && sv.array[2].boolean});
+                }
             t.armed = tv.getBool("armed", false);
             t.inputChannel = static_cast<int32_t>(std::clamp<int64_t>(toInt(tv, "input"), 0, 63));
             if (const json::Value *pl = tv.get("plugins"); pl && pl->isArray()) {
@@ -524,6 +551,31 @@ std::unique_ptr<Engine::PreparedProject> Engine::prepareDocument(const json::Val
                 }
             }
             model.tracks.push_back(std::move(t));
+        }
+    }
+    // Routing must name existing buses and never loop; a damaged file is an error, not a silent re-route.
+    for (const auto &t : model.tracks) {
+        if (t.kind == kTrackBus && std::any_of(model.clips.begin(), model.clips.end(), [&](const ClipState &c) { return c.track == t.id; })) {
+            err = "a bus track holds clips"; return nullptr;
+        }
+        std::vector<DalnokTrackId> dests;
+        if (t.output) dests.push_back(t.output);
+        for (const auto &snd : t.sends) dests.push_back(snd.bus);
+        for (auto d : dests) {
+            const TrackState *b = model.track(d);
+            if (!b || b->kind != kTrackBus) { err = "a track is routed to a missing bus"; return nullptr; }
+        }
+        // Follow the routing from this track; reaching it again is a loop.
+        std::vector<DalnokTrackId> stack = dests;
+        std::set<DalnokTrackId> seen;
+        while (!stack.empty()) {
+            const auto id = stack.back(); stack.pop_back();
+            if (id == t.id) { err = "the project's routing feeds a bus back into itself"; return nullptr; }
+            if (!seen.insert(id).second) continue;
+            if (const TrackState *n = model.track(id)) {
+                if (n->output) stack.push_back(n->output);
+                for (const auto &snd : n->sends) stack.push_back(snd.bus);
+            }
         }
     }
 

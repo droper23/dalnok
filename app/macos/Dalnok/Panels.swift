@@ -377,10 +377,12 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
         arm.isOn = t.armed
         let fx = t.effects.count
         let instrument = t.instrumentName ?? "Dalnok Poly"
-        inputButton.title = (t.isInstrument ? String(instrument.prefix(12)) : "IN \(t.inputChannel + 1)") + (fx > 0 ? " · \(fx) FX" : "")
+        inputButton.title = (t.isBus ? "BUS" : t.isInstrument ? String(instrument.prefix(12)) : "IN \(t.inputChannel + 1)") + (fx > 0 ? " · \(fx) FX" : "")
+        arm.isHidden = t.isBus
         let missing = t.plugins.filter { !$0.loaded }.map(\.name)
-        inputButton.toolTip = (t.isInstrument ? "Instrument: \(instrument). Plays from all MIDI inputs when armed."
-                                              : "Recording input channel (click to choose)")
+        inputButton.toolTip = (t.isBus ? "A bus mixes what tracks route or send to it (View ▸ Mixer)"
+                               : t.isInstrument ? "Instrument: \(instrument). Plays from all MIDI inputs when armed."
+                                                : "Recording input channel (click to choose)")
             + (fx > 0 ? "\nInserts: " + t.effects.map(\.name).joined(separator: " → ") : "")
             + (missing.isEmpty ? "" : "\nNot loaded (bypassed): " + missing.joined(separator: ", "))
         inputButton.contentTintColor = missing.isEmpty ? Theme.textDim : Theme.clipRed

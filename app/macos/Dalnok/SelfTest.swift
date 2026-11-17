@@ -13,7 +13,7 @@ final class SelfTest {
     let workdir: URL
     private var failures = 0
     /// Preferences the test changes; all are restored at the end so a run never alters the owner's settings.
-    private static let restoredKeys = ["copyAudioOnSave", "comingFrom", "onboardingDone", "recordingInputUID", "rulerBarsAndBeats", "metronome", "showDevicePanel", "countIn"]
+    private static let restoredKeys = ["copyAudioOnSave", "comingFrom", "onboardingDone", "recordingInputUID", "rulerBarsAndBeats", "metronome", "showDevicePanel", "countIn", "showMixer"]
     private let previousPreferences: [String: Any]
     private var w: MainWindowController { app.main }
     private var s: Session { app.session }
@@ -447,7 +447,8 @@ final class SelfTest {
                 try? JSONSerialization.data(withJSONObject: ["pid": Int(pid), "started": started]).write(to: marker)
             }
             writeMarker(pid: 999_999, started: Date().timeIntervalSince1970 - 3_600) // a session that is gone
-            check(w.unfinishedSessionSnapshot() == recovery, "a session that ended unexpectedly offers its newest snapshot")
+            check(w.unfinishedSessionSnapshot()?.resolvingSymlinksInPath() == recovery?.resolvingSymlinksInPath(),
+                  "a session that ended unexpectedly offers its newest snapshot")
             writeMarker(pid: 1, started: Date().timeIntervalSince1970 - 3_600) // still running (another instance)
             check(w.unfinishedSessionSnapshot() == nil, "no offer while that session is still running")
             writeMarker(pid: 999_999, started: Date().timeIntervalSince1970 + 60) // nothing saved since it started
@@ -723,6 +724,7 @@ final class SelfTest {
         await pianoRoll(clip: clip)
         await tempoAndMetronome()
         await cycle()
+        await mixerAndRouting()
         check(s.track(keys.id)?.clips.count == before + 1 && recorded?.notes.count == 1 && recorded?.notes.first?.pitch == 67,
               "recorded one MIDI note (\(recorded?.notes.count ?? 0))")
         let ms = Double(recorded?.notes.first?.length ?? 0) / e.sampleRate * 1000
@@ -976,6 +978,43 @@ final class SelfTest {
         check(w.transport.recordButton.layer?.animation(forKey: "pulse") == nil, "with Reduce Motion nothing pulses")
         w.transport.setRecording(false)
         _ = e
+    }
+
+    /// Mixer and routing: View ▸ Mixer, Track ▸ New Bus, output and send through the strip controls, fader drag.
+    private func mixerAndRouting() async {
+        guard let src = s.tracks.first(where: { !$0.isBus })?.id else { return check(false, "a track for routing") }
+        let wasShown = MainWindowController.showMixer
+        if !wasShown { check(perform("Mixer", exact: true) && MainWindowController.showMixer, "View > Mixer shows the mixer") }
+        await wait(0.1)
+        check(!w.mixer.isHidden && w.mixer.frame.height > 300 && w.mixer.strips.count == s.tracks.count,
+              "the mixer has a strip per track (\(w.mixer.strips.count))")
+        check(perform("New Bus") && s.tracks.last?.isBus == true, "Track > New Bus adds a bus")
+        guard let bus = s.tracks.last?.id, let strip = w.mixer.strips.first(where: { $0.trackId == src }) else { return }
+        await wait(0.05)
+        check(w.mixer.strips.count == s.tracks.count, "the mixer adds the bus's strip")
+        strip.output.selectItem(withTag: Int(bus))
+        strip.outputChosen()
+        check(s.track(src)?.output == bus, "the strip's output menu routes the track to the bus")
+        strip.output.selectItem(withTag: 0); strip.outputChosen()
+        check(s.track(src)?.output == 0, "output back to the master")
+        if let item = strip.addSend.itemArray.first(where: { $0.tag == Int(bus) }) {
+            strip.addSendChosen(item)
+            check(s.track(src)?.sends.first?.bus == bus, "+ Send adds a send to the bus")
+        } else { check(false, "+ Send lists the bus") }
+        // Drag the fader down: one undo step.
+        let f = strip.fader
+        let a = f.convert(CGPoint(x: f.bounds.midX, y: f.bounds.height * 0.25), to: nil), b = f.convert(CGPoint(x: f.bounds.midX, y: f.bounds.height * 0.6), to: nil)
+        let before = s.track(src)?.gainDb ?? 0
+        f.mouseDown(with: mouse(.leftMouseDown, a))
+        for k in 1...6 { f.mouseDragged(with: mouse(.leftMouseDragged, CGPoint(x: a.x, y: a.y + (b.y - a.y) * CGFloat(k) / 6))) }
+        f.mouseUp(with: mouse(.leftMouseUp, b))
+        let after = s.track(src)?.gainDb ?? 0
+        check(after < before - 3, "dragging the strip fader down lowers the volume (\(before) → \(after) dB)")
+        check(s.engine.undoName == "Volume" && perform("Undo") && abs((s.track(src)?.gainDb ?? 0) - before) < 0.01, "the fader drag is one undo step")
+        // Removing the bus clears the send.
+        w.headers.select(bus)
+        check(perform("Delete Track") && s.track(src)?.sends.isEmpty == true, "deleting the bus removes sends to it")
+        if !wasShown { _ = perform("Mixer", exact: true) }
     }
 
     /// Cycle: Transport menu, drawing and moving it in the ruler, looping playback, and exporting its range.

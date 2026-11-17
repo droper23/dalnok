@@ -24,14 +24,14 @@ Concept Guide. Grows with each phase: MIDI (P3), plugins, automation, and sends 
 Signalsmith-based stretch, pitch, and varispeed rendered in the background. ⌥-drag stretch and the Clip
 menu. Imported REAPER playrates and Ableton warp markers now play correctly.
 
-## Phase 2: Recording and editing 🔶 (track recording, take journal and crash recovery verified; loopback latency, power loss, punch, multi-input next)
+## Phase 2: Recording and editing 🔶 (recording, journals, crash recovery prompt, cycle, punch, count-in and multi-input verified; loopback latency and power loss need the owner's hardware; disk streaming open)
 Input and recording (with a Scarlett test rig), monitoring, split, fades, crossfades, autosave and crash
 recovery, basic routing, disk streaming.
 
 ## Phase 3: MIDI and instruments ✅ (MIDI clips, live input, recording, quantize, Dalnok Poly, piano roll, velocity, tempo and meter maps, metronome; open: real-keyboard test, sample-accurate input timing)
 MIDI tracks, recording and playback, piano roll, quantize, velocity, tempo and meter map, first stock instrument.
 
-## Phase 4: Professional production 🔶 (read-only plugin discovery; hosting plan in [[ADR-0009 Plugin hosting]])
+## Phase 4: Professional production 🔶 (VST3/AU hosting, generic parameter panel, buses, sends, mixer done; automation, delay compensation, comping, stacks next)
 **VST3 hosting (first format)** with generic parameter panels, then AU and CLAP. Mixer, buses, sends,
 sidechains, automation, delay compensation, **comping and take folders**, track stacks.
 

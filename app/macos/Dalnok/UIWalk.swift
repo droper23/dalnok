@@ -213,6 +213,18 @@ final class UIWalk {
             for pw in w.pluginWindows.values { pw.window?.orderOut(nil) }
         }
 
+        // Mixer: strips with routing; drag a fader (mid-drag picture).
+        let mixerWasShown = MainWindowController.showMixer
+        if !mixerWasShown { w.toggleMixer(nil) }
+        await pause(500)
+        shot("mixer")
+        if let strip = w.mixer.strips.first {
+            let f = strip.fader
+            await drag(f, CGPoint(x: f.bounds.midX, y: f.bounds.height * 0.3), CGPoint(x: f.bounds.midX, y: f.bounds.height * 0.6), shotAt: "mixer-fader-drag")
+            key("z", code: 6, mods: .command)
+        }
+        if !mixerWasShown { w.toggleMixer(nil) }
+
         // Secondary windows.
         w.showSettings(nil); await pause(300); shot("settings"); w.settings.window?.orderOut(nil)
         w.showPlugins(nil); await pause(600); shot("plugin-manager"); w.pluginManager.window?.orderOut(nil)

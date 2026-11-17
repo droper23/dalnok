@@ -357,6 +357,33 @@ DalnokTrackId dalnok_track_add_instrument(DalnokEngine *e, const char *name) {
     std::string err;
     return e ? e->impl.addInstrumentTrack(name ? name : "", err) : 0;
 }
+DalnokTrackId dalnok_track_add_bus(DalnokEngine *e, const char *name) {
+    std::string err;
+    return e ? e->impl.addBusTrack(name ? name : "", err) : 0;
+}
+DalnokStatus dalnok_track_set_output(DalnokEngine *e, DalnokTrackId t, DalnokTrackId bus) {
+    std::string err;
+    return e ? statusFor(e->impl.setTrackOutput(t, bus, err), err) : DALNOK_ERR_INVALID_ARG;
+}
+DalnokTrackId dalnok_track_output(const DalnokEngine *e, DalnokTrackId t) {
+    const auto *tr = e ? e->impl.model().track(t) : nullptr;
+    return tr ? tr->output : 0;
+}
+DalnokStatus dalnok_track_set_send(DalnokEngine *e, DalnokTrackId t, DalnokTrackId bus, float db, bool pre) {
+    std::string err;
+    return e ? statusFor(e->impl.setSend(t, bus, db, pre, err), err) : DALNOK_ERR_INVALID_ARG;
+}
+DalnokStatus dalnok_track_remove_send(DalnokEngine *e, DalnokTrackId t, DalnokTrackId bus) {
+    std::string err;
+    return e ? statusFor(e->impl.removeSend(t, bus, err), err) : DALNOK_ERR_INVALID_ARG;
+}
+int32_t dalnok_track_sends(const DalnokEngine *e, DalnokTrackId t, DalnokSend *out, int32_t cap) {
+    const auto *tr = e ? e->impl.model().track(t) : nullptr;
+    if (!tr) return 0;
+    for (int32_t i = 0; out && i < cap && i < static_cast<int32_t>(tr->sends.size()); ++i)
+        out[i] = {tr->sends[static_cast<size_t>(i)].bus, tr->sends[static_cast<size_t>(i)].db, tr->sends[static_cast<size_t>(i)].pre};
+    return static_cast<int32_t>(tr->sends.size());
+}
 DalnokStatus dalnok_track_set_armed(DalnokEngine *e, DalnokTrackId t, bool armed) {
     std::string err;
     return e ? statusFor(e->impl.setArmed(t, armed, err), err) : DALNOK_ERR_INVALID_ARG;

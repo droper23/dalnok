@@ -117,6 +117,27 @@ const CommandDef kCommands[] = {
          r.set("id", id);
          return status(id != 0, err);
      }},
+    {"track.addBus", "New Bus", "{name?}", [](ARGS) {
+         const auto id = e.addBusTrack(a.getString("name", ""), err);
+         if (!id) return DALNOK_ERR_INVALID_ARG;
+         r.set("track", id);
+         return DALNOK_OK;
+     }},
+    {"track.setOutput", "Set Track Output", "{track, bus (0 = master)}", [](ARGS) {
+         DalnokTrackId t;
+         if (!needInt(a, "track", t, err)) return DALNOK_ERR_INVALID_ARG;
+         return status(e.setTrackOutput(t, static_cast<DalnokTrackId>(a.getNumber("bus", 0)), err), err);
+     }},
+    {"track.setSend", "Send", "{track, bus, db?, pre?}", [](ARGS) {
+         DalnokTrackId t, b;
+         if (!needInt(a, "track", t, err) || !needInt(a, "bus", b, err)) return DALNOK_ERR_INVALID_ARG;
+         return status(e.setSend(t, b, static_cast<float>(a.getNumber("db", 0)), a.getBool("pre", false), err), err);
+     }},
+    {"track.removeSend", "Remove Send", "{track, bus}", [](ARGS) {
+         DalnokTrackId t, b;
+         if (!needInt(a, "track", t, err) || !needInt(a, "bus", b, err)) return DALNOK_ERR_INVALID_ARG;
+         return status(e.removeSend(t, b, err), err);
+     }},
     {"track.setArmed", "Record Enable Track", "{track, armed}", [](ARGS) {
          DalnokTrackId t;
          if (!needInt(a, "track", t, err)) return DALNOK_ERR_INVALID_ARG;

@@ -24,5 +24,8 @@ if [[ "${DALNOK_SKIP_LIVE:-0}" != "1" ]]; then
   swift build --product dalnok-cli
   .build/debug/dalnok-cli play /System/Library/Sounds/Submarine.aiff --seconds 2 --churn
   work=$(mktemp -d)
-  .build/debug/Dalnok /System/Library/Sounds/Submarine.aiff /System/Library/Sounds/Glass.aiff --selftest "$work" | tail -1
+  .build/debug/Dalnok /System/Library/Sounds/Submarine.aiff /System/Library/Sounds/Glass.aiff --selftest "$work" > "$work/selftest.log" && status=0 || status=$?
+  grep -E '^FAIL' "$work/selftest.log" || true
+  tail -1 "$work/selftest.log"
+  [[ $status -eq 0 ]] || exit $status
 fi

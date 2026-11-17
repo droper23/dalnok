@@ -244,7 +244,9 @@ extension MainWindowController {
             menu.addItem(it)
         }
         if !track.plugins.isEmpty { menu.addItem(.separator()) }
-        if track.isInstrument {
+        if track.isBus {
+            // Buses have no input of their own.
+        } else if track.isInstrument {
             let sources = Engine.midiSources()
             let title = sources.isEmpty ? "No MIDI inputs connected" : "All MIDI inputs (\(sources.map(\.name).joined(separator: ", ")))"
             let it = NSMenuItem(title: title, action: nil, keyEquivalent: "")
@@ -261,7 +263,26 @@ extension MainWindowController {
                 menu.addItem(it)
             }
         }
+        // Output: the master or a bus.
+        menu.addItem(.separator())
+        let header = NSMenuItem(title: "Output", action: nil, keyEquivalent: "")
+        header.isEnabled = false
+        menu.addItem(header)
+        for (id, name) in [(DalnokTrackId(0), "Master")] + session.buses.filter({ $0.id != track.id }).map({ ($0.id, $0.name) }) {
+            let it = NSMenuItem(title: name, action: #selector(setTrackOutputItem(_:)), keyEquivalent: "")
+            it.tag = Int(id)
+            it.representedObject = track.id
+            it.state = track.output == id ? .on : .off
+            it.target = self
+            it.indentationLevel = 1
+            menu.addItem(it)
+        }
         menu.popUp(positioning: nil, at: NSPoint(x: 0, y: row.inputButton.bounds.maxY), in: row.inputButton)
+    }
+
+    @objc func setTrackOutputItem(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? DalnokTrackId else { return }
+        if !session.setOutput(id, DalnokTrackId(sender.tag)) { flash("That output would feed the bus back into itself") }
     }
 
     @objc func setTrackInput(_ sender: NSMenuItem) {

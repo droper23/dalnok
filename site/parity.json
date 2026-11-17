@@ -914,11 +914,15 @@
       "why": "Logic's mixer is a switching requirement.",
       "steps": [
         [
-          "Channel strips",
-          "todo"
+          "Channel strips: output, sends, pan, vertical fader with meter, mute/solo/arm, name (View > Mixer, X)",
+          "verified"
         ],
         [
           "Insert slots",
+          "todo"
+        ],
+        [
+          "Master strip",
           "todo"
         ],
         [
@@ -926,7 +930,7 @@
           "todo"
         ]
       ],
-      "evidence": "Planned for Phase 4."
+      "evidence": "App self-test: View > Mixer shows a strip per track, Track > New Bus adds a strip, the strip's output menu and + Send route a track, a fader drag lowers the volume as one undo step, and deleting a bus removes its sends. Reviewed in both themes with --uiwalk (including mid-drag). Inserts are still edited in the device panel."
     },
     {
       "id": "routing",
@@ -941,12 +945,16 @@
       "why": "Reverb sends, parallel processing, ducking.",
       "steps": [
         [
-          "Aux buses",
-          "todo"
+          "Aux buses and track outputs (feedback loops rejected)",
+          "verified"
         ],
         [
           "Pre- and post-fader sends",
-          "todo"
+          "verified"
+        ],
+        [
+          "Solo follows routing (soloing a bus keeps its sources; soloing a source keeps its buses)",
+          "verified"
         ],
         [
           "Sidechain inputs",
@@ -957,7 +965,7 @@
           "todo"
         ]
       ],
-      "evidence": "Planned for Phase 4."
+      "evidence": "RoutingTests (offline renders, 1e-4 tolerance): output through a bus applies its fader and balance pan; post-fader and pre-fader sends add the expected levels; mute silences pre-fader sends; chained buses; solo through routing; feedback and clips on buses rejected; deleting a bus returns its sources to the master and undo restores the routing; routing survives save/reopen (format 5) and a looping file is rejected. TSan clean on the live render path tests. Live MIDI input played while stopped still goes straight to the master."
     },
     {
       "id": "stacks",

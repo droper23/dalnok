@@ -44,6 +44,9 @@ struct TrackView {
     var inputChannel: Int32 = 0
     struct Plugin { let id: Int32; let name: String; let instrument: Bool; let loaded: Bool; let error: String; let latency: UInt32 }
     var plugins: [Plugin] = []
+    var isBus = false
+    var output: DalnokTrackId = 0 // 0 = master
+    var sends: [DalnokSend] = []
     var instrumentName: String? { plugins.first { $0.instrument }?.name }
     var effects: [Plugin] { plugins.filter { !$0.instrument } }
 }
@@ -100,11 +103,15 @@ final class Session {
                 plugins.append(.init(id: pi.id, name: fixedString(pi.name), instrument: pi.instrument, loaded: pi.loaded,
                                      error: fixedString(pi.error), latency: pi.latency))
             }
+            var sends = [DalnokSend](repeating: DalnokSend(), count: 16)
+            let sendCount = Int(dalnok_track_sends(h, tid, &sends, 16))
             out.append(TrackView(id: tid, name: fixedString(ti.name), color: Theme.trackColor(step: Int(ti.color), custom: ti.custom_color),
                                  customColor: ti.custom_color,
                                  gainDb: ti.gain_db, pan: ti.pan, muted: ti.muted, solo: ti.solo, clips: clips,
                                  isInstrument: ti.kind == Int32(DALNOK_TRACK_INSTRUMENT.rawValue), armed: ti.armed,
-                                 inputChannel: ti.input_channel, plugins: plugins))
+                                 inputChannel: ti.input_channel, plugins: plugins,
+                                 isBus: ti.kind == Int32(DALNOK_TRACK_BUS.rawValue), output: dalnok_track_output(h, tid),
+                                 sends: Array(sends.prefix(min(sendCount, 16)))))
         }
         tracks = out
         onChange?()
@@ -120,6 +127,16 @@ final class Session {
     // MARK: Edits (each is an engine command)
 
     func setGain(_ t: DalnokTrackId, db: Float) { dalnok_track_set_gain_db(h, t, db); refresh() }
+    // Routing
+    @discardableResult func addBus(_ name: String = "") -> DalnokTrackId { let id = dalnok_track_add_bus(h, name); refresh(); return id }
+    @discardableResult func setOutput(_ t: DalnokTrackId, _ bus: DalnokTrackId) -> Bool {
+        let ok = dalnok_track_set_output(h, t, bus) == DALNOK_OK; refresh(); return ok
+    }
+    @discardableResult func setSend(_ t: DalnokTrackId, _ bus: DalnokTrackId, db: Float, pre: Bool) -> Bool {
+        let ok = dalnok_track_set_send(h, t, bus, db, pre) == DALNOK_OK; refresh(); return ok
+    }
+    func removeSend(_ t: DalnokTrackId, _ bus: DalnokTrackId) { dalnok_track_remove_send(h, t, bus); refresh() }
+    var buses: [TrackView] { tracks.filter(\.isBus) }
     func setPan(_ t: DalnokTrackId, _ p: Float) { dalnok_track_set_pan(h, t, p); refresh() }
     func setMute(_ t: DalnokTrackId, _ m: Bool) { dalnok_track_set_mute(h, t, m); refresh() }
     func setSolo(_ t: DalnokTrackId, _ on: Bool) { dalnok_track_set_solo(h, t, on); refresh() }

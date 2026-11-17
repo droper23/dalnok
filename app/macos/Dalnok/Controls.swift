@@ -56,6 +56,8 @@ final class FaderControl: NSControl {
     var onEnd: (() -> Void)?
     private(set) var tracking = false
     private var dragStart: (x: CGFloat, pos: Double)?
+    /// Vertical (mixer strip): unity near the top, drag up to raise.
+    var vertical = false { didSet { invalidateIntrinsicContentSize(); needsDisplay = true } }
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -66,7 +68,9 @@ final class FaderControl: NSControl {
     required init?(coder: NSCoder) { fatalError() }
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
-    override var intrinsicContentSize: NSSize { NSSize(width: NSView.noIntrinsicMetric, height: 18) }
+    override var intrinsicContentSize: NSSize {
+        vertical ? NSSize(width: 26, height: NSView.noIntrinsicMetric) : NSSize(width: NSView.noIntrinsicMetric, height: 18)
+    }
 
     static func format(_ db: Float) -> String { db <= -95 ? "−∞ dB" : String(format: "%@%.1f dB", db >= 0 ? "+" : "−", abs(db)) }
 
@@ -84,11 +88,20 @@ final class FaderControl: NSControl {
         return max(-95, d) <= -95 ? -.infinity : d
     }
 
-    private var grooveRect: CGRect { CGRect(x: 6, y: bounds.midY - 2, width: bounds.width - 12, height: 4) }
+    private var grooveRect: CGRect {
+        vertical ? CGRect(x: bounds.midX - 2, y: 8, width: 4, height: bounds.height - 16)
+                 : CGRect(x: 6, y: bounds.midY - 2, width: bounds.width - 12, height: 4)
+    }
     private func x(for pos: Double) -> CGFloat { grooveRect.minX + CGFloat(pos) * grooveRect.width }
+    /// Vertical position (flipped view): pos 1 at the top.
+    private func y(for pos: Double) -> CGFloat { grooveRect.maxY - CGFloat(pos) * grooveRect.height }
+    /// Along the travel: x for horizontal, the flipped y distance for vertical (both grow with level).
+    private func travel(_ p: CGPoint) -> CGFloat { vertical ? grooveRect.maxY - p.y : p.x - grooveRect.minX }
+    private var length: CGFloat { vertical ? grooveRect.height : grooveRect.width }
 
     override func draw(_ dirtyRect: NSRect) {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+        if vertical { drawVertical(ctx); return }
         let g = grooveRect, pos = Self.position(for: db), capX = x(for: pos)
         // Groove with inner shadow feel.
         ctx.setFillColor(Theme.hex(0x0A0B0D).cgColor)
@@ -115,10 +128,38 @@ final class FaderControl: NSControl {
         }
     }
 
+    private func drawVertical(_ ctx: CGContext) {
+        let g = grooveRect, pos = Self.position(for: db), capY = y(for: pos)
+        ctx.setFillColor(Theme.hex(0x0A0B0D).cgColor)
+        ctx.addPath(CGPath(roundedRect: g, cornerWidth: 2, cornerHeight: 2, transform: nil)); ctx.fillPath()
+        ctx.setFillColor(tint.withAlphaComponent(0.55).cgColor)
+        ctx.addPath(CGPath(roundedRect: CGRect(x: g.minX, y: capY, width: g.width, height: max(0, g.maxY - capY)),
+                           cornerWidth: 2, cornerHeight: 2, transform: nil)); ctx.fillPath()
+        // Scale ticks: +6, 0 (longer), -6, -12, -24, -48.
+        ctx.setFillColor(Theme.textFaint.cgColor)
+        for d: Float in [6, 0, -6, -12, -24, -48] {
+            let ty = y(for: Self.position(for: d)).rounded()
+            let w: CGFloat = d == 0 ? 6 : 3
+            ctx.fill(CGRect(x: g.minX - 3 - w, y: ty, width: w, height: 1))
+            ctx.fill(CGRect(x: g.maxX + 3, y: ty, width: w, height: 1))
+        }
+        let cap = CGRect(x: bounds.midX - 9, y: capY - 6, width: 18, height: 12)
+        ctx.setShadow(offset: CGSize(width: 0, height: 1), blur: 2, color: NSColor.black.withAlphaComponent(0.6).cgColor)
+        ctx.setFillColor((tracking ? Theme.hex(0xF2F3F5) : Theme.hex(0xC9CCD2)).cgColor)
+        ctx.addPath(CGPath(roundedRect: cap, cornerWidth: 2, cornerHeight: 2, transform: nil)); ctx.fillPath()
+        ctx.setShadow(offset: .zero, blur: 0, color: nil)
+        ctx.setFillColor(Theme.hex(0x2A2D33).cgColor)
+        ctx.fill(CGRect(x: cap.minX + 3, y: capY - 0.5, width: cap.width - 6, height: 1))
+        if window?.firstResponder === self {
+            ctx.setStrokeColor(NSColor.keyboardFocusIndicatorColor.cgColor); ctx.setLineWidth(1)
+            ctx.stroke(cap.insetBy(dx: -1.5, dy: -1.5))
+        }
+    }
+
     private func set(_ value: Float) {
         db = value
         onChange?(value)
-        ValueBubble.show(Self.format(value), above: self, at: x(for: Self.position(for: value)))
+        ValueBubble.show(Self.format(value), above: self, at: vertical ? bounds.midX : x(for: Self.position(for: value)))
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -132,16 +173,16 @@ final class FaderControl: NSControl {
         onBegin?()
         // Clicking the groove jumps; grabbing the cap keeps relative position.
         let pos = Self.position(for: db)
-        if abs(p.x - x(for: pos)) > 8 { set(Self.db(for: Double((p.x - grooveRect.minX) / grooveRect.width))) }
-        dragStart = (p.x, Self.position(for: db))
-        ValueBubble.show(Self.format(db), above: self, at: x(for: Self.position(for: db)))
+        if abs(travel(p) - CGFloat(pos) * length) > 8 { set(Self.db(for: Double(travel(p) / length))) }
+        dragStart = (travel(p), Self.position(for: db))
+        ValueBubble.show(Self.format(db), above: self, at: vertical ? bounds.midX : x(for: Self.position(for: db)))
     }
 
     override func mouseDragged(with event: NSEvent) {
         guard let s = dragStart else { return }
         let p = convert(event.locationInWindow, from: nil)
         let scale = event.modifierFlags.contains(.shift) ? 0.15 : 1.0
-        set(Self.db(for: s.pos + Double((p.x - s.x) / grooveRect.width) * scale))
+        set(Self.db(for: s.pos + Double((travel(p) - s.x) / length) * scale))
     }
 
     override func mouseUp(with event: NSEvent) {
