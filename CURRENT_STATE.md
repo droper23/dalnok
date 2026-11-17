@@ -5,6 +5,15 @@ milestone: M11 VST3 hosting (ADR-0009 stage 3) done; editors, parameters and AU 
 ---
 # Current State
 
+## Latest session, part 3 (Phase 2 recording workflow, Phase 4 routing; 2026-11-17)
+- **Warm Analog track names** are now lit scribble strips (recessed display, name in the track color, dark when muted), replacing the tape labels the owner disliked.
+- **Cycle** (C, ruler band, ⌘U Set Cycle to Selection, cycle export), **punch in/out** (Autopunch, red ruler range, sample-accurate) and **count-in** (⇧K, one bar of clicks, take starts at the record point). Fixed: fresh engines had no metronome schedule; a seek pending at record start could break count-in takes.
+- **Multi-input recording**: every armed audio track records its own device input into one spool; stop writes and verifies one mono WAV per track and places them as one undo step; recovery splits per channel. Not yet tried on the Scarlett's two inputs.
+- **Crash recovery prompt** at launch from the session marker and newest autosave snapshot.
+- **Routing**: bus tracks, outputs, pre/post sends, solo through routing, feedback rejected (C API 14, format 5). **Mixer** (X) with channel strips.
+- Verified: 129 engine tests, self-test 277 checks in both themes, `scripts/check.sh` (now prints failing checks), TSan on routing/recording suites, RT-effects clean.
+- Next: automation (volume, pan, plug-in parameters), delay compensation, take folders/comping, track stacks; master strip and insert slots in the mixer; disk streaming.
+
 ## Latest session, part 2 (UI/UX review, both themes)
 - Reviewed every main interaction in Graphite and Warm Analog with the new `--uiwalk` (real NSEvents through the windows, every window captured per step). Findings and fixes: [[UI Review 2026-11-17]]. Highlights: clips no longer draw over track headers when scrolled; Escape cancels rename; Warm Analog rename and tape fixed; AU editors no longer clipped; quitting then cancelling the save prompt no longer hangs the quit; palette ranking; snapped playhead clicks; device-panel Add tile; empty-state track buttons; piano-roll subtitle; Relaunch Now for themes.
 - Self-test 243 checks in both themes; `scripts/check.sh` passes. OS-level input not exercised (screen locked); `scripts/dev/drive.swift` + `DALNOK_WINDOW_DUMP` are ready for that.

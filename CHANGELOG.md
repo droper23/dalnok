@@ -1,6 +1,11 @@
 # Changelog
 
 ## [Unreleased]
+### Added (2026-11-17, recording workflow and routing)
+- Cycle playback, punch in/out (Autopunch), count-in, multi-track recording from several inputs, crash-recovery prompt at launch, bus tracks with outputs and pre/post-fader sends, and a mixer with channel strips (View ▸ Mixer, X).
+### Changed (2026-11-17)
+- Warm Analog track names are lit scribble strips instead of handwritten tape labels.
+
 ### Fixed (2026-11-17, UI review)
 - Clips drew over track headers when zoomed or scrolled; Escape didn't cancel track renames; Warm Analog rename text was invisible and the tape label disappeared after renaming; Audio Unit editors were clipped; cancelling the save prompt while quitting left the quit pending; command-palette ranking favored scattered letter matches; the gain value bubble covered the track name.
 ### Changed (2026-11-17, UI review)
