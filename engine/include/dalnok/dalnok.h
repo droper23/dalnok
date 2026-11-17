@@ -28,7 +28,7 @@
 extern "C" {
 #endif
 
-#define DALNOK_API_VERSION 6
+#define DALNOK_API_VERSION 7
 
 typedef enum {
     DALNOK_OK = 0,
@@ -94,6 +94,13 @@ void dalnok_meter_master(DalnokEngine *engine, float *left, float *right);
 /* Frees snapshots retired by the audio thread. Call periodically (e.g. from a
  * UI timer). Cheap when there is nothing to do. */
 void dalnok_engine_collect_garbage(DalnokEngine *engine);
+
+/* Convert a stopped mono/stereo capture spool to a new 32-bit float WAV.
+ * The spool is unchanged; output must not already exist. Incomplete trailing
+ * frame bytes are reported and omitted. [any thread] */
+DalnokStatus dalnok_capture_recover_wav(const char *spool, const char *output,
+                                        uint64_t *frames_out, uint32_t *trailing_bytes_out,
+                                        char *err, size_t err_len);
 
 /* ---- Media (decoded audio, independent of any engine) ---------------- */
 

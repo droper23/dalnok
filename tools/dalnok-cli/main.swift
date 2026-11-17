@@ -22,6 +22,7 @@ usage:
   dalnok-cli play <audio-file> [--seconds N] [--churn]   live playback on the default device
   dalnok-cli render <audio-file> <out.wav> [--bits 16|24|32]
   dalnok-cli render-project <project.dalnok> <out.wav> [--bits 16|24|32]
+  dalnok-cli recover-capture <spool> <new-output.wav>
   dalnok-cli command <project.dalnok> <command> [args-json] [--save]   run a catalog command
   dalnok-cli commands                                                  list the command catalog
   dalnok-cli bench [--tracks N] [--seconds S]                          render-cost benchmark (no device)
@@ -106,6 +107,13 @@ case "render":
                  Double(frames) / 48_000 / dt))
     dalnok_media_release(media)
     dalnok_engine_destroy(engine)
+
+case "recover-capture":
+    guard args.count == 3 else { print(usage); exit(2) }
+    var frames: UInt64 = 0, trailing: UInt32 = 0
+    var err = [CChar](repeating: 0, count: 512)
+    guard dalnok_capture_recover_wav(args[1], args[2], &frames, &trailing, &err, err.count) == DALNOK_OK else { fail(cstr(err)) }
+    print("recovered \(frames) frames; omitted \(trailing) incomplete trailing bytes; source preserved")
 
 case "render-project":
     guard args.count >= 3 else { print(usage); exit(2) }

@@ -1,6 +1,9 @@
 # Changelog
 
 ## [Unreleased]
+### Added (2026-11-16, capture recovery)
+- C API v7 and `dalnok-cli recover-capture` convert stopped mono/stereo capture spools into new float WAVs, preserving the original and reporting incomplete trailing bytes. Live recording is not yet connected.
+
 ### Fixed (2026-11-16, project saves)
 - Atomic saves use unique temporary files and preserve an existing project file’s permissions.
 

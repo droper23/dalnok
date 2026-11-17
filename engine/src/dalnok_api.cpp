@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "dalnok/dalnok.h"
 #include "commands.hpp"
+#include "capture_recovery.hpp"
 #include "engine.hpp"
 #include "import/import.hpp"
 
@@ -336,6 +337,21 @@ void dalnok_undo_begin_group(DalnokEngine *e, const char *name) {
 }
 void dalnok_undo_end_group(DalnokEngine *e) {
     if (e) e->impl.endGroup();
+}
+
+DalnokStatus dalnok_capture_recover_wav(const char *spool, const char *output, uint64_t *frames_out,
+                                        uint32_t *trailing_bytes_out, char *err, size_t err_len) {
+    if (frames_out) *frames_out = 0;
+    if (trailing_bytes_out) *trailing_bytes_out = 0;
+    if (!spool || !output) return DALNOK_ERR_INVALID_ARG;
+    uint64_t frames = 0; uint32_t trailing = 0; std::string message;
+    if (!recoverCapture(spool, output, frames, trailing, message)) {
+        copyOut(err, err_len, message);
+        return DALNOK_ERR_IO;
+    }
+    if (frames_out) *frames_out = frames;
+    if (trailing_bytes_out) *trailing_bytes_out = trailing;
+    return DALNOK_OK;
 }
 
 // ---- Project ----------------------------------------------------------------

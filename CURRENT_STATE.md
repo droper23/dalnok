@@ -6,6 +6,7 @@ milestone: Phase 1 + Migration (M5) + Time stretch (M6) + UI pass 1 (M7) done; P
 # Current State
 
 ## Latest session
+- Capture spool recovery now converts a stopped mono/stereo spool into a new float WAV via C API v7 or `dalnok-cli recover-capture`; tests verify samples, incomplete frame reporting, and no overwrite. Device recording and UI integration remain unimplemented.
 - Atomic project saves use unique temporary files and preserve existing project permissions; targeted persistence tests pass.
 - Periodic recovery snapshots and File ▸ Recover Snapshot are implemented. The app self-test verifies snapshot creation and manual restore as a new unsaved project; scripts/ci/recovery-smoke.sh verifies the automatic timer and rendering a snapshot after killing an isolated app process. Power-loss durability and automatic recovery prompting remain unverified. Copies are retained in Application Support/Dalnok/Recovery.
 - A tested project snapshot API writes a recovery copy without changing the model revision or saved/dirty state. Periodic scheduling and manual recovery UI are implemented; the isolated process-kill smoke test passes.
@@ -32,7 +33,7 @@ milestone: Phase 1 + Migration (M5) + Time stretch (M6) + UI pass 1 (M7) done; P
 - CI has two jobs: build + test, and real-time effect analysis with Homebrew LLVM.
 
 ## Architecture (now)
-C++20 engine (`engine/`) → C API (`dalnok.h`, v6) → AppKit UI (`app/macos/`). The **engine owns the
+C++20 engine (`engine/`) → C API (`dalnok.h`, v7) → AppKit UI (`app/macos/`). The **engine owns the
 project model**: tracks, clips in z-order, and a media pool. Every edit is a named, undoable command with
 whole-model snapshot undo, also reachable as JSON through the command catalog. The UI is a read-only view
 that refreshes on `dalnok_model_revision`. Render snapshots reach the audio thread through an atomic
@@ -95,7 +96,7 @@ Phase 2: recording. Recording integrity outranks everything else. Time-stretch l
 [[ADR-0007 Time stretch]]) because real imports needed it.
 
 ## Next recommended action
-Extend the capture writer and temporary spool into durable recovery and finalization, then integrate the tested capture buffer with same-device AUHAL input, record-arm, monitoring, and the model. The Scarlett is needed for hardware and loopback validation.
+Integrate the capture buffer, spool, and recovery converter with same-device AUHAL input, record-arm, monitoring, and the model; add durable journal and power-loss testing. The Scarlett is needed for hardware and loopback validation.
 
 ## Open migration items
 - Verify Logic `.logicx` placement against a real Logic **Final Cut Pro XML export** of the same project

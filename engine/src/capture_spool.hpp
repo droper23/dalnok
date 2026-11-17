@@ -36,17 +36,22 @@ public:
     static bool inspect(const std::string &path, Inspection &result) {
         const int fd = ::open(path.c_str(), O_RDONLY);
         if (fd < 0) return false;
+        const bool ok = inspectFd(fd, result);
+        ::close(fd);
+        return ok;
+    }
+    // Uses pread so callers can validate and read the same open file.
+    static bool inspectFd(int fd, Inspection &result) {
         struct stat info{};
         uint8_t header[16]{};
         const bool validFile = ::fstat(fd, &info) == 0 && S_ISREG(info.st_mode) && info.st_size >= 16;
         size_t readBytes = 0;
         while (validFile && readBytes < sizeof(header)) {
-            const auto n = ::read(fd, header + readBytes, sizeof(header) - readBytes);
+            const auto n = ::pread(fd, header + readBytes, sizeof(header) - readBytes, static_cast<off_t>(readBytes));
             if (n < 0 && errno == EINTR) continue;
             if (n <= 0) break;
             readBytes += static_cast<size_t>(n);
         }
-        ::close(fd);
         if (!validFile || readBytes != sizeof(header) || std::memcmp(header, "DLNCAP01", 8) != 0) return false;
         auto number = [&](int at) {
             uint32_t n = 0;
