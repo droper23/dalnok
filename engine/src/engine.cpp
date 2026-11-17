@@ -662,9 +662,10 @@ bool Engine::quantize(DalnokClipId id, double gridBeats, double strength, std::s
 int32_t Engine::addPlugin(DalnokTrackId track, const std::string &path, const std::string &classId, std::string &err) {
     const TrackState *t = model_.track(track);
     if (!t) return fail(err, "no such track"), 0;
-    // "au:type:subtype:manufacturer" names an Audio Unit; anything else is a VST3 bundle path.
+    // "au:type:subtype:manufacturer" names an Audio Unit; a ".clap" bundle is CLAP; anything else is a VST3 bundle.
     const bool au = path.rfind("au:", 0) == 0;
-    const std::string format = au ? "au" : "vst3", location = au ? path.substr(3) : path;
+    const bool clap = !au && path.size() > 5 && path.compare(path.size() - 5, 5, ".clap") == 0;
+    const std::string format = au ? "au" : clap ? "clap" : "vst3", location = au ? path.substr(3) : path;
     std::shared_ptr<PluginProcessor> instance(loadPlugin(format, location, classId, sampleRate_, kMaxBlock, false, err));
     if (!instance) return 0;
     if (instance->instrument() && t->kind != kTrackInstrument) return fail(err, "instrument plug-ins go on instrument tracks"), 0;

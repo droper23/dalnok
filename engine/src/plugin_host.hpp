@@ -84,7 +84,10 @@ std::unique_ptr<PluginProcessor> loadVst3(const std::string &bundle, const std::
 
 // Loads a registered Audio Unit by "type:subtype:manufacturer" (macOS).
 std::unique_ptr<PluginProcessor> loadAudioUnit(const std::string &id, double sampleRate, int maxBlock, std::string &err);
-// Dispatches on format ("vst3" bundle path, or "au" identifier).
+// Loads a .clap bundle in this process; `id` picks a plug-in (empty = the first).
+std::unique_ptr<PluginProcessor> loadClap(const std::string &path, const std::string &id, double sampleRate, int maxBlock,
+                                          std::string &err);
+// Dispatches on format ("vst3" or "clap" bundle path, or "au" identifier).
 std::unique_ptr<PluginProcessor> loadPlugin(const std::string &format, const std::string &path, const std::string &classId,
                                             double sampleRate, int maxBlock, bool offline, std::string &err);
 

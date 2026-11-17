@@ -18,7 +18,17 @@ PLIST
 "$CXX" -std=c++20 -bundle -isysroot "$(xcrun --show-sdk-path)" -Iengine/third_party/vst3 \
   tools/dalnok-scan/fixtures/host_vst3.cpp tools/dalnok-scan/vst3_iids.cpp -framework CoreFoundation \
   -o "$dir/Contents/MacOS/DalnokTest"
-DALNOK_TEST_VST3="$dir" swift test --disable-sandbox --filter 'PluginHosting|DelayCompensation' ${DALNOK_HOST_SANITIZE:+--sanitize=$DALNOK_HOST_SANITIZE} 2>&1 \
+clap="$(dirname "$dir")/DalnokTestGain.clap"
+mkdir -p "$clap/Contents/MacOS"
+printf '<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>CFBundleExecutable</key><string>DalnokTestGain</string><key>CFBundlePackageType</key><string>BNDL</string></dict></plist>' > "$clap/Contents/Info.plist"
+"$CXX" -std=c++20 -bundle -isysroot "$(xcrun --show-sdk-path)" -Iengine/third_party/clap/include \
+  tools/dalnok-scan/fixtures/host_clap.cpp -o "$clap/Contents/MacOS/DalnokTestGain"
+DALNOK_TEST_CLAP="$clap" DALNOK_TEST_VST3="$dir" swift test --disable-sandbox --filter 'PluginHosting|DelayCompensation|ClapHosting' ${DALNOK_HOST_SANITIZE:+--sanitize=$DALNOK_HOST_SANITIZE} 2>&1 \
   | grep -E "✔|✘|error:|Test run" | tail -8
-DALNOK_TEST_VST3="$dir" swift test --disable-sandbox --filter 'PluginHosting|DelayCompensation' ${DALNOK_HOST_SANITIZE:+--sanitize=$DALNOK_HOST_SANITIZE} >/dev/null 2>&1 \
+clap="$(dirname "$dir")/DalnokTestGain.clap"
+mkdir -p "$clap/Contents/MacOS"
+printf '<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>CFBundleExecutable</key><string>DalnokTestGain</string><key>CFBundlePackageType</key><string>BNDL</string></dict></plist>' > "$clap/Contents/Info.plist"
+"$CXX" -std=c++20 -bundle -isysroot "$(xcrun --show-sdk-path)" -Iengine/third_party/clap/include \
+  tools/dalnok-scan/fixtures/host_clap.cpp -o "$clap/Contents/MacOS/DalnokTestGain"
+DALNOK_TEST_CLAP="$clap" DALNOK_TEST_VST3="$dir" swift test --disable-sandbox --filter 'PluginHosting|DelayCompensation|ClapHosting' ${DALNOK_HOST_SANITIZE:+--sanitize=$DALNOK_HOST_SANITIZE} >/dev/null 2>&1 \
   && echo 'plugin hosting: PASS' || { echo 'plugin hosting: FAIL' >&2; exit 1; }

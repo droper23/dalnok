@@ -542,7 +542,7 @@ std::unique_ptr<Engine::PreparedProject> Engine::prepareDocument(const json::Val
                     if (const json::Value *ids = pv.get("controls"); ids && ids->isArray())
                         for (const auto &c : ids->array)
                             if (c.isNumber() && c.number >= 0 && c.number <= 4294967295.0) slot.controls.push_back(static_cast<uint32_t>(c.number));
-                    if (slot.id <= 0 || !seen.insert(slot.id).second || (slot.format != "vst3" && slot.format != "au") ||
+                    if (slot.id <= 0 || !seen.insert(slot.id).second || (slot.format != "vst3" && slot.format != "au" && slot.format != "clap") ||
                         !base64Decode(pv.getString("state", ""), slot.state)) {
                         err = "invalid plug-in on track " + t.name;
                         return nullptr;

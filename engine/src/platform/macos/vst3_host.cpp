@@ -556,6 +556,7 @@ std::unique_ptr<PluginProcessor> loadPlugin(const std::string &format, const std
                                             double sampleRate, int maxBlock, bool offline, std::string &err) {
     if (format == "au") return loadAudioUnit(path, sampleRate, maxBlock, err);
     if (format == "vst3") return loadVst3(path, classId, sampleRate, maxBlock, offline, err);
+    if (format == "clap") return loadClap(path, classId, sampleRate, maxBlock, err);
     err = "unsupported plug-in format " + format;
     return nullptr;
 }

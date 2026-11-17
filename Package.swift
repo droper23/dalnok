@@ -38,6 +38,7 @@ let package = Package(
                 .headerSearchPath("src"),
                 .headerSearchPath("third_party/pugixml"),
                 .headerSearchPath("third_party/vst3"),
+                .headerSearchPath("third_party/clap/include"),
                 .unsafeFlags(["-Wall", "-Wextra", "-Wfunction-effects", "-Werror=function-effects"]),
             ],
             linkerSettings: [

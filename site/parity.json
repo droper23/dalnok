@@ -1187,14 +1187,14 @@
         ],
         [
           "Load and process",
-          "todo"
+          "verified"
         ],
         [
           "Per-note modulation",
           "todo"
         ]
       ],
-      "evidence": "PluginDiscovery tests. CLAP descriptors require loading the plugin, so kinds are unknown until the sandboxed scan."
+      "evidence": "PluginDiscovery tests; ClapHosting test (plugin-host.sh) loads a test CLAP gain: exact 0.5 gain, parameter set and display text, automation at 0.25, state through save/reopen."
     },
     {
       "id": "sandbox",
