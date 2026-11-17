@@ -145,6 +145,14 @@ public:
         metronome_.store(on, std::memory_order_relaxed);
     }
     bool metronome() const { return metronome_.load(std::memory_order_relaxed); }
+    // Cycle (loop) playback between two frames. Transport state saved with the project, not an undo step.
+    // Playback that crosses `end` continues at `start` on the exact sample; recording plays straight through.
+    bool setCycle(bool on, int64_t start, int64_t end, std::string &err);
+    void cycle(bool &on, int64_t &start, int64_t &end) const {
+        on = cycleOn_.load(std::memory_order_relaxed);
+        start = cycleStart_.load(std::memory_order_relaxed);
+        end = cycleEnd_.load(std::memory_order_relaxed);
+    }
     bool monitoring() const { return monitoring_.load(std::memory_order_relaxed); }
     void setSimulatedLatency(int64_t frames) { simulatedLatency_ = frames; }
     // Runs one duplex cycle on the simulated input device (tests and simulation).
@@ -380,6 +388,8 @@ private:
     std::atomic<float> clickCoef_{0}, clickAccentCoef_{0}, clickSin_{0}, clickAccentSin_{0}, clickDecay_{0};
     std::atomic<int64_t> seekRequest_{-1};
     std::atomic<int64_t> position_{0};
+    std::atomic<bool> cycleOn_{false};
+    std::atomic<int64_t> cycleStart_{0}, cycleEnd_{0};
 
     // Diagnostics (written by the audio thread).
     std::atomic<uint64_t> callbacks_{0}, framesRendered_{0}, maxCallbackNs_{0}, lastCallbackNs_{0};
@@ -395,6 +405,8 @@ struct Engine::PreparedProject {
     int32_t maxColor = -1;
     double sampleRate = 0;
     bool imported = false; // came from another DAW: starts dirty, untitled
+    bool cycleOn = false;  // transport cycle (frames at the engine rate)
+    int64_t cycleStart = 0, cycleEnd = 0;
     std::vector<std::pair<StretchKey, std::shared_ptr<const Media>>> stretched; // precomputed for playback
 };
 

@@ -106,11 +106,12 @@ final class Engine {
         }
         return Int(missing)
     }
-    func exportWav(to url: URL, bits: Int32 = 24) throws {
+    /// Exports `range` (default: the whole arrangement) as a WAV.
+    func exportWav(to url: URL, bits: Int32 = 24, range: (start: Int64, end: Int64)? = nil) throws {
         var err = [CChar](repeating: 0, count: 512)
-        let frames = sessionLength
+        let start = range?.start ?? 0, frames = (range?.end ?? sessionLength) - start
         guard frames > 0 else { throw EngineError(description: "Nothing to export") }
-        guard dalnok_render_to_wav(handle, url.path, 0, frames, bits, &err, 512) == DALNOK_OK else {
+        guard dalnok_render_to_wav(handle, url.path, start, frames, bits, &err, 512) == DALNOK_OK else {
             throw EngineError(description: cString(err))
         }
     }

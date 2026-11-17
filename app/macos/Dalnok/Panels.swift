@@ -38,6 +38,8 @@ final class TransportBar: NSView {
     let recordButton = IconButton("circle.fill", help: "Record (R)")
     let metronomeButton = IconButton("metronome.fill", help: "Metronome (K)")
     var onMetronome: (() -> Void)?
+    let cycleButton = IconButton("repeat", help: "Cycle (C): loop playback between the yellow markers in the ruler")
+    var onCycle: (() -> Void)?
     private let rewind = IconButton("backward.end.fill", help: "Go to Start (Return)")
     private let paletteButton = IconButton("magnifyingglass", help: "Command Palette (⌘K)")
     private let importButton = IconButton("plus.rectangle.on.rectangle", help: "Import Audio… (⌘I)")
@@ -109,6 +111,7 @@ final class TransportBar: NSView {
         playButton.target = self; playButton.action = #selector(playTapped)
         recordButton.target = self; recordButton.action = #selector(recordTapped)
         metronomeButton.target = self; metronomeButton.action = #selector(metronomeTapped)
+        cycleButton.target = self; cycleButton.action = #selector(cycleTapped)
         recordButton.contentTintColor = Theme.recordOn.withAlphaComponent(0.75)
         paletteButton.target = self; paletteButton.action = #selector(paletteTapped)
         importButton.target = self; importButton.action = #selector(importTapped)
@@ -132,7 +135,7 @@ final class TransportBar: NSView {
         tempo.spacing = 3
         tempo.edgeInsets = NSEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
         tempoField.widthAnchor.constraint(equalToConstant: 44).isActive = true
-        let transport = NSStackView(views: [rewind, playButton, recordButton, lcd, tempo])
+        let transport = NSStackView(views: [rewind, playButton, recordButton, cycleButton, lcd, tempo])
         transport.spacing = 6
 
         masterMeter.toolTip = "Output level (click to reset the clip indicator)"
@@ -188,6 +191,7 @@ final class TransportBar: NSView {
     @objc private func playTapped() { onPlayPause?() }
     @objc private func recordTapped() { onRecord?() }
     @objc private func metronomeTapped() { onMetronome?() }
+    @objc private func cycleTapped() { onCycle?() }
 
     /// Recording: red record symbol and position display; otherwise the normal look.
     func setRecording(_ recording: Bool) {

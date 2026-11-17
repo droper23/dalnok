@@ -2,6 +2,7 @@
 // chain) and synthesized mouse gestures, then verifies the engine model.
 // SPDX-License-Identifier: GPL-3.0-or-later
 import AppKit
+import AVFoundation
 import DalnokEngine
 
 @MainActor
@@ -652,6 +653,7 @@ final class SelfTest {
         _ = recorded
         await pianoRoll(clip: clip)
         await tempoAndMetronome()
+        await cycle()
         check(s.track(keys.id)?.clips.count == before + 1 && recorded?.notes.count == 1 && recorded?.notes.first?.pitch == 67,
               "recorded one MIDI note (\(recorded?.notes.count ?? 0))")
         let ms = Double(recorded?.notes.first?.length ?? 0) / e.sampleRate * 1000
@@ -905,6 +907,46 @@ final class SelfTest {
         check(w.transport.recordButton.layer?.animation(forKey: "pulse") == nil, "with Reduce Motion nothing pulses")
         w.transport.setRecording(false)
         _ = e
+    }
+
+    /// Cycle: Transport menu, drawing and moving it in the ruler, looping playback, and exporting its range.
+    private func cycle() async {
+        let e = s.engine, tl = w.timeline
+        _ = s.setCycle(false, 0, 0) // start without a region
+        tl.selectedClip = nil // with clips selected, Cycle uses their span instead
+        e.seek(0); await wait(0.1)
+        check(perform("Cycle", exact: true) && s.cycle.on && s.cycle.end > s.cycle.start, "Transport > Cycle turns on a 4-bar cycle at the playhead")
+        check(abs(Double(s.cycle.end) - s.beatToFrame(s.barToBeat(4))) < 1, "the default cycle is 4 bars (\(s.cycle.start)–\(s.cycle.end))")
+        check(perform("Cycle", exact: true) && !s.cycle.on, "Cycle toggles off and keeps the region")
+        // Draw a new region in the upper ruler (starting outside any existing region), then move it.
+        _ = s.setCycle(false, 0, 0)
+        let x1 = tl.xPos(forFrame: s.beatToFrame(s.barToBeat(1))), x2 = tl.xPos(forFrame: s.beatToFrame(s.barToBeat(2)))
+        let y = Theme.rulerHeight / 4
+        let a = tl.convert(CGPoint(x: x1 + 2, y: y), to: nil), b = tl.convert(CGPoint(x: x2 + 2, y: y), to: nil)
+        tl.mouseDown(with: mouse(.leftMouseDown, a))
+        for k in 1...6 { tl.mouseDragged(with: mouse(.leftMouseDragged, CGPoint(x: a.x + (b.x - a.x) * CGFloat(k) / 6, y: a.y))) }
+        tl.mouseUp(with: mouse(.leftMouseUp, b))
+        let bar1 = Int64(s.beatToFrame(s.barToBeat(1)).rounded()), bar2 = Int64(s.beatToFrame(s.barToBeat(2)).rounded())
+        check(s.cycle.on && abs(s.cycle.start - bar1) <= 1 && abs(s.cycle.end - bar2) <= 1,
+              "dragging in the upper ruler draws a snapped cycle (\(s.cycle.start)–\(s.cycle.end), bar 2–3 = \(bar1)–\(bar2))")
+        let mid = tl.convert(CGPoint(x: (x1 + x2) / 2, y: y), to: nil), right = tl.convert(CGPoint(x: (x1 + x2) / 2 + (x2 - x1), y: y), to: nil)
+        tl.mouseDown(with: mouse(.leftMouseDown, mid))
+        for k in 1...6 { tl.mouseDragged(with: mouse(.leftMouseDragged, CGPoint(x: mid.x + (right.x - mid.x) * CGFloat(k) / 6, y: mid.y))) }
+        tl.mouseUp(with: mouse(.leftMouseUp, right))
+        check(abs(s.cycle.start - bar2) <= 1 && s.cycle.end - s.cycle.start == bar2 - bar1, "dragging the band moves the cycle by a bar")
+        // Playback loops inside it.
+        e.seek(s.cycle.start); await wait(0.1)
+        e.play()
+        await wait(Double(s.cycle.end - s.cycle.start) / e.sampleRate * 1.6)
+        let pos = e.position
+        e.pause()
+        check(pos >= s.cycle.start && pos < s.cycle.end, "playback loops inside the cycle (\(pos))")
+        // Export uses the cycle range.
+        let url = workdir.appendingPathComponent("cycle-export.wav")
+        if w.exportMix(to: url), let f = try? AVAudioFile(forReading: url) {
+            check(abs(f.length - (s.cycle.end - s.cycle.start)) <= 1, "Export Mix exports the cycle range (\(f.length) frames)")
+        } else { check(false, "Export Mix with cycle on") }
+        _ = s.setCycle(false, s.cycle.start, s.cycle.end)
     }
 
     /// Tempo field, meter popup, ruler mode, and metronome through the real controls and menus.

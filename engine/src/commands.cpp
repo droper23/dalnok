@@ -159,6 +159,12 @@ const CommandDef kCommands[] = {
          }
          return status(e.setTempoMap(std::move(tempo), std::move(meters), err), err);
      }},
+    {"transport.setCycle", "Cycle", "{on, start?, end? (frames)}", [](ARGS) {
+         bool on; int64_t start, end;
+         e.cycle(on, start, end);
+         return status(e.setCycle(a.getBool("on", true), static_cast<int64_t>(a.getNumber("start", static_cast<double>(start))),
+                                  static_cast<int64_t>(a.getNumber("end", static_cast<double>(end))), err), err);
+     }},
     {"transport.setMetronome", "Metronome", "{on, level? (0-1)}", [](ARGS) {
          e.setMetronome(a.getBool("on", true), static_cast<float>(a.getNumber("level", 0.5)));
          return DALNOK_OK;

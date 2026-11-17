@@ -194,6 +194,18 @@ final class Session {
         dalnok_beat_to_bar(h, beat, &b, &inBar, &n, &d)
         return (Int(b), inBar, Int(n), Int(d))
     }
+    /// Cycle (loop) region; not an undo step.
+    var cycle: (on: Bool, start: Int64, end: Int64) {
+        var on = false, a: Int64 = 0, b: Int64 = 0
+        dalnok_cycle_get(h, &on, &a, &b); return (on, a, b)
+    }
+    @discardableResult
+    func setCycle(_ on: Bool, _ start: Int64, _ end: Int64) -> Bool {
+        let ok = dalnok_cycle_set(h, on, start, end) == DALNOK_OK
+        onCycleChange?()
+        return ok
+    }
+    var onCycleChange: (() -> Void)?
     /// Frames per quarter note at a frame position.
     func framesPerBeat(at frame: Double) -> Double { engine.sampleRate * 60 / tempo(atBeat: frameToBeat(frame)) }
     func setStretch(_ c: DalnokClipId, length: Int64, rate: Double, pitch: Float, preservePitch: Bool) {

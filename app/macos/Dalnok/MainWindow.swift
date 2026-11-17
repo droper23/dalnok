@@ -170,6 +170,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         transport.onPlayPause = { [weak self] in self?.togglePlay() }
         transport.onRecord = { [weak self] in self?.toggleRecord(nil) }
         transport.onMetronome = { [weak self] in self?.toggleMetronome(nil) }
+        transport.onCycle = { [weak self] in self?.toggleCycle(nil) }
+        session.onCycleChange = { [weak self] in self?.applyCycle() }
         transport.tempoField.target = self
         transport.tempoField.action = #selector(tempoEdited(_:))
         transport.meterPopup.target = self
@@ -290,6 +292,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         timeline.needsDisplay = true
         updateTitle()
         updateTempoDisplay()
+        applyCycle()
         pianoRoll.modelChanged()
         if devicePanel.track == nil, let first = session.tracks.first?.id { headers.select(first) }
         devicePanel.rebuild()
@@ -831,7 +834,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.wav]
         panel.nameFieldStringValue = (session.projectURL?.deletingPathExtension().lastPathComponent ?? "Mix") + ".wav"
-        panel.message = "Exports the full arrangement as a 24-bit WAV."
+        let c = session.cycle
+        panel.message = c.on ? "Exports the cycle range (\(timeline.positionText(c.start)) to \(timeline.positionText(c.end))) as a 24-bit WAV. Turn Cycle off to export everything."
+                             : "Exports the full arrangement as a 24-bit WAV."
         panel.beginSheetModal(for: window!) { [weak self] resp in
             guard resp == .OK, let url = panel.url else { return }
             MainActor.assumeIsolated { () -> Void in self?.exportMix(to: url) }
@@ -842,7 +847,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     func exportMix(to url: URL) -> Bool {
         do {
             let t0 = Date()
-            try session.engine.exportWav(to: url)
+            let c = session.cycle
+            try session.engine.exportWav(to: url, range: c.on ? (c.start, c.end) : nil)
             flash(String(format: "Exported %@ in %.0f ms", url.lastPathComponent, Date().timeIntervalSince(t0) * 1000))
             return true
         } catch {
@@ -898,6 +904,31 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         applyMetronome()
         flash(Self.metronomeOn ? "Metronome on" : "Metronome off")
     }
+    /// Transport ▸ Cycle (C). With no cycle yet, it starts as the selected clips or the 4 bars at the playhead.
+    @objc func toggleCycle(_ sender: Any?) {
+        let c = session.cycle
+        if c.end > c.start { session.setCycle(!c.on, c.start, c.end) } else { setCycleToSelection(nil) }
+        flash(session.cycle.on ? "Cycle on" : "Cycle off")
+    }
+    /// Transport ▸ Set Cycle to Selection (⌘U): the selected clips' span, or the 4 bars at the playhead.
+    @objc func setCycleToSelection(_ sender: Any?) {
+        let clips = timeline.selectedClips.compactMap { session.clip($0) }
+        var range: (Int64, Int64)
+        if let a = clips.map(\.start).min(), let b = clips.map({ $0.start + $0.length }).max() {
+            range = (a, b)
+        } else {
+            let bar = session.bar(atBeat: session.frameToBeat(Double(session.engine.position))).bar
+            range = (Int64(session.beatToFrame(session.barToBeat(bar)).rounded()), Int64(session.beatToFrame(session.barToBeat(bar + 4)).rounded()))
+        }
+        if session.setCycle(true, range.0, range.1) { flash("Cycle \(timeline.positionText(range.0)) – \(timeline.positionText(range.1))") }
+    }
+    func applyCycle() {
+        let on = session.cycle.on
+        transport.cycleButton.setSymbol("repeat", tint: on ? Theme.cycle : Theme.textDim)
+        transport.cycleButton.setAccessibilityValue(on ? "on" : "off")
+        timeline.needsDisplay = true
+    }
+
     func applyMetronome() {
         dalnok_metronome_set(session.engine.handle, Self.metronomeOn, 0.5)
         transport.metronomeButton.setSymbol("metronome.fill", tint: Self.metronomeOn ? Theme.accent : Theme.textDim)
@@ -1094,6 +1125,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             return true
         case #selector(toggleMetronome(_:)):
             item.state = Self.metronomeOn ? .on : .off
+            return true
+        case #selector(toggleCycle(_:)):
+            item.state = session.cycle.on ? .on : .off
             return true
         case #selector(removeTempoChange(_:)):
             return tempoSegmentAtPlayhead().tempo > 0

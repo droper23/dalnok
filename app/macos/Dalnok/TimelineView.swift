@@ -60,6 +60,10 @@ final class TimelineView: NSView {
     private var drag: Drag?
     private struct Marquee { let start: CGPoint; var end: CGPoint; let initial: Set<DalnokClipId>; var moved = false }
     private var marquee: Marquee?
+    /// Ruler gesture: a click seeks; a drag draws, moves or resizes the cycle region.
+    private struct RulerDrag { enum Kind { case create, move, start, end }; var kind: Kind; let x: CGFloat; let start: Int64; let end: Int64; var moved = false }
+    private var rulerDrag: RulerDrag?
+    private var scrubbing = false
     private let edgeWidth: CGFloat = 7
 
     init(session: Session) {
@@ -411,6 +415,7 @@ final class TimelineView: NSView {
         ctx.setFillColor(Theme.separator.cgColor)
         ctx.fill(CGRect(x: 0, y: Theme.rulerHeight - 1, width: bounds.width, height: 1))
 
+        drawCycle(ctx)
         let attrs: [NSAttributedString.Key: Any] = [.font: Theme.mono(10), .foregroundColor: Theme.textDim]
         let px = 1 / scale
         let step = gridStepFrames()
@@ -438,6 +443,24 @@ final class TimelineView: NSView {
             if let label = mark.1 { (label as NSString).draw(at: CGPoint(x: x + 4, y: 2), withAttributes: attrs) }
         }
         drawTempoMarkers(ctx)
+    }
+
+    /// The cycle region: a band in the ruler (bright when on) and, when on, a faint wash over the lanes.
+    private func drawCycle(_ ctx: CGContext) {
+        let c = session.cycle
+        guard c.end > c.start else { return }
+        let a = xPos(forFrame: Double(c.start)), b = xPos(forFrame: Double(c.end))
+        guard b > 0, a < bounds.width else { return }
+        let band = CGRect(x: a, y: 1, width: b - a, height: Theme.rulerHeight - 3)
+        ctx.setFillColor(Theme.cycle.withAlphaComponent(c.on ? 0.32 : 0.10).cgColor)
+        ctx.fill(band)
+        ctx.setFillColor(Theme.cycle.withAlphaComponent(c.on ? 1 : 0.35).cgColor)
+        ctx.fill(CGRect(x: a, y: 1, width: 2, height: band.height))
+        ctx.fill(CGRect(x: b - 2, y: 1, width: 2, height: band.height))
+        if c.on {
+            ctx.setFillColor(Theme.cycle.withAlphaComponent(0.035).cgColor)
+            ctx.fill(CGRect(x: a, y: Theme.rulerHeight, width: b - a, height: bounds.height - Theme.rulerHeight))
+        }
     }
 
     /// Tempo and meter changes after the start, as small flags on the ruler (the first values live in the control bar).
@@ -687,7 +710,15 @@ final class TimelineView: NSView {
     override func mouseDown(with event: NSEvent) {
         onActivate?()
         let p = convert(event.locationInWindow, from: nil)
-        if p.y < Theme.rulerHeight { seek(toX: p.x); return }
+        if p.y >= Theme.rulerHeight / 2 && p.y < Theme.rulerHeight { seek(toX: p.x); scrubbing = true; return } // lower half: playhead
+        if p.y < Theme.rulerHeight { // upper half: cycle
+            let c = session.cycle
+            let a = xPos(forFrame: Double(c.start)), b = xPos(forFrame: Double(c.end))
+            let kind: RulerDrag.Kind = c.end <= c.start ? .create
+                : abs(p.x - a) <= 5 ? .start : abs(p.x - b) <= 5 ? .end : (p.x > a && p.x < b ? .move : .create)
+            rulerDrag = RulerDrag(kind: kind, x: p.x, start: c.start, end: c.end)
+            return
+        }
         guard let (clip, zone) = hit(p) else {
             let initial = event.modifierFlags.contains(.shift) ? selectedClips : []
             if initial.isEmpty { selectedClip = nil }
@@ -735,10 +766,27 @@ final class TimelineView: NSView {
             marquee = m; needsDisplay = true
             return
         }
-        guard var d = drag else {
-            if p.y < Theme.rulerHeight { seek(toX: p.x) }
+        if var r = rulerDrag {
+            r.moved = r.moved || abs(p.x - r.x) >= 3
+            rulerDrag = r
+            guard r.moved else { return }
+            let bypass = event.modifierFlags.contains(.control)
+            let at = snap(frame(forX: p.x), bypass: bypass), from = snap(frame(forX: r.x), bypass: bypass)
+            var range: (Int64, Int64)
+            switch r.kind {
+            case .create: range = (min(at, from), max(at, from))
+            case .move:
+                let delta = max(-r.start, at - from)
+                range = (r.start + delta, r.end + delta)
+            case .start: range = (min(at, r.end - 1), r.end)
+            case .end: range = (r.start, max(at, r.start + 1))
+            }
+            if range.1 - range.0 >= 64 { session.setCycle(true, range.0, range.1) }
+            needsDisplay = true
             return
         }
+        if scrubbing { seek(toX: p.x); return }
+        guard var d = drag else { return }
         let bypass = event.modifierFlags.contains(.control)
         let delta = Double(p.x - d.startX) * framesPerPoint
         let c = d.clip
@@ -810,6 +858,12 @@ final class TimelineView: NSView {
     }
 
     override func mouseUp(with event: NSEvent) {
+        if scrubbing { scrubbing = false; return }
+        if let r = rulerDrag {
+            rulerDrag = nil
+            if !r.moved { seek(toX: r.x) }
+            return
+        }
         if let m = marquee {
             marquee = nil; needsDisplay = true
             if !m.moved { seek(toX: m.start.x) }
@@ -872,6 +926,11 @@ final class TimelineView: NSView {
 
     override func layout() {
         super.layout()
+        removeAllToolTips()
+        addToolTip(CGRect(x: 0, y: 0, width: bounds.width, height: Theme.rulerHeight / 2),
+                   owner: "Drag here to set the cycle (loop) region; drag it to move, drag its edges to resize. C turns cycle on or off." as NSString, userData: nil)
+        addToolTip(CGRect(x: 0, y: Theme.rulerHeight / 2, width: bounds.width, height: Theme.rulerHeight / 2),
+                   owner: "Click or drag to move the playhead (snaps to the grid; hold ⌃ for an exact position)." as NSString, userData: nil)
         updatePlayhead()
     }
 }

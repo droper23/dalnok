@@ -115,6 +115,13 @@ json::Value Engine::describe() const {
         meter.push(model_.meters.front().den);
         root.set("meter", std::move(meter));
     }
+    if (cycleEnd_.load() > cycleStart_.load()) {
+        json::Value cyc = json::Value::makeArray();
+        cyc.push(cycleOn_.load());
+        cyc.push(static_cast<double>(cycleStart_.load()));
+        cyc.push(static_cast<double>(cycleEnd_.load()));
+        root.set("cycle", std::move(cyc));
+    }
     if (model_.tempo.size() > 1) {
         json::Value map = json::Value::makeArray();
         for (const auto &p : model_.tempo) {
@@ -557,6 +564,12 @@ std::unique_ptr<Engine::PreparedProject> Engine::prepareDocument(const json::Val
         model.meters = std::move(meters);
     }
     auto prepared = std::make_unique<PreparedProject>();
+    if (const json::Value *cyc = doc.get("cycle"); cyc && cyc->isArray() && cyc->array.size() == 3 &&
+        cyc->array[1].isNumber() && cyc->array[2].isNumber()) {
+        prepared->cycleOn = cyc->array[0].isBool() && cyc->array[0].boolean;
+        prepared->cycleStart = static_cast<int64_t>(std::llround(cyc->array[1].number * ratio));
+        prepared->cycleEnd = static_cast<int64_t>(std::llround(cyc->array[2].number * ratio));
+    }
     // Render stretched clips now (we're off the main thread) so playback is ready on apply.
     for (const auto &c : model.clips) {
         if (!c.stretched()) continue;
@@ -588,6 +601,8 @@ void Engine::applyProject(std::unique_ptr<PreparedProject> p, bool recovered) {
     nextClip_ = std::max(nextClip_, p->maxClip + 1);
     nextMedia_ = std::max(nextMedia_, p->maxMedia + 1);
     nextColor_ = p->maxColor + 1;
+    std::string ignored;
+    if (!setCycle(p->cycleOn, p->cycleStart, p->cycleEnd, ignored)) cycleOn_.store(false, std::memory_order_release);
     syncRuntimes();
     ++revision_;
     savedRevision_ = (p->imported || recovered) ? revision_ - 1 : revision_; // an import is unsaved work

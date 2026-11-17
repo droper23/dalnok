@@ -49,6 +49,7 @@ enum Theme {
     static let accent = tone(0xE8B25C, 0xE6AB69)        // time display / brand
     static let playhead = tone(0xF4F4F5, 0xF6E5CE)
     static let selection = hex(0xFFFFFF)
+    static let cycle = tone(0xE9C24A, 0xE8B54F) // cycle region in the ruler (Logic users know it as yellow)
     static let muteOn = hex(0x5B9BFF)        // blue chip (Logic convention)
     static let soloOn = hex(0xF5C451)        // yellow chip
     static let clipRed = hex(0xFF5A4F)

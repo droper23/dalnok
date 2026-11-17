@@ -542,6 +542,12 @@ int64_t dalnok_transport_position(const DalnokEngine *engine);  /* [any thread] 
 void dalnok_metronome_set(DalnokEngine *engine, bool on, float level);
 bool dalnok_metronome_enabled(const DalnokEngine *engine);
 
+/* Cycle (loop) playback: when playback crosses `end` it continues at `start` on the exact sample.
+ * Recording plays straight through. Saved with the project; not an undo step. end - start >= 64;
+ * (false, 0, 0) clears the region. */
+DalnokStatus dalnok_cycle_set(DalnokEngine *engine, bool enabled, int64_t start, int64_t end);
+void dalnok_cycle_get(const DalnokEngine *engine, bool *enabled, int64_t *start, int64_t *end);
+
 /* ---- Offline rendering ----------------------------------------------- */
 
 /* Renders the current model (ignoring the live transport) into caller-provided

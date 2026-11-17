@@ -261,6 +261,8 @@ func buildMenu(target: MainWindowController) -> NSMenu {
         item("Go to Start", #selector(W.goToStart), "\r", []),
         item("Record", #selector(W.toggleRecord(_:)), "r", []),
         item("Metronome", #selector(W.toggleMetronome(_:)), "k", []),
+        item("Cycle", #selector(W.toggleCycle(_:)), "c", []),
+        item("Set Cycle to Selection", #selector(W.setCycleToSelection(_:)), "u"),
         item("Edit Tempo", #selector(W.editTempo(_:)), "t", [.command, .option]),
         .separator(),
         item("Add Tempo Change at Playhead", #selector(W.addTempoChange(_:)), "t", [.command, .option, .shift]),

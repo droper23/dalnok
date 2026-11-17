@@ -350,6 +350,9 @@ void Engine::resetModel() {
     redo_.clear();
     groupDepth_ = 0;
     nextColor_ = 0;
+    cycleOn_.store(false, std::memory_order_release);
+    cycleStart_.store(0, std::memory_order_relaxed);
+    cycleEnd_.store(0, std::memory_order_relaxed);
     syncRuntimes();
     ++revision_;
     savedRevision_ = revision_;
@@ -535,6 +538,21 @@ bool Engine::setTempoMap(std::vector<TempoPoint> tempo, std::vector<MeterChange>
         m.meters = std::move(meters);
         return true;
     });
+}
+
+bool Engine::setCycle(bool on, int64_t start, int64_t end, std::string &err) {
+    if (!on && start == 0 && end == 0) { // clear the region
+        cycleOn_.store(false, std::memory_order_release);
+        cycleStart_.store(0, std::memory_order_relaxed);
+        cycleEnd_.store(0, std::memory_order_relaxed);
+        return true;
+    }
+    if (start < 0 || end - start < 64 || end > (int64_t{1} << 48)) return fail(err, "cycle needs 0 <= start and end at least 64 frames after start");
+    cycleOn_.store(false, std::memory_order_release); // audio thread never sees a half-updated range while on
+    cycleStart_.store(start, std::memory_order_relaxed);
+    cycleEnd_.store(end, std::memory_order_relaxed);
+    cycleOn_.store(on, std::memory_order_release);
+    return true;
 }
 
 bool Engine::validNotes(const std::vector<MidiNote> &notes, std::string &err) const {
@@ -1203,8 +1221,16 @@ void Engine::process(float *left, float *right, int frames) DALNOK_NONBLOCKING {
     const bool play = playing_.load(std::memory_order_relaxed);
     const float step = static_cast<float>(1.0 / (kTransportFadeSeconds * sampleRate_));
 
+    // Cycle: read once per callback (the control thread writes start/end before enabling).
+    const bool cycling = cycleOn_.load(std::memory_order_acquire) && !recordArmed_.load(std::memory_order_relaxed);
+    const int64_t cycleStart = cycleStart_.load(std::memory_order_relaxed), cycleEnd = cycleEnd_.load(std::memory_order_relaxed);
+    const bool cycleValid = cycling && cycleEnd - cycleStart >= 64 && cycleStart >= 0;
+
     for (int off = 0; off < frames;) {
-        const int n = std::min(kMaxBlock, frames - off);
+        int n = std::min(kMaxBlock, frames - off);
+        // Stop the sub-block exactly at the cycle end so the jump back lands on the right sample.
+        if (cycleValid && play && pendingSeek_ < 0 && rtPosition_ < cycleEnd && rtPosition_ + n > cycleEnd)
+            n = static_cast<int>(cycleEnd - rtPosition_);
         float *l = left + off, *r = right + off;
         off += n;
 
@@ -1248,6 +1274,7 @@ void Engine::process(float *left, float *right, int frames) DALNOK_NONBLOCKING {
         raisePeak(masterPeakL_, pl);
         raisePeak(masterPeakR_, pr);
         rtPosition_ += n;
+        if (cycleValid && play && pendingSeek_ < 0 && rtPosition_ == cycleEnd) rtPosition_ = cycleStart;
     }
     position_.store(pendingSeek_ >= 0 ? pendingSeek_ : rtPosition_, std::memory_order_relaxed);
 
