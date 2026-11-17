@@ -176,6 +176,24 @@ const CommandDef kCommands[] = {
                  if (p.isArray() && p.array.size() == 2) points.push_back({static_cast<int64_t>(p.array[0].number), static_cast<float>(p.array[1].number)});
          return status(e.setPluginAutomation(t, slot, static_cast<uint32_t>(param), std::move(points), err), err);
      }},
+    {"launcher.copyClip", "Copy to Launcher Slot", "{clip, slot}", [](ARGS) {
+         DalnokClipId c; int32_t slot;
+         if (!needInt(a, "clip", c, err) || !needInt(a, "slot", slot, err)) return DALNOK_ERR_INVALID_ARG;
+         const auto id = e.copyToSlot(c, slot, err);
+         if (!id) return DALNOK_ERR_INVALID_ARG;
+         r.set("clip", id);
+         return DALNOK_OK;
+     }},
+    {"launcher.launch", "Launch Slot", "{track, slot (-1 = back to the arrangement)}", [](ARGS) {
+         DalnokTrackId t; int32_t slot;
+         if (!needInt(a, "track", t, err) || !needInt(a, "slot", slot, err)) return DALNOK_ERR_INVALID_ARG;
+         return status(e.launch(t, slot, err), err);
+     }},
+    {"launcher.launchScene", "Launch Scene", "{slot}", [](ARGS) {
+         int32_t slot;
+         if (!needInt(a, "slot", slot, err)) return DALNOK_ERR_INVALID_ARG;
+         return status(e.launchScene(slot, err), err);
+     }},
     {"master.setGain", "Master Volume", "{db}", [](ARGS) {
          double db;
          if (!needNumber(a, "db", db, err)) return DALNOK_ERR_INVALID_ARG;

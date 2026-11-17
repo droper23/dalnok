@@ -818,23 +818,27 @@
       "why": "Sketching and performance without a separate session copy of every track.",
       "steps": [
         [
-          "Launcher slots on every track",
-          "todo"
+          "Launcher slots on every track, beside the timeline lane (View > Clip Launcher, cmd-L)",
+          "verified"
         ],
         [
-          "Quantized launch",
-          "todo"
+          "Quantized launch (next bar, sample-exact) and looping; stop back to the arrangement",
+          "verified"
         ],
         [
           "Scenes",
-          "todo"
+          "verified"
         ],
         [
           "Record a launcher performance to the timeline",
           "todo"
+        ],
+        [
+          "Record into slots; drag clips between the timeline and slots; follow actions",
+          "todo"
         ]
       ],
-      "evidence": "Planned for Phase 5."
+      "evidence": "LauncherTests: launching while playing switches exactly on the next bar and loops every clip length, stopping returns to the arrangement on a later bar, launching while stopped starts the transport, exports play the arrangement only, scenes launch every filled track. App self-test: View > Clip Launcher, clicking an empty slot copies the selected clip, clicking launches it and clicking again stops it on the bar, undo. Launch quantization is one bar; the slot progress bar is approximate."
     },
     {
       "id": "channel",

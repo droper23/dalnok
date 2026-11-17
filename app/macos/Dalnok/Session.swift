@@ -25,6 +25,7 @@ struct ClipView {
     var notes: [DalnokNote] = [] // MIDI clips only
     var isMidi = false
     var folder: Int32 = 0 // take folder (comp piece when shown in the arrangement)
+    var slot: Int32 = -1  // clip launcher slot (not on the timeline)
     var end: Int64 { start + length }
     var isStretched: Bool { abs(rate - 1) > 1e-9 || pitch != 0 }
     var sourceSpan: Int64 { Int64((Double(length) * rate).rounded()) }
@@ -61,6 +62,13 @@ struct TrackView {
 final class Session {
     let engine: Engine
     private(set) var tracks: [TrackView] = []
+    /// Clips in launcher slots.
+    private(set) var slotClips: [ClipView] = []
+    func slotClip(_ track: DalnokTrackId, _ slot: Int32) -> ClipView? { slotClips.first { $0.track == track && $0.slot == slot } }
+    var scenes: Int32 { dalnok_launcher_scenes(h) }
+    @discardableResult func copyToSlot(_ clip: DalnokClipId, _ slot: Int32) -> Bool {
+        let ok = dalnok_launcher_copy_clip(h, clip, slot) != 0; refresh(); return ok
+    }
     /// Takes inside take folders (not shown in the arrangement), by clip id.
     private(set) var takeClips: [DalnokClipId: ClipView] = [:]
     private var revision: UInt64 = 0 // reset to force a rebuild
@@ -85,6 +93,7 @@ final class Session {
         revision = rev
         var out: [TrackView] = []
         takeClips = [:]
+        slotClips = []
         for i in 0..<dalnok_track_count(h) {
             let tid = dalnok_track_at(h, i)
             var ti = DalnokTrackInfo()
@@ -99,7 +108,9 @@ final class Session {
                                     gainDb: ci.gain_db, rate: ci.rate, pitch: ci.pitch, preservePitch: ci.preserve_pitch,
                                     processing: ci.processing, name: fixedString(ci.name))
                 clip.folder = ci.folder
+                clip.slot = ci.slot
                 if ci.alt { takeClips[ci.id] = clip; continue } // takes live in their folder, not the arrangement
+                if ci.slot >= 0 { slotClips.append(clip); continue } // launcher slots, beside the arrangement
                 if ci.midi {
                     clip.isMidi = true
                     clip.notes = [DalnokNote](repeating: DalnokNote(), count: Int(ci.note_count))

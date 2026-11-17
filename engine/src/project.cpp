@@ -30,8 +30,7 @@ namespace fs = std::filesystem;
 namespace dalnok {
 
 namespace {
-constexpr int kFormatVersion = 8; // 6: volume and pan automation; 7: take folders; 8: plug-in automation // 3: shared MIDI sources preserve notes crossing split clips; 4: tempo and meter maps;
-                                   // 5: bus tracks, track outputs and sends
+constexpr int kFormatVersion = 9; // 3: shared MIDI sources; 4: tempo/meter maps; 5: routing; 6: automation; 7: take folders; 8: plug-in automation; 9: launcher slots
 constexpr int kConstantTempoVersion = 3; // written when there are no tempo or meter changes, so older builds still open it
 
 bool readFile(const std::string &path, std::string &out, std::string &err) {
@@ -269,6 +268,7 @@ json::Value Engine::describe() const {
             cv.set("length", c.length);
             cv.set("name", c.name);
             if (c.folder) cv.set("folder", c.folder);
+            if (c.slot >= 0) cv.set("slot", c.slot);
             if (c.alt) cv.set("alt", true);
             if (c.stretched()) {
                 cv.set("rate", c.rate);
@@ -375,9 +375,11 @@ bool Engine::saveProject(const std::string &path, std::string &err, bool copyMed
     }
     bool automation = false;
     for (const auto &t : model_.tracks) automation = automation || !t.volumeAuto.empty() || !t.panAuto.empty() || !t.pluginAuto.empty();
+    bool launcher = false;
+    for (const auto &c : model_.clips) launcher = launcher || c.slot >= 0;
     bool pluginAutomation = false;
     for (const auto &t : model_.tracks) pluginAutomation = pluginAutomation || !t.pluginAuto.empty();
-    doc.set("version", pluginAutomation ? 8 : !model_.folders.empty() ? 7 : automation ? 6 : routing ? 5 : model_.tempo.size() > 1 || model_.meters.size() > 1 ? 4 : kConstantTempoVersion);
+    doc.set("version", launcher ? 9 : pluginAutomation ? 8 : !model_.folders.empty() ? 7 : automation ? 6 : routing ? 5 : model_.tempo.size() > 1 || model_.meters.size() > 1 ? 4 : kConstantTempoVersion);
     json::Value body = describe();
     for (auto &[key, value] : body.object) {
         if (key != "media") continue;
@@ -565,6 +567,7 @@ std::unique_ptr<Engine::PreparedProject> Engine::prepareDocument(const json::Val
                     c.length = scale(toInt(cv, "length"));
                     c.name = cv.getString("name", "Audio");
                     c.folder = static_cast<int32_t>(std::max<int64_t>(0, toInt(cv, "folder")));
+                    c.slot = cv.get("slot") ? static_cast<int32_t>(std::clamp<int64_t>(toInt(cv, "slot"), -1, 255)) : -1;
                     c.alt = cv.getBool("alt", false);
                     if (cv.getString("kind", "audio") == "midi") {
                         std::vector<MidiNote> notes;

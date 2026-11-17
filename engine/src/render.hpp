@@ -32,6 +32,12 @@ struct TrackRuntime {
     bool primed = false;
     // Instrument voices (audio thread): timeline playback and live MIDI input.
     SynthState play, live;
+    // Clip launcher. The control thread posts a request (target slot, or -1 = back to the arrangement)
+    // to take effect at `launchAt`; the audio thread switches exactly there and keeps the playing state.
+    std::atomic<int64_t> launchAt{-1};
+    std::atomic<int32_t> launchTarget{-1};
+    std::atomic<int32_t> playingSlot{-1}; // what the audio thread plays (-1 = the arrangement); readable by the UI
+    int64_t slotStart = 0;                // timeline frame where the playing slot's first loop began
 };
 
 // Raises a meter atomic to `v` if larger. A concurrent reset may be overwritten
@@ -85,8 +91,18 @@ struct RenderSend {
     DelayLine *delay = nullptr; // delay compensation on this connection (null = none)
 };
 
+// A launcher slot's clip: loops from its start; audio as a clip window, MIDI as notes relative to the loop.
+struct RenderSlot {
+    int32_t slot = -1;
+    int64_t length = 0; // loop length in frames
+    bool hasAudio = false;
+    RenderClip clip;    // audio (start ignored; placed per loop iteration)
+    std::vector<RenderNote> notes, noteEnds; // MIDI, relative to the loop start, sorted by start / by end
+};
+
 struct RenderTrack {
     std::shared_ptr<TrackRuntime> runtime;
+    std::vector<RenderSlot> slots; // launcher clips on this track
     bool bus = false;      // mixes its input slot instead of clips
     int32_t busSlot = -1;  // this bus's input slot
     int32_t output = -1;   // destination bus slot, -1 = master

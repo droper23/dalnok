@@ -94,6 +94,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     let devicePanel: DevicePanel
     private var devicePanelHeight: NSLayoutConstraint!
     let mixer: MixerPanel
+    let launcher: LauncherView
+    private var launcherWidth: NSLayoutConstraint!
+    static var showLauncher: Bool {
+        get { UserDefaults.standard.bool(forKey: "showLauncher") }
+        set { UserDefaults.standard.set(newValue, forKey: "showLauncher") }
+    }
     private var mixerHeight: NSLayoutConstraint!
     static var showMixer: Bool {
         get { UserDefaults.standard.bool(forKey: "showMixer") }
@@ -126,6 +132,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         timeline = TimelineView(session: session)
         devicePanel = DevicePanel(session: session)
         mixer = MixerPanel(session: session)
+        launcher = LauncherView(session: session)
 
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1280, height: 760),
                               styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
@@ -149,7 +156,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             }
         }
         window.contentView = root
-        for v in [transport, headers, timeline, mixer, devicePanel, emptyState] as [NSView] {
+        for v in [transport, headers, launcher, timeline, mixer, devicePanel, emptyState] as [NSView] {
             v.translatesAutoresizingMaskIntoConstraints = false
             root.addSubview(v)
         }
@@ -163,7 +170,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             headers.bottomAnchor.constraint(equalTo: mixer.topAnchor),
             headers.widthAnchor.constraint(equalToConstant: Theme.headerWidth),
             timeline.topAnchor.constraint(equalTo: transport.bottomAnchor),
-            timeline.leadingAnchor.constraint(equalTo: headers.trailingAnchor),
+            launcher.topAnchor.constraint(equalTo: transport.bottomAnchor),
+            launcher.leadingAnchor.constraint(equalTo: headers.trailingAnchor),
+            launcher.bottomAnchor.constraint(equalTo: mixer.topAnchor),
+            timeline.leadingAnchor.constraint(equalTo: launcher.trailingAnchor),
             timeline.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             timeline.bottomAnchor.constraint(equalTo: mixer.topAnchor),
             mixer.leadingAnchor.constraint(equalTo: root.leadingAnchor),
@@ -180,6 +190,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         devicePanelHeight = devicePanel.heightAnchor.constraint(equalToConstant: Self.showDevicePanel ? DevicePanel.height : 0)
         devicePanelHeight.isActive = true
         devicePanel.isHidden = !Self.showDevicePanel
+        launcherWidth = launcher.widthAnchor.constraint(equalToConstant: Self.showLauncher ? launcher.width : 0)
+        launcherWidth.isActive = true
+        launcher.isHidden = !Self.showLauncher
+        launcher.selectedClip = { [weak self] in self?.timeline.selectedClip }
+        launcher.onMessage = { [weak self] m in self?.flash(m) }
         mixerHeight = mixer.heightAnchor.constraint(equalToConstant: Self.showMixer ? MixerPanel.height : 0)
         mixerHeight.isActive = true
         mixer.isHidden = !Self.showMixer
@@ -209,7 +224,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         transport.onImport = { [weak self] in self?.importAudio() }
         transport.onPalette = { [weak self] in self?.showCommandPalette(nil) }
         headers.onAddTrack = { [weak self] in self?.newTrack(nil) }
-        timeline.onVerticalScroll = { [weak self] y in self?.headers.scrollY = y }
+        timeline.onVerticalScroll = { [weak self] y in self?.headers.scrollY = y; self?.launcher.scrollY = y }
         timeline.onClipSelected = { [weak self] clip in self?.headers.selectedTrack = clip.track }
         timeline.onOpenClip = { [weak self] clip in
             if clip.folder != 0 { self?.compEditor.show(folder: clip.folder) } else { self?.pianoRoll.show(clip: clip.id) }
@@ -387,6 +402,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         if devicePanel.track == nil, let first = session.tracks.first?.id { headers.select(first) }
         devicePanel.rebuild()
         if !mixer.isHidden { mixer.rebuild(); mixer.select(selectedTrack) }
+        if !launcher.isHidden { launcher.needsDisplay = true }
         if transientMessageUntil < Date() { updateStatus() }
     }
 
@@ -435,6 +451,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         session.refresh() // picks up changes from any source (e.g. scripts)
         _ = session.pollJobs() // installs finished time-stretch renders
         followTempoSegment()
+        if !launcher.isHidden && (e.isPlaying || tickCount % 15 == 0) && tickCount % 4 == 0 { launcher.tick() }
         let playing = e.isPlaying, recording = e.isRecording
         if playing != wasPlaying || recording != wasRecording {
             transport.setPlaying(playing)
@@ -1083,6 +1100,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         })
     }
 
+    /// View ▸ Clip Launcher (⌘L): launcher slots beside each track's lane.
+    @objc func toggleLauncher(_ sender: Any?) {
+        Self.showLauncher.toggle()
+        launcherWidth.constant = Self.showLauncher ? launcher.width : 0
+        launcher.isHidden = !Self.showLauncher
+        launcher.needsDisplay = true
+        if Self.showLauncher { flash("Clip launcher: select a clip, click an empty slot on its track to put it there, click to launch") }
+    }
+    @objc func stopAllClips(_ sender: Any?) { dalnok_launcher_stop_all(session.engine.handle); launcher.needsDisplay = true }
+
     /// View ▸ Mixer (X): channel strips for every track and bus above the device panel.
     @objc func toggleMixer(_ sender: Any?) {
         Self.showMixer.toggle()
@@ -1334,6 +1361,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             return true
         case #selector(clearAutomation(_:)):
             return selectedTrack.flatMap { session.track($0) }.map { !$0.automation(TimelineView.automationTarget).isEmpty } ?? false
+        case #selector(toggleLauncher(_:)):
+            item.state = Self.showLauncher ? .on : .off
+            return true
         case #selector(toggleMixer(_:)):
             item.state = Self.showMixer ? .on : .off
             return true

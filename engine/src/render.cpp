@@ -82,16 +82,16 @@ void mixClip(const RenderClip &clip, int64_t pos, int frames, float *l, float *r
 namespace {
 // Plays a track's notes for [pos, pos + frames) into out (mono, overwritten).
 // Returns false if nothing sounded.
-bool renderNotes(const RenderTrack &t, const SynthParams &p, SynthState &synth, int64_t pos, int frames,
+bool renderNotes(const std::vector<RenderNote> &notes, const SynthParams &p, SynthState &synth, int64_t pos, int frames,
                  float *out) DALNOK_NONBLOCKING {
     if (synth.expected != pos) synth.reset(); // seek: notes are not chased
     synth.expected = pos + frames;
-    const auto first = std::lower_bound(t.notes.begin(), t.notes.end(), pos,
+    const auto first = std::lower_bound(notes.begin(), notes.end(), pos,
                                         [](const RenderNote &n, int64_t at) DALNOK_NONBLOCKING { return n.start < at; });
-    if (!synth.active() && (first == t.notes.end() || first->start >= pos + frames)) return false;
+    if (!synth.active() && (first == notes.end() || first->start >= pos + frames)) return false;
     clear(out, frames);
     int done = 0;
-    for (auto it = first; it != t.notes.end() && it->start < pos + frames; ++it) {
+    for (auto it = first; it != notes.end() && it->start < pos + frames; ++it) {
         const int at = static_cast<int>(it->start - pos);
         if (at > done) { synth.render(p, out + done, at - done, pos + done); done = at; }
         synth.noteOn(p, it->pitch, it->velocity, it->end);
@@ -247,7 +247,30 @@ void renderBlock(const RenderState &state, int64_t pos, int frames, float *left,
             lane.plugin->automate(lane.param, lane.lo + static_cast<double>(v) * (lane.hi - lane.lo));
         }
         bool any = false;
-        if (t.bus) {
+        // Clip launcher (live only): a playing slot replaces this track's timeline clips and notes.
+        const RenderSlot *slot = nullptr;
+        if (!synths && !t.slots.empty()) {
+            const int32_t ps = rt.playingSlot.load(std::memory_order_relaxed);
+            for (const RenderSlot &sl : t.slots) if (sl.slot == ps && sl.length > 0) slot = &sl;
+        }
+        if (slot) {
+            const int64_t rel = ((pos - rt.slotStart) % slot->length + slot->length) % slot->length; // block ends by the loop end
+            if (slot->hasAudio) {
+                clear(s.trackL, frames); clear(s.trackR, frames);
+                mixClip(slot->clip, rel, frames, s.trackL, s.trackR);
+                any = true;
+            } else if (t.instrumentPlugin) {
+                const PluginNote *live = s.liveNotes;
+                const int liveCount = s.liveNoteCount;
+                if (static_cast<int32_t>(index - 1) != state.liveTrack) { s.liveNotes = nullptr; s.liveNoteCount = 0; }
+                renderPluginNotes(t.instrumentPlugin, slot->notes.data(), slot->noteEnds.data(), slot->notes.size(), synth, rel, frames, s);
+                s.liveNotes = live; s.liveNoteCount = liveCount;
+                any = true;
+            } else if (t.instrument && renderNotes(slot->notes, state.synth, synth, rel, frames, s.trackL)) {
+                for (int i = 0; i < frames; ++i) s.trackR[i] = s.trackL[i];
+                any = true;
+            }
+        } else if (t.bus) {
             const float *inL = busL + static_cast<size_t>(t.busSlot) * kMaxBlock, *inR = busR + static_cast<size_t>(t.busSlot) * kMaxBlock;
             for (int i = 0; i < frames; ++i) { s.trackL[i] = inL[i]; s.trackR[i] = inR[i]; }
             any = true;
@@ -261,11 +284,12 @@ void renderBlock(const RenderState &state, int64_t pos, int frames, float *left,
             s.liveNotes = live;
             s.liveNoteCount = liveCount;
             any = true;
-        } else if (t.instrument && renderNotes(t, state.synth, synth, pos, frames, s.trackL)) {
+        } else if (t.instrument && renderNotes(t.notes, state.synth, synth, pos, frames, s.trackL)) {
             for (int i = 0; i < frames; ++i) s.trackR[i] = s.trackL[i];
             any = true;
         }
         for (const RenderClip &c : t.clips) {
+            if (slot) break; // the launcher clip plays instead of the arrangement
             if (c.start >= pos + frames || c.start + c.length <= pos) continue;
             if (!any) {
                 clear(s.trackL, frames);

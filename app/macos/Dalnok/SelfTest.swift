@@ -13,7 +13,7 @@ final class SelfTest {
     let workdir: URL
     private var failures = 0
     /// Preferences the test changes; all are restored at the end so a run never alters the owner's settings.
-    private static let restoredKeys = ["copyAudioOnSave", "comingFrom", "onboardingDone", "recordingInputUID", "rulerBarsAndBeats", "metronome", "showDevicePanel", "countIn", "showMixer"]
+    private static let restoredKeys = ["copyAudioOnSave", "comingFrom", "onboardingDone", "recordingInputUID", "rulerBarsAndBeats", "metronome", "showDevicePanel", "countIn", "showMixer", "showLauncher"]
     private let previousPreferences: [String: Any]
     private var w: MainWindowController { app.main }
     private var s: Session { app.session }
@@ -773,6 +773,7 @@ final class SelfTest {
         await tempoAndMetronome()
         await cycle()
         await mixerAndRouting()
+        await launcherSteps()
         check(s.track(keys.id)?.clips.count == before + 1 && recorded?.notes.count == 1 && recorded?.notes.first?.pitch == 67,
               "recorded one MIDI note (\(recorded?.notes.count ?? 0))")
         let ms = Double(recorded?.notes.first?.length ?? 0) / e.sampleRate * 1000
@@ -1045,6 +1046,40 @@ final class SelfTest {
         check(w.transport.recordButton.layer?.animation(forKey: "pulse") == nil, "with Reduce Motion nothing pulses")
         w.transport.setRecording(false)
         _ = e
+    }
+
+    /// Clip launcher: View ▸ Clip Launcher, copy a selected clip into a slot, launch it on the bar, stop it.
+    private func launcherSteps() async {
+        guard let (row, track) = s.tracks.enumerated().first(where: { !$0.element.isBus && !$0.element.clips.isEmpty }),
+              let clip = track.clips.first else { return check(false, "a clip for the launcher (\(s.tracks.map { ($0.name, $0.clips.count) }))") }
+        let e = s.engine
+        let was = MainWindowController.showLauncher
+        if !was {
+            check(perform("Clip Launcher"), "View > Clip Launcher")
+            w.window?.contentView?.layoutSubtreeIfNeeded()
+            check(!w.launcher.isHidden && w.launcher.frame.width > 400, "the launcher shows its slots (\(w.launcher.frame.width) pt)")
+        }
+        w.timeline.selectedClip = clip.id
+        let lv = w.launcher
+        func click(_ r: CGRect) {
+            let at = lv.convert(CGPoint(x: r.midX, y: r.midY), to: nil)
+            lv.mouseDown(with: mouse(.leftMouseDown, at))
+        }
+        click(lv.slotRect(row: row, slot: 0))
+        check(s.slotClip(track.id, 0) != nil && s.track(track.id)?.clips.count == track.clips.count,
+              "clicking an empty slot copies the selected clip there (the arrangement keeps it)")
+        e.seek(0); await wait(0.1)
+        click(lv.slotRect(row: row, slot: 0))
+        check(e.isPlaying, "clicking a slot clip launches it (starting the transport)")
+        await wait(0.3)
+        check(dalnok_launcher_playing(e.handle, track.id) == 0, "the slot is playing")
+        try? w.snapshot(to: workdir.appendingPathComponent("launcher.png"))
+        click(lv.slotRect(row: row, slot: 0))
+        await wait(2.3) // the stop lands on the next bar (2 s at 120 BPM)
+        check(dalnok_launcher_playing(e.handle, track.id) == -1, "clicking it again goes back to the arrangement on the bar")
+        e.pause()
+        check(perform("Undo") && s.slotClip(track.id, 0) == nil, "undo removes the slot copy")
+        if !was { _ = perform("Clip Launcher") }
     }
 
     /// Mixer and routing: View ▸ Mixer, Track ▸ New Bus, output and send through the strip controls, fader drag.

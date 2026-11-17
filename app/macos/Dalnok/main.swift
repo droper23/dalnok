@@ -310,6 +310,8 @@ func buildMenu(target: MainWindowController) -> NSMenu {
         item("Bars and Beats Ruler", #selector(W.toggleBarsAndBeats(_:)), "b", [.command, .option]),
         item("Device Panel", #selector(W.toggleDevicePanel(_:)), "d", [.command, .option]),
         item("Mixer", #selector(W.toggleMixer(_:)), "x", []),
+        item("Clip Launcher", #selector(W.toggleLauncher(_:)), "l", [.command]),
+        item("Stop All Clips", #selector(W.stopAllClips(_:)), ""),
         item("Show Automation", #selector(W.toggleAutomation(_:)), "a", []),
         item("Automate Volume", #selector(W.automateVolume(_:)), ""),
         item("Automate Pan", #selector(W.automatePan(_:)), ""),

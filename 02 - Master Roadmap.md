@@ -31,11 +31,11 @@ recovery, basic routing, disk streaming.
 ## Phase 3: MIDI and instruments ✅ (MIDI clips, live input, recording, quantize, Dalnok Poly, piano roll, velocity, tempo and meter maps, metronome; open: real-keyboard test, sample-accurate input timing)
 MIDI tracks, recording and playback, piano roll, quantize, velocity, tempo and meter map, first stock instrument.
 
-## Phase 4: Professional production 🔶 (VST3/AU hosting, generic parameter panel, buses, sends, mixer done; automation, delay compensation, comping, stacks next)
+## Phase 4: Professional production 🔶 (VST3/AU hosting, parameter panel, buses, sends, mixer with master and inserts, volume/pan/plug-in automation, delay compensation, comping, stacks done; sidechains, CLAP, write modes open)
 **VST3 hosting (first format)** with generic parameter panels, then AU and CLAP. Mixer, buses, sends,
 sidechains, automation, delay compensation, **comping and take folders**, track stacks.
 
-## Phase 5: Creative workflows ⬜
+## Phase 5: Creative workflows 🔶 (clip launcher with scenes on the same tracks started)
 **Unified clip launcher** on the same tracks as the timeline. Flex-style time and pitch editing
 (Signalsmith Stretch). Modulation system, racks, scripting API, macros, workspaces.
 

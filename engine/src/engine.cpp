@@ -857,6 +857,80 @@ bool Engine::setSend(DalnokTrackId track, DalnokTrackId bus, float db, bool pre,
     });
 }
 
+DalnokClipId Engine::copyToSlot(DalnokClipId clip, int32_t slot, std::string &err) {
+    const auto id = nextClip_;
+    const bool ok = edit("Copy to Launcher", true, [&](Model &m) {
+        const ClipState *c = m.clip(clip);
+        if (!c || c->alt) return fail(err, "no such clip");
+        if (slot < 0 || slot >= m.scenes) return fail(err, "no such launcher slot");
+        std::erase_if(m.clips, [&](const ClipState &x) { return x.track == c->track && x.slot == slot; }); // replaces the slot
+        c = m.clip(clip);
+        if (!c) return fail(err, "that clip was in the slot");
+        ClipState copy = *c;
+        copy.id = id;
+        copy.slot = slot;
+        copy.folder = 0;
+        copy.start = 0;
+        m.clips.push_back(std::move(copy));
+        return true;
+    });
+    if (!ok) return 0;
+    ++nextClip_;
+    return id;
+}
+
+namespace {
+// Next bar start strictly after `frame` (or `frame` itself when it is a bar start).
+int64_t nextBar(const Model &m, const TempoMap &map, int64_t frame) {
+    double beat = 0;
+    if (!map.frameToBeat(frame, beat)) return frame;
+    int32_t bar, num, den; double inBar;
+    beatToBar(m.meters, beat, bar, inBar, num, den);
+    if (inBar < 1e-6) return frame;
+    int64_t out = frame;
+    map.beatToFrame(barToBeat(m.meters, bar + 1), out);
+    return out;
+}
+} // namespace
+
+bool Engine::launch(DalnokTrackId track, int32_t slot, std::string &err) {
+    const TrackState *t = model_.track(track);
+    if (!t) return fail(err, "no such track");
+    if (slot >= 0 && std::none_of(model_.clips.begin(), model_.clips.end(), [&](const ClipState &c) { return c.track == track && c.slot == slot; }))
+        return fail(err, "that slot is empty");
+    // Launch times are timeline frames; the audio thread switches when the rendered position (the playhead
+    // plus delay compensation) reaches them, so the change is heard exactly on the bar.
+    const bool rolling = playing_.load();
+    const int64_t at = rolling ? nextBar(model_, map_, position() + 1) : position();
+    t->runtime->launchTarget.store(slot, std::memory_order_relaxed);
+    t->runtime->launchAt.store(at, std::memory_order_release);
+    if (!rolling && slot >= 0) play();
+    return true;
+}
+
+bool Engine::launchScene(int32_t slot, std::string &err) {
+    if (slot < 0 || slot >= model_.scenes) return fail(err, "no such scene");
+    bool any = false;
+    for (const auto &t : model_.tracks) {
+        const bool filled = std::any_of(model_.clips.begin(), model_.clips.end(), [&](const ClipState &c) { return c.track == t.id && c.slot == slot; });
+        std::string ignored;
+        if (filled) any = launch(t.id, slot, ignored) || any;
+        else if (t.runtime->playingSlot.load() >= 0) launch(t.id, -1, ignored); // empty slot in the scene: that track stops its clip
+    }
+    return any || fail(err, "that scene is empty");
+}
+
+void Engine::stopLauncher() {
+    std::string ignored;
+    for (const auto &t : model_.tracks)
+        if (t.runtime->playingSlot.load() >= 0 || t.runtime->launchAt.load() >= 0) launch(t.id, -1, ignored);
+}
+
+int32_t Engine::playingSlot(DalnokTrackId track) const {
+    const TrackState *t = model_.track(track);
+    return t ? t->runtime->playingSlot.load(std::memory_order_relaxed) : -1;
+}
+
 bool Engine::setPluginAutomation(DalnokTrackId track, int32_t slot, uint32_t param, std::vector<AutoPoint> points, std::string &err) {
     for (const auto &p : points)
         if (p.frame < 0 || !(p.value >= 0 && p.value <= 1)) return fail(err, "plug-in automation points need frame >= 0 and a value 0-1");
@@ -1390,6 +1464,22 @@ std::unique_ptr<RenderState> Engine::compile(std::vector<StretchJob> *needed, co
         }
         for (const auto &c : model_.clips) {
             if (c.track != t.id || c.alt) continue; // takes in a folder don't play; the comp's pieces do
+            if (c.slot >= 0 && c.midi()) { // launcher slot: notes relative to the loop start
+                if (!rt.instrument) continue;
+                RenderSlot sl;
+                sl.slot = c.slot;
+                sl.length = c.length;
+                for (const auto &n : *c.notes) {
+                    if (n.start < c.offset || n.start >= c.offset + c.length) continue;
+                    const int64_t at = n.start - c.offset;
+                    sl.notes.push_back({at, std::min(at + n.length, c.length), n.pitch, n.velocity});
+                }
+                std::stable_sort(sl.notes.begin(), sl.notes.end(), [](const RenderNote &a, const RenderNote &b) { return a.start < b.start; });
+                sl.noteEnds = sl.notes;
+                std::stable_sort(sl.noteEnds.begin(), sl.noteEnds.end(), [](const RenderNote &a, const RenderNote &b) { return a.end < b.end; });
+                rt.slots.push_back(std::move(sl));
+                continue;
+            }
             if (c.midi()) {
                 if (!rt.instrument) continue;
                 for (const auto &n : *c.notes) {
@@ -1436,6 +1526,15 @@ std::unique_ptr<RenderState> Engine::compile(std::vector<StretchJob> *needed, co
                 const double k = static_cast<double>(len) / static_cast<double>(fi + fo);
                 fi = static_cast<int64_t>(static_cast<double>(fi) * k);
                 fo = len - fi;
+            }
+            if (c.slot >= 0) { // launcher slot: one loop of the clip window
+                RenderSlot sl;
+                sl.slot = c.slot;
+                sl.length = len;
+                sl.hasAudio = true;
+                sl.clip = {media, 0, offset, len, fi, fo, c.fadeCurve, dbToGain(c.gainDb)};
+                rt.slots.push_back(std::move(sl));
+                continue;
             }
             rt.clips.push_back({media, c.start, offset, len, fi, fo, c.fadeCurve, dbToGain(c.gainDb)});
             if (media->channelCount() > 1) rt.monoSource = false;
@@ -1699,6 +1798,29 @@ void Engine::process(float *left, float *right, int frames) DALNOK_NONBLOCKING {
         // Stop the sub-block exactly at the cycle end so the jump back lands on the right sample.
         if (cycleValid && play && pendingSeek_ < 0 && rtPosition_ < cycleEnd && rtPosition_ + n > cycleEnd)
             n = static_cast<int>(cycleEnd - rtPosition_);
+        // Clip launcher: switch tracks exactly at their launch frame and cut blocks at loop ends, so every
+        // change lands on a block start (rendered position = playhead + compensation).
+        if (current_ && play && pendingSeek_ < 0) {
+            const int64_t rp = rtPosition_ + current_->compensation;
+            for (const RenderTrack &t : current_->tracks) {
+                TrackRuntime &rt = *t.runtime;
+                const int64_t la = rt.launchAt.load(std::memory_order_acquire);
+                if (la >= 0 && la <= rp) {
+                    rt.playingSlot.store(rt.launchTarget.load(std::memory_order_relaxed), std::memory_order_relaxed);
+                    rt.slotStart = la;
+                    rt.launchAt.store(-1, std::memory_order_relaxed);
+                } else if (la >= 0 && la < rp + n) {
+                    n = static_cast<int>(la - rp);
+                }
+                const int32_t ps = rt.playingSlot.load(std::memory_order_relaxed);
+                if (ps < 0) continue;
+                for (const RenderSlot &sl : t.slots) {
+                    if (sl.slot != ps || sl.length <= 0) continue;
+                    const int64_t rel = ((rp - rt.slotStart) % sl.length + sl.length) % sl.length;
+                    if (rel + n > sl.length) n = static_cast<int>(sl.length - rel);
+                }
+            }
+        }
         float *l = left + off, *r = right + off;
         off += n;
 

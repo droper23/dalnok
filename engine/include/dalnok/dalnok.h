@@ -28,7 +28,7 @@
 extern "C" {
 #endif
 
-#define DALNOK_API_VERSION 19
+#define DALNOK_API_VERSION 20
 
 typedef enum {
     DALNOK_OK = 0,
@@ -304,6 +304,17 @@ int32_t dalnok_take_folder_takes(const DalnokEngine *engine, int32_t folder, Dal
 int32_t dalnok_take_folder_comp(const DalnokEngine *engine, int32_t folder, DalnokCompSegment *out, int32_t capacity);
 DalnokStatus dalnok_take_folder_set_comp(DalnokEngine *engine, int32_t folder, const DalnokCompSegment *segments, int32_t count);
 
+/* ---- Clip launcher ----------------------------------------------------
+ * Every track has launcher slots (scenes) beside its timeline lane. A slot holds a copy of a clip that loops
+ * when launched, replacing that track's arrangement until stopped. Launches land on the next bar (exactly on
+ * the sample); launching while stopped starts the transport there. Exports play the arrangement only. */
+int32_t dalnok_launcher_scenes(const DalnokEngine *engine);
+DalnokClipId dalnok_launcher_copy_clip(DalnokEngine *engine, DalnokClipId clip, int32_t slot); /* replaces the slot; undoable */
+DalnokStatus dalnok_launcher_launch(DalnokEngine *engine, DalnokTrackId track, int32_t slot);   /* -1: back to the arrangement */
+DalnokStatus dalnok_launcher_launch_scene(DalnokEngine *engine, int32_t slot);
+void dalnok_launcher_stop_all(DalnokEngine *engine);
+int32_t dalnok_launcher_playing(const DalnokEngine *engine, DalnokTrackId track);              /* slot or -1 */
+
 /* ---- Track stacks -----------------------------------------------------
  * A summing stack is a bus placed above its members (which move to follow it and are routed into it).
  * Closing a stack is a display state, saved with the project. Stacks don't nest yet. */
@@ -355,6 +366,7 @@ typedef struct {
     int32_t note_count;
     int32_t folder;       /* take folder (0 = none) */
     bool alt;             /* a take inside a folder: kept, not played (the comp's pieces play) */
+    int32_t slot;         /* clip launcher slot (>= 0: not on the timeline), -1 = timeline */
 } DalnokClipInfo;
 DalnokStatus dalnok_clip_info(const DalnokEngine *engine, DalnokClipId clip, DalnokClipInfo *out);
 

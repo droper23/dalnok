@@ -392,6 +392,21 @@ DalnokStatus dalnok_master_set_gain_db(DalnokEngine *e, float db) {
     return e ? statusFor(e->impl.setMasterGainDb(db, err), err) : DALNOK_ERR_INVALID_ARG;
 }
 float dalnok_master_gain_db(const DalnokEngine *e) { return e ? e->impl.model().masterGainDb : 0; }
+int32_t dalnok_launcher_scenes(const DalnokEngine *e) { return e ? e->impl.model().scenes : 0; }
+DalnokClipId dalnok_launcher_copy_clip(DalnokEngine *e, DalnokClipId clip, int32_t slot) {
+    std::string err;
+    return e ? e->impl.copyToSlot(clip, slot, err) : 0;
+}
+DalnokStatus dalnok_launcher_launch(DalnokEngine *e, DalnokTrackId t, int32_t slot) {
+    std::string err;
+    return e ? statusFor(e->impl.launch(t, slot, err), err) : DALNOK_ERR_INVALID_ARG;
+}
+DalnokStatus dalnok_launcher_launch_scene(DalnokEngine *e, int32_t slot) {
+    std::string err;
+    return e ? statusFor(e->impl.launchScene(slot, err), err) : DALNOK_ERR_INVALID_ARG;
+}
+void dalnok_launcher_stop_all(DalnokEngine *e) { if (e) e->impl.stopLauncher(); }
+int32_t dalnok_launcher_playing(const DalnokEngine *e, DalnokTrackId t) { return e ? e->impl.playingSlot(t) : -1; }
 DalnokStatus dalnok_plugin_set_automation(DalnokEngine *e, DalnokTrackId t, int32_t slot, uint32_t param,
                                           const DalnokAutoPoint *pts, int32_t count) {
     if (!e || count < 0 || (count > 0 && !pts)) return DALNOK_ERR_INVALID_ARG;
@@ -732,6 +747,7 @@ DalnokStatus dalnok_clip_info(const DalnokEngine *e, DalnokClipId id, DalnokClip
     out->midi = c->midi();
     out->folder = c->folder;
     out->alt = c->alt;
+    out->slot = c->slot;
     if (c->midi()) {
         out->offline = false;
         out->note_count = static_cast<int32_t>(c->notes->size());

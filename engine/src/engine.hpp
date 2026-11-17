@@ -91,6 +91,7 @@ using NoteList = std::shared_ptr<const std::vector<MidiNote>>; // immutable; sha
 struct ClipState {
     DalnokClipId id = 0;
     int32_t folder = 0; // take folder this clip belongs to (0 = none)
+    int32_t slot = -1;  // clip launcher slot (>= 0): not on the timeline; loops when launched
     bool alt = false;   // a take inside a folder: kept, not played (the comp's pieces play)
     NoteList notes; // non-null: MIDI clip (media = 0)
     bool midi() const { return notes != nullptr; }
@@ -125,6 +126,7 @@ struct Model {
     std::vector<TrackState> tracks; // display order
     std::vector<TakeFolder> folders;
     float masterGainDb = 0; // the master fader
+    int32_t scenes = 8;     // launcher slots per track
     std::vector<ClipState> clips;   // z-order: later = on top
     std::vector<TempoPoint> tempo{TempoPoint{}};    // quarter-note beats; first point at beat 0
     std::vector<MeterChange> meters{MeterChange{}}; // first change at bar 0
@@ -273,6 +275,13 @@ public:
     bool setComp(int32_t folder, std::vector<CompSegment> comp, std::string &err);
     int32_t makeTakeFolder(Model &m, DalnokTrackId track, std::vector<DalnokClipId> takes, std::string &err); // inside an edit
     int32_t addTakeFolder(DalnokTrackId track, std::vector<DalnokClipId> takes, std::string &err); // its own edit ("Take Folder")
+    // Clip launcher. A slot clip is a copy of a clip that loops when launched; launching takes effect at the next
+    // bar (immediately when stopped, which starts the transport). Launch state is live-only, not undoable.
+    DalnokClipId copyToSlot(DalnokClipId clip, int32_t slot, std::string &err); // one undo step
+    bool launch(DalnokTrackId track, int32_t slot, std::string &err);           // slot -1 = back to the arrangement
+    bool launchScene(int32_t slot, std::string &err);
+    void stopLauncher();                                                         // every track back to the arrangement
+    int32_t playingSlot(DalnokTrackId track) const;
     // Replaces a plug-in parameter's lane on a track (normalized 0-1; empty removes it). One undo step.
     bool setPluginAutomation(DalnokTrackId track, int32_t slot, uint32_t param, std::vector<AutoPoint> points, std::string &err);
     // Replaces a track's automation lane (sorted by frame; an empty list removes it). One undo step.

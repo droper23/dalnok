@@ -5,6 +5,12 @@ milestone: M11 VST3 hosting (ADR-0009 stage 3) done; editors, parameters and AU 
 ---
 # Current State
 
+## Latest session, part 4 (Phase 4 completion and Phase 5 start; theme critique)
+- Master fader and mixer master strip (Warm Analog: ballistic VU needle), insert slots on strips; track stacks (summing, collapsible); plug-in parameter automation (block-rate); **clip launcher** (slots beside every track lane, bar-quantized launch, scenes; ⌘L).
+- Theme critique by four reviewer agents: [[Theme Critique 2026-11-17]]. Done from it: Warm Analog lit-cap lamp buttons with lamp physics, channel modules (colour caps, printed dB scales, screws), VU needle, display lamp test, count-in countdown; Graphite header tint and quiet chips. Many ideas remain (material system, hero accent palette, tape reels, knob redesign, splice bay, pin piano roll).
+- 145 engine tests, self-test passes in both themes, full check, TSan and RT-effects clean. Format 9, C API 20.
+- Next: launcher recording and drag between timeline and slots; sidechains; CLAP hosting; automation write modes; disk streaming; remaining theme ideas.
+
 ## Latest session, part 3 (Phase 2 recording workflow, Phase 4 routing; 2026-11-17)
 - **Warm Analog track names** are now lit scribble strips (recessed display, name in the track color, dark when muted), replacing the tape labels the owner disliked.
 - **Cycle** (C, ruler band, ⌘U Set Cycle to Selection, cycle export), **punch in/out** (Autopunch, red ruler range, sample-accurate) and **count-in** (⇧K, one bar of clicks, take starts at the record point). Fixed: fresh engines had no metronome schedule; a seek pending at record start could break count-in takes.
