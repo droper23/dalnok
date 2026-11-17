@@ -261,7 +261,15 @@ final class SelfTest {
         w.window?.makeFirstResponder(nil)
         check(!MainWindowController.isTyping && NSApp.mainMenu?.performKeyEquivalent(with: space) == true && e.isPlaying,
               "Space starts playback when not typing")
-        e.pause()
+        check(NSApp.mainMenu?.performKeyEquivalent(with: space) == true && !e.isPlaying,
+              "Space pauses playback")
+        if let gain = w.headers.row(t0)?.gain {
+            w.window?.makeFirstResponder(gain)
+            check(NSApp.mainMenu?.performKeyEquivalent(with: space) == true && e.isPlaying,
+                  "Space starts playback with gain knob focused")
+            check(NSApp.mainMenu?.performKeyEquivalent(with: space) == true && !e.isPlaying,
+                  "Space pauses playback with gain knob focused")
+        }
         check(s.track(t0)?.name == "Lead Vox", "renamed track (\(s.track(t0)?.name ?? "-"))")
 
         // Save, New (via menu), reopen.

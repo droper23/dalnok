@@ -49,7 +49,7 @@ bool walk(const std::string &d, std::vector<Chunk> &out) {
         for (char ch : tag)
             if (!((ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z'))) return false;
         const auto len = rd<uint64_t>(d, pos + 28);
-        if (pos + kChunkHeader + len > d.size()) return false;
+        if (len > d.size() - pos - kChunkHeader) return false;
         out.push_back({std::string(tag.rbegin(), tag.rend()), pos, pos + kChunkHeader, static_cast<size_t>(len)});
         pos += kChunkHeader + static_cast<size_t>(len);
     }
@@ -120,9 +120,11 @@ bool importLogic(const std::string &path, Result &out, std::string &err) {
     for (const auto &c : chunks) {
         if (c.tag == "AuFl" && c.length > 10) {
             const auto n = rd<uint16_t>(d, c.payload + 8);
+            if (n > (c.length - 10) / 2) { err = "invalid Logic audio file name length"; return false; }
             currentFile = utf16le(d, c.payload + 10, n);
         } else if (c.tag == "AuRg" && c.length > 76) {
             const auto nl = rd<uint16_t>(d, c.payload + 74);
+            if (nl > c.length - 76) { err = "invalid Logic audio region name length"; return false; }
             regions.push_back({currentFile, rd<uint32_t>(d, c.payload + 6), rd<uint32_t>(d, c.payload + 22),
                                d.substr(c.payload + 76, nl)});
         }
@@ -166,11 +168,12 @@ bool importLogic(const std::string &path, Result &out, std::string &err) {
     }
     rep.skip("unplacedRegions", static_cast<int>(regions.size()) - placed);
     rep.skip("unresolvedPlacements", unresolved);
-    rep.skip("midiRegions", midiRegions);
+    if (midiRegions > 0)
+        rep.notes.push_back("Some event records may represent MIDI; MIDI regions are not imported and their count is not verified.");
     rep.notes.push_back("EXPERIMENTAL: Logic's project format is undocumented. Audio files and region trims are verified; "
                         "region positions and track assignment are decoded but not yet verified, and track names, "
-                        "plug-ins, automation and take folders are not imported. For an exact arrangement, use Logic's "
-                        "File ▸ Export ▸ Project to Final Cut Pro XML and import that file.");
+                        "plug-ins, automation and take folders are not imported. Logic's File ▸ Export ▸ Project to Final Cut Pro XML "
+                        "is an alternative, but may render audio and change clip boundaries; compare the result with the original.");
     out.document = b.document();
     return true;
 }

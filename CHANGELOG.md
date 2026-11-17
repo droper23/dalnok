@@ -1,6 +1,9 @@
 # Changelog
 
 ## [Unreleased]
+### Fixed (2026-11-16, Logic import)
+- Reject malformed Logic chunk and name lengths, avoid reporting unverified MIDI event counts, and clarify limitations of the Final Cut Pro XML alternative.
+
 ### Changed (2026-11-16, track controls)
 - Track gain is now a labeled rotary knob, paired with a labeled pan knob. Its halo displays post-fader peak level during playback and the gain setting while adjusting.
 

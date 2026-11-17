@@ -24,7 +24,7 @@ Concept Guide. Grows with each phase: MIDI (P3), plugins, automation, and sends 
 Signalsmith-based stretch, pitch, and varispeed rendered in the background. ⌥-drag stretch and the Clip
 menu. Imported REAPER playrates and Ableton warp markers now play correctly.
 
-## Phase 2: Recording and editing 🔶 (next: ADR-0008 recording architecture)
+## Phase 2: Recording and editing 🔶 (ADR-0008 accepted; capture implementation next)
 Input and recording (with a Scarlett test rig), monitoring, split, fades, crossfades, autosave and crash
 recovery, basic routing, disk streaming.
 

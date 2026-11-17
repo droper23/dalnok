@@ -44,3 +44,6 @@ Type `0x20` (80 bytes) appears to be MIDI-region placement.
 
 **Next step to verify:** export one project via Logic's File ▸ Export ▸ Project to Final Cut Pro XML
 and compare its clip positions with this decoder's output.
+
+## Controlled Logic export (2026-11-16)
+A disposable Logic 12.2 project using the macOS Submarine sample and its FCPXML export both imported as one track and one clip with no missing media. Logic rendered a separate 65,536-frame audio file in the XML export, shorter than the original region, so this comparison does not establish sample-accurate placement or boundaries. The audio-only project also contains type 0x20 events: counting every such event as a MIDI region is not supported by this evidence. More controlled projects with known nonzero offsets, trims and tracks are needed.

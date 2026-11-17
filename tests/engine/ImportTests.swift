@@ -293,6 +293,29 @@ func skipped(_ r: [String: Any], _ key: String) -> Int { (r["skipped"] as? [Stri
                 "\(c.map { ($0.start, $0.offset, $0.length) })")
     }
 
+    @Test func rejectsInvalidChunkAndNameLengths() throws {
+        let alt = tempDir().appendingPathComponent("Bad.logicx/Alternatives/000")
+        try FileManager.default.createDirectory(at: alt, withIntermediateDirectories: true)
+        let project = alt.deletingLastPathComponent().deletingLastPathComponent()
+        func checkInvalid(_ body: Data) throws {
+            var file = Data([0x23, 0x47, 0xc0, 0xab])
+            file.append(Data(repeating: 0, count: 12))
+            file.append(contentsOf: le(UInt64(body.count)))
+            file.append(body)
+            try file.write(to: alt.appendingPathComponent("ProjectData"))
+            #expect(throws: (any Error).self) { try importInto(project.path) }
+        }
+        var oversized = chunk("Song", Data())
+        oversized.replaceSubrange(28..<36, with: le(UInt64.max))
+        try checkInvalid(oversized)
+        var name = Data(repeating: 0, count: 11)
+        name.replaceSubrange(8..<10, with: le(UInt16(100)))
+        try checkInvalid(chunk("AuFl", name))
+        var region = Data(repeating: 0, count: 77)
+        region.replaceSubrange(74..<76, with: le(UInt16(100)))
+        try checkInvalid(chunk("AuRg", region))
+    }
+
     @Test func corruptDataFailsWithGuidance() throws {
         let pkg = tempDir().appendingPathComponent("Bad.logicx/Alternatives/000")
         try FileManager.default.createDirectory(at: pkg, withIntermediateDirectories: true)

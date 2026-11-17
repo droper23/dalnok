@@ -13,9 +13,7 @@ world-class UI, honest verification, and milestone check-ins.
 3. `09 - Decisions/ADR-0001…0007`, `06 - Design/UI Audit 2026-11-16.md`, `06 - Design/Track Colors.md`.
 
 ## Current objective (update this section each milestone)
-**Phase 2: recording.** Write ADR-0008 first (input via AUHAL or an aggregate device, a lock-free capture
-ring, a disk-writer thread, crash-safe finalization), then input selection, record-arm, monitoring, and a
-long-duration capture test. Ask the owner to connect the Scarlett.
+**Phase 2: recording.** ADR-0008 is written. Implement its bounded capture ring and disk writer with failure and recovery tests, then same-device AUHAL input, record-arm, monitoring, and long-duration capture. Scarlett hardware is needed for loopback and hardware validation.
 
 **Just finished (M8):** knobs are now a layer-based `RotaryKnob` (`Controls.swift`): a flat face and pointer
 at rest. On hover, drag or focus, the face shrinks (0.68×, 160 ms) to reveal a glowing ring in the track

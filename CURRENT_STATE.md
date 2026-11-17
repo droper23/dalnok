@@ -6,6 +6,9 @@ milestone: Phase 1 + Migration (M5) + Time stretch (M6) + UI pass 1 (M7) done; P
 # Current State
 
 ## Latest session
+- ADR-0008 defines the first recording path, failure handling, recovery, and verification gates. Capture is not implemented.
+- Logic import rejects oversized chunk/name lengths; its report no longer presents uncertain events as MIDI counts or XML as exact. Three Logic importer tests pass.
+- GUI self-test verifies Space starts and pauses playback, including with gain knob focus.
 - Track gain and pan use labeled rotary knobs. Gain halo follows post-fader peak level; knob interaction shows gain. Build and GUI self-test passed.
 - A synthetic Logic 12.2 project and its Final Cut Pro XML export both import (one track, one clip, no missing media). The XML export rendered and shortened the audio, so exact native placement remains unverified.
 - Space is assigned to Play / Pause and is covered by the typing and playback self-test. More shortcut coverage remains requested.
@@ -84,9 +87,7 @@ Phase 2: recording. Recording integrity outranks everything else. Time-stretch l
 [[ADR-0007 Time stretch]]) because real imports needed it.
 
 ## Next recommended action
-Write ADR-0008 (recording architecture): input via AUHAL or an aggregate device, a lock-free capture ring,
-a disk-writer thread, and crash-safe file finalization. Then input selection, record-arm, monitoring, and
-a long-duration capture test. Ask the owner to connect the Scarlett.
+Implement and test the capture ring and disk writer described in [[ADR-0008 Recording architecture]], then integrate same-device AUHAL input, record-arm, monitoring, and recovery. The Scarlett is needed for hardware and loopback validation.
 
 ## Open migration items
 - Verify Logic `.logicx` placement against a real Logic **Final Cut Pro XML export** of the same project
