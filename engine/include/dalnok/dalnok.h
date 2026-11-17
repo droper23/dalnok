@@ -28,7 +28,7 @@
 extern "C" {
 #endif
 
-#define DALNOK_API_VERSION 23
+#define DALNOK_API_VERSION 24
 
 typedef enum {
     DALNOK_OK = 0,
@@ -595,6 +595,11 @@ DalnokStatus dalnok_project_save(DalnokEngine *engine, const char *path, char *e
 /* Write a recovery snapshot without marking the current project saved or copying media.
  * Use a separate recovery path, never the primary project file. [control thread] */
 DalnokStatus dalnok_project_save_snapshot(DalnokEngine *engine, const char *path, char *err, size_t err_len);
+/* Export a DAWproject (.dawproject: ZIP with project.xml, metadata.xml and the audio): tracks, the arrangement
+ * (audio and MIDI clips in seconds, fades, time-stretch as warp markers), volume, pan, mute, solo, outputs and
+ * sends. `notes` receives one line per thing the format didn't carry (plug-ins, automation, ...). [control thread] */
+DalnokStatus dalnok_project_export_dawproject(DalnokEngine *engine, const char *path, char *notes, size_t notes_len,
+                                              char *err, size_t err_len);
 /* As dalnok_project_save; with copy_media, audio outside the project folder is
  * first copied into "<project folder>/Audio Files/" (identical files reused,
  * name clashes numbered) and the project then references the copies. */

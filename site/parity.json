@@ -1636,15 +1636,19 @@
       "why": "No lock-in. Move projects between DAWs.",
       "steps": [
         [
-          "Export DAWproject",
-          "todo"
+          "Export DAWproject (tracks, audio and MIDI clips, fades, warp-marker stretch, volume, pan, mute, solo, outputs, sends, audio files)",
+          "verified"
         ],
         [
-          "Import DAWproject",
+          "Import DAWproject (audio clips, fades, warp-marker stretch, mixer basics; MIDI, plug-ins, automation reported)",
+          "verified"
+        ],
+        [
+          "Plug-in states, automation and MIDI import through DAWproject",
           "todo"
         ]
       ],
-      "evidence": "Planned for Phase 6."
+      "evidence": "DawprojectTests: a generated project exports to a ZIP that /usr/bin/unzip lists and CRC-checks; importing it back restores clip positions, offsets, fades, a 0.5x stretch, track gain and pan, and renders the same audio within 1e-5; MIDI and submix routing are reported. Self-test: File > Export as DAWproject... and the export imports back with every audio clip. Times are written in seconds; one tempo and time signature."
     },
     {
       "id": "rtsafety",

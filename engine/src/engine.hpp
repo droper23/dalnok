@@ -356,6 +356,9 @@ public:
     // copyMedia: copy referenced audio not already inside the project folder into
     // "<project folder>/Audio Files/" and reference the copies.
     bool saveProject(const std::string &path, std::string &err, bool copyMedia = false, bool markSaved = true);
+    // DAWproject export: the arrangement, mixer (volume, pan, mute, solo, outputs, sends) and audio in one ZIP.
+    // `notes` lists what the format didn't carry (plug-ins, automation, launcher slots, ...).
+    bool exportDawproject(const std::string &path, std::vector<std::string> &notes, std::string &err);
     bool loadProject(const std::string &path, int32_t &missing, std::string &err);
     // Two-phase load: prepare (parse + decode, any thread) then apply (control thread).
     struct PreparedProject;

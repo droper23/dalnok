@@ -63,7 +63,7 @@ struct Result {
     Report report;
 };
 
-/// Detects the format by extension/contents: .rpp, .als, .logicx, .fcpxml/.fcpxmld, or a folder of stems.
+/// Detects the format by extension/contents: .rpp, .als, .logicx, .fcpxml/.fcpxmld, .dawproject, or a folder of stems.
 bool importProject(const std::string &path, Result &out, std::string &err);
 
 bool importReaper(const std::string &path, Result &out, std::string &err);
@@ -71,6 +71,7 @@ bool importAbleton(const std::string &path, Result &out, std::string &err);
 bool importStems(const std::string &folder, Result &out, std::string &err);
 bool importFcpxml(const std::string &path, Result &out, std::string &err);
 bool importLogic(const std::string &path, Result &out, std::string &err);
+bool importDawproject(const std::string &path, Result &out, std::string &err);
 
 float linearToDb(double v);
 

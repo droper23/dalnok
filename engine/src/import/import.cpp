@@ -212,8 +212,9 @@ bool importProject(const std::string &path, Result &out, std::string &err) {
     if (ext == ".als") return importAbleton(path, out, err);
     if (ext == ".logicx") return importLogic(path, out, err);
     if (ext == ".fcpxml" || ext == ".fcpxmld") return importFcpxml(path, out, err);
+    if (ext == ".dawproject") return importDawproject(path, out, err);
     if (fs::is_directory(p, ec)) return importStems(path, out, err);
-    err = "unsupported project type '" + ext + "' (supported: .rpp, .als, .logicx, .fcpxml, or a folder of stems)";
+    err = "unsupported project type '" + ext + "' (supported: .rpp, .als, .logicx, .fcpxml, .dawproject, or a folder of stems)";
     return false;
 }
 

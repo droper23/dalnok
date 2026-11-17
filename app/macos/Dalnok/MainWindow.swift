@@ -91,7 +91,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     lazy var conceptGuide = ConceptGuideController()
     lazy var welcome = WelcomeController(main: self)
     private(set) var lastImportReport: ImportReport?
-    static let foreignExtensions: Set<String> = ["rpp", "als", "logicx", "fcpxml", "fcpxmld"]
+    static let foreignExtensions: Set<String> = ["rpp", "als", "logicx", "fcpxml", "fcpxmld", "dawproject"]
     private var tickCount = 0
     let transport = TransportBar()
     let headers: TrackHeaderColumn
@@ -1037,6 +1037,30 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         }
     }
 
+    /// File ▸ Export as DAWproject…: the arrangement and mixer for other DAWs (Bitwig, Studio One, Cubase, ...).
+    @objc func exportDawproject(_ sender: Any?) {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [UTType(filenameExtension: "dawproject") ?? .data]
+        panel.nameFieldStringValue = (session.projectURL?.deletingPathExtension().lastPathComponent ?? "Untitled") + ".dawproject"
+        panel.message = "Tracks, clips, fades, volume, pan, mute, solo, routing and the audio, for other DAWs."
+        panel.beginSheetModal(for: window!) { [weak self] resp in
+            guard resp == .OK, let url = panel.url else { return }
+            MainActor.assumeIsolated { () -> Void in self?.exportDawproject(to: url) }
+        }
+    }
+
+    @discardableResult
+    func exportDawproject(to url: URL) -> Bool {
+        var notes = [CChar](repeating: 0, count: 8192), err = [CChar](repeating: 0, count: 1024)
+        guard dalnok_project_export_dawproject(session.engine.handle, url.path, &notes, notes.count, &err, err.count) == DALNOK_OK else {
+            presentError(title: "Export failed", EngineError(description: String(cString: err)))
+            return false
+        }
+        let left = String(cString: notes).split(separator: "\n")
+        flash(left.isEmpty ? "Exported \(url.lastPathComponent)" : "Exported \(url.lastPathComponent); not carried: " + left.joined(separator: "; "))
+        return true
+    }
+
     @discardableResult
     func exportMix(to url: URL) -> Bool {
         do {
@@ -1471,7 +1495,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             return true
         case #selector(relinkMissingAudio(_:)):
             return !session.offlineMedia.isEmpty
-        case #selector(exportMix(_:)):
+        case #selector(exportMix(_:)), #selector(exportDawproject(_:)):
             return session.length > 0
         default:
             return true

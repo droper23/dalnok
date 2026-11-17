@@ -22,6 +22,7 @@ usage:
   dalnok-cli play <audio-file> [--seconds N] [--churn]   live playback on the default device
   dalnok-cli render <audio-file> <out.wav> [--bits 16|24|32]
   dalnok-cli render-project <project.dalnok> <out.wav> [--bits 16|24|32]
+  dalnok-cli export-dawproject <project.dalnok> <out.dawproject>
   dalnok-cli recover-capture <spool> <new-output.wav>
   dalnok-cli command <project.dalnok> <command> [args-json] [--save]   run a catalog command
   dalnok-cli commands                                                  list the command catalog
@@ -332,6 +333,15 @@ case "render-project":
     guard dalnok_render_to_wav(engine, args[2], 0, frames, Int32(opt("--bits") ?? "24") ?? 24, &err, 512) == DALNOK_OK
     else { fail(cstr(err)) }
     print("rendered \(frames) frames to \(args[2])")
+    dalnok_engine_destroy(engine)
+
+case "export-dawproject":
+    guard args.count >= 3 else { print(usage); exit(2) }
+    let engine = openProject(args[1])
+    var notes = [CChar](repeating: 0, count: 8192), err = [CChar](repeating: 0, count: 512)
+    guard dalnok_project_export_dawproject(engine, args[2], &notes, notes.count, &err, 512) == DALNOK_OK else { fail(cstr(err)) }
+    print("exported \(args[2])")
+    for line in cstr(notes).split(separator: "\n") { print("  not carried: \(line)") }
     dalnok_engine_destroy(engine)
 
 case "commands":

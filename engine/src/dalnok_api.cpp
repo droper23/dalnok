@@ -944,6 +944,17 @@ DalnokStatus dalnok_project_save(DalnokEngine *e, const char *path, char *err, s
     }
     return DALNOK_OK;
 }
+DalnokStatus dalnok_project_export_dawproject(DalnokEngine *e, const char *path, char *notes, size_t notes_len, char *err,
+                                              size_t err_len) {
+    if (!e || !path) return DALNOK_ERR_INVALID_ARG;
+    std::string msg, text;
+    std::vector<std::string> lines;
+    const bool ok = e->impl.exportDawproject(path, lines, msg);
+    for (const auto &l : lines) text += l + "\n";
+    copyOut(notes, notes_len, text);
+    if (!ok) { copyOut(err, err_len, msg); return DALNOK_ERR_IO; }
+    return DALNOK_OK;
+}
 DalnokStatus dalnok_project_save_snapshot(DalnokEngine *e, const char *path, char *err, size_t err_len) {
     if (!e || !path) return DALNOK_ERR_INVALID_ARG;
     std::string msg;

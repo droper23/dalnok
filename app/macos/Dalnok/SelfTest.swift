@@ -421,6 +421,17 @@ final class SelfTest {
         check(loaded && dalnok_media_frames(media) == s.length && dalnok_media_channels(media) == 2,
               "exported WAV decodes to \(dalnok_media_frames(media)) frames (session \(s.length)), stereo")
         if let media { dalnok_media_release(media) }
+        // DAWproject: the File menu offers it; the export imports back with the same clips.
+        if let item = menuItem("Export as DAWproject…") { item.menu?.update(); check(item.isEnabled, "File > Export as DAWproject… is enabled") }
+        else { check(false, "File > Export as DAWproject… exists") }
+        let dawp = workdir.appendingPathComponent("selftest.dawproject")
+        check(w.exportDawproject(to: dawp), "export DAWproject (\(w.lastFlashText))")
+        var report = [CChar](repeating: 0, count: 8192), derr = [CChar](repeating: 0, count: 512)
+        let ok = dalnok_project_import_report(dawp.path, &report, report.count, &derr, derr.count) == DALNOK_OK
+        let clipsBack = (try? JSONSerialization.jsonObject(with: Data(String(cString: report).utf8)) as? [String: Any])
+            .flatMap { ($0["imported"] as? [String: Any])?["clips"] as? Int } ?? -1
+        let arrangementClips = s.tracks.flatMap(\.clips).filter { !$0.isMidi && !$0.offline }.count
+        check(ok && clipsBack == arrangementClips, "the DAWproject imports back with its \(arrangementClips) audio clips (\(clipsBack), \(String(cString: derr)))")
 
         // Exercise recovery snapshots without writing into the user's recovery folder.
         if let track = s.tracks.first {
