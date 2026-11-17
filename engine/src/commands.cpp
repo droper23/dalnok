@@ -159,6 +159,12 @@ const CommandDef kCommands[] = {
          }
          return status(e.setTempoMap(std::move(tempo), std::move(meters), err), err);
      }},
+    {"transport.setPunch", "Punch In/Out", "{on, in?, out? (frames)}", [](ARGS) {
+         bool on; int64_t in, out;
+         e.punch(on, in, out);
+         return status(e.setPunch(a.getBool("on", true), static_cast<int64_t>(a.getNumber("in", on ? static_cast<double>(in) : 0)),
+                                  static_cast<int64_t>(a.getNumber("out", on ? static_cast<double>(out) : 0)), err), err);
+     }},
     {"transport.setCycle", "Cycle", "{on, start?, end? (frames)}", [](ARGS) {
          bool on; int64_t start, end;
          e.cycle(on, start, end);

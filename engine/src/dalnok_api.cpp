@@ -384,6 +384,19 @@ DalnokStatus dalnok_tempo_set(DalnokEngine *e, double bpm, int32_t num, int32_t 
     return e ? statusFor(e->impl.setTempo(bpm, num, den, err), err) : DALNOK_ERR_INVALID_ARG;
 }
 void dalnok_metronome_set(DalnokEngine *e, bool on, float level) { if (e) e->impl.setMetronome(on, level); }
+void dalnok_metronome_count_in(DalnokEngine *e, int64_t until) { if (e) e->impl.setCountIn(until); }
+DalnokStatus dalnok_record_set_punch(DalnokEngine *e, bool on, int64_t in, int64_t out) {
+    std::string err;
+    return e ? statusFor(e->impl.setPunch(on, in, out, err), err) : DALNOK_ERR_INVALID_ARG;
+}
+void dalnok_record_punch(const DalnokEngine *e, bool *on, int64_t *in, int64_t *out) {
+    bool o = false;
+    int64_t a = 0, b = 0;
+    if (e) e->impl.punch(o, a, b);
+    if (on) *on = o;
+    if (in) *in = o ? a : 0;
+    if (out) *out = o ? b : 0;
+}
 DalnokStatus dalnok_cycle_set(DalnokEngine *e, bool on, int64_t start, int64_t end) {
     std::string err;
     return e ? statusFor(e->impl.setCycle(on, start, end, err), err) : DALNOK_ERR_INVALID_ARG;

@@ -518,15 +518,15 @@
           "todo"
         ],
         [
-          "Punch in and out",
-          "todo"
+          "Punch in and out (autopunch range; sample-accurate)",
+          "verified"
         ],
         [
           "Separate input and output devices; multiple armed audio tracks",
           "todo"
         ]
       ],
-      "evidence": "RecordingTests: bit-exact take contents, latency placement, undo/redo, save and reopen, interrupted takes, journal recovery and monitoring on the simulated input. scripts/ci/record-crash.sh kills a real-time take at three points and verifies every recovered sample. App self-test records through the real menus. Scarlett Solo 4th Gen at 44.1 kHz: 10 s and 120 s takes via dalnok-cli record, 0 dropped frames. Latency compensation uses the device's reported figures (1,186 frames on the Solo) and has not been checked with a loopback measurement; monitoring was not checked by ear."
+      "evidence": "RecordingTests: bit-exact take contents, latency placement, undo/redo, save and reopen, interrupted takes, journal recovery and monitoring on the simulated input. scripts/ci/record-crash.sh kills a real-time take at three points and verifies every recovered sample. App self-test records through the real menus. Scarlett Solo 4th Gen at 44.1 kHz: 10 s and 120 s takes via dalnok-cli record, 0 dropped frames. Latency compensation uses the device's reported figures (1,186 frames on the Solo) and has not been checked with a loopback measurement; monitoring was not checked by ear. PunchTests: a mid-block punch window records exactly its frames, count-in pre-roll starts the take at the record point (also when requested while playing), and count-in clicks stop at the record point; the self-test records with count-in and autopunch through the Transport menu."
     },
     {
       "id": "comping",
@@ -791,8 +791,8 @@
           "todo"
         ],
         [
-          "Cycle and loop region",
-          "todo"
+          "Cycle region: sample-exact loop playback, ruler band, C",
+          "verified"
         ]
       ],
       "evidence": "topClipWinsWhenOverlapping; screenshots.",
@@ -1343,8 +1343,8 @@
           "verified"
         ],
         [
-          "Count-in",
-          "todo"
+          "Count-in (one bar of clicks; take starts at the record point)",
+          "verified"
         ]
       ],
       "evidence": "MidiTests (tempo validation, persistence, quantize grid) and Metronome tests (click on the exact beat sample, 1.6 kHz accent / 1 kHz beat, silent in offline renders). The self-test edits tempo and meter in the control bar, checks the bars-and-beats position display and toggles the metronome, confirming it reaches the output past the end of the session. Offline-render MIDI tests verify tempo edits, split-note continuity, undo and reopening. TempoMaps tests: notes crossing a tempo change keep their beats (exact frames), clips after it move, quantize follows the map, the metronome clicks on the exact samples and accents the new bars across tempo and meter changes, maps survive save/reopen (also at another sample rate) and damaged maps are rejected. The self-test adds, edits and removes tempo and time-signature changes through the Transport menu and control bar, and checks the ruler, LCD and control bar follow the playhead. Tempo changes are steps (no ramps); importers bring in the first tempo only."
@@ -1573,8 +1573,8 @@
           "verified"
         ],
         [
-          "Export range or cycle selection",
-          "todo"
+          "Export the cycle range",
+          "verified"
         ],
         [
           "MP3, AAC, and FLAC export",

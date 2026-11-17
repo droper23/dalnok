@@ -66,6 +66,7 @@ Engine::Engine(double sampleRate) : sampleRate_(sampleRate) {
     if (sampleRate_ <= 0) sampleRate_ = 48000.0;
     midiParsers_[0] = std::make_unique<MidiParser>();
     midiInputs_[0].store(midiParsers_[0].get(), std::memory_order_release);
+    syncRuntimes(); // builds the tempo map: the first snapshot needs the metronome schedule
     commit();
 }
 
@@ -538,6 +539,13 @@ bool Engine::setTempoMap(std::vector<TempoPoint> tempo, std::vector<MeterChange>
         m.meters = std::move(meters);
         return true;
     });
+}
+
+bool Engine::setPunch(bool on, int64_t in, int64_t out, std::string &err) {
+    if (on && (in < 0 || out <= in)) return fail(err, "punch needs 0 <= in < out");
+    punchIn_.store(on ? in : INT64_MIN, std::memory_order_relaxed);
+    punchOut_.store(on ? out : INT64_MAX, std::memory_order_relaxed);
+    return true;
 }
 
 bool Engine::setCycle(bool on, int64_t start, int64_t end, std::string &err) {
@@ -1126,19 +1134,24 @@ void Engine::duplexCallback(void *ctx, float *left, float *right, const float *i
         return;
     }
     // In a recording session only blocks where the transport rolled continuously belong to the take.
-    const bool take = !self->recordSession_.load(std::memory_order_acquire) || self->rtRecordingBlock_;
-    if (take && self->captureRT_) self->captureRT_->push(input, static_cast<uint32_t>(frames));
+    const bool session = self->recordSession_.load(std::memory_order_acquire);
+    if (self->captureRT_) {
+        if (!session) self->captureRT_->push(input, static_cast<uint32_t>(frames));
+        else if (self->rtRecordingBlock_) // only the part of the block inside the punch window
+            self->captureRT_->push(input + self->rtRecordOffset_, static_cast<uint32_t>(self->rtRecordCount_));
+    }
     if (self->monitoring_.load(std::memory_order_relaxed))
         for (int i = 0; i < frames; ++i) { left[i] += input[i]; right[i] += input[i]; }
 }
 
 void Engine::renderClick(float *left, float *right, int frames, int64_t pos) DALNOK_NONBLOCKING {
     const bool on = metronome_.load(std::memory_order_relaxed);
+    const int64_t until = countInUntil_.load(std::memory_order_relaxed); // count-in clicks even with the metronome off
     const float level = metronomeLevel_.load(std::memory_order_relaxed), decay = clickDecay_.load(std::memory_order_relaxed);
     bool accent = false;
-    int64_t next = on && current_ ? nextClick(*current_, pos, accent) : INT64_MAX;
+    int64_t next = (on || pos < until) && current_ ? nextClick(*current_, pos, accent) : INT64_MAX;
     for (int i = 0; i < frames; ++i) {
-        if (on && pos + i == next) { // start a click: sine via a two-term recursion, no libm on this thread
+        if ((on || pos + i < until) && pos + i == next) { // start a click: sine via a two-term recursion, no libm on this thread
             clickCoefNow_ = accent ? clickAccentCoef_.load(std::memory_order_relaxed) : clickCoef_.load(std::memory_order_relaxed);
             clickY1_ = 0;
             clickY2_ = -(accent ? clickAccentSin_.load(std::memory_order_relaxed) : clickSin_.load(std::memory_order_relaxed));
@@ -1264,7 +1277,8 @@ void Engine::process(float *left, float *right, int frames) DALNOK_NONBLOCKING {
             transportGain_ = g;
         }
         if (current_) renderLiveInput(*current_, n, l, r, scratch_, anySolo, false);
-        if (play && pendingSeek_ < 0 && (clickLeft_ > 0 || metronome_.load(std::memory_order_relaxed)))
+        if (play && pendingSeek_ < 0 && (clickLeft_ > 0 || metronome_.load(std::memory_order_relaxed) ||
+                                         rtPosition_ < countInUntil_.load(std::memory_order_relaxed)))
             renderClick(l, r, n, rtPosition_);
         float pl = 0, pr = 0;
         for (int i = 0; i < n; ++i) {
@@ -1282,21 +1296,36 @@ void Engine::process(float *left, float *right, int frames) DALNOK_NONBLOCKING {
     const uint32_t take = recordTake_.load(std::memory_order_acquire);
     if (take != rtTake_) { rtTake_ = take; rtRecordNext_ = -1; }
     rtRecordingBlock_ = false;
+    rtRecordOffset_ = 0;
+    rtRecordCount_ = frames;
     if (recordArmed_.load(std::memory_order_acquire) && !recordBroken_.load(std::memory_order_relaxed)) {
-        if (rtPosition_ - before == frames) {
+        // Punch window: only frames in [in, out) belong to the take (whole blocks without punch).
+        const int64_t in = punchIn_.load(std::memory_order_relaxed), out = punchOut_.load(std::memory_order_relaxed);
+        const bool finished = rtRecordNext_ >= 0 && rtRecordNext_ >= out; // past punch-out: nothing more to check
+        // A block that ends with a seek still pending is a fade-out before a jump (e.g. count-in pre-roll
+        // requested while playing): it never starts a take, and during a take the jump breaks it below.
+        if (!finished && rtPosition_ - before == frames && pendingSeek_ < 0) {
             const int64_t blockStart = rtPosition_ - frames;
-            if (rtRecordNext_ < 0) recordStart_.store(blockStart, std::memory_order_release);
-            if (rtRecordNext_ >= 0 && blockStart != rtRecordNext_) recordBroken_.store(true, std::memory_order_release);
-            else { rtRecordingBlock_ = true; recordEnd_.store(rtPosition_, std::memory_order_release); }
-            rtRecordNext_ = rtPosition_;
-        } else if (rtRecordNext_ >= 0) {
+            const int64_t from = std::max(blockStart, in), to = std::min(rtPosition_, out);
+            if (to > from) {
+                if (rtRecordNext_ < 0) recordStart_.store(from, std::memory_order_release);
+                if (rtRecordNext_ >= 0 && from != rtRecordNext_) recordBroken_.store(true, std::memory_order_release);
+                else {
+                    rtRecordingBlock_ = true;
+                    rtRecordOffset_ = static_cast<int>(from - blockStart);
+                    rtRecordCount_ = static_cast<int>(to - from);
+                    recordEnd_.store(to, std::memory_order_release);
+                }
+                rtRecordNext_ = to;
+            }
+        } else if (!finished && rtRecordNext_ >= 0) {
             recordBroken_.store(true, std::memory_order_release); // paused or sought during the take
         }
     }
     if (rtRecordingBlock_ && recordMidi_.load(std::memory_order_acquire)) {
         for (int i = 0; i < rtMidiCount_; ++i) {
             RecordedMidi e = rtMidiEvents_[i];
-            e.pos = rtPosition_ - frames;
+            e.pos = rtPosition_ - frames + rtRecordOffset_; // block-accurate, clamped into the punch window
             if (!midiRecordQueue_.push(e)) midiRecordDropped_.fetch_add(1, std::memory_order_relaxed);
         }
     }

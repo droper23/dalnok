@@ -64,6 +64,9 @@ final class TimelineView: NSView {
     private struct RulerDrag { enum Kind { case create, move, start, end }; var kind: Kind; let x: CGFloat; let start: Int64; let end: Int64; var moved = false }
     private var rulerDrag: RulerDrag?
     private var scrubbing = false
+    /// Autopunch range (red, lower ruler); drawn while `showPunch`.
+    var punchRange: (Int64, Int64)? { didSet { needsDisplay = true } }
+    var showPunch = false { didSet { needsDisplay = true } }
     private let edgeWidth: CGFloat = 7
 
     init(session: Session) {
@@ -416,6 +419,7 @@ final class TimelineView: NSView {
         ctx.fill(CGRect(x: 0, y: Theme.rulerHeight - 1, width: bounds.width, height: 1))
 
         drawCycle(ctx)
+        drawPunch(ctx)
         let attrs: [NSAttributedString.Key: Any] = [.font: Theme.mono(10), .foregroundColor: Theme.textDim]
         let px = 1 / scale
         let step = gridStepFrames()
@@ -461,6 +465,17 @@ final class TimelineView: NSView {
             ctx.setFillColor(Theme.cycle.withAlphaComponent(0.035).cgColor)
             ctx.fill(CGRect(x: a, y: Theme.rulerHeight, width: b - a, height: bounds.height - Theme.rulerHeight))
         }
+    }
+
+    /// Autopunch: a red bar along the bottom of the ruler with a faint wash over the lanes.
+    private func drawPunch(_ ctx: CGContext) {
+        guard showPunch, let p = punchRange else { return }
+        let a = xPos(forFrame: Double(p.0)), b = xPos(forFrame: Double(p.1))
+        guard b > 0, a < bounds.width else { return }
+        ctx.setFillColor(Theme.recordOn.withAlphaComponent(0.85).cgColor)
+        ctx.fill(CGRect(x: a, y: Theme.rulerHeight - 4, width: b - a, height: 3))
+        ctx.setFillColor(Theme.recordOn.withAlphaComponent(0.05).cgColor)
+        ctx.fill(CGRect(x: a, y: Theme.rulerHeight, width: b - a, height: bounds.height - Theme.rulerHeight))
     }
 
     /// Tempo and meter changes after the start, as small flags on the ruler (the first values live in the control bar).

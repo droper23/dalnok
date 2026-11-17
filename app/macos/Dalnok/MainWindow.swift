@@ -1129,6 +1129,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         case #selector(toggleCycle(_:)):
             item.state = session.cycle.on ? .on : .off
             return true
+        case #selector(toggleCountIn(_:)):
+            item.state = Self.countIn ? .on : .off
+            return !session.engine.isRecording
+        case #selector(toggleAutopunch(_:)):
+            item.state = Self.autopunch ? .on : .off
+            return !session.engine.isRecording
         case #selector(removeTempoChange(_:)):
             return tempoSegmentAtPlayhead().tempo > 0
         case #selector(removeMeterChange(_:)):

@@ -145,9 +145,18 @@ public:
         metronome_.store(on, std::memory_order_relaxed);
     }
     bool metronome() const { return metronome_.load(std::memory_order_relaxed); }
+    // Count-in: the click also sounds before `frame` (0 = off), whether or not the metronome is on.
+    void setCountIn(int64_t frame) { countInUntil_.store(std::max<int64_t>(0, frame), std::memory_order_relaxed); }
     // Cycle (loop) playback between two frames. Transport state saved with the project, not an undo step.
     // Playback that crosses `end` continues at `start` on the exact sample; recording plays straight through.
     bool setCycle(bool on, int64_t start, int64_t end, std::string &err);
+    // Punch: a take only records [in, out); the transport rolls before and after (pre- and post-roll).
+    // Used for punch in/out and for count-in (in = where recording was started). Not saved.
+    bool setPunch(bool on, int64_t in, int64_t out, std::string &err);
+    void punch(bool &on, int64_t &in, int64_t &out) const {
+        in = punchIn_.load(std::memory_order_relaxed); out = punchOut_.load(std::memory_order_relaxed);
+        on = in != INT64_MIN;
+    }
     void cycle(bool &on, int64_t &start, int64_t &end) const {
         on = cycleOn_.load(std::memory_order_relaxed);
         start = cycleStart_.load(std::memory_order_relaxed);
@@ -370,6 +379,7 @@ private:
     int64_t rtPosition_ = 0;
     int64_t rtRecordNext_ = -1;
     bool rtRecordingBlock_ = false;
+    int rtRecordOffset_ = 0, rtRecordCount_ = 0; // the part of this callback's block that belongs to the take
     uint32_t rtTake_ = 0;
     float clickY1_ = 0, clickY2_ = 0, clickCoefNow_ = 0, clickEnv_ = 0;
     int clickLeft_ = 0;
@@ -389,6 +399,8 @@ private:
     std::atomic<int64_t> seekRequest_{-1};
     std::atomic<int64_t> position_{0};
     std::atomic<bool> cycleOn_{false};
+    std::atomic<int64_t> punchIn_{INT64_MIN}, punchOut_{INT64_MAX};
+    std::atomic<int64_t> countInUntil_{0};
     std::atomic<int64_t> cycleStart_{0}, cycleEnd_{0};
 
     // Diagnostics (written by the audio thread).

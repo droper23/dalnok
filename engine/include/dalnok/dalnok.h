@@ -147,6 +147,11 @@ bool dalnok_record_active(const DalnokEngine *engine);
 bool dalnok_record_broken(const DalnokEngine *engine);
 /* Timeline frame where the current take began, or -1 before the transport rolls. */
 int64_t dalnok_record_start_frame(const DalnokEngine *engine);
+/* Punch: takes record only timeline frames [in, out) while the transport rolls before and after
+ * (count-in pre-roll and post-roll). Sample-accurate for audio, block-accurate for MIDI. Not saved.
+ * Call before dalnok_record_start; changing it during a take moves the window for the rest of the take. */
+DalnokStatus dalnok_record_set_punch(DalnokEngine *engine, bool enabled, int64_t in, int64_t out);
+void dalnok_record_punch(const DalnokEngine *engine, bool *enabled, int64_t *in, int64_t *out);
 /* Device-reported round trip (input + output) plus the manual offset. Not loopback-measured. */
 int64_t dalnok_record_latency(const DalnokEngine *engine);
 void dalnok_record_set_latency_offset(DalnokEngine *engine, int64_t frames);
@@ -541,6 +546,8 @@ int64_t dalnok_transport_position(const DalnokEngine *engine);  /* [any thread] 
  * rolls, also while recording. Live output only; never in offline renders or exports. */
 void dalnok_metronome_set(DalnokEngine *engine, bool on, float level);
 bool dalnok_metronome_enabled(const DalnokEngine *engine);
+/* Count-in: clicks also sound at positions before `until_frame` (0 = off), even with the metronome off. */
+void dalnok_metronome_count_in(DalnokEngine *engine, int64_t until_frame);
 
 /* Cycle (loop) playback: when playback crosses `end` it continues at `start` on the exact sample.
  * Recording plays straight through. Saved with the project; not an undo step. end - start >= 64;

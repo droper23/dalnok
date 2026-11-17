@@ -13,7 +13,7 @@ final class SelfTest {
     let workdir: URL
     private var failures = 0
     /// Preferences the test changes; all are restored at the end so a run never alters the owner's settings.
-    private static let restoredKeys = ["copyAudioOnSave", "comingFrom", "onboardingDone", "recordingInputUID", "rulerBarsAndBeats", "metronome", "showDevicePanel"]
+    private static let restoredKeys = ["copyAudioOnSave", "comingFrom", "onboardingDone", "recordingInputUID", "rulerBarsAndBeats", "metronome", "showDevicePanel", "countIn"]
     private let previousPreferences: [String: Any]
     private var w: MainWindowController { app.main }
     private var s: Session { app.session }
@@ -595,14 +595,46 @@ final class SelfTest {
         check(perform("Undo") && s.track(track)?.clips.count == clipsBefore, "undo removes the take")
         check(perform("Redo") && s.track(track)?.clips.count == clipsBefore + 1, "redo restores the take")
 
+        // Count-in: the transport starts a bar early with clicks; the take starts where Record was pressed.
+        let bar2 = Int64(s.beatToFrame(s.barToBeat(2)).rounded())
+        e.seek(bar2)
+        for _ in 0..<2 { dalnok_engine_pump(e.handle, &l, &r, 512) } // let the seek land (no input session yet)
+        let wasCountIn = MainWindowController.countIn
+        if !wasCountIn { check(perform("Count-In") && MainWindowController.countIn, "Transport > Count-In turns it on") }
+        check(perform("Record", exact: true) && e.isRecording, "count-in take starts")
+        let barLength = bar2 - Int64(s.beatToFrame(s.barToBeat(1)).rounded())
+        for _ in 0..<(Int(barLength) / 512 + 12) { dalnok_engine_pump_input(e.handle, input, &l, &r, 512) }
+        check(perform("Stop Recording", exact: true), "count-in take stops")
+        let counted = s.track(track)?.clips.last
+        let latency = dalnok_record_latency(e.handle)
+        check(counted.map { abs($0.start + latency - bar2) <= 1 } == true,
+              "count-in take starts at the record position (\(counted?.start ?? -1) + latency \(latency) vs \(bar2))")
+        if !wasCountIn { _ = perform("Count-In") }
+
+        // Autopunch: only the red range is kept.
+        let bar3 = Int64(s.beatToFrame(s.barToBeat(3)).rounded())
+        w.timeline.punchRange = (bar2 + 1_000, bar3)
+        if !MainWindowController.autopunch { check(perform("Autopunch") && MainWindowController.autopunch, "Transport > Autopunch turns it on") }
+        w.timeline.punchRange = (bar2 + 1_000, bar3)
+        e.seek(Int64(s.beatToFrame(s.barToBeat(1)).rounded()))
+        for _ in 0..<2 { dalnok_engine_pump(e.handle, &l, &r, 512) }
+        check(perform("Record", exact: true) && e.isRecording, "autopunch take starts")
+        for _ in 0..<(Int(bar3 - bar2) * 2 / 512 + 20) { dalnok_engine_pump_input(e.handle, input, &l, &r, 512) }
+        check(perform("Stop Recording", exact: true), "autopunch take stops")
+        let punched = s.track(track)?.clips.last
+        check(punched.map { abs($0.start + latency - (bar2 + 1_000)) <= 1 && abs($0.length - (bar3 - bar2 - 1_000)) <= 1 } == true,
+              "autopunch keeps exactly the punch range (\(punched?.start ?? -1), \(punched?.length ?? -1))")
+        _ = perform("Autopunch")
+
         // Interrupted take: pausing ends it with an explanation; nothing is placed.
+        let clipsBeforeInterrupted = s.track(track)?.clips.count ?? 0
         check(perform("Record", exact: true) && e.isRecording, "second take starts")
         for _ in 0..<5 { dalnok_engine_pump_input(e.handle, input, &l, &r, 512) }
         e.pause()
         for _ in 0..<3 { dalnok_engine_pump_input(e.handle, input, &l, &r, 512) }
         w.updateRecording()
         check(!e.isRecording && w.lastRecordingProblem == "The take was interrupted", "interrupted take is reported (\(w.lastRecordingProblem ?? "-"))")
-        check(s.track(track)?.clips.count == clipsBefore + 1, "interrupted take is not placed")
+        check(s.track(track)?.clips.count == clipsBeforeInterrupted, "interrupted take is not placed")
 
         // An unfinished take (as after a crash) is recovered through File > Recover Recordings.
         var spool = Data("DLNCAP01".utf8)

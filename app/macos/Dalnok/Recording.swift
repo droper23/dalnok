@@ -35,6 +35,37 @@ extension MainWindowController {
 
     // MARK: Record
 
+    static var countIn: Bool {
+        get { UserDefaults.standard.bool(forKey: "countIn") }
+        set { UserDefaults.standard.set(newValue, forKey: "countIn") }
+    }
+    static var autopunch = false
+
+    /// Transport ▸ Count-In (⇧K): recording starts one bar early with clicks; the take starts where you pressed Record.
+    @objc func toggleCountIn(_ sender: Any?) {
+        Self.countIn.toggle()
+        flash(Self.countIn ? "Count-in on: one bar of clicks before recording" : "Count-in off")
+    }
+    /// Transport ▸ Autopunch: record only inside the red punch range (from the cycle, the selection, or 4 bars).
+    @objc func toggleAutopunch(_ sender: Any?) {
+        Self.autopunch.toggle()
+        if Self.autopunch && timeline.punchRange == nil { setPunchToCycle(nil) }
+        timeline.showPunch = Self.autopunch
+        flash(Self.autopunch ? "Autopunch on: recording keeps only the red range" : "Autopunch off")
+    }
+    /// Transport ▸ Set Punch to Cycle: the punch range copies the cycle (or the selected clips, or 4 bars).
+    @objc func setPunchToCycle(_ sender: Any?) {
+        let c = session.cycle
+        if c.end > c.start { timeline.punchRange = (c.start, c.end) }
+        else {
+            setCycleToSelection(nil)
+            let n = session.cycle
+            timeline.punchRange = (n.start, n.end)
+            _ = session.setCycle(false, n.start, n.end)
+        }
+        if !Self.autopunch { Self.autopunch = true; timeline.showPunch = true }
+    }
+
     @objc func toggleRecord(_ sender: Any?) {
         session.engine.isRecording ? finishRecording() : beginRecording()
     }
@@ -88,19 +119,38 @@ extension MainWindowController {
                 }
             }
         }
+        // Autopunch records only the red punch range; count-in starts a bar before the record point with clicks.
+        let requested = e.position
+        var punchIn: Int64? = nil, punchOut = Int64.max / 4
+        if Self.autopunch, let p = timeline.punchRange { punchIn = p.0; punchOut = p.1 }
+        var countInEnd: Int64 = 0
+        if Self.countIn {
+            let recordAt = max(requested, punchIn ?? requested)
+            let beat = session.frameToBeat(Double(recordAt))
+            let b = session.bar(atBeat: beat)
+            let barBeats = session.barToBeat(b.bar + 1) - session.barToBeat(b.bar)
+            let preRoll = max(0, Int64(session.beatToFrame(beat - barBeats).rounded()))
+            if preRoll < recordAt { e.seek(preRoll); countInEnd = recordAt; punchIn = recordAt }
+        }
+        dalnok_record_set_punch(e.handle, punchIn != nil, punchIn ?? 0, punchIn != nil ? punchOut : 0)
+        dalnok_metronome_count_in(e.handle, countInEnd)
         do {
             try e.startRecording(input: uid, folder: audio == nil ? nil : recordingFolder)
         } catch {
+            dalnok_record_set_punch(e.handle, false, 0, 0); dalnok_metronome_count_in(e.handle, 0)
             return recordingProblem("Recording didn’t start", "\(error)")
         }
         transport.setRecording(true)
         let names = session.tracks.filter(\.armed).map(\.name).joined(separator: " and ")
-        flash("● Recording \(names)")
+        flash(countInEnd > 0 ? "● Count-in… recording \(names) from \(timeline.positionText(countInEnd))"
+              : punchIn != nil ? "● Recording \(names) between the punch markers" : "● Recording \(names)")
     }
 
     func finishRecording() {
         let e = session.engine
         let (result, problem) = e.stopRecording()
+        dalnok_record_set_punch(e.handle, false, 0, 0)
+        dalnok_metronome_count_in(e.handle, 0)
         transport.setRecording(false)
         timeline.recording = nil
         session.refresh()

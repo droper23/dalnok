@@ -169,7 +169,9 @@ bool Engine::stopRecording(RecordResult &r, std::string &err) {
         r.journal = recordJournal_;
         audioOK = captureOK && !broken && r.start >= 0;
         if (!captureOK) problems.push_back(captureErr);
-        if (r.start < 0) problems.push_back("the transport never started, so nothing was recorded");
+        if (r.start < 0)
+            problems.push_back(punchIn_.load() != INT64_MIN ? "playback never reached the punch-in point, so nothing was recorded"
+                                                            : "the transport never started, so nothing was recorded");
         uint64_t frames = 0;
         uint32_t trailing = 0;
         std::string convertErr;
