@@ -14,6 +14,8 @@ jobs:
         run: swift build
       - name: Engine tests
         run: swift test
+      - name: Tempo map conversion tests
+        run: scripts/ci/tempo-map.sh
       - name: Capture buffer tests
         run: scripts/ci/capture-ring.sh
       - name: MIDI parser tests

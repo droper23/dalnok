@@ -1,6 +1,9 @@
 # Changelog
 
 ## [Unreleased]
+### Changed (2026-11-16, tempo-map groundwork)
+- Added an internal, tested beat/frame converter for piecewise-constant tempos. Tempo maps are not yet exposed or used by playback. Piano-roll beat lines now follow the meter denominator.
+
 ### Fixed (2026-11-16, MIDI group editing)
 - Moving or transposing multiple notes now clamps the whole selection at timeline and pitch boundaries, preserving spacing instead of collapsing notes.
 

@@ -852,6 +852,7 @@ final class SelfTest {
         let eighth = e.sampleRate * 60 / 96 / 2
         check(w.timeline.positionText(Int64(eighth * 2)) == "1.3.1.000" &&
               w.timeline.barsLabel(eighth * 2, wholeBars: false) == "1.3", "3/8 ruler and LCD count eighth-note beats")
+        check(abs(w.pianoRoll.roll.meterBeatFrames - eighth) < 1e-6, "3/8 piano roll uses eighth-note beat lines")
         _ = s.setTempo(96, 3, 4)
         check(perform("Bars and Beats Ruler") && !TimelineView.barsAndBeats, "View > Bars and Beats Ruler toggles to time")
         try? await Task.sleep(for: .milliseconds(100))

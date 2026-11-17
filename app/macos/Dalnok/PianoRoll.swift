@@ -105,6 +105,7 @@ final class PianoRollView: NSView {
     func pitch(atY y: CGFloat) -> Int { max(0, min(127, 127 - Int(floor((y - grid.minY + scrollY) / rowHeight)))) }
     var framesPerBeat: Double { session.engine.sampleRate * 60 / session.bpm }
     var beatsPerBar: Double { let m = session.meter; return Double(m.0) * 4 / Double(m.1) }
+    var meterBeatFrames: Double { framesPerBeat * 4 / Double(session.meter.1) }
     /// Snap unit: a 16th note, or an 8th / beat when zoomed out.
     var snapFrames: Double {
         let sixteenth = framesPerBeat / 4
@@ -193,8 +194,9 @@ final class PianoRollView: NSView {
     }
 
     private func drawBeatLines(_ ctx: CGContext, from top: CGFloat, height: CGFloat) {
-        let beat = framesPerBeat, bar = beat * beatsPerBar
-        let step = beat / 4 / framesPerPoint >= 8 ? beat / 4 : (beat / framesPerPoint >= 8 ? beat : bar)
+        let beat = meterBeatFrames, bar = framesPerBeat * beatsPerBar
+        let sixteenth = framesPerBeat / 4
+        let step = sixteenth / framesPerPoint >= 8 ? sixteenth : (beat / framesPerPoint >= 8 ? beat : bar)
         var f = (frame(atX: grid.minX) / step).rounded(.down) * step
         while x(f) <= grid.maxX {
             let isBar = abs((f / bar).rounded() * bar - f) < 1, isBeat = abs((f / beat).rounded() * beat - f) < 1

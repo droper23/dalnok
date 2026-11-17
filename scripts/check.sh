@@ -7,6 +7,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 swift build
 swift test
+scripts/ci/tempo-map.sh
 scripts/ci/capture-ring.sh
 scripts/ci/midi-parser.sh
 scripts/ci/duplex-probe.sh

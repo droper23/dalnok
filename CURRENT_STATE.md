@@ -5,7 +5,11 @@ milestone: M11 VST3 hosting (ADR-0009 stage 3) done; editors, parameters and AU 
 ---
 # Current State
 
-## Latest session (MIDI group editing)
+## Latest session (tempo-map groundwork)
+- Added an internal validated piecewise-constant beat/frame converter with negative-origin support and generated native tests; it is not yet connected to the model, playback, MIDI, recording or UI. Tempo and meter maps remain unimplemented. Piano-roll beat lines now follow the meter denominator; GUI self-test passes.
+- Next: design and implement canonical beat-domain MIDI, project migration and tempo-map persistence, then update playback, metronome, quantize, recording and UI as one consistent feature. Keep audio time-locked.
+
+## Earlier (MIDI group editing)
 - Keyboard and drag movement clamp selected notes as a group at timeline and pitch limits; the GUI self-test verifies spacing and passes.
 
 ## Earlier (MIDI persistence validation)
