@@ -30,6 +30,29 @@ enum Analog {
         return NSColor(patternImage: image)
     }()
 
+    /// Walnut end cheeks (console side panels): vertical grain with darker streaks, as a pattern color.
+    static let walnut: NSColor = {
+        let w = 16, h = 256
+        let image = NSImage(size: NSSize(width: w, height: h), flipped: false) { rect in
+            Theme.hex(0x4A2E1C).setFill(); rect.fill()
+            var seed: UInt32 = 0x9E37_79B9
+            func rnd() -> CGFloat { seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5; return CGFloat(seed % 1000) / 1000 }
+            for x in 0..<w { // long grain lines that wander slightly
+                let dark = rnd() > 0.6
+                NSColor(red: dark ? 0.16 : 0.42, green: dark ? 0.09 : 0.26, blue: dark ? 0.05 : 0.15, alpha: 0.25 + rnd() * 0.3).setFill()
+                var y: CGFloat = 0
+                while y < CGFloat(h) {
+                    let len = 20 + rnd() * 60
+                    NSRect(x: CGFloat(x) + (rnd() > 0.85 ? 0.5 : 0), y: y, width: 1, height: len).fill()
+                    y += len + rnd() * 6
+                }
+            }
+            return true
+        }
+        return NSColor(patternImage: image)
+    }()
+    static let cheekWidth: CGFloat = 12
+
     /// A slotted screw head, as on a rack ear or faceplate corner.
     static func screw(_ ctx: CGContext, at c: CGPoint, radius r: CGFloat = 3.5, angle: CGFloat = 0.6) {
         ctx.saveGState()

@@ -48,8 +48,9 @@ final class MixerPanel: NSView {
         addBusButton.action = #selector(addBus)
         addBusButton.toolTip = "New bus (an aux track that mixes what you route or send to it)"
         NSLayoutConstraint.activate([
-            scroll.leadingAnchor.constraint(equalTo: leadingAnchor), scroll.trailingAnchor.constraint(equalTo: master.leadingAnchor),
-            master.trailingAnchor.constraint(equalTo: trailingAnchor), master.topAnchor.constraint(equalTo: topAnchor, constant: 9),
+            scroll.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Analog.on ? Analog.cheekWidth : 0),
+            scroll.trailingAnchor.constraint(equalTo: master.leadingAnchor),
+            master.trailingAnchor.constraint(equalTo: trailingAnchor, constant: Analog.on ? -Analog.cheekWidth : 0), master.topAnchor.constraint(equalTo: topAnchor, constant: 9),
             master.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -9),
             scroll.topAnchor.constraint(equalTo: topAnchor, constant: 1), scroll.bottomAnchor.constraint(equalTo: bottomAnchor),
             stack.leadingAnchor.constraint(equalTo: doc.leadingAnchor), stack.topAnchor.constraint(equalTo: doc.topAnchor),
@@ -63,6 +64,14 @@ final class MixerPanel: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         (Analog.on ? Theme.hex(0x15100C) : Theme.panel).setFill(); bounds.fill()
+        if Analog.on { // walnut end cheeks with a rounded, lit inner edge
+            let w = Analog.cheekWidth
+            for r in [NSRect(x: 0, y: 0, width: w, height: bounds.height), NSRect(x: bounds.width - w, y: 0, width: w, height: bounds.height)] {
+                Analog.walnut.setFill(); r.fill()
+                NSColor(white: 1, alpha: 0.08).setFill(); NSRect(x: r.minX == 0 ? r.maxX - 2 : r.minX, y: 0, width: 1, height: r.height).fill()
+                NSColor(white: 0, alpha: 0.5).setFill(); NSRect(x: r.minX == 0 ? r.maxX - 1 : r.minX + 1, y: 0, width: 1, height: r.height).fill()
+            }
+        }
         Theme.separator.setFill(); NSRect(x: 0, y: bounds.height - 1, width: bounds.width, height: 1).fill()
     }
 
