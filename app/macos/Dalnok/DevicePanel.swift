@@ -14,6 +14,8 @@ final class DevicePanel: NSView {
     private(set) var devices: [DeviceView] = []
     private let scroll = NSScrollView()
     private let stack = NSStackView()
+    private let emptyCard = NSView()
+    private let emptyTitle = NSTextField(labelWithString: "DEVICE CHAIN")
     private let empty = NSTextField(labelWithString: "")
     private let addButton = NSButton(title: "Add Plug-in…", target: nil, action: nil)
     private lazy var addTile: NSButton = {
@@ -52,11 +54,21 @@ final class DevicePanel: NSView {
         scroll.hasHorizontalScroller = true
         scroll.drawsBackground = false
         scroll.autohidesScrollers = true
+        emptyCard.wantsLayer = true
+        emptyCard.layer?.backgroundColor = (Analog.on ? Theme.hex(0x211914) : Theme.hex(0x202228)).cgColor
+        emptyCard.layer?.borderColor = Theme.hairline.cgColor
+        emptyCard.layer?.borderWidth = 1
+        emptyCard.layer?.cornerRadius = 6
+        emptyTitle.font = Theme.ui(10, .semibold)
+        emptyTitle.textColor = Theme.textDim
         empty.font = Theme.ui(12)
         empty.textColor = Theme.textDim
+        empty.maximumNumberOfLines = 2
+        empty.lineBreakMode = .byTruncatingTail
         addButton.target = self
         addButton.action = #selector(addTapped)
-        for v in [scroll, empty, addButton] as [NSView] { v.translatesAutoresizingMaskIntoConstraints = false; addSubview(v) }
+        for v in [scroll, emptyCard] as [NSView] { v.translatesAutoresizingMaskIntoConstraints = false; addSubview(v) }
+        for v in [emptyTitle, empty, addButton] as [NSView] { v.translatesAutoresizingMaskIntoConstraints = false; emptyCard.addSubview(v) }
         NSLayoutConstraint.activate([
             scroll.leadingAnchor.constraint(equalTo: leadingAnchor), scroll.trailingAnchor.constraint(equalTo: trailingAnchor),
             scroll.topAnchor.constraint(equalTo: topAnchor, constant: 1), scroll.bottomAnchor.constraint(equalTo: bottomAnchor),
@@ -64,8 +76,16 @@ final class DevicePanel: NSView {
             doc.heightAnchor.constraint(equalTo: scroll.contentView.heightAnchor),
             doc.widthAnchor.constraint(greaterThanOrEqualTo: stack.widthAnchor),
             doc.widthAnchor.constraint(greaterThanOrEqualTo: scroll.contentView.widthAnchor),
-            empty.centerXAnchor.constraint(equalTo: centerXAnchor), empty.centerYAnchor.constraint(equalTo: centerYAnchor, constant: -12),
-            addButton.centerXAnchor.constraint(equalTo: centerXAnchor), addButton.topAnchor.constraint(equalTo: empty.bottomAnchor, constant: 8),
+            emptyCard.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Analog.on ? 64 : 12),
+            emptyCard.centerYAnchor.constraint(equalTo: centerYAnchor),
+            emptyCard.widthAnchor.constraint(equalToConstant: 360), emptyCard.heightAnchor.constraint(equalToConstant: 132),
+            emptyTitle.leadingAnchor.constraint(equalTo: emptyCard.leadingAnchor, constant: 16),
+            emptyTitle.topAnchor.constraint(equalTo: emptyCard.topAnchor, constant: 14),
+            empty.leadingAnchor.constraint(equalTo: emptyTitle.leadingAnchor),
+            empty.trailingAnchor.constraint(equalTo: emptyCard.trailingAnchor, constant: -16),
+            empty.topAnchor.constraint(equalTo: emptyTitle.bottomAnchor, constant: 10),
+            addButton.leadingAnchor.constraint(equalTo: emptyTitle.leadingAnchor),
+            addButton.topAnchor.constraint(equalTo: empty.bottomAnchor, constant: 10),
         ])
         setAccessibilityLabel("Device panel")
     }
@@ -104,7 +124,7 @@ final class DevicePanel: NSView {
             }
         }
         needsLayout = true
-        empty.isHidden = !plugins.isEmpty
+        emptyCard.isHidden = !plugins.isEmpty
         addButton.isHidden = !plugins.isEmpty || t == nil
         empty.stringValue = t == nil ? "Select a track to see its plug-ins." :
             t!.isInstrument ? "\(t!.name) plays the built-in Dalnok Poly. Add an instrument or effect plug-in."
@@ -127,6 +147,9 @@ final class DevicePanel: NSView {
         return ctx?.makeImage()
     }()
     private var knownCables = Set<String>()
+    private var cableFrames: [CGRect] = []
+    private var cableSlots: [Int32] = []
+    private var cableTrack: DalnokTrackId?
     override func layout() {
         super.layout()
         layoutCables()
@@ -136,13 +159,18 @@ final class DevicePanel: NSView {
         guard Analog.on, let doc = scroll.documentView else { return }
         doc.wantsLayer = true
         doc.layoutSubtreeIfNeeded()
+        let frames = devices.map { $0.convert($0.bounds, to: doc) }
+        let slots = devices.map(\.slot)
+        if frames == cableFrames && slots == cableSlots && track == cableTrack { return }
+        cableFrames = frames
+        cableSlots = slots
+        cableTrack = track
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         cableLayers.forEach { $0.removeFromSuperlayer() }
         cableLayers = []
         CATransaction.commit()
-        guard !devices.isEmpty else { return }
-        let frames = devices.map { $0.convert($0.bounds, to: doc) }
+        guard !devices.isEmpty else { knownCables = []; return }
         var links: [(CGPoint, CGPoint, String)] = []
         let first = frames[0], last = frames[frames.count - 1]
         // The track's patch points: IN (left of the chain) and OUT (right of it).
@@ -192,21 +220,12 @@ final class DevicePanel: NSView {
             doc.layer?.addSublayer(plug)
             cableLayers += [cable, plug]
             if !knownCables.contains(key) && !Motion.reduced && window != nil {
-                // Plugging in: the cable draws toward the jack, then the plug seats with a small push.
-                let draw = CABasicAnimation(keyPath: "strokeEnd")
-                draw.fromValue = 0
-                draw.toValue = 1
-                draw.duration = 0.35
-                draw.timingFunction = CAMediaTimingFunction(name: .easeOut)
-                cable.add(draw, forKey: "plug")
-                let seat = CAKeyframeAnimation(keyPath: "transform.translation.x")
-                seat.values = [-12, -12, 1.5, 0]
-                seat.keyTimes = [0, 0.6, 0.85, 1]
-                seat.duration = 0.5
-                plug.add(seat, forKey: "seat")
+                Motion.connectCable(cable, plug: plug, paths: [12, 37, 27, 31, 30].map {
+                    Analog.cablePath(from: a, to: b, sag: CGFloat($0))
+                })
             }
-            knownCables.insert(key)
         }
+        knownCables = Set(links.map { $0.2 })
     }
 }
 

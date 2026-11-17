@@ -5,6 +5,10 @@ milestone: M11 VST3 hosting (ADR-0009 stage 3) done; editors, parameters and AU 
 ---
 # Current State
 
+## Latest session (visual audit; 2026-11-17)
+- Reviewed both themes on generated projects; aligned mixer controls, improved device and track hierarchy, and refined analog lamp and cable motion. See [[Visual Audit 2026-11-17]] for findings and remaining work.
+- Verification: 153 engine tests and both-theme GUI self-tests. Animation behavior is checked programmatically; timing has not been reviewed in motion. Site updates remain unpublished.
+
 ## Latest session (nested stacks; 2026-11-17)
 - Nested summing stacks retain their descendants, support collapse through ancestors, and return members to the parent on ungroup or deletion. The mixer supports duplicate bus names.
 - Verification: `swift test --disable-sandbox` (153 tests); GUI self-test in Graphite and Warm Analog. Site changes remain unpublished.

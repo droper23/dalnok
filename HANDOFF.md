@@ -1,6 +1,9 @@
 # Handoff: Dalnok (latest: 2026-11-17, Phases 2–4 session)
 
-## 2026-11-17, nested stacks (read first)
+## 2026-11-17, visual audit (read first)
+Both themes were reviewed on generated projects; see `06 - Design/Visual Audit 2026-11-17.md`. Mixer controls align with scrollable routing, and analog lamps and patch cables animate with Reduce Motion support. Verify animation timing by eye; site changes remain unpublished.
+
+## 2026-11-17, nested stacks
 Nested stacks and duplicate-name mixer destinations are covered by engine and both-theme GUI self-tests. Site parity remains unpublished. Next: separate input/output devices, disk streaming, lamp physics and patch-cable motion, and an AU sidechain fixture. Owner prohibits OS-level input and tape-style track labels.
 
 ## 2026-11-17, later

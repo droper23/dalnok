@@ -69,7 +69,8 @@ final class PluginManagerController: NSWindowController, NSTableViewDataSource, 
         spinner.isDisplayedWhenStopped = false
         summary.font = Theme.ui(11)
         summary.textColor = Theme.textDim
-        summary.lineBreakMode = .byTruncatingTail
+        summary.maximumNumberOfLines = 2
+        summary.lineBreakMode = .byWordWrapping
         addButton.target = self
         addButton.action = #selector(addSelected(_:))
         addButton.isEnabled = false

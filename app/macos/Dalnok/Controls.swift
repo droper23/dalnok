@@ -622,8 +622,10 @@ final class ToggleChip: NSControl {
         didSet {
             setAccessibilityValue(isOn ? "on" : "off")
             guard isOn != oldValue else { return }
+            let brightness = glow.presentation()?.shadowOpacity ?? glow.shadowOpacity
             applyState(animated: true)
-            if isOn { Motion.bounce(face, scale: 1.12, duration: 0.2) }
+            if Analog.on { Motion.filament(glow, from: brightness, lit: isOn) }
+            else if isOn { Motion.bounce(face, scale: 1.12, duration: 0.2) }
         }
     }
     /// Breathing glow (an armed track while recording).
@@ -698,9 +700,8 @@ final class ToggleChip: NSControl {
     private func applyState(animated: Bool) {
         if Analog.on {
             let body = { [self] in
-                // Lamp lens: unlit it's a dark tinted lens (you can still tell which colour it lights),
-                // lit it's the colour itself with a hot halo and dark engraved lettering.
-                let unlit = onColor.blended(withFraction: 0.82, of: NSColor(white: 0.08, alpha: 1)) ?? onColor
+                // Neutral unlit caps keep color reserved for active states.
+                let unlit = Theme.hex(0x302923)
                 face.backgroundColor = (isOn ? onColor : (hovering ? unlit.blended(withFraction: 0.12, of: .white) ?? unlit : unlit)).cgColor
                 face.borderColor = (isOn ? onColor.blended(withFraction: 0.35, of: .white) ?? onColor : NSColor(white: 0, alpha: 0.85)).cgColor
                 face.shadowColor = NSColor.black.cgColor
@@ -708,7 +709,7 @@ final class ToggleChip: NSControl {
                 face.shadowRadius = 1
                 face.shadowOffset = CGSize(width: 0, height: pressed ? -0.5 : -1.5)
                 glow.shadowOpacity = isOn ? 0.85 : 0
-                label.foregroundColor = (isOn ? onText : onColor.withAlphaComponent(0.55)).cgColor
+                label.foregroundColor = (isOn ? onText : Theme.textDim).cgColor
                 face.transform = pressed ? CATransform3DMakeTranslation(0, 1, 0) : CATransform3DIdentity
             }
             // Lamp physics: a filament snaps on and glows down slowly when switched off.

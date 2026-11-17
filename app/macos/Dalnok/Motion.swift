@@ -46,6 +46,19 @@ enum Motion {
     }
     static func stopPulse(_ layer: CALayer?) { layer?.removeAnimation(forKey: "pulse") }
 
+    /// Warm lamp filaments catch quickly and cool gradually. Start at the visible brightness
+    /// so rapid state changes continue smoothly instead of restarting from an endpoint.
+    static func filament(_ layer: CALayer, from brightness: Float, lit: Bool) {
+        layer.removeAnimation(forKey: "filament")
+        guard !reduced else { return }
+        let a = CAKeyframeAnimation(keyPath: "shadowOpacity")
+        a.values = lit ? [brightness, 1, 0.85] : [brightness, brightness * 0.45, 0]
+        a.keyTimes = lit ? [0, 0.25, 1] : [0, 0.45, 1]
+        a.duration = lit ? 0.18 : 0.38
+        a.timingFunctions = [CAMediaTimingFunction(name: .easeOut), CAMediaTimingFunction(name: .easeOut)]
+        layer.add(a, forKey: "filament")
+    }
+
     /// A quick scale "tick" (metronome beats, confirmations). Scales around the layer's center.
     static func bounce(_ layer: CALayer?, scale: CGFloat = 1.18, duration: Double = 0.18) {
         guard let layer, !reduced else { return }
@@ -64,6 +77,28 @@ enum Motion {
         t.type = .fade
         t.duration = duration
         layer.add(t, forKey: "fade")
+    }
+
+    /// Draws a new patch cable, seats its plug, and lets its curve settle under gravity.
+    static func connectCable(_ cable: CAShapeLayer, plug: CALayer, paths: [CGPath]) {
+        guard !reduced else { return }
+        let draw = CABasicAnimation(keyPath: "strokeEnd")
+        draw.fromValue = 0
+        draw.toValue = 1
+        draw.duration = 0.35
+        draw.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        cable.add(draw, forKey: "plug")
+        let settle = CAKeyframeAnimation(keyPath: "path")
+        settle.values = paths
+        settle.keyTimes = [0, 0.48, 0.72, 0.88, 1]
+        settle.duration = 0.65
+        settle.timingFunctions = Array(repeating: CAMediaTimingFunction(name: .easeInEaseOut), count: 4)
+        cable.add(settle, forKey: "settle")
+        let seat = CAKeyframeAnimation(keyPath: "transform.translation.x")
+        seat.values = [-12, -12, 1.5, 0]
+        seat.keyTimes = [0, 0.6, 0.85, 1]
+        seat.duration = 0.5
+        plug.add(seat, forKey: "seat")
     }
 
     /// Centers a layer's anchor point without moving it, so scale animations grow from the middle.

@@ -63,7 +63,9 @@ final class MixerPanel: NSView {
     required init?(coder: NSCoder) { fatalError() }
 
     override func draw(_ dirtyRect: NSRect) {
-        (Analog.on ? Theme.hex(0x15100C) : Theme.panel).setFill(); bounds.fill()
+        (Analog.on ? Analog.faceplate : Theme.panelRaised).setFill(); bounds.fill()
+        (Analog.on ? NSColor.black.withAlphaComponent(0.22) : Theme.panel.withAlphaComponent(0.55)).setFill(); bounds.fill()
+        Theme.hairline.setFill(); NSRect(x: 0, y: bounds.height - 2, width: bounds.width, height: 1).fill()
         if Analog.on { // walnut end cheeks with a rounded, lit inner edge
             let w = Analog.cheekWidth
             for r in [NSRect(x: 0, y: 0, width: w, height: bounds.height), NSRect(x: bounds.width - w, y: 0, width: w, height: bounds.height)] {
@@ -109,6 +111,7 @@ final class ChannelStrip: NSView {
     let trackId: DalnokTrackId
     let output = NSPopUpButton(frame: .zero, pullsDown: false)
     let sendsStack = NSStackView()
+    let routingScroll = NSScrollView()
     let addSend = NSPopUpButton(frame: .zero, pullsDown: true)
     let pan = PanKnob()
     let fader = FaderControl()
@@ -165,13 +168,40 @@ final class ChannelStrip: NSView {
         name.alignment = .center
         name.lineBreakMode = .byTruncatingTail
 
+        let panLabel = NSTextField(labelWithString: "PAN")
+        panLabel.font = Theme.ui(8, .semibold)
+        panLabel.textColor = Theme.textDim
+        panLabel.alignment = .center
+        let routingDoc = FlippedView()
+        let routingStack = NSStackView(views: [insertsStack, sendsStack, addSend])
+        routingStack.orientation = .vertical
+        routingStack.alignment = .centerX
+        routingStack.spacing = 3
+        routingDoc.translatesAutoresizingMaskIntoConstraints = false
+        routingStack.translatesAutoresizingMaskIntoConstraints = false
+        routingDoc.addSubview(routingStack)
+        routingScroll.documentView = routingDoc
+        routingScroll.hasVerticalScroller = true
+        routingScroll.autohidesScrollers = true
+        routingScroll.scrollerStyle = .overlay
+        routingScroll.drawsBackground = false
+        routingScroll.toolTip = "Scroll to see all inserts and sends"
+        routingScroll.setAccessibilityLabel("Inserts and sends; scroll for more")
+        NSLayoutConstraint.activate([
+            routingStack.topAnchor.constraint(equalTo: routingDoc.topAnchor),
+            routingStack.leadingAnchor.constraint(equalTo: routingDoc.leadingAnchor),
+            routingStack.trailingAnchor.constraint(equalTo: routingDoc.trailingAnchor),
+            routingDoc.widthAnchor.constraint(equalTo: routingScroll.contentView.widthAnchor),
+            routingDoc.heightAnchor.constraint(greaterThanOrEqualTo: routingStack.heightAnchor),
+            routingDoc.heightAnchor.constraint(greaterThanOrEqualTo: routingScroll.contentView.heightAnchor),
+        ])
         let faderRow = NSStackView(views: [fader, meter])
         faderRow.spacing = 4
         let chips = NSStackView(views: [arm, mute, solo])
         chips.spacing = 3
         insertsStack.orientation = .vertical
         insertsStack.spacing = 1
-        for v in [output, insertsStack, sendsStack, addSend, pan, faderRow, dbLabel, chips, scribble, name] as [NSView] {
+        for v in [output, routingScroll, panLabel, pan, faderRow, dbLabel, chips, scribble, name] as [NSView] {
             v.translatesAutoresizingMaskIntoConstraints = false
             addSubview(v)
         }
@@ -181,15 +211,13 @@ final class ChannelStrip: NSView {
             output.topAnchor.constraint(equalTo: topAnchor, constant: 6),
             output.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
             output.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
-            insertsStack.topAnchor.constraint(equalTo: output.bottomAnchor, constant: 4),
-            insertsStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
-            insertsStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
-            sendsStack.topAnchor.constraint(equalTo: insertsStack.bottomAnchor, constant: 4),
-            sendsStack.centerXAnchor.constraint(equalTo: centerXAnchor),
-            sendsStack.widthAnchor.constraint(equalTo: widthAnchor, constant: -8),
-            addSend.topAnchor.constraint(equalTo: sendsStack.bottomAnchor, constant: 2),
-            addSend.centerXAnchor.constraint(equalTo: centerXAnchor),
-            pan.topAnchor.constraint(equalTo: addSend.bottomAnchor, constant: 6),
+            routingScroll.topAnchor.constraint(equalTo: output.bottomAnchor, constant: 4),
+            routingScroll.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
+            routingScroll.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
+            routingScroll.heightAnchor.constraint(equalToConstant: 68),
+            panLabel.topAnchor.constraint(equalTo: routingScroll.bottomAnchor, constant: 2),
+            panLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
+            pan.topAnchor.constraint(equalTo: panLabel.bottomAnchor, constant: 1),
             pan.centerXAnchor.constraint(equalTo: centerXAnchor),
             pan.widthAnchor.constraint(equalToConstant: 30), pan.heightAnchor.constraint(equalToConstant: 30),
             faderRow.topAnchor.constraint(equalTo: pan.bottomAnchor, constant: 6),
@@ -233,7 +261,7 @@ final class ChannelStrip: NSView {
         color = t.muted ? TrackTint(base: t.color).muted : t.color
         needsDisplay = true
         name.stringValue = t.name
-        name.textColor = Analog.on ? (t.muted ? Theme.hex(0x5E554A) : OKLCH.adjust(t.color, dl: 0.2, chromaScale: 0.7))
+        name.textColor = Analog.on ? (t.muted ? Theme.textFaint : OKLCH.adjust(t.color, dl: 0.2, chromaScale: 0.7))
                                    : (t.muted ? Theme.textDim : Theme.text)
         scribble.color = t.color
         scribble.lit = !t.muted

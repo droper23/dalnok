@@ -1053,6 +1053,53 @@ final class SelfTest {
         check(w.transport.recordButton.layer?.animation(forKey: "pulse") != nil, "record button pulses while recording")
         w.transport.setRecording(false)
         check(w.transport.recordButton.layer?.animation(forKey: "pulse") == nil, "pulse stops when recording stops")
+        if Analog.on, let content = w.window?.contentView {
+            let lamp = ToggleChip("M", on: Theme.muteOn, onText: .white, help: "Motion test")
+            lamp.frame = NSRect(x: 0, y: 0, width: 24, height: 18)
+            content.addSubview(lamp)
+            defer { lamp.removeFromSuperview() }
+            if let glow = lamp.layer?.sublayers?.first {
+                lamp.isOn = true
+                let rising = glow.animation(forKey: "filament") as? CAKeyframeAnimation
+                check(rising?.duration == 0.18 && abs(glow.shadowOpacity - 0.85) < 1e-5,
+                      "analog lamp warms up toward its lit brightness")
+                try? await Task.sleep(for: .milliseconds(70))
+                let before = glow.presentation()?.shadowOpacity ?? glow.shadowOpacity
+                lamp.isOn = false
+                let falling = glow.animation(forKey: "filament") as? CAKeyframeAnimation
+                let start = (falling?.values?.first as? NSNumber)?.floatValue ?? -1
+                check(falling?.duration == 0.38 && abs(start - before) < 0.05 && glow.shadowOpacity == 0,
+                      "analog lamp cools from its visible brightness when switched off")
+                lamp.isOn = true
+                let reversed = glow.animation(forKey: "filament") as? CAKeyframeAnimation
+                check(reversed?.duration == 0.18 && abs(glow.shadowOpacity - 0.85) < 1e-5,
+                      "rapid lamp reversal restores the lit state")
+                Motion.override = false
+                lamp.isOn = false
+                check(glow.animation(forKey: "filament") == nil && glow.shadowOpacity == 0,
+                      "with Reduce Motion the lamp switches off instantly")
+                lamp.isOn = true
+                check(glow.animation(forKey: "filament") == nil && abs(glow.shadowOpacity - 0.85) < 1e-5,
+                      "with Reduce Motion the lamp switches on instantly")
+                Motion.override = true
+            } else { check(false, "analog lamp has a glow layer") }
+        }
+        // New patch cables draw, settle, and seat once; Reduce Motion suppresses all three.
+        let cable = CAShapeLayer(), plug = CALayer()
+        let cablePaths = [12, 37, 27, 31, 30].map {
+            Analog.cablePath(from: .zero, to: CGPoint(x: 60, y: 0), sag: CGFloat($0))
+        }
+        Motion.connectCable(cable, plug: plug, paths: cablePaths)
+        let settling = cable.animation(forKey: "settle") as? CAKeyframeAnimation
+        check(cable.animation(forKey: "plug") != nil && settling?.values?.count == 5 &&
+              abs((settling?.duration ?? 0) - 0.65) < 1e-6 && plug.animation(forKey: "seat") != nil,
+              "new patch cable draws, settles and seats")
+        Motion.override = false
+        let stillCable = CAShapeLayer(), stillPlug = CALayer()
+        Motion.connectCable(stillCable, plug: stillPlug, paths: cablePaths)
+        check(stillCable.animationKeys()?.isEmpty != false && stillPlug.animationKeys()?.isEmpty != false,
+              "with Reduce Motion patch cables do not animate")
+        Motion.override = true
         // Palette fades in.
         w.palette.show(over: w.window!)
         check(w.palette.panel.alphaValue < 1, "command palette fades in (alpha \(w.palette.panel.alphaValue))")
@@ -1256,6 +1303,25 @@ final class SelfTest {
         check(s.masterGainDb < -3 && s.engine.undoName == "Master Volume", "the master strip's fader sets the master volume (\(s.masterGainDb) dB)")
         check(perform("Undo") && s.masterGainDb == 0, "undo restores the master volume")
         check(strip.insertsStack.arrangedSubviews.contains { ($0 as? NSButton)?.title == "+ Insert" }, "strips offer + Insert")
+        // A long send list scrolls without shifting the pan or fader relative to other channels.
+        let extraBuses = (0..<4).map { s.addBus("Test Send \($0)") }
+        for id in extraBuses { _ = s.setSend(src, id, db: -12, pre: false) }
+        if let longStrip = w.mixer.strips.first(where: { $0.trackId == src }),
+           let otherStrip = w.mixer.strips.first(where: { $0.trackId != src }),
+           let doc = longStrip.routingScroll.documentView {
+            w.mixer.layoutSubtreeIfNeeded()
+            let a = longStrip.fader.convert(longStrip.fader.bounds, to: w.mixer)
+            let b = otherStrip.fader.convert(otherStrip.fader.bounds, to: w.mixer)
+            check(abs(a.minY - b.minY) < 0.5 && abs(a.height - b.height) < 0.5,
+                  "mixer faders align with different send counts")
+            let scroll = longStrip.routingScroll
+            let overflow = doc.bounds.height - scroll.contentView.bounds.height
+            scroll.contentView.scroll(to: NSPoint(x: 0, y: max(0, overflow)))
+            scroll.reflectScrolledClipView(scroll.contentView)
+            check(overflow > 0 && scroll.contentView.bounds.minY > 0,
+                  "long mixer insert and send lists scroll without overlapping the fader")
+        } else { check(false, "mixer strips and routing list exist") }
+        for id in extraBuses { s.removeTrack(id) }
         // Removing the bus clears the send.
         w.headers.select(bus)
         check(perform("Delete Track") && s.track(src)?.sends.isEmpty == true, "deleting the bus removes sends to it")

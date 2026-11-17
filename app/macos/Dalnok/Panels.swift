@@ -388,7 +388,7 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
         if Analog.on {
             // Lit in the track's color; a muted channel's strip goes dark.
             let lit = OKLCH.adjust(t.color, dl: 0.2, chromaScale: 0.7)
-            nameLabel.textColor = t.muted ? Theme.hex(0x5E554A) : lit
+            nameLabel.textColor = t.muted ? Theme.textFaint : lit
             let glow = NSShadow()
             glow.shadowColor = t.muted ? .clear : lit.withAlphaComponent(0.55)
             glow.shadowBlurRadius = 5
@@ -641,6 +641,8 @@ final class TrackHeaderColumn: NSView {
     override func draw(_ dirtyRect: NSRect) {
         Theme.panel.setFill()
         bounds.fill()
+        let title = "TRACKS" as NSString
+        title.draw(at: NSPoint(x: 16, y: 7), withAttributes: [.font: Theme.ui(10, .semibold), .foregroundColor: Theme.textDim, .kern: 0.8])
         Theme.separator.setFill()
         NSRect(x: 0, y: Theme.rulerHeight - 1, width: bounds.width, height: 1).fill()
         NSRect(x: bounds.width - 1, y: 0, width: 1, height: bounds.height).fill()

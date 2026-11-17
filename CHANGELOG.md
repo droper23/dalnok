@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Changed (2026-11-17, visual audit)
+- Refined both themes with aligned mixer controls, clearer track and device hierarchy, and readable muted labels. Warm Analog lamps now warm and cool and patch cables settle when connected; Reduce Motion remains supported.
 ### Added (2026-11-17, nested stacks)
 - Nested track stacks with ancestor-aware collapse, summing and parent-preserving ungroup and deletion.
 ### Fixed (2026-11-17, mixer)
