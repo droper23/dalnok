@@ -174,6 +174,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         mixerHeight.isActive = true
         mixer.isHidden = !Self.showMixer
         mixer.onSelect = { [weak self] id in self?.headers.select(id) }
+        mixer.onOpenPlugin = { [weak self] t, slot in self?.openPluginWindow(track: t, slot: slot) }
+        mixer.onAddPlugin = { [weak self] t in self?.headers.select(t); self?.showPlugins(nil) }
         devicePanel.onOpen = { [weak self] track, slot in self?.openPluginWindow(track: track, slot: slot) }
         devicePanel.onAdd = { [weak self] in self?.showPlugins(nil) }
         emptyState.onImportAudio = { [weak self] in self?.importAudio() }
@@ -449,7 +451,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         if Analog.on { transport.ghost.stringValue = String(position.map { $0.isNumber ? "8" : $0 }) } // unlit segments
         timeline.followPlayhead()
         timeline.updatePlayhead()
-        // Track meters reset on read: read each once and feed the headers and the mixer.
+        // Meters reset on read: read each once and feed the headers, the control bar and the mixer.
+        let (ml0, mr0) = e.masterMeter()
         var levels: [DalnokTrackId: (Float, Float)] = [:]
         for t in session.tracks { levels[t.id] = e.trackMeter(t.id) }
         for row in headers.rows {
@@ -457,7 +460,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             row.meter.push(l, r)
             row.gain.updateMeter(max(row.meter.levelDb.0, row.meter.levelDb.1))
         }
-        if !mixer.isHidden { mixer.pushMeters { levels[$0] ?? (0, 0) } }
+        if !mixer.isHidden { mixer.pushMeters { levels[$0] ?? (0, 0) }; mixer.master.meter.push(ml0, mr0) }
         // Automated tracks: knobs and faders show the automated value at the playhead.
         for t in session.tracks where !t.volumeAuto.isEmpty || !t.panAuto.isEmpty {
             let v = session.automationValue(t, 0, at: e.position), p = session.automationValue(t, 1, at: e.position)
@@ -471,8 +474,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             }
         }
         if e.isRecording { updateRecording() }
-        let (ml, mr) = e.masterMeter()
-        transport.masterMeter.push(ml, mr)
+        transport.masterMeter.push(ml0, mr0)
         tickCount += 1
         if tickCount % 1800 == 0 && !SelfTest.running, let directory = recoveryDirectory {
             do { _ = try writeRecoverySnapshot(in: directory) }

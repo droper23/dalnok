@@ -13,7 +13,10 @@ final class MixerPanel: NSView {
     private let scroll = NSScrollView()
     private let stack = NSStackView()
     private let addBusButton = NSButton(title: "+ Bus", target: nil, action: nil)
+    let master = MasterStrip()
     var onSelect: ((DalnokTrackId) -> Void)?
+    var onOpenPlugin: ((DalnokTrackId, Int32) -> Void)?
+    var onAddPlugin: ((DalnokTrackId) -> Void)?
 
     init(session: Session) {
         self.session = session
@@ -34,13 +37,20 @@ final class MixerPanel: NSView {
         scroll.drawsBackground = false
         scroll.translatesAutoresizingMaskIntoConstraints = false
         addSubview(scroll)
+        master.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(master)
+        master.fader.onBegin = { [weak self] in self?.session.engine.beginGroup("Master Volume") }
+        master.fader.onChange = { [weak self] db in self?.session.setMasterGain(db); self?.master.dbLabel.stringValue = FaderControl.format(db) }
+        master.fader.onEnd = { [weak self] in self?.session.engine.endGroup() }
         addBusButton.bezelStyle = .inline
         addBusButton.controlSize = .small
         addBusButton.target = self
         addBusButton.action = #selector(addBus)
         addBusButton.toolTip = "New bus (an aux track that mixes what you route or send to it)"
         NSLayoutConstraint.activate([
-            scroll.leadingAnchor.constraint(equalTo: leadingAnchor), scroll.trailingAnchor.constraint(equalTo: trailingAnchor),
+            scroll.leadingAnchor.constraint(equalTo: leadingAnchor), scroll.trailingAnchor.constraint(equalTo: master.leadingAnchor),
+            master.trailingAnchor.constraint(equalTo: trailingAnchor), master.topAnchor.constraint(equalTo: topAnchor, constant: 9),
+            master.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -9),
             scroll.topAnchor.constraint(equalTo: topAnchor, constant: 1), scroll.bottomAnchor.constraint(equalTo: bottomAnchor),
             stack.leadingAnchor.constraint(equalTo: doc.leadingAnchor), stack.topAnchor.constraint(equalTo: doc.topAnchor),
             doc.heightAnchor.constraint(equalTo: scroll.contentView.heightAnchor),
@@ -67,11 +77,14 @@ final class MixerPanel: NSView {
             strips = tracks.map { ChannelStrip(session: session, trackId: $0.id) }
             for s in strips {
                 s.onSelect = { [weak self] id in self?.onSelect?(id) }
+                s.onOpenPlugin = { [weak self] t, slot in self?.onOpenPlugin?(t, slot) }
+                s.onAddPlugin = { [weak self] t in self?.onAddPlugin?(t) }
                 stack.addArrangedSubview(s)
             }
             stack.addArrangedSubview(addBusButton)
         }
         for (s, t) in zip(strips, tracks) { s.update(t) }
+        if !master.fader.tracking { master.fader.db = session.masterGainDb; master.dbLabel.stringValue = FaderControl.format(session.masterGainDb) }
     }
 
     func pushMeters(_ read: (DalnokTrackId) -> (Float, Float)) {
@@ -101,6 +114,10 @@ final class ChannelStrip: NSView {
     var onSelect: ((DalnokTrackId) -> Void)?
     var isSelected = false { didSet { if isSelected != oldValue { needsDisplay = true } } }
     private var sendKnobs: [(bus: DalnokTrackId, knob: GainKnob, pre: Bool)] = []
+    let insertsStack = NSStackView()
+    var onOpenPlugin: ((DalnokTrackId, Int32) -> Void)?
+    var onAddPlugin: ((DalnokTrackId) -> Void)?
+    private var shownInserts: [Int32] = []
 
     init(session: Session, trackId: DalnokTrackId) {
         self.session = session
@@ -142,7 +159,9 @@ final class ChannelStrip: NSView {
         faderRow.spacing = 4
         let chips = NSStackView(views: [arm, mute, solo])
         chips.spacing = 3
-        for v in [output, sendsStack, addSend, pan, faderRow, dbLabel, chips, scribble, name] as [NSView] {
+        insertsStack.orientation = .vertical
+        insertsStack.spacing = 1
+        for v in [output, insertsStack, sendsStack, addSend, pan, faderRow, dbLabel, chips, scribble, name] as [NSView] {
             v.translatesAutoresizingMaskIntoConstraints = false
             addSubview(v)
         }
@@ -152,7 +171,10 @@ final class ChannelStrip: NSView {
             output.topAnchor.constraint(equalTo: topAnchor, constant: 6),
             output.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
             output.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
-            sendsStack.topAnchor.constraint(equalTo: output.bottomAnchor, constant: 4),
+            insertsStack.topAnchor.constraint(equalTo: output.bottomAnchor, constant: 4),
+            insertsStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
+            insertsStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
+            sendsStack.topAnchor.constraint(equalTo: insertsStack.bottomAnchor, constant: 4),
             sendsStack.centerXAnchor.constraint(equalTo: centerXAnchor),
             sendsStack.widthAnchor.constraint(equalTo: widthAnchor, constant: -8),
             addSend.topAnchor.constraint(equalTo: sendsStack.bottomAnchor, constant: 2),
@@ -208,6 +230,25 @@ final class ChannelStrip: NSView {
         solo.isOn = t.solo
         arm.isOn = t.armed
         arm.isHidden = t.isBus
+        // Insert slots: each plug-in (click to open its window), then + to add one.
+        let ids = t.plugins.map(\.id)
+        if ids != shownInserts || insertsStack.arrangedSubviews.isEmpty {
+            shownInserts = ids
+            insertsStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
+            for p in t.plugins {
+                let b = slotButton((p.instrument ? "♪ " : "") + p.name, dim: !p.loaded)
+                b.tag = Int(p.id)
+                b.action = #selector(openInsert(_:))
+                b.toolTip = p.loaded ? "Open \(p.name)" : "\(p.name) isn't installed: bypassed, settings kept"
+                insertsStack.addArrangedSubview(b)
+            }
+            if !t.isBus || true {
+                let add = slotButton("+ Insert", dim: true)
+                add.action = #selector(addInsert)
+                add.toolTip = "Add a plug-in to this channel"
+                insertsStack.addArrangedSubview(add)
+            }
+        }
         // Output: the master or any bus but this one.
         let buses = session.buses.filter { $0.id != t.id }
         let titles = ["Master"] + buses.map(\.name)
@@ -270,6 +311,23 @@ final class ChannelStrip: NSView {
         return m
     }
 
+    private func slotButton(_ title: String, dim: Bool) -> NSButton {
+        let b = NSButton(title: title, target: self, action: nil)
+        b.isBordered = false
+        b.wantsLayer = true
+        b.layer?.backgroundColor = (dim ? Theme.hex(0x000000, 0.25) : Theme.hex(0x000000, 0.45)).cgColor
+        b.layer?.cornerRadius = 3
+        b.font = Theme.ui(9.5, .medium)
+        b.contentTintColor = dim ? Theme.textDim : Theme.text
+        b.lineBreakMode = .byTruncatingTail
+        b.translatesAutoresizingMaskIntoConstraints = false
+        b.heightAnchor.constraint(equalToConstant: 16).isActive = true
+        b.widthAnchor.constraint(equalToConstant: ChannelStrip.width - 8).isActive = true
+        return b
+    }
+    @objc func openInsert(_ sender: NSButton) { onOpenPlugin?(trackId, Int32(sender.tag)) }
+    @objc func addInsert() { onSelect?(trackId); onAddPlugin?(trackId) }
+
     @objc func outputChosen() {
         let bus = DalnokTrackId(output.selectedTag())
         if !session.setOutput(trackId, bus) { session.onMessage?("That output would feed the bus back into itself") }
@@ -290,4 +348,41 @@ final class ChannelStrip: NSView {
 final class SendRow: NSStackView {
     var menuProvider: (() -> NSMenu?)?
     override func menu(for event: NSEvent) -> NSMenu? { menuProvider?() }
+}
+
+/// The master: fader, meter and level at the right end of the mixer.
+@MainActor
+final class MasterStrip: NSView {
+    let fader = FaderControl()
+    let meter = MeterView()
+    let dbLabel = NSTextField(labelWithString: "")
+    private let name = NSTextField(labelWithString: "Master")
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        fader.vertical = true
+        fader.tint = Theme.accent
+        fader.setAccessibilityLabel("Master volume")
+        meter.vertical = true
+        dbLabel.font = Theme.mono(10); dbLabel.textColor = Theme.textDim; dbLabel.alignment = .center
+        name.font = Theme.ui(11.5, .semibold); name.textColor = Theme.accent; name.alignment = .center
+        let row = NSStackView(views: [fader, meter])
+        row.spacing = 4
+        for v in [row, dbLabel, name] as [NSView] { v.translatesAutoresizingMaskIntoConstraints = false; addSubview(v) }
+        NSLayoutConstraint.activate([
+            widthAnchor.constraint(equalToConstant: 86),
+            row.topAnchor.constraint(equalTo: topAnchor, constant: 30), row.centerXAnchor.constraint(equalTo: centerXAnchor),
+            fader.widthAnchor.constraint(equalToConstant: 30), meter.widthAnchor.constraint(equalToConstant: 10),
+            row.bottomAnchor.constraint(equalTo: dbLabel.topAnchor, constant: -2),
+            dbLabel.centerXAnchor.constraint(equalTo: centerXAnchor), dbLabel.bottomAnchor.constraint(equalTo: name.topAnchor, constant: -10),
+            name.centerXAnchor.constraint(equalTo: centerXAnchor), name.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
+        ])
+    }
+    required init?(coder: NSCoder) { fatalError() }
+    override var isFlipped: Bool { true }
+    override func draw(_ dirtyRect: NSRect) {
+        (Analog.on ? Analog.faceplate : Theme.panelRaised).setFill(); bounds.fill()
+        Theme.accent.setFill(); NSRect(x: 0, y: 0, width: bounds.width, height: 3).fill()
+        Theme.separator.setFill(); NSRect(x: 0, y: 0, width: 1, height: bounds.height).fill()
+    }
 }

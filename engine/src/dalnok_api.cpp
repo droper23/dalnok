@@ -387,6 +387,11 @@ int32_t dalnok_track_sends(const DalnokEngine *e, DalnokTrackId t, DalnokSend *o
         out[i] = {tr->sends[static_cast<size_t>(i)].bus, tr->sends[static_cast<size_t>(i)].db, tr->sends[static_cast<size_t>(i)].pre};
     return static_cast<int32_t>(tr->sends.size());
 }
+DalnokStatus dalnok_master_set_gain_db(DalnokEngine *e, float db) {
+    std::string err;
+    return e ? statusFor(e->impl.setMasterGainDb(db, err), err) : DALNOK_ERR_INVALID_ARG;
+}
+float dalnok_master_gain_db(const DalnokEngine *e) { return e ? e->impl.model().masterGainDb : 0; }
 int32_t dalnok_take_folder_create(DalnokEngine *e, DalnokTrackId t, const DalnokClipId *takes, int32_t count) {
     if (!e || !takes || count < 1) return 0;
     std::string err;

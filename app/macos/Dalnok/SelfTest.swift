@@ -1088,6 +1088,15 @@ final class SelfTest {
         check(perform("Automate Pan") && TimelineView.automationTarget == 1, "View > Automate Pan switches the shown parameter")
         TimelineView.automationTarget = 0
         _ = perform("Show Automation")
+        // Master strip: dragging its fader sets the master volume as one undo step.
+        let mf = w.mixer.master.fader
+        let m0 = mf.convert(CGPoint(x: mf.bounds.midX, y: mf.bounds.height * 0.2), to: nil), m1 = mf.convert(CGPoint(x: mf.bounds.midX, y: mf.bounds.height * 0.55), to: nil)
+        mf.mouseDown(with: mouse(.leftMouseDown, m0))
+        for k in 1...4 { mf.mouseDragged(with: mouse(.leftMouseDragged, CGPoint(x: m0.x, y: m0.y + (m1.y - m0.y) * CGFloat(k) / 4))) }
+        mf.mouseUp(with: mouse(.leftMouseUp, m1))
+        check(s.masterGainDb < -3 && s.engine.undoName == "Master Volume", "the master strip's fader sets the master volume (\(s.masterGainDb) dB)")
+        check(perform("Undo") && s.masterGainDb == 0, "undo restores the master volume")
+        check(strip.insertsStack.arrangedSubviews.contains { ($0 as? NSButton)?.title == "+ Insert" }, "strips offer + Insert")
         // Removing the bus clears the send.
         w.headers.select(bus)
         check(perform("Delete Track") && s.track(src)?.sends.isEmpty == true, "deleting the bus removes sends to it")

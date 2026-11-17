@@ -119,6 +119,7 @@ struct RenderState {
     // Plug-in delay compensation: every path to the master is delayed to this many frames, so the
     // timeline is rendered this far ahead of the playhead (and exports pre-roll by it).
     int32_t compensation = 0;
+    std::shared_ptr<TrackRuntime> master; // master fader (gain atomic; live smoothing state)
     std::vector<std::shared_ptr<DelayLine>> delayKeep; // keeps the delay lines alive with the snapshot
     std::vector<ClickMeter> clickMeter;
     SynthParams synth;

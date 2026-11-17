@@ -28,7 +28,7 @@
 extern "C" {
 #endif
 
-#define DALNOK_API_VERSION 16
+#define DALNOK_API_VERSION 17
 
 typedef enum {
     DALNOK_OK = 0,
@@ -197,6 +197,9 @@ DalnokStatus dalnok_engine_pump(DalnokEngine *engine, float *left, float *right,
  * Only the live path (device or pump) feeds meters. */
 DalnokStatus dalnok_meter_track(DalnokEngine *engine, DalnokTrackId track, float *left, float *right);
 void dalnok_meter_master(DalnokEngine *engine, float *left, float *right);
+/* The master fader (dB, <= +12; <= -96 is silence). Undoable; the master meter reads after it. */
+DalnokStatus dalnok_master_set_gain_db(DalnokEngine *engine, float gain_db);
+float dalnok_master_gain_db(const DalnokEngine *engine);
 
 /* Frees snapshots retired by the audio thread. Call periodically (e.g. from a
  * UI timer). Cheap when there is nothing to do. */

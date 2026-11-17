@@ -153,6 +153,11 @@ const CommandDef kCommands[] = {
              }
          return status(e.setAutomation(t, target == "volume" ? kAutoVolume : kAutoPan, std::move(points), err), err);
      }},
+    {"master.setGain", "Master Volume", "{db}", [](ARGS) {
+         double db;
+         if (!needNumber(a, "db", db, err)) return DALNOK_ERR_INVALID_ARG;
+         return status(e.setMasterGainDb(static_cast<float>(db), err), err);
+     }},
     {"takes.makeFolder", "Make Take Folder", "{track, clips: [clip, ...]}", [](ARGS) {
          DalnokTrackId t;
          if (!needInt(a, "track", t, err)) return DALNOK_ERR_INVALID_ARG;

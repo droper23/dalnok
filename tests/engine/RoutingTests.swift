@@ -128,3 +128,21 @@ private func close(_ a: (Float, Float), _ b: Float) -> Bool { abs(a.0 - b) < 1e-
         #expect(dalnok_project_load(e2, bad.path, nil, &err, err.count) != DALNOK_OK)
     }
 }
+
+@Suite struct MasterFader {
+    @Test func masterGainScalesTheMixLiveAndOfflineAndSaves() throws {
+        let e = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(e) }
+        let m = makeMedia([[Float](repeating: 0.5, count: 48_000)]); defer { dalnok_media_release(m) }
+        DalnokEngine.dalnok_clip_add(e, dalnok_track_add(e, "A"), dalnok_pool_add(e, m, ""), 0, 0, 0)
+        #expect(dalnok_master_set_gain_db(e, -6.020_6) == DALNOK_OK && undoName(e) == "Master Volume")
+        #expect(abs(render(e, 0, 2_000)[1_000] - 0.25) < 1e-4)
+        dalnok_transport_play(e)
+        let (l, _) = pump(e, 4_000)
+        #expect(abs(l[3_000] - 0.25) < 1e-4, "live \(l[3_000])")
+        var ml: Float = 0, mr: Float = 0
+        dalnok_meter_master(e, &ml, &mr)
+        #expect(abs(ml - 0.25) < 1e-3, "meter reads after the fader")
+        #expect(dalnok_undo(e) && dalnok_master_gain_db(e) == 0 && abs(render(e, 0, 2_000)[1_000] - 0.5) < 1e-4)
+        #expect(runCommand(e, "master.setGain", #"{"db":-200}"#).0 == DALNOK_OK && render(e, 0, 2_000).allSatisfy { $0 == 0 })
+    }
+}

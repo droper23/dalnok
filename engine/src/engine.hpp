@@ -114,6 +114,7 @@ struct TakeFolder {
 struct Model {
     std::vector<TrackState> tracks; // display order
     std::vector<TakeFolder> folders;
+    float masterGainDb = 0; // the master fader
     std::vector<ClipState> clips;   // z-order: later = on top
     std::vector<TempoPoint> tempo{TempoPoint{}};    // quarter-note beats; first point at beat 0
     std::vector<MeterChange> meters{MeterChange{}}; // first change at bar 0
@@ -239,6 +240,7 @@ public:
     bool removeTrack(DalnokTrackId id, std::string &err);
     bool renameTrack(DalnokTrackId id, const std::string &name, std::string &err);
     bool setGainDb(DalnokTrackId id, float db, std::string &err);
+    bool setMasterGainDb(float db, std::string &err);
     bool setPan(DalnokTrackId id, float pan, std::string &err);
     bool setMute(DalnokTrackId id, bool muted, std::string &err);
     bool setSolo(DalnokTrackId id, bool solo, std::string &err);
@@ -377,6 +379,7 @@ private:
     // Control-thread state.
     Model model_;
     TempoMap map_; // built from model_.tempo in syncRuntimes
+    std::shared_ptr<TrackRuntime> masterRuntime_ = std::make_shared<TrackRuntime>(); // master fader target + smoothing
     // Live delay-compensation lines by connection and length; shared by snapshots (audio thread only processes them).
     mutable std::map<std::string, std::shared_ptr<DelayLine>> delayCache_;
     std::map<DalnokMediaId, PoolEntry> pool_;

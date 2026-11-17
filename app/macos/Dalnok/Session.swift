@@ -136,6 +136,8 @@ final class Session {
     // MARK: Edits (each is an engine command)
 
     func setGain(_ t: DalnokTrackId, db: Float) { dalnok_track_set_gain_db(h, t, db); refresh() }
+    var masterGainDb: Float { dalnok_master_gain_db(h) }
+    func setMasterGain(_ db: Float) { dalnok_master_set_gain_db(h, db); refresh() }
     // Routing
     @discardableResult func addBus(_ name: String = "") -> DalnokTrackId { let id = dalnok_track_add_bus(h, name); refresh(); return id }
     @discardableResult func setOutput(_ t: DalnokTrackId, _ bus: DalnokTrackId) -> Bool {

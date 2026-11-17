@@ -110,6 +110,7 @@ json::Value Engine::describe() const {
     Value root = Value::makeObject();
     root.set("sampleRate", sampleRate_);
     root.set("tempo", model_.bpm());
+    if (model_.masterGainDb != 0) root.set("masterGain", std::isfinite(model_.masterGainDb) ? static_cast<double>(model_.masterGainDb) : -200.0);
     {
         json::Value meter = json::Value::makeArray();
         meter.push(model_.meters.front().num);
@@ -657,6 +658,10 @@ std::unique_ptr<Engine::PreparedProject> Engine::prepareDocument(const json::Val
     }
 
     model.tempo.front().bpm = std::clamp(doc.getNumber("tempo", 120), 20.0, 400.0);
+    {
+        const double g = std::min(doc.getNumber("masterGain", 0), 12.0);
+        model.masterGainDb = g <= -96 ? -INFINITY : static_cast<float>(g);
+    }
     if (const json::Value *meter = doc.get("meter"); meter && meter->isArray() && meter->array.size() == 2 &&
         meter->array[0].isNumber() && meter->array[1].isNumber()) {
         model.meters.front().num = static_cast<int32_t>(std::clamp(meter->array[0].number, 1.0, 32.0));

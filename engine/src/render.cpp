@@ -380,6 +380,16 @@ void renderBlock(const RenderState &state, int64_t pos, int frames, float *left,
         rt.curL = gl;
         rt.curR = gr;
     }
+    // Master fader (ramped live from the previous block, constant offline).
+    if (state.master) {
+        TrackRuntime &m = *state.master;
+        const float g = m.gain.load(std::memory_order_relaxed);
+        if (!smooth || !m.primed) { m.curL = g; m.primed = smooth; }
+        const float from = m.curL, step = (g - from) / static_cast<float>(frames);
+        if (from != 1.0f || g != 1.0f)
+            for (int i = 0; i < frames; ++i) { const float k = from + step * static_cast<float>(i + 1); left[i] *= k; right[i] *= k; }
+        m.curL = g;
+    }
 }
 
 } // namespace dalnok

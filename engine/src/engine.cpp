@@ -311,6 +311,7 @@ void Engine::syncRuntimes() {
     clickAccentSin_.store(static_cast<float>(std::sin(wa)), std::memory_order_relaxed);
     clickDecay_.store(static_cast<float>(std::exp(-1.0 / (0.012 * sampleRate_))), std::memory_order_relaxed);
     int32_t solos = 0;
+    masterRuntime_->gain.store(dbToGain(model_.masterGainDb), std::memory_order_relaxed);
     for (const auto &t : model_.tracks) {
         t.runtime->gain.store(dbToGain(t.gainDb), std::memory_order_relaxed);
         t.runtime->pan.store(t.pan, std::memory_order_relaxed);
@@ -1000,6 +1001,15 @@ bool Engine::renameTrack(DalnokTrackId id, const std::string &name, std::string 
     });
 }
 
+bool Engine::setMasterGainDb(float db, std::string &err) {
+    return edit("Master Volume", false, [&](Model &m) {
+        if (std::isnan(db)) return fail(err, "gain is NaN");
+        m.masterGainDb = db <= -96.0f ? -INFINITY : std::min(db, 12.0f);
+        masterRuntime_->gain.store(dbToGain(m.masterGainDb), std::memory_order_relaxed);
+        return true;
+    });
+}
+
 bool Engine::setGainDb(DalnokTrackId id, float db, std::string &err) {
     return edit("Volume", false, [&](Model &m) {
         TrackState *t = m.track(id);
@@ -1239,6 +1249,9 @@ std::unique_ptr<RenderState> Engine::compile(std::vector<StretchJob> *needed, co
     const PluginMap &instances = pluginMap ? *pluginMap : plugins_;
     auto s = std::make_unique<RenderState>();
     s->synth = SynthParams::make(sampleRate_);
+    // Exports get their own master runtime (same gain) so they never touch the live smoothing state.
+    if (pluginMap) { s->master = std::make_shared<TrackRuntime>(); s->master->gain.store(masterRuntime_->gain.load()); }
+    else s->master = masterRuntime_;
     for (const auto &seg : map_.segments())
         s->clickTempo.push_back({seg.beat, static_cast<double>(seg.frame), static_cast<double>(seg.framesPerBeat)});
     for (const auto &m : model_.meters)
