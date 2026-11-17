@@ -268,7 +268,10 @@ final class ChannelStrip: NSView {
         // Output: the master or any bus but this one.
         let buses = session.buses.filter { $0.id != t.id }
         let titles = ["Master"] + buses.map(\.name)
-        if output.itemTitles != titles { output.removeAllItems(); output.addItems(withTitles: titles) }
+        if output.itemTitles != titles {
+            output.removeAllItems()
+            for title in titles { output.menu?.addItem(NSMenuItem(title: title, action: nil, keyEquivalent: "")) }
+        }
         for (i, b) in buses.enumerated() { output.item(at: i + 1)?.tag = Int(b.id) }
         output.item(at: 0)?.tag = 0
         output.selectItem(withTag: Int(t.output))

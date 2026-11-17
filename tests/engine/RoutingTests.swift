@@ -169,10 +169,56 @@ private func close(_ a: (Float, Float), _ b: Float) -> Bool { abs(a.0 - b) < 1e-
         #expect(dalnok_track_stack_set_collapsed(e, stack, true) == DALNOK_OK)
         _ = dalnok_track_info(e, stack, &info)
         #expect(info.collapsed)
-        #expect(dalnok_track_stack_create(e, [a], 1, nil) == 0, "no nesting yet")
+        #expect(dalnok_track_stack_create(e, [a, x], 2, nil) == 0, "members must share a parent stack")
         #expect(dalnok_track_stack_ungroup(e, stack) == DALNOK_OK)
         #expect(dalnok_track_output(e, a) == 0 && abs(render(e, 0, 2_000)[1_000] - 0.75) < 1e-4)
         #expect(dalnok_undo(e) && dalnok_track_output(e, a) == stack)
         #expect(runCommand(e, "track.ungroupStack", "{\"track\":\(stack)}").0 == DALNOK_OK)
+    }
+
+    @Test func stacksNest() {
+        let e = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(e) }
+        let m = makeMedia([[Float](repeating: 0.25, count: 4_800)]); defer { dalnok_media_release(m) }
+        let id = dalnok_pool_add(e, m, "")
+        let a = dalnok_track_add(e, "A"), b = dalnok_track_add(e, "B"), c = dalnok_track_add(e, "C")
+        for t in [a, b, c] { DalnokEngine.dalnok_clip_add(e, t, id, 0, 0, 0) }
+        let inner = dalnok_track_stack_create(e, [a, b], 2, "Kit")
+        let outer = dalnok_track_stack_create(e, [inner, c], 2, "Drums")
+        #expect(inner != 0 && outer != 0)
+        // Order: Drums, Kit, A, B, C; Kit sits in Drums and feeds it.
+        #expect((0..<5).map { dalnok_track_at(e, $0) } == [outer, inner, a, b, c])
+        var info = DalnokTrackInfo()
+        _ = dalnok_track_info(e, inner, &info)
+        #expect(info.stack == outer && dalnok_track_output(e, inner) == outer && dalnok_track_output(e, c) == outer)
+        _ = dalnok_track_info(e, a, &info)
+        #expect(info.stack == inner && dalnok_track_output(e, a) == inner, "A stays in Kit")
+        #expect(abs(render(e, 0, 2_000)[1_000] - 0.75) < 1e-4)
+        // Faders multiply down the chain: Kit at -6 dB halves A and B; Drums at -6 dB halves everything.
+        #expect(dalnok_track_set_gain_db(e, inner, -6.020_6) == DALNOK_OK)
+        #expect(abs(render(e, 0, 2_000)[1_000] - 0.5) < 1e-4)
+        #expect(dalnok_track_set_gain_db(e, outer, -6.020_6) == DALNOK_OK)
+        #expect(abs(render(e, 0, 2_000)[1_000] - 0.25) < 1e-4)
+        // A stack inside Kit (members from Kit), and one across levels is refused.
+        let pair = dalnok_track_stack_create(e, [b], 1, "B Sub")
+        _ = dalnok_track_info(e, pair, &info)
+        #expect(pair != 0 && info.stack == inner && dalnok_track_output(e, pair) == inner)
+        #expect(dalnok_track_stack_create(e, [a, c], 2, nil) == 0, "A (in Kit) and C (in Drums) can't share a new stack")
+        #expect(abs(render(e, 0, 2_000)[1_000] - 0.25) < 1e-4, "an extra unity stack changes nothing")
+        // Ungrouping Drums returns Kit and C to the top level; deleting Kit moves A and B Sub up to the top too.
+        #expect(dalnok_track_stack_ungroup(e, outer) == DALNOK_OK)
+        _ = dalnok_track_info(e, inner, &info)
+        #expect(info.stack == 0 && dalnok_track_output(e, inner) == 0 && dalnok_track_output(e, c) == 0)
+        #expect(dalnok_track_remove(e, inner) == DALNOK_OK)
+        _ = dalnok_track_info(e, a, &info)
+        #expect(info.stack == 0 && dalnok_track_output(e, a) == 0 && abs(render(e, 0, 2_000)[1_000] - 0.75) < 1e-4)
+        // Save and reopen keeps the nesting (undo back to the nested state first).
+        #expect(dalnok_undo(e) && dalnok_undo(e))
+        let dir = tempDir(), project = dir.appendingPathComponent("nested.dalnok")
+        var err = [CChar](repeating: 0, count: 256)
+        #expect(dalnok_project_save(e, project.path, &err, err.count) == DALNOK_OK)
+        let e2 = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(e2) }
+        #expect(dalnok_project_load(e2, project.path, nil, &err, err.count) == DALNOK_OK, "\(cstr(err))")
+        _ = dalnok_track_info(e2, inner, &info)
+        #expect(info.stack == outer && info.is_stack)
     }
 }

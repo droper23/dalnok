@@ -383,7 +383,7 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
             disclosure.toolTip = t.collapsed ? "Open the stack (show its tracks)" : "Close the stack (hide its tracks)"
             disclosure.setAccessibilityLabel(t.collapsed ? "Open stack \(t.name)" : "Close stack \(t.name)")
         }
-        numberLeading.constant = t.stack != 0 ? 20 : 8 // members sit inside their stack
+        numberLeading.constant = 8 + 12 * CGFloat(min(3, session.nesting(t))) // members sit inside their stack (nested ones deeper)
         if !nameLabel.isEditable { nameLabel.stringValue = t.name }
         if Analog.on {
             // Lit in the track's color; a muted channel's strip goes dark.

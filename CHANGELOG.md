@@ -1,6 +1,10 @@
 # Changelog
 
 ## [Unreleased]
+### Added (2026-11-17, nested stacks)
+- Nested track stacks with ancestor-aware collapse, summing and parent-preserving ungroup and deletion.
+### Fixed (2026-11-17, mixer)
+- Mixer output menus retain identically named buses and stacks.
 ### Added (2026-11-17, recording workflow and routing)
 - Cycle playback, punch in/out (Autopunch), count-in, multi-track recording from several inputs, crash-recovery prompt at launch, bus tracks with outputs and pre/post-fader sends, and a mixer with channel strips (View ▸ Mixer, X).
 ### Changed (2026-11-17)

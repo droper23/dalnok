@@ -141,9 +141,14 @@ final class Session {
                                  volumeAuto: automationPoints(tid, 0), panAuto: automationPoints(tid, 1)))
         }
         allTracks = out
-        // Members of a closed stack are hidden from the arrangement, headers and mixer.
-        let closed = Set(out.filter { $0.isStack && $0.collapsed }.map(\.id))
-        tracks = out.filter { !closed.contains($0.stack) }
+        // Tracks inside a closed stack (at any depth) are hidden from the arrangement, headers and mixer.
+        let byId = Dictionary(uniqueKeysWithValues: out.map { ($0.id, $0) })
+        func hidden(_ t: TrackView) -> Bool {
+            var parent = t.stack
+            while parent != 0, let p = byId[parent] { if p.collapsed { return true }; parent = p.stack }
+            return false
+        }
+        tracks = out.filter { !hidden($0) }
         onChange?()
         return true
     }
@@ -152,6 +157,19 @@ final class Session {
     /// Every track, including members of closed stacks (`tracks` is what's shown).
     private(set) var allTracks: [TrackView] = []
     func members(of stack: DalnokTrackId) -> [TrackView] { allTracks.filter { $0.stack == stack } }
+    /// Everything inside a stack at any depth (the members of nested stacks too), in display order.
+    func contents(of stack: DalnokTrackId) -> [TrackView] { allTracks.filter { depth(of: $0.id, inside: stack) } }
+    private func depth(of track: DalnokTrackId, inside stack: DalnokTrackId) -> Bool {
+        var parent = self.track(track)?.stack ?? 0
+        while parent != 0 { if parent == stack { return true }; parent = self.track(parent)?.stack ?? 0 }
+        return false
+    }
+    /// How many stacks a track is inside (0 = top level).
+    func nesting(_ track: TrackView) -> Int {
+        var n = 0, parent = track.stack
+        while parent != 0, n < 16 { n += 1; parent = self.track(parent)?.stack ?? 0 }
+        return n
+    }
     @discardableResult
     func makeStack(_ members: [DalnokTrackId], name: String = "") -> DalnokTrackId {
         let id = dalnok_track_stack_create(h, members, Int32(members.count), name); refresh(); return id

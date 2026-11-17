@@ -1,11 +1,14 @@
 # Handoff: Dalnok (latest: 2026-11-17, Phases 2–4 session)
 
-## 2026-11-17, later (read first)
+## 2026-11-17, nested stacks (read first)
+Nested stacks and duplicate-name mixer destinations are covered by engine and both-theme GUI self-tests. Site parity remains unpublished. Next: separate input/output devices, disk streaming, lamp physics and patch-cable motion, and an AU sidechain fixture. Owner prohibits OS-level input and tape-style track labels.
+
+## 2026-11-17, later
 Added: master fader + mixer master strip and insert slots; track stacks; plug-in parameter automation; the clip
 launcher (Phase 5 start). Theme critique plan: `06 - Design/Theme Critique 2026-11-17.md` (top items done; the
 rest is ranked there). Format 9, C API 20. Launcher state is live-only (not undoable, not saved as "playing").
 Open: launcher recording and timeline↔slot drag, follow actions; sidechains; CLAP; automation write modes;
-disk streaming; separate in/out devices; nested stacks; theme material system and palette.
+disk streaming; separate in/out devices; theme material system and palette.
 
 ## 2026-11-17 session
 Phase 3 closed (tempo/meter maps). Phase 2 recording workflow: cycle, punch/count-in, multi-input takes, crash

@@ -1277,6 +1277,24 @@ final class SelfTest {
                       "the disclosure arrow closes the stack and hides its tracks")
                 w.headers.row(stack.id)?.subviewsDeep.compactMap { $0 as? NSButton }.first { $0.action == NSSelectorFromString("toggleStack") }?.performClick(nil)
                 check(s.tracks.contains { $0.id == plain[0].id }, "opening the stack shows its tracks again")
+                // Nesting: stack the stack; closing the outer one hides everything inside it.
+                w.headers.select(stack.id); w.timeline.selectedClip = nil
+                let created = perform("Create Track Stack")
+                check(created, "Track > Create Track Stack on a stack")
+                if let outer = s.tracks.first(where: { $0.isStack && $0.id != stack.id }) {
+                    if let strip = w.mixer.strips.first(where: { $0.trackId == plain[0].id }) {
+                        check(strip.output.itemArray.filter { $0.title == "Stack" }.count == 2 &&
+                              Set(strip.output.itemArray.map(\.tag)).isSuperset(of: [Int(stack.id), Int(outer.id)]),
+                              "mixer output menu keeps both identically named stacks")
+                    } else { check(false, "mixer strip exists for nested track") }
+                    check(s.track(stack.id)?.stack == outer.id && s.nesting(s.track(plain[0].id)!) == 2,
+                          "a stack nests inside another (\(s.track(stack.id)?.stack ?? 0) vs \(outer.id))")
+                    s.setStackCollapsed(outer.id, true)
+                    check(!s.tracks.contains { $0.id == stack.id || $0.id == plain[0].id }, "closing the outer stack hides the inner stack and its tracks")
+                    s.setStackCollapsed(outer.id, false)
+                    _ = perform("Undo"); _ = perform("Undo"); _ = perform("Undo") // open, close, then create
+                    check(s.track(stack.id)?.stack == 0 && s.tracks.filter(\.isStack).count == 1, "undo removes the outer stack")
+                }
                 w.headers.select(stack.id)
                 check(perform("Ungroup Track Stack") && !s.tracks.contains { $0.isStack } && s.track(plain[0].id)?.output == 0, "Track > Ungroup Track Stack")
                 check(perform("Undo") && s.tracks.contains { $0.isStack }, "undo brings the stack back")

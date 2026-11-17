@@ -1235,7 +1235,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         guard !ordered.isEmpty else { return flash("Select a track (or clips on several tracks) to stack") }
         let id = session.makeStack(ordered)
         if id != 0 { headers.select(id); flash("Track stack of \(ordered.count) track\(ordered.count == 1 ? "" : "s"): its fader and plug-ins act on all of them") }
-        else { flash("Those tracks can't be stacked (stacks don't nest yet)") }
+        else { flash("Those tracks are in different stacks: choose tracks from the same stack (or from none)") }
     }
     @objc func ungroupTrackStack(_ sender: Any?) {
         guard let id = selectedTrack, session.track(id)?.isStack == true else { return }

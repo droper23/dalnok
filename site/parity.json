@@ -1013,10 +1013,10 @@
         ],
         [
           "Nested stacks",
-          "todo"
+          "verified"
         ]
       ],
-      "evidence": "TrackStacks engine test: the stack sums its members, its fader scales only them, order and routing, collapse flag, ungroup and undo. App self-test: Track > Create Track Stack from the selected track and a selected clip, the disclosure arrow hides and shows members, Ungroup, undo."
+      "evidence": "TrackStacks engine test: the stack sums its members, its fader scales only them, order and routing, collapse flag, ungroup and undo. stacksNest engine test: nested routing and faders (1e-4 tolerance), ordering, ungroup, deletion, undo and save/reopen. App self-test: create, collapse, expand and undo nested stacks; mixer output menus retain identically named stacks."
     },
     {
       "id": "automation",

@@ -607,7 +607,7 @@ final class TimelineView: NSView {
 
     /// A stack's lane: its members' clips as slim bars in their colours (a map of the stack), one row each.
     private func drawStackSummary(_ ctx: CGContext, _ stack: TrackView, laneY y: CGFloat) {
-        let members = session.members(of: stack.id)
+        let members = session.contents(of: stack.id).filter { !$0.isStack } // the audio inside, at any depth
         guard !members.isEmpty else { return }
         let top = y + 8, h = Theme.trackHeight - 16, row = max(2, min(8, h / CGFloat(members.count)))
         for (k, m) in members.enumerated() {
