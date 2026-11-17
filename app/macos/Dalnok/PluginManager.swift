@@ -175,7 +175,7 @@ final class PluginManagerController: NSWindowController, NSTableViewDataSource, 
         let scanned = count("ok") + count("failed") + count("crashed") + count("timeout")
         if scanned > 0 { text += " · scanned: \(count("ok")) ok, \(count("failed")) failed, \(count("crashed")) crashed, \(count("timeout")) timed out" }
         else { text += " · not scanned yet (types come from metadata only)" }
-        text += " · VST3 plug-ins can be added to tracks; Audio Units and CLAP come later."
+        text += " · VST3 and Audio Unit plug-ins can be added to tracks; CLAP comes later."
         summary.stringValue = text
     }
     private func value(_ p: Plugin, _ key: String) -> String {
@@ -186,14 +186,15 @@ final class PluginManagerController: NSWindowController, NSTableViewDataSource, 
     func updateAddButton() {
         let row = table.selectedRow >= 0 && table.selectedRow < rows.count ? rows[table.selectedRow] : nil
         let track = selectedTrackName?()
-        addButton.isEnabled = row?.format == "VST3" && track != nil
-        addButton.toolTip = row == nil ? "Select a plug-in" : row?.format != "VST3" ? "Only VST3 plug-ins can be loaded so far"
+        let loadable = row?.format == "VST3" || row?.format == "AU"
+        addButton.isEnabled = loadable && track != nil
+        addButton.toolTip = row == nil ? "Select a plug-in" : !loadable ? "CLAP plug-ins can't be loaded yet"
             : track == nil ? "Select a track in the arrangement first" : "Add \(row!.name) to \(track!)"
     }
     @objc func addSelected(_ sender: Any?) {
         guard table.selectedRow >= 0, table.selectedRow < rows.count else { return }
         let p = rows[table.selectedRow]
-        if let error = onAdd?(p.path) { summary.stringValue = "Couldn’t add \(p.name): \(error)" }
+        if let error = onAdd?(p.format == "AU" ? "au:" + p.path : p.path) { summary.stringValue = "Couldn’t add \(p.name): \(error)" }
         else { summary.stringValue = "Added \(p.name) to \(selectedTrackName?() ?? "the track")." }
     }
     /// Selects the first row whose name matches (tests and keyboard users).

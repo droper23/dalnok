@@ -292,6 +292,21 @@ DalnokStatus dalnok_plugin_set_parameter(DalnokEngine *e, int32_t slot, uint32_t
     e->impl.touchPlugin();
     return DALNOK_OK;
 }
+int32_t dalnok_plugin_controls(const DalnokEngine *e, DalnokTrackId t, int32_t slot, uint32_t *ids, int32_t cap) {
+    const TrackState *tr = e ? e->impl.model().track(t) : nullptr;
+    if (!tr) return 0;
+    for (const auto &s : tr->plugins)
+        if (s.id == slot) {
+            for (int32_t i = 0; ids && i < cap && i < static_cast<int32_t>(s.controls.size()); ++i) ids[i] = s.controls[static_cast<size_t>(i)];
+            return static_cast<int32_t>(s.controls.size());
+        }
+    return 0;
+}
+DalnokStatus dalnok_plugin_set_controls(DalnokEngine *e, DalnokTrackId t, int32_t slot, const uint32_t *ids, int32_t count) {
+    if (!e || count < 0 || (count > 0 && !ids)) return DALNOK_ERR_INVALID_ARG;
+    std::string err;
+    return statusFor(e->impl.setPluginControls(t, slot, std::vector<uint32_t>(ids, ids + count), err), err);
+}
 bool dalnok_plugin_has_editor(const DalnokEngine *e, int32_t slot) {
     PluginProcessor *p = e ? e->impl.pluginInstance(slot) : nullptr;
     return p && p->hasEditor();

@@ -146,6 +146,11 @@ final class Session {
         return id
     }
     func removePlugin(_ t: DalnokTrackId, _ slot: Int32) { dalnok_plugin_remove(h, t, slot); refresh() }
+    func setPluginControls(_ t: DalnokTrackId, _ slot: Int32, _ ids: [UInt32]) {
+        var list = ids
+        dalnok_plugin_set_controls(h, t, slot, &list, Int32(list.count))
+        refresh()
+    }
     @discardableResult
     func addMidiClip(_ t: DalnokTrackId, start: Int64, length: Int64) -> DalnokClipId {
         let id = dalnok_midi_clip_add(h, t, start, length); refresh(); return id

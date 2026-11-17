@@ -21,6 +21,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Migration.applyKeymap(SourceDAW.preferred, to: NSApp.mainMenu)
         main.showWindow(nil)
         main.window?.center()
+        // Open filling the screen's usable area (like double-clicking the title bar), not in full-screen mode.
+        // Captures and tests keep the fixed default size so their images stay comparable.
+        if !args0.contains("--snapshot") && !args0.contains("--screenshots") && !args0.contains("--selftest"),
+           let screen = main.window?.screen ?? NSScreen.main {
+            main.window?.setFrame(screen.visibleFrame, display: true)
+        }
         NSApp.activate()
 
         do { try engine.startDevice() } catch {
@@ -74,7 +80,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let projects = files.filter { $0.pathExtension == "dalnok" }
         let foreign = files.filter { MainWindowController.foreignExtensions.contains($0.pathExtension.lowercased()) }
         let audio = files.filter { $0.pathExtension != "dalnok" && !foreign.contains($0) }
-        if let p = projects.first { main.openProject(p) }
+
         if let f = foreign.first { main.importProject(f, confirm: false) }
         if files.isEmpty && snapshot == nil && !args.contains("--no-welcome") && !WelcomeController.hasCompleted {
             main.welcome.show()
@@ -92,7 +98,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         }
-        if audio.isEmpty { finish() } else { session.importFiles(audio, completion: finish) }
+        if let p = projects.first {
+            main.openProject(p) { _ in finish() } // snapshots wait until the project (and its plug-ins) loaded
+        } else if audio.isEmpty { finish() } else { session.importFiles(audio, completion: finish) }
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
@@ -255,6 +263,7 @@ func buildMenu(target: MainWindowController) -> NSMenu {
         item("Zoom to Fit", #selector(W.zoomToFit), "0"),
         .separator(),
         item("Bars and Beats Ruler", #selector(W.toggleBarsAndBeats(_:)), "b", [.command, .option]),
+        item("Device Panel", #selector(W.toggleDevicePanel(_:)), "d", [.command, .option]),
     ])
     menu("Window", [
         item("Minimize", #selector(NSWindow.performMiniaturize(_:)), "m"),

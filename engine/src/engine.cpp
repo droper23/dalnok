@@ -526,13 +526,17 @@ bool Engine::quantize(DalnokClipId id, double gridBeats, double strength, std::s
 int32_t Engine::addPlugin(DalnokTrackId track, const std::string &path, const std::string &classId, std::string &err) {
     const TrackState *t = model_.track(track);
     if (!t) return fail(err, "no such track"), 0;
-    std::shared_ptr<PluginProcessor> instance(loadVst3(path, classId, sampleRate_, kMaxBlock, false, err));
+    // "au:type:subtype:manufacturer" names an Audio Unit; anything else is a VST3 bundle path.
+    const bool au = path.rfind("au:", 0) == 0;
+    const std::string format = au ? "au" : "vst3", location = au ? path.substr(3) : path;
+    std::shared_ptr<PluginProcessor> instance(loadPlugin(format, location, classId, sampleRate_, kMaxBlock, false, err));
     if (!instance) return 0;
     if (instance->instrument() && t->kind != kTrackInstrument) return fail(err, "instrument plug-ins go on instrument tracks"), 0;
     const int32_t id = nextPlugin_;
     PluginSlot slot;
     slot.id = id;
-    slot.path = path;
+    slot.format = format;
+    slot.path = location;
     slot.classId = instance->classId();
     slot.name = instance->name();
     slot.vendor = instance->vendor();
@@ -563,6 +567,17 @@ bool Engine::removePlugin(DalnokTrackId track, int32_t id, std::string &err) {
         std::erase_if(t->plugins, [id](const PluginSlot &p) { return p.id == id; });
         if (t->plugins.size() == before) return fail(err, "no such plug-in");
         return true; // the instance stays loaded for undo
+    });
+}
+
+bool Engine::setPluginControls(DalnokTrackId track, int32_t id, std::vector<uint32_t> ids, std::string &err) {
+    if (ids.size() > 32) return fail(err, "at most 32 controls");
+    return edit("Edit Controls", false, [&](Model &m) {
+        TrackState *t = m.track(track);
+        if (!t) return fail(err, "no such track");
+        for (auto &slot : t->plugins)
+            if (slot.id == id) { slot.controls = ids; return true; }
+        return fail(err, "no such plug-in");
     });
 }
 
@@ -598,7 +613,7 @@ Engine::PluginMap Engine::offlinePlugins() const {
         for (const auto &slot : t.plugins) {
             if (!pluginInstance(slot.id)) continue;
             std::string err, state;
-            std::shared_ptr<PluginProcessor> p(loadVst3(slot.path, slot.classId, sampleRate_, kMaxBlock, true, err));
+            std::shared_ptr<PluginProcessor> p(loadPlugin(slot.format, slot.path, slot.classId, sampleRate_, kMaxBlock, true, err));
             if (!p) continue;
             if (pluginState(slot.id, state)) p->setState(state);
             // Parameters set since the state was captured may not be in it yet (the live processor applies
@@ -617,7 +632,7 @@ void Engine::instantiatePlugins() {
             nextPlugin_ = std::max(nextPlugin_, slot.id + 1);
             if (plugins_.count(slot.id)) continue;
             std::string err;
-            std::shared_ptr<PluginProcessor> p(loadVst3(slot.path, slot.classId, sampleRate_, kMaxBlock, false, err));
+            std::shared_ptr<PluginProcessor> p(loadPlugin(slot.format, slot.path, slot.classId, sampleRate_, kMaxBlock, false, err));
             if (!p) { pluginErrors_[slot.id] = err; continue; }
             if (!slot.state.empty() && !p->setState(slot.state)) pluginErrors_[slot.id] = "the saved state was not accepted";
             plugins_[slot.id] = std::move(p);

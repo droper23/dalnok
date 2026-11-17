@@ -1073,11 +1073,15 @@
           "verified"
         ],
         [
+          "Device panel with a custom controller per plug-in (choose parameters; saved; undoable)",
+          "verified"
+        ],
+        [
           "Automate and map from the panel",
           "todo"
         ]
       ],
-      "evidence": "App self-test with the test plug-in: the panel lists its parameter, sets it, shows the plug-in's text, and filters. Works for any VST3 (Vital: 2,855 parameters)."
+      "evidence": "App self-test with the test plug-in: the panel lists its parameter, sets it, shows the plug-in's text, and filters. Works for any VST3 (Vital: 2,855 parameters). Device panel: self-test turns a knob, edits the controller (one undo step), undoes it, and checks the knob follows changes made elsewhere."
     },
     {
       "id": "au",
@@ -1101,19 +1105,27 @@
           "implemented"
         ],
         [
-          "Load and process",
-          "todo"
+          "Load and process effects and instruments on tracks",
+          "verified"
         ],
         [
-          "Save state",
-          "todo"
+          "Save state (class info) and reopen",
+          "verified"
         ],
         [
-          "Plugin editor window",
+          "Parameters (generic panel, device controller)",
+          "verified"
+        ],
+        [
+          "Plugin editor window (AUv2 Cocoa views)",
+          "implemented"
+        ],
+        [
+          "AUv3 view controllers",
           "todo"
         ]
       ],
-      "evidence": "PluginDiscovery test checks Apple's built-in units; 230 instrument and effect units listed on the development Mac."
+      "evidence": "AudioUnitHosting tests with Apple's units: AUDelay dry-only null within 1e-5, wet output delayed 50 ms, state through save/reopen; DLSMusicDevice silent before and sounding during a clip note. App self-test drives AUDelay and AUPeakLimiter in the device panel."
     },
     {
       "id": "clap",

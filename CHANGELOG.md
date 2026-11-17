@@ -1,6 +1,14 @@
 # Changelog
 
 ## [Unreleased]
+### Added (2026-11-16, Audio Units, device panel)
+- Audio Unit hosting (effects and instruments, state, parameters, AUv2 Cocoa editors) through the same track slots as VST3; Audio ▸ Plug-ins adds AUs too.
+- Device panel (View ▸ Device Panel, ⌥⌘D): the selected track's plug-ins as devices, each with a controller of knobs; Edit Controls chooses its parameters (saved in the project, one undo step). Knobs follow changes made in the plug-in's window.
+### Changed
+- The main window opens filling the screen's usable area (zoomed, not full-screen mode).
+### Fixed
+- At launch the empty state and the timeline could both show.
+- `--snapshot` waits until a project has finished opening.
 ### Added (2026-11-16, plug-in editors and parameters)
 - Plug-in windows (Open … in the track's Plug-ins menu or the header input menu): the plug-in's own editor, sized by the plug-in, and a generic, searchable parameter panel with sliders and the plug-in's value text for every VST3.
 - Parameter changes from editors and the panel reach the audio thread through a bounded queue (applied at the next block) and are replayed into export instances; editor edits mark the project changed.

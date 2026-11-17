@@ -535,6 +535,14 @@ std::unique_ptr<PluginProcessor> loadVst3(const std::string &bundle, const std::
     return p;
 }
 
+std::unique_ptr<PluginProcessor> loadPlugin(const std::string &format, const std::string &path, const std::string &classId,
+                                            double sampleRate, int maxBlock, bool offline, std::string &err) {
+    if (format == "au") return loadAudioUnit(path, sampleRate, maxBlock, err);
+    if (format == "vst3") return loadVst3(path, classId, sampleRate, maxBlock, offline, err);
+    err = "unsupported plug-in format " + format;
+    return nullptr;
+}
+
 // ---- base64 for plugin state in project files -------------------------------------
 
 std::string base64Encode(const std::string &in) {

@@ -150,6 +150,11 @@ json::Value Engine::describe() const {
                 pv.set("name", slot.name);
                 if (!slot.vendor.empty()) pv.set("vendor", slot.vendor);
                 if (slot.instrument) pv.set("instrument", true);
+                if (!slot.controls.empty()) {
+                    Value ids = Value::makeArray();
+                    for (auto c : slot.controls) ids.push(static_cast<int64_t>(c));
+                    pv.set("controls", std::move(ids));
+                }
                 std::string state;
                 if (!pluginState(slot.id, state)) state = slot.state;
                 pv.set("state", base64Encode(state));
@@ -382,7 +387,10 @@ std::unique_ptr<Engine::PreparedProject> Engine::prepareDocument(const json::Val
                     slot.name = pv.getString("name", "Plug-in");
                     slot.vendor = pv.getString("vendor", "");
                     slot.instrument = pv.getBool("instrument", false);
-                    if (slot.id <= 0 || !seen.insert(slot.id).second || slot.format != "vst3" ||
+                    if (const json::Value *ids = pv.get("controls"); ids && ids->isArray())
+                        for (const auto &c : ids->array)
+                            if (c.isNumber() && c.number >= 0 && c.number <= 4294967295.0) slot.controls.push_back(static_cast<uint32_t>(c.number));
+                    if (slot.id <= 0 || !seen.insert(slot.id).second || (slot.format != "vst3" && slot.format != "au") ||
                         !base64Decode(pv.getString("state", ""), slot.state)) {
                         err = "invalid plug-in on track " + t.name;
                         return nullptr;

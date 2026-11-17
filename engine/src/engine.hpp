@@ -33,6 +33,7 @@ struct PluginSlot {
     int32_t id = 0;
     std::string format = "vst3", path, classId, name, vendor;
     bool instrument = false;
+    std::vector<uint32_t> controls; // parameters on the device panel's controller (empty = the first automatable ones)
     std::string state; // last known plugin state (used when the plugin is missing, and for saving)
 };
 
@@ -197,6 +198,7 @@ public:
     // Plugins (ADR-0009 stage 3). Loading runs plugin code in this process (control thread).
     int32_t addPlugin(DalnokTrackId track, const std::string &path, const std::string &classId, std::string &err);
     bool removePlugin(DalnokTrackId track, int32_t slot, std::string &err);
+    bool setPluginControls(DalnokTrackId track, int32_t slot, std::vector<uint32_t> ids, std::string &err);
     PluginProcessor *pluginInstance(int32_t slot) const;
     std::string pluginError(int32_t slot) const;
     bool pluginState(int32_t slot, std::string &bytes) const;

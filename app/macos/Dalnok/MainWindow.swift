@@ -84,9 +84,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     let transport = TransportBar()
     let headers: TrackHeaderColumn
     let timeline: TimelineView
+    let devicePanel: DevicePanel
+    private var devicePanelHeight: NSLayoutConstraint!
+    static var showDevicePanel: Bool {
+        get { UserDefaults.standard.object(forKey: "showDevicePanel") as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: "showDevicePanel") }
+    }
     private var timer: Timer?
     private var wasPlaying = false
     private var wasRecording = false
+    private var didShowContent = false
     private var lastBeat = -1
     /// Self-test only: record from DALNOK_SIMULATED_INPUT instead of a device.
     static var simulatedInput = false
@@ -100,6 +107,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         self.session = session
         headers = TrackHeaderColumn(session: session)
         timeline = TimelineView(session: session)
+        devicePanel = DevicePanel(session: session)
 
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1280, height: 760),
                               styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
@@ -123,7 +131,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             }
         }
         window.contentView = root
-        for v in [transport, headers, timeline, emptyState] as [NSView] {
+        for v in [transport, headers, timeline, devicePanel, emptyState] as [NSView] {
             v.translatesAutoresizingMaskIntoConstraints = false
             root.addSubview(v)
         }
@@ -134,17 +142,25 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             transport.heightAnchor.constraint(equalToConstant: Theme.transportHeight),
             headers.topAnchor.constraint(equalTo: transport.bottomAnchor),
             headers.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            headers.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            headers.bottomAnchor.constraint(equalTo: devicePanel.topAnchor),
             headers.widthAnchor.constraint(equalToConstant: Theme.headerWidth),
             timeline.topAnchor.constraint(equalTo: transport.bottomAnchor),
             timeline.leadingAnchor.constraint(equalTo: headers.trailingAnchor),
             timeline.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            timeline.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            timeline.bottomAnchor.constraint(equalTo: devicePanel.topAnchor),
+            devicePanel.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            devicePanel.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            devicePanel.bottomAnchor.constraint(equalTo: root.bottomAnchor),
             emptyState.topAnchor.constraint(equalTo: transport.bottomAnchor),
             emptyState.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             emptyState.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             emptyState.bottomAnchor.constraint(equalTo: root.bottomAnchor),
         ])
+        devicePanelHeight = devicePanel.heightAnchor.constraint(equalToConstant: Self.showDevicePanel ? DevicePanel.height : 0)
+        devicePanelHeight.isActive = true
+        devicePanel.isHidden = !Self.showDevicePanel
+        devicePanel.onOpen = { [weak self] track, slot in self?.openPluginWindow(track: track, slot: slot) }
+        devicePanel.onAdd = { [weak self] in self?.showPlugins(nil) }
         emptyState.onImportAudio = { [weak self] in self?.importAudio() }
         emptyState.onOpen = { [weak self] in self?.openDocument(nil) }
         emptyState.onMigrate = { [weak self] in self?.showMigrationAssistant(nil) }
@@ -166,7 +182,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         timeline.onOpenClip = { [weak self] clip in self?.pianoRoll.show(clip: clip.id) }
         timeline.onActivate = { [weak self] in self?.pianoRoll.focused = false }
         headers.contextMenu = trackContextMenu()
-        headers.onSelect = { [weak self] id in self?.timeline.highlightedTrack = id }
+        headers.onSelect = { [weak self] id in
+            self?.timeline.highlightedTrack = id
+            self?.devicePanel.track = id
+        }
         palette.onOpenGuide = { [weak self] c in self?.conceptGuide.show(daw: c.daw, query: c.term) }
         session.onChange = { [weak self] in self?.modelChanged() }
         session.onMessage = { [weak self] msg in self?.flash(msg) }
@@ -231,20 +250,26 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
     private func modelChanged() {
         headers.sync()
-        // Crossfade between the empty state and the arrangement.
+        // Show the empty state or the arrangement; crossfade only when that actually changes.
         let empty = session.tracks.isEmpty
-        if emptyState.isHidden == empty {
-            let show: NSView = empty ? emptyState : timeline, hide: NSView = empty ? timeline : emptyState
-            for v in [show] + (empty ? [] : [headers]) { v.alphaValue = Motion.reduced ? 1 : 0; v.isHidden = false }
-            Motion.views(Motion.gentle) {
-                show.animator().alphaValue = 1
-                if !empty { headers.animator().alphaValue = 1 }
-                hide.animator().alphaValue = 0
-                if empty { headers.animator().alphaValue = 0 }
-            }
-            hide.isHidden = Motion.reduced
-            if empty { headers.isHidden = Motion.reduced }
-            if !Motion.reduced {
+        devicePanel.isHidden = empty || !Self.showDevicePanel
+        let showingEmpty = !emptyState.isHidden && timeline.isHidden
+        if showingEmpty != empty {
+            let changing = didShowContent // the first state at launch appears without animation
+            didShowContent = true
+            emptyState.isHidden = false
+            timeline.isHidden = false
+            headers.isHidden = false
+            let show: [NSView] = empty ? [emptyState] : [timeline, headers], hide: [NSView] = empty ? [timeline, headers] : [emptyState]
+            if !changing || Motion.reduced {
+                hide.forEach { $0.isHidden = true; $0.alphaValue = 1 }
+                show.forEach { $0.alphaValue = 1 }
+            } else {
+                show.forEach { $0.alphaValue = 0 }
+                Motion.views(Motion.gentle) {
+                    show.forEach { $0.animator().alphaValue = 1 }
+                    hide.forEach { $0.animator().alphaValue = 0 }
+                }
                 DispatchQueue.main.asyncAfter(deadline: .now() + Motion.gentle + 0.05) { [weak self] in
                     guard let self else { return }
                     let nowEmpty = self.session.tracks.isEmpty
@@ -264,6 +289,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         updateTitle()
         updateTempoDisplay()
         pianoRoll.modelChanged()
+        if devicePanel.track == nil, let first = session.tracks.first?.id { headers.select(first) }
+        devicePanel.rebuild()
         if transientMessageUntil < Date() { updateStatus() }
     }
 
@@ -349,6 +376,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             catch { flash("Recovery snapshot failed: \(error)") }
         }
         if tickCount % 30 == 0 && !e.deviceAlive { deviceLost() }
+        if tickCount % 15 == 0 && !devicePanel.isHidden { devicePanel.refreshValues() }
         if transientMessageUntil < Date(), transientMessageUntil != .distantPast {
             transientMessageUntil = .distantPast
             updateStatus()
@@ -857,6 +885,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         transport.metronomeButton.setAccessibilityValue(Self.metronomeOn ? "on" : "off")
     }
 
+    @objc func toggleDevicePanel(_ sender: Any?) {
+        Self.showDevicePanel.toggle()
+        let show = Self.showDevicePanel
+        if show { devicePanel.isHidden = false }
+        let panel = devicePanel
+        Motion.views(Motion.gentle, { devicePanelHeight.animator().constant = show ? DevicePanel.height : 0 }, completion: {
+            DispatchQueue.main.async { if !show { panel.isHidden = true } }
+        })
+        if Motion.reduced { devicePanel.isHidden = !show }
+    }
+
     @objc func toggleBarsAndBeats(_ sender: Any?) {
         TimelineView.barsAndBeats.toggle()
         timeline.needsDisplay = true
@@ -953,6 +992,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             return true
         case #selector(toggleMetronome(_:)):
             item.state = Self.metronomeOn ? .on : .off
+            return true
+        case #selector(toggleDevicePanel(_:)):
+            item.state = Self.showDevicePanel ? .on : .off
             return true
         case #selector(toggleBarsAndBeats(_:)):
             item.state = TimelineView.barsAndBeats ? .on : .off

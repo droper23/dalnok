@@ -397,6 +397,10 @@ typedef struct {
 int32_t dalnok_plugin_parameter_count(const DalnokEngine *engine, int32_t slot);
 DalnokStatus dalnok_plugin_parameter(const DalnokEngine *engine, int32_t slot, int32_t index, DalnokPluginParameter *out);
 DalnokStatus dalnok_plugin_set_parameter(DalnokEngine *engine, int32_t slot, uint32_t id, double normalized);
+/* The device panel's controller: which parameters it shows (saved; one undo step to change).
+ * Returns the count (0 = not customized: the panel shows the first automatable parameters). */
+int32_t dalnok_plugin_controls(const DalnokEngine *engine, DalnokTrackId track, int32_t slot, uint32_t *ids, int32_t capacity);
+DalnokStatus dalnok_plugin_set_controls(DalnokEngine *engine, DalnokTrackId track, int32_t slot, const uint32_t *ids, int32_t count);
 
 /* The plugin's own editor, attached to `parent_view` (an NSView). `on_resize`
  * is called when the editor asks for a new size. Main thread. */

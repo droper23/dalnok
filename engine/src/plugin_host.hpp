@@ -65,6 +65,12 @@ public:
 std::unique_ptr<PluginProcessor> loadVst3(const std::string &bundle, const std::string &classId, double sampleRate,
                                           int maxBlock, bool offline, std::string &err);
 
+// Loads a registered Audio Unit by "type:subtype:manufacturer" (macOS).
+std::unique_ptr<PluginProcessor> loadAudioUnit(const std::string &id, double sampleRate, int maxBlock, std::string &err);
+// Dispatches on format ("vst3" bundle path, or "au" identifier).
+std::unique_ptr<PluginProcessor> loadPlugin(const std::string &format, const std::string &path, const std::string &classId,
+                                            double sampleRate, int maxBlock, bool offline, std::string &err);
+
 std::string base64Encode(const std::string &bytes);
 bool base64Decode(const std::string &text, std::string &bytes);
 

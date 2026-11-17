@@ -12,7 +12,7 @@ final class SelfTest {
     let workdir: URL
     private var failures = 0
     /// Preferences the test changes; all are restored at the end so a run never alters the owner's settings.
-    private static let restoredKeys = ["copyAudioOnSave", "comingFrom", "onboardingDone", "recordingInputUID", "rulerBarsAndBeats", "metronome"]
+    private static let restoredKeys = ["copyAudioOnSave", "comingFrom", "onboardingDone", "recordingInputUID", "rulerBarsAndBeats", "metronome", "showDevicePanel"]
     private let previousPreferences: [String: Any]
     private var w: MainWindowController { app.main }
     private var s: Session { app.session }
@@ -405,6 +405,7 @@ final class SelfTest {
         await motion()
         pluginManager()
         hostedPlugins()
+        devicePanel()
 
         // Import a REAPER project end to end (fixture built from this run's audio files).
         let media = workdir.appendingPathComponent("Media")
@@ -631,7 +632,7 @@ final class SelfTest {
         check(pm.all.count > 0 && pm.all.contains { $0.format == "AU" && $0.vendor == "Apple" }, "plug-in list shows \(pm.all.count) plug-ins including Apple's Audio Units")
         pm.filter("apple")
         check(!pm.rows.isEmpty && pm.rows.allSatisfy { "\($0.name) \($0.vendor)".lowercased().contains("apple") }, "search narrows the list (\(pm.rows.count))")
-        check(pm.summary.stringValue.contains("VST3 plug-ins can be added"), "the list says which formats can be added")
+        check(pm.summary.stringValue.contains("VST3 and Audio Unit plug-ins can be added"), "the list says which formats can be added")
         pm.filter("")
         pm.window?.orderOut(nil)
     }
@@ -674,6 +675,43 @@ final class SelfTest {
         check(pw.rows.isEmpty, "parameter search filters")
         pw.window?.close()
         check(w.pluginWindows[slot] == nil, "closing the plug-in window releases it")
+    }
+
+    /// Device panel with Apple's built-in Audio Units (present on every Mac): controller knobs, Edit Controls, undo.
+    private func devicePanel() {
+        guard let track = s.tracks.first(where: { !$0.isInstrument })?.id else { return check(false, "an audio track exists") }
+        w.headers.select(track)
+        let slot = (try? s.addPlugin(track, path: "au:aufx:dely:appl")) ?? 0
+        check(slot != 0, "AUDelay loads as an insert")
+        let limiter = (try? s.addPlugin(track, path: "au:aufx:lmtr:appl")) ?? 0
+        let panel = w.devicePanel
+        check(!panel.isHidden && panel.devices.map(\.slot) == [slot, limiter], "device panel shows the track's plug-ins in order")
+        guard let delay = panel.devices.first else { return }
+        let names = delay.knobs.map { $0.label.stringValue }
+        check(delay.knobs.count == 4 && names.contains("Dry/Wet Mix"), "controller shows AUDelay's parameters (\(names))")
+        if let lim = panel.devices.last {
+            let limNames = lim.knobs.map { $0.label.stringValue }
+            check(lim.knobs.count == lim.controlIds.count && !limNames.contains(""), "every limiter control has a named knob (\(limNames))")
+        }
+        // Turning a knob changes the plug-in.
+        let mix = delay.knobs[0]
+        delay.set(mix.id, 0.2)
+        check(abs((delay.current(mix.id)?.value ?? 0) - 0.2) < 1e-4 && mix.value.stringValue.hasPrefix("20"), "knob sets the parameter (\(mix.value.stringValue))")
+        // Edit Controls: remove one control, undo restores the default set.
+        delay.toggleControl(mix.id)
+        check(delay.knobs.count == 3 && s.engine.undoName == "Edit Controls", "Edit Controls removes a knob as one undo step")
+        _ = perform("Undo")
+        panel.rebuild()
+        check(panel.devices.first?.knobs.count == 4, "undo restores the controller")
+        // External change (as from the plug-in's own window): the knob follows.
+        dalnok_plugin_set_parameter(s.engine.handle, slot, mix.id, 0.9)
+        panel.refreshValues()
+        check(abs((panel.devices.first?.knobs.first?.knob.value ?? 0) - 0.9) < 1e-4, "knob follows changes made elsewhere")
+        check(perform("Device Panel") && w.devicePanel.isHidden, "View > Device Panel hides it")
+        _ = perform("Device Panel")
+        s.removePlugin(track, limiter)
+        s.removePlugin(track, slot)
+        check(w.devicePanel.devices.isEmpty, "removing the plug-ins clears the panel")
     }
 
     /// Animations run when motion is allowed and are skipped with Reduce Motion.

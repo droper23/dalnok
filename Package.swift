@@ -45,6 +45,7 @@ let package = Package(
                 .linkedFramework("CoreAudio"),
                 .linkedFramework("CoreMIDI"),
                 .linkedFramework("CoreFoundation"),
+                .linkedFramework("AppKit"), // Audio Unit editor views (au_host.mm)
                 .linkedLibrary("z"),
             ]
         ),
