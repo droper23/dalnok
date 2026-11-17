@@ -11,7 +11,7 @@ rendering changes. Someone who knows Graphite can use Warm Analog without relear
 | Meters | Continuous bars | Segmented LED ladders (green, amber, red), dim unlit segments, held peak segment |
 | Position display | Amber digits on black | Vacuum-fluorescent display: teal glowing digits over unlit "8" segments |
 | Panels | Flat graphite | Brushed, grained faceplates with screws |
-| Track names | Text | Handwritten on masking-tape scribble strips |
+| Track names | Text | Recessed display window (scribble strip), name lit in the track color with a soft glow; dark when muted (replaced the handwritten tape labels on 2026-11-17 at the owner's request) |
 | Device panel | Cards | Rack units with ears, screws, a power LED, IN/OUT jacks, joined by patch cables that sag and plug in (animated) from the track's IN to its OUT |
 | Track colours | Green-start OKLCH gradient | Amber-start, softer chroma (same lightness rules) |
 

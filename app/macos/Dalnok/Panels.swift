@@ -232,6 +232,7 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
     }
     /// Selected-row tint and the color strip are layers so selection slides in instead of jumping.
     private let selectionLayer = CALayer(), strip = CALayer()
+    private let scribble = ScribbleStrip() // Warm Analog: the display window behind the name
     private var hasShown = false
     /// While recording, an armed row's R chip breathes.
     func setRecording(_ recording: Bool) { arm.pulsing = recording && arm.isOn }
@@ -265,18 +266,13 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
         number.font = Theme.mono(11)
         number.textColor = Theme.textFaint
         number.alignment = .right
-        nameLabel.font = Analog.on ? (NSFont(name: "Noteworthy-Bold", size: 14) ?? Theme.ui(13, .semibold)) : Theme.ui(13, .semibold)
+        nameLabel.font = Theme.ui(13, .semibold)
         nameLabel.textColor = Theme.text
         if Analog.on {
-            // A console scribble strip: the name written on masking tape.
-            nameLabel.drawsBackground = true
-            nameLabel.backgroundColor = Theme.hex(0xE6DAC0)
-            nameLabel.wantsLayer = true
-            nameLabel.layer?.cornerRadius = 1
-            nameLabel.layer?.shadowOpacity = 0.5
-            nameLabel.layer?.shadowRadius = 1
-            nameLabel.layer?.shadowOffset = CGSize(width: 0, height: -1)
-            nameLabel.layer?.masksToBounds = false
+            // A console scribble strip: a recessed display window (drawn by the row) with the name lit in the
+            // track's color, like the backlit strips on modern analog-style consoles.
+            nameLabel.font = NSFont.systemFont(ofSize: 12.5, weight: .semibold, width: .condensed)
+            nameLabel.drawsBackground = false
         }
         nameLabel.lineBreakMode = .byTruncatingTail
         nameLabel.delegate = self
@@ -304,6 +300,7 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
         meter.vertical = true
         meter.toolTip = "Post-fader level (click to reset the clip indicator)"
 
+        if Analog.on { addSubview(scribble) } // first, so the name draws on top of it
         for v in [number, nameLabel, arm, mute, solo, gain, pan, gainLabel, panLabel, meter, inputButton] as [NSView] {
             v.translatesAutoresizingMaskIntoConstraints = false
             addSubview(v)
@@ -312,9 +309,9 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
             number.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
             number.widthAnchor.constraint(equalToConstant: 18),
             number.firstBaselineAnchor.constraint(equalTo: nameLabel.firstBaselineAnchor),
-            nameLabel.leadingAnchor.constraint(equalTo: number.trailingAnchor, constant: 8),
+            nameLabel.leadingAnchor.constraint(equalTo: number.trailingAnchor, constant: Analog.on ? 14 : 8),
             nameLabel.topAnchor.constraint(equalTo: topAnchor, constant: 12),
-            nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: arm.leadingAnchor, constant: -8),
+            nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: arm.leadingAnchor, constant: Analog.on ? -16 : -8),
             arm.trailingAnchor.constraint(equalTo: mute.leadingAnchor, constant: -4),
             arm.centerYAnchor.constraint(equalTo: nameLabel.centerYAnchor),
             inputButton.trailingAnchor.constraint(equalTo: solo.trailingAnchor),
@@ -355,7 +352,20 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
         muted = t.muted
         number.stringValue = "\(index + 1)"
         if !nameLabel.isEditable { nameLabel.stringValue = t.name }
-        nameLabel.textColor = Analog.on ? Theme.hex(t.muted ? 0x6E6455 : 0x1E1A16) : (t.muted ? Theme.textDim : Theme.text)
+        if Analog.on {
+            // Lit in the track's color; a muted channel's strip goes dark.
+            let lit = OKLCH.adjust(t.color, dl: 0.2, chromaScale: 0.7)
+            nameLabel.textColor = t.muted ? Theme.hex(0x5E554A) : lit
+            let glow = NSShadow()
+            glow.shadowColor = t.muted ? .clear : lit.withAlphaComponent(0.55)
+            glow.shadowBlurRadius = 5
+            glow.shadowOffset = .zero
+            nameLabel.shadow = glow
+            scribble.color = t.color
+            scribble.lit = !t.muted
+        } else {
+            nameLabel.textColor = t.muted ? Theme.textDim : Theme.text
+        }
         // Color strip: the track's identity, full height; desaturated (animated) when muted.
         Motion.layers(Motion.gentle) { strip.backgroundColor = (t.muted ? TrackTint(base: t.color).muted : t.color).cgColor }
         mute.isOn = t.muted
@@ -394,6 +404,10 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
         selectionLayer.frame = CGRect(x: 0, y: 1, width: bounds.width, height: bounds.height - 2)
         strip.frame = CGRect(x: 0, y: 0, width: isSelected ? 5 : 3, height: bounds.height - 1)
         CATransaction.commit()
+        if Analog.on {
+            let n = nameLabel.frame
+            scribble.frame = NSRect(x: n.minX - 7, y: n.midY - 11, width: max(40, arm.frame.minX - 9 - (n.minX - 7)), height: 22)
+        }
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -413,8 +427,8 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
         nameLabel.isEditable = true
         nameLabel.isBezeled = true
         nameLabel.drawsBackground = true
-        // Warm Analog keeps writing on the tape (dark ink); Graphite edits in a dark well.
-        nameLabel.backgroundColor = Analog.on ? Theme.hex(0xF1E7D0) : Theme.window
+        // Both themes edit in a dark well (Warm Analog: the scribble strip itself).
+        nameLabel.backgroundColor = Analog.on ? Theme.hex(0x0D0A08) : Theme.window
         window?.makeFirstResponder(nameLabel)
         nameLabel.currentEditor()?.selectAll(nil)
     }
@@ -423,8 +437,7 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
         guard nameLabel.isEditable else { return }
         nameLabel.isEditable = false
         nameLabel.isBezeled = false
-        nameLabel.drawsBackground = Analog.on // the tape stays
-        nameLabel.backgroundColor = Analog.on ? Theme.hex(0xE6DAC0) : .clear
+        nameLabel.drawsBackground = false // Warm Analog's strip is drawn by the row
         let name = renameCancelled ? "" : nameLabel.stringValue.trimmingCharacters(in: .whitespaces)
         renameCancelled = false
         if !name.isEmpty { session.renameTrack(trackId, name) } else { session.refresh() }
@@ -592,4 +605,31 @@ final class TrackHeaderColumn: NSView {
 
 final class FlippedView: NSView {
     override var isFlipped: Bool { true }
+}
+
+
+/// Warm Analog track name window: a recessed dark display with a glass sheen, lit from below in the track's color.
+@MainActor
+final class ScribbleStrip: NSView {
+    var color: NSColor = .gray { didSet { needsDisplay = true } }
+    var lit = true { didSet { if lit != oldValue { needsDisplay = true } } }
+    override var isFlipped: Bool { true }
+    override func hitTest(_ point: NSPoint) -> NSView? { nil } // clicks go to the row (select, double-click rename)
+
+    override func draw(_ dirtyRect: NSRect) {
+        let r = bounds.insetBy(dx: 0.5, dy: 0.5)
+        let well = NSBezierPath(roundedRect: r, xRadius: 3, yRadius: 3)
+        Theme.hex(0x0D0A08).setFill(); well.fill()
+        NSGraphicsContext.saveGraphicsState()
+        well.addClip()
+        NSGradient(starting: Theme.hex(0xFFFFFF, 0.07), ending: Theme.hex(0xFFFFFF, 0))?
+            .draw(in: NSRect(x: r.minX, y: r.minY, width: r.width, height: r.height / 2), angle: -90)
+        if lit {
+            NSGradient(starting: color.withAlphaComponent(0), ending: color.withAlphaComponent(0.14))?
+                .draw(in: NSRect(x: r.minX, y: r.midY, width: r.width, height: r.height / 2), angle: -90)
+        }
+        Theme.hex(0x000000, 0.7).setFill(); NSRect(x: r.minX, y: r.minY, width: r.width, height: 1).fill() // inner top shadow
+        NSGraphicsContext.restoreGraphicsState()
+        Theme.hex(0x000000, 0.85).setStroke(); well.lineWidth = 1; well.stroke()
+    }
 }
