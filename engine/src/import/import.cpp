@@ -108,6 +108,14 @@ int32_t Builder::addTrack(const std::string &name, float gainDb, float pan, bool
     return static_cast<int32_t>(tracks_.size() - 1);
 }
 
+void Builder::setTrackMix(int32_t track, float gainDb, float pan, bool mute) {
+    if (track < 0 || track >= static_cast<int32_t>(tracks_.size())) return;
+    Track &t = tracks_[static_cast<size_t>(track)];
+    t.gainDb = gainDb;
+    t.pan = std::clamp(pan, -1.0f, 1.0f);
+    t.mute = mute;
+}
+
 int32_t Builder::addInstrumentTrack(const std::string &name) {
     const int32_t t = addTrack(name, 0, 0, false, false);
     tracks_[static_cast<size_t>(t)].instrument = true;
@@ -120,13 +128,16 @@ bool Builder::isInstrumentTrack(int32_t track) const {
 
 void Builder::addAudioUnit(int32_t track, const std::string &id, const std::string &name, bool instrument, const std::string &state) {
     if (track < 0 || track >= static_cast<int32_t>(tracks_.size())) return;
-    tracks_[static_cast<size_t>(track)].plugins.push_back({id, name, state, instrument});
+    const auto first = name.find_first_not_of(" \t\r\n"), last = name.find_last_not_of(" \t\r\n");
+    tracks_[static_cast<size_t>(track)].plugins.push_back(
+        {id, first == std::string::npos ? std::string() : name.substr(first, last - first + 1), state, instrument});
 }
 
-void Builder::addMidiClip(int32_t track, double start, double length, const std::vector<Note> &notes, const std::string &name) {
+void Builder::addMidiClip(int32_t track, double start, double length, const std::vector<Note> &notes, const std::string &name, bool muted) {
     if (track < 0 || track >= static_cast<int32_t>(tracks_.size()) || length <= 0) return;
     Clip c{0, frames(std::max(0.0, start)), 0, std::max<int64_t>(1, frames(length)), 0, 0, false, 0, name, {}};
     c.midi = true;
+    c.muted = muted;
     for (const auto &n : notes) {
         if (!(n.start >= 0) || !(n.length > 0) || n.pitch < 0 || n.pitch > 127) { report_.skip("invalidNotes"); continue; }
         c.notes.push_back({frames(n.start), std::max<int64_t>(1, frames(n.length)), n.pitch, std::clamp(n.velocity, 1, 127)});
@@ -220,6 +231,7 @@ json::Value Builder::document() const {
             cv.set("start", c.start);
             cv.set("offset", c.offset);
             cv.set("length", c.length);
+            if (c.muted) cv.set("muted", true);
             cv.set("name", c.name);
             if (c.gainDb != 0) cv.set("gainDb", std::isfinite(c.gainDb) ? Value(static_cast<double>(c.gainDb)) : Value());
             if (c.fadeIn > 0) cv.set("fadeIn", c.fadeIn);
@@ -248,6 +260,7 @@ json::Value Builder::document() const {
     doc.set("tracks", std::move(tracks));
     // MIDI and instrument tracks need project version 2.
     if (std::any_of(tracks_.begin(), tracks_.end(), [](const Track &t) { return t.instrument; })) doc.set("version", 2);
+    if (std::any_of(tracks_.begin(), tracks_.end(), [](const Track &t) { return std::any_of(t.clips.begin(), t.clips.end(), [](const Clip &c) { return c.muted; }); })) doc.set("version", 12);
     return doc;
 }
 

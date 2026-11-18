@@ -778,6 +778,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
     private var selectedClipView: ClipView? { timeline.selectedClip.flatMap { session.clip($0) } }
 
+    @objc func toggleClipMute(_ sender: Any?) {
+        guard let clip = selectedClipView else { return }
+        session.setClipMuted(clip.id, !clip.muted)
+    }
+
     @objc func setFadeCurveLinear(_ sender: Any?) { setCurve(DALNOK_FADE_LINEAR) }
     @objc func setFadeCurveEqualPower(_ sender: Any?) { setCurve(DALNOK_FADE_EQUAL_POWER) }
     private func setCurve(_ curve: DalnokFadeCurve) {
@@ -1613,6 +1618,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         case #selector(toggleSoloTrack(_:)):
             item.state = selectedTrack.flatMap { session.track($0) }?.solo == true ? .on : .off
             return selectedTrack != nil
+        case #selector(toggleClipMute(_:)):
+            item.title = selectedClipView?.muted == true ? "Unmute Clip" : "Mute Clip"
+            return selectedClipView != nil
         case #selector(setFadeCurveLinear(_:)), #selector(setFadeCurveEqualPower(_:)):
             let eq = item.action == #selector(setFadeCurveEqualPower(_:))
             item.state = selectedClipView.map { ($0.fadeCurve == 1) == eq } == true ? .on : .off

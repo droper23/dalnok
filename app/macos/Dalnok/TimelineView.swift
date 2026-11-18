@@ -779,7 +779,7 @@ final class TimelineView: NSView {
         let path = CGPath(roundedRect: rect, cornerWidth: 3, cornerHeight: 3, transform: nil)
         let tint = TrackTint(base: clip.offline ? Theme.textFaint : (track.muted ? TrackTint(base: track.color).muted : track.color))
         let selected = selectedClips.contains(clip.id)
-        let dim = track.muted || clip.offline
+        let dim = track.muted || clip.muted || clip.offline
 
         ctx.saveGState()
         ctx.addPath(path)
@@ -805,6 +805,7 @@ final class TimelineView: NSView {
         let tagAttrs: [NSAttributedString.Key: Any] = [.font: Theme.ui(10, .regular), .foregroundColor: fg.withAlphaComponent(0.7)]
         var tags: [String] = []
         if clip.offline { tags.append("offline") }
+        if clip.muted { tags.append("muted") }
         if clip.isMidi { tags.append(clip.notes.count == 1 ? "1 note" : "\(clip.notes.count) notes") }
         if clip.folder != 0 { tags.append("⧉ takes \(session.takes(clip.folder).count)") }
         if abs(clip.rate - 1) > 1e-9 { tags.append(String(format: "%.0f%% speed", clip.rate * 100)) }

@@ -24,6 +24,7 @@ struct ClipView {
     let name: String
     var notes: [DalnokNote] = [] // MIDI clips only
     var isMidi = false
+    var muted = false
     var folder: Int32 = 0 // take folder (comp piece when shown in the arrangement)
     var slot: Int32 = -1  // clip launcher slot (not on the timeline)
     var follow: Int32 = 0, followLoops: Int32 = 1
@@ -109,6 +110,7 @@ final class Session {
                                     fadeIn: ci.fade_in, fadeOut: ci.fade_out, fadeCurve: ci.fade_curve,
                                     gainDb: ci.gain_db, rate: ci.rate, pitch: ci.pitch, preservePitch: ci.preserve_pitch,
                                     processing: ci.processing, name: fixedString(ci.name))
+                clip.muted = dalnok_clip_muted(h, ci.id)
                 clip.folder = ci.folder
                 clip.slot = ci.slot
                 clip.follow = ci.follow
@@ -188,6 +190,7 @@ final class Session {
 
     // MARK: Edits (each is an engine command)
 
+    func setClipMuted(_ clip: DalnokClipId, _ muted: Bool) { dalnok_clip_set_muted(h, clip, muted); refresh() }
     func setGain(_ t: DalnokTrackId, db: Float) { dalnok_track_set_gain_db(h, t, db); refresh() }
     var masterGainDb: Float { dalnok_master_gain_db(h) }
     func setMasterGain(_ db: Float) { dalnok_master_set_gain_db(h, db); refresh() }

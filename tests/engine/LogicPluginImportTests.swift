@@ -112,7 +112,9 @@ import Testing
         region.replaceSubrange(0x52..<0x56, with: le(UInt32(3_840)))
         var note = line(0x90, 38_400); note[11] = 120; note[12] = 60
         let notes = note + line(0x40, 0x8900_0000, 0, 960) + end
-        var body = chunk("Envi", env, id: 20) + chunk("AuCO", Data(repeating: 0, count: 201), id: 36, sub: 0)
+        var strip = Data(repeating: 0, count: 201) // unity fader, centre pan
+        strip[85] = 0x5a; strip[89] = 64; strip.replaceSubrange(116..<120, with: le(UInt32(0x5a00_0000)))
+        var body = chunk("Envi", env, id: 20) + chunk("AuCO", strip, id: 36, sub: 0)
         body += chunk("AuCU", component("DLS", type: "aumu", subtype: "dls ", manufacturer: "appl", xml: xml), id: 36, sub: 0, kind: 2)
         body += chunk("MSeq", Data(repeating: 0, count: 8)) + chunk("Trak", track) + chunk("EvSq", placement)
         body += chunk("MSeq", region, id: 104) + chunk("EvSq", notes, id: 104)

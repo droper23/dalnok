@@ -318,7 +318,7 @@ func skipped(_ r: [String: Any], _ key: String) -> Int { (r["skipped"] as? [Stri
 
     /// Regression (a 2026 Logic 12.2 project imported 1 of 24 clips and no MIDI): a placement record can run past
     /// 80 bytes with continuation lines; a placement names a piece of a split region (+0x28); MIDI regions (0x20)
-    /// point at a sequence of 0x90 note records; Drummer regions (0x4090 notes) are skipped and reported.
+    /// point at a sequence of compact or extended MIDI note records.
     @Test func longRecordsSplitPiecesAndMidiRegions() throws {
         let pkg = tempDir().appendingPathComponent("Pieces.logicx")
         let alt = pkg.appendingPathComponent("Alternatives/000"), media = pkg.appendingPathComponent("Media/Audio Files")
@@ -344,7 +344,7 @@ func skipped(_ r: [String: Any], _ key: String) -> Int { (r["skipped"] as? [Stri
         let bar: UInt32 = 3_840
         // Two pieces of one split region (id 40): piece 0 = samples 0..12000, piece 1 = 12000..36000.
         // Bar 2: piece 1 in a long record (200 continuation lines); bar 3: piece 0; bar 4: MIDI region -> sequence 104;
-        // bar 5: a Drummer region -> sequence 108.
+        // bar 5: an extended-note region -> sequence 108.
         var arrange = placement(0x24, pos: 34_560 + bar, row: 1, link: 40, piece: 1, extra: 200)
         arrange += placement(0x24, pos: 34_560 + 2 * bar, row: 1, link: 40, piece: 0)
         var midiRef = line(0x20, 34_560 + 3 * bar) + line(0x80, 0x8900_0000 | 2, 0, 0x3fff_ffff) + line(104, 0x8800_0000)
@@ -359,15 +359,15 @@ func skipped(_ r: [String: Any], _ key: String) -> Int { (r["skipped"] as? [Stri
             return a + line(0x40, 0x8900_0000, 0, len)
         }
         let notes = note(38_400, pitch: 60, vel: 80, len: 960) + note(38_400 + 1_920, pitch: 64, vel: 100, len: 480) + end
-        var drum = line(0x4090, 34_560); drum[12] = 36
-        let drums = drum + line(0, 0x8900_0000) + line(0, 0x8900_0000) + end
+        var extended = line(0x4090, 38_400); extended[11] = 96; extended[12] = 36
+        let extendedNotes = extended + line(0, 0x8900_0000, 0, 480) + line(0x1234, 0xa300_0000) + end
         var body = chunk("Song", Data(repeating: 0, count: 8))
         body.append(chunk("AuFl", fl))
         body.append(chunk("AuRg", region(offset: 0, length: 12_000), id: 40, sub: 0))
         body.append(chunk("AuRg", region(offset: 12_000, length: 24_000), id: 40, sub: 1))
         body.append(chunk("EvSq", arrange, id: 4))
         body.append(chunk("EvSq", notes, id: 104))
-        body.append(chunk("EvSq", drums, id: 108))
+        body.append(chunk("EvSq", extendedNotes, id: 108))
         var file = Data([0x23, 0x47, 0xc0, 0xab]); file.append(Data(repeating: 0, count: 12))
         file.append(contentsOf: le(UInt64(body.count))); file.append(body)
         try file.write(to: alt.appendingPathComponent("ProjectData"))
@@ -380,15 +380,20 @@ func skipped(_ r: [String: Any], _ key: String) -> Int { (r["skipped"] as? [Stri
         #expect(audio.count == 2, "both placements survive the long record (\(audio.count))")
         #expect(audio.first?.start == 96_000 && audio.first?.offset == 12_000 && audio.first?.length == 24_000, "bar 2 plays piece 1")
         #expect(audio.last?.start == 192_000 && audio.last?.offset == 0 && audio.last?.length == 12_000, "bar 3 plays piece 0")
-        let midi = clips(e).filter { $0.info.midi }
-        #expect(midi.count == 1 && midi.first?.info.start == 288_000, "the MIDI region lands at bar 4 on an instrument track")
+        let midi = clips(e).filter { $0.info.midi }.sorted { $0.info.start < $1.info.start }
+        #expect(midi.count == 2 && midi.first?.info.start == 288_000, "the MIDI region lands at bar 4 on an instrument track")
         if let m = midi.first {
             var got = [DalnokNote](repeating: DalnokNote(), count: 4)
             let n = dalnok_midi_clip_notes(e, m.info.id, &got, 4)
             #expect(n == 2 && got[0].pitch == 60 && got[0].velocity == 80 && got[0].start == 0 && got[0].length == 24_000)
             #expect(got[1].pitch == 64 && got[1].velocity == 100 && got[1].start == 48_000 && got[1].length == 12_000)
         }
-        #expect((r["skipped"] as? [String: Any])?["drummerRegions"] as? Int == 1, "the Drummer region is reported, not imported")
+        if midi.count == 2 {
+            var got = [DalnokNote](repeating: DalnokNote(), count: 2)
+            #expect(midi[1].info.start == 384_000 && dalnok_midi_clip_notes(e, midi[1].info.id, &got, 2) == 1)
+            #expect(got[0].start == 0 && got[0].length == 12_000 && got[0].pitch == 36 && got[0].velocity == 96)
+        }
+        #expect((r["skipped"] as? [String: Any])?["midiNoteExtensions"] as? Int == 1, "unknown extended note data is reported")
     }
 
     @Test func midiRegionsUseTheirOwnDurationsAndNoteOrigin() throws {
@@ -400,13 +405,14 @@ func skipped(_ r: [String: Any], _ key: String) -> Int { (r["skipped"] as? [Stri
             line(0x20, start) + line(0x80, 0x8900_0001, 0, 0x3fff_ffff) + line(link, 0x8800_0000)
                 + line(0x600, 0x8a06_0000) + line(0, 0x8800_0000)
         }
-        func region(_ title: String, _ ticks: UInt32) -> Data {
+        func region(_ title: String, _ ticks: UInt32, muted: Bool = false) -> Data {
             let bytes = Array(title.utf8), padded = (bytes.count + 1) & ~1
             var body = Data(repeating: 0, count: 180 + padded)
             body.replaceSubrange(16..<18, with: le(UInt16(bytes.count)))
             body.replaceSubrange(18..<(18 + bytes.count), with: bytes)
             let offset = 0x4e + padded
             body.replaceSubrange(offset..<(offset + 4), with: le(ticks))
+            body[offset + 18] = muted ? 1 : 0
             return body
         }
         func note(_ at: UInt32, _ length: UInt32, _ pitch: UInt8) -> Data {
@@ -418,7 +424,7 @@ func skipped(_ r: [String: Any], _ key: String) -> Int { (r["skipped"] as? [Stri
         // the placement origin shifted it one bar late and made the old inferred first region five bars long.
         let arrange = placement(34_560, 104) + placement(34_560 + 4 * bar, 108) + end
         var body = chunk("EvSq", arrange, id: 4)
-        body += chunk("MSeq", region("Odd", 4 * bar), id: 104)
+        body += chunk("MSeq", region("Odd", 4 * bar, muted: true), id: 104)
         body += chunk("EvSq", note(0, 960, 60) + note(3 * bar, 3_360, 62) + end, id: 104)
         body += chunk("MSeq", region("Even name!", 4 * bar), id: 108)
         body += chunk("EvSq", note(0, 960, 64) + end, id: 108)
@@ -432,6 +438,9 @@ func skipped(_ r: [String: Any], _ key: String) -> Int { (r["skipped"] as? [Stri
             #expect(imported[0].start == 0 && imported[0].length == 384_000)
             #expect(imported[1].start == 384_000 && imported[1].length == 384_000, "adjacent regions don't overlap")
             #expect(name(imported[0].name) == "Odd" && name(imported[1].name) == "Even name!")
+            #expect(dalnok_clip_muted(e, imported[0].id) && !dalnok_clip_muted(e, imported[1].id), "region mute is independent per clip")
+            #expect(render(e, 0, 48_000).allSatisfy { abs($0) < 1e-6 }, "muted MIDI region is silent")
+            #expect(render(e, 384_000, 48_000).contains { abs($0) > 0.001 }, "unmuted MIDI region plays")
             var got = [DalnokNote](repeating: DalnokNote(), count: 3)
             #expect(dalnok_midi_clip_notes(e, imported[0].id, &got, 3) == 2)
             #expect(got[0].start == 0 && got[0].length == 24_000 && got[0].pitch == 60)

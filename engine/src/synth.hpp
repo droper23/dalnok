@@ -52,6 +52,7 @@ struct SynthState {
     // Plugin instruments: notes this render has started and not yet ended, per pitch.
     std::array<uint8_t, 128> pluginHeld{};
     int64_t pluginExpected = -1;
+    uint64_t mutedMidiSignature = 0;
 
     void reset() DALNOK_NONBLOCKING {
         for (auto &v : voices) v = SynthVoice{};

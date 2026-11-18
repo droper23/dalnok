@@ -96,6 +96,7 @@ struct ClipState {
     int32_t folder = 0; // take folder this clip belongs to (0 = none)
     int32_t slot = -1;  // clip launcher slot (>= 0): not on the timeline; loops when launched
     int32_t follow = 0, followLoops = 1; // launcher follow action: 0 none, 1 next slot, 2 stop; after N loops
+    bool muted = false; // clip is retained but does not contribute audio or MIDI
     bool alt = false;   // a take inside a folder: kept, not played (the comp's pieces play)
     NoteList notes; // non-null: MIDI clip (media = 0)
     bool midi() const { return notes != nullptr; }
@@ -367,6 +368,7 @@ public:
     size_t clipboardCount() const { return clipboard_.size(); }
     bool setClipFades(DalnokClipId id, int64_t fadeIn, int64_t fadeOut, int32_t curve, std::string &err);
     bool setClipGain(DalnokClipId id, float gainDb, std::string &err);
+    bool setClipMuted(DalnokClipId id, bool muted, std::string &err);
     // Time-stretch: new timeline length and speed (source span = length × rate), pitch, mode.
     bool setClipStretch(DalnokClipId id, int64_t length, double rate, float pitch, bool preservePitch, std::string &err);
     // Stretch rendering status (background). True if finished renders were installed.

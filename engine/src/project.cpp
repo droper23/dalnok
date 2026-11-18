@@ -30,7 +30,7 @@ namespace fs = std::filesystem;
 namespace dalnok {
 
 namespace {
-constexpr int kFormatVersion = 11; // 11: markers; 10: plug-in bypass; 3: shared MIDI sources; 4: tempo/meter maps; 5: routing; 6: automation; 7: take folders; 8: plug-in automation; 9: launcher slots
+constexpr int kFormatVersion = 12; // 11: markers; 10: plug-in bypass; 3: shared MIDI sources; 4: tempo/meter maps; 5: routing; 6: automation; 7: take folders; 8: plug-in automation; 9: launcher slots
 constexpr int kConstantTempoVersion = 3; // written when there are no tempo or meter changes, so older builds still open it
 
 bool readFile(const std::string &path, std::string &out, std::string &err) {
@@ -274,6 +274,7 @@ json::Value Engine::describe() const {
             if (c.slot >= 0) cv.set("slot", c.slot);
             if (c.follow) { cv.set("follow", c.follow); cv.set("followLoops", c.followLoops); }
             if (c.alt) cv.set("alt", true);
+            if (c.muted) cv.set("muted", true);
             if (c.stretched()) {
                 cv.set("rate", c.rate);
                 if (c.pitch != 0) cv.set("pitch", static_cast<double>(c.pitch));
@@ -399,7 +400,8 @@ bool Engine::saveProject(const std::string &path, std::string &err, bool copyMed
         }
         doc.set("markers", std::move(ms));
     }
-    doc.set("version", !model_.markers.empty() ? 11 : bypass ? 10 : launcher ? 9 : pluginAutomation ? 8 : !model_.folders.empty() ? 7 : automation ? 6 : routing ? 5 : model_.tempo.size() > 1 || model_.meters.size() > 1 ? 4 : kConstantTempoVersion);
+    const bool clipMute = std::any_of(model_.clips.begin(), model_.clips.end(), [](const ClipState &c) { return c.muted; });
+    doc.set("version", clipMute ? 12 : !model_.markers.empty() ? 11 : bypass ? 10 : launcher ? 9 : pluginAutomation ? 8 : !model_.folders.empty() ? 7 : automation ? 6 : routing ? 5 : model_.tempo.size() > 1 || model_.meters.size() > 1 ? 4 : kConstantTempoVersion);
     json::Value body = describe();
     for (auto &[key, value] : body.object) {
         if (key != "media") continue;
@@ -594,6 +596,7 @@ std::unique_ptr<Engine::PreparedProject> Engine::prepareDocument(const json::Val
                     c.follow = static_cast<int32_t>(std::clamp<int64_t>(toInt(cv, "follow"), 0, 2));
                     c.followLoops = static_cast<int32_t>(std::clamp<int64_t>(cv.get("followLoops") ? toInt(cv, "followLoops") : 1, 1, 1024));
                     c.alt = cv.getBool("alt", false);
+                    c.muted = cv.getBool("muted", false);
                     if (cv.getString("kind", "audio") == "midi") {
                         std::vector<MidiNote> notes;
                         if (const json::Value *nv = cv.get("notes"); nv && nv->isArray())

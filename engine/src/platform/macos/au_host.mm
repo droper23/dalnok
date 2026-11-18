@@ -22,6 +22,10 @@ OSType fourCC(const std::string &s, size_t at) {
                                (static_cast<unsigned char>(s[at + 2]) << 8) | static_cast<unsigned char>(s[at + 3]));
 }
 
+// Some Apple units (e.g. the DLS synth) share global state between instances, and Core Audio does not
+// promise that instance creation and teardown are thread-safe. Lifecycle calls run off the audio thread.
+std::mutex &lifecycleLock() { static std::mutex m; return m; }
+
 struct ParamChange { AudioUnitParameterID id; double value; };
 
 class AudioUnitProcessor final : public PluginProcessor {
@@ -29,6 +33,7 @@ public:
     ~AudioUnitProcessor() override {
         closeEditor();
         if (unit_) {
+            std::lock_guard<std::mutex> g(lifecycleLock());
             AudioUnitUninitialize(unit_);
             AudioComponentInstanceDispose(unit_);
         }
@@ -39,6 +44,7 @@ public:
         AudioComponentDescription desc{fourCC(id, 0), fourCC(id, 5), fourCC(id, 10), 0, 0};
         AudioComponent comp = AudioComponentFindNext(nullptr, &desc);
         if (!comp) { err = "Audio Unit not installed"; return false; }
+        std::lock_guard<std::mutex> lifecycle(lifecycleLock());
         if (AudioComponentInstanceNew(comp, &unit_) != noErr || !unit_) { err = "cannot create the Audio Unit"; return false; }
         classId_ = id;
         instrument_ = desc.componentType == kAudioUnitType_MusicDevice;
@@ -158,13 +164,21 @@ public:
         CFRelease(data);
         return true;
     }
-    bool setState(const std::string &bytes) override {
+    bool setState(const std::string &bytes) override { return applyState(bytes, false); }
+    bool setStateFromDocument(const std::string &bytes) override { return applyState(bytes, true); }
+    bool applyState(const std::string &bytes, bool fromDocument) {
         stateError_.clear();
         CFDataRef data = CFDataCreate(nullptr, reinterpret_cast<const UInt8 *>(bytes.data()), static_cast<CFIndex>(bytes.size()));
         CFPropertyListRef plist = data ? CFPropertyListCreateWithData(nullptr, data, kCFPropertyListImmutable, nullptr, nullptr) : nullptr;
         if (data) CFRelease(data);
         if (!plist) { stateError_ = "invalid Audio Unit state"; return false; }
-        const OSStatus status = AudioUnitSetProperty(unit_, kAudioUnitProperty_ClassInfo, kAudioUnitScope_Global, 0, &plist, sizeof plist);
+        // Apple specifies document-specific restoration first, with the normal class-info property as
+        // fallback on any error. Direct preset/state changes keep using the normal property.
+        OSStatus status = fromDocument ? AudioUnitSetProperty(unit_, kAudioUnitProperty_ClassInfoFromDocument,
+                                                               kAudioUnitScope_Global, 0, &plist, sizeof plist)
+                                       : kAudioUnitErr_InvalidProperty;
+        if (status != noErr)
+            status = AudioUnitSetProperty(unit_, kAudioUnitProperty_ClassInfo, kAudioUnitScope_Global, 0, &plist, sizeof plist);
         const bool ok = status == noErr;
         if (status == kAudioUnitErr_Unauthorized) stateError_ = "Audio Unit reported an authorization error";
         else if (!ok) stateError_ = "Audio Unit error " + std::to_string(status);

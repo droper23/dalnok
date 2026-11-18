@@ -898,6 +898,15 @@ int32_t dalnok_engine_poll_jobs(DalnokEngine *e) {
     return e->impl.pendingJobs();
 }
 
+DalnokStatus dalnok_clip_set_muted(DalnokEngine *e, DalnokClipId c, bool muted) {
+    std::string err;
+    return e ? statusFor(e->impl.setClipMuted(c, muted, err), err) : DALNOK_ERR_INVALID_ARG;
+}
+bool dalnok_clip_muted(const DalnokEngine *e, DalnokClipId c) {
+    const ClipState *clip = e ? e->impl.model().clip(c) : nullptr;
+    return clip && clip->muted;
+}
+
 DalnokStatus dalnok_clip_set_gain_db(DalnokEngine *e, DalnokClipId c, float db) {
     std::string err;
     return e ? statusFor(e->impl.setClipGain(c, db, err), err) : DALNOK_ERR_INVALID_ARG;

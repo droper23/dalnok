@@ -102,6 +102,7 @@ struct RenderSlot {
     int32_t nextSlot = -1;  // the next filled slot on this track (wrapping), for "next"
     int64_t length = 0; // loop length in frames
     bool hasAudio = false;
+    bool muted = false;
     RenderClip clip;    // audio (start ignored; placed per loop iteration)
     std::vector<RenderNote> notes, noteEnds; // MIDI, relative to the loop start, sorted by start / by end
 };
@@ -126,6 +127,7 @@ struct RenderTrack {
     std::vector<PluginLane> pluginAuto;
     std::vector<RenderClip> clips; // z-order: later clips overwrite earlier ones
     bool monoSource = true;        // every clip is mono -> constant-power pan law
+    uint64_t mutedMidiSignature = 0;
     bool instrument = false;       // MIDI track (built-in synth unless instrumentPlugin is set)
     std::vector<RenderNote> notes; // sorted by start
     std::vector<RenderNote> noteEnds; // the same notes sorted by end (plugin note-offs)

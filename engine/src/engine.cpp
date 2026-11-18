@@ -879,7 +879,7 @@ void Engine::instantiatePlugins() {
             std::string err;
             std::shared_ptr<PluginProcessor> p(loadPlugin(slot.format, slot.path, slot.classId, sampleRate_, kMaxBlock, false, err));
             if (!p) { pluginErrors_[slot.id] = err; continue; }
-            if (!slot.state.empty() && !p->setState(slot.state)) {
+            if (!slot.state.empty() && !p->setStateFromDocument(slot.state)) {
                 // Keep the original state intact instead of running and later saving a default instance.
                 const auto detail = p->stateError();
                 pluginErrors_[slot.id] = "the saved state was not accepted" + (detail.empty() ? std::string{} : ": " + detail) + "; the original state was preserved";
@@ -1606,6 +1606,16 @@ bool Engine::setClipStretch(DalnokClipId id, int64_t length, double rate, float 
     });
 }
 
+bool Engine::setClipMuted(DalnokClipId id, bool muted, std::string &err) {
+    return edit(muted ? "Mute Clip" : "Unmute Clip", true, [&](Model &m) {
+        ClipState *clip = m.clip(id);
+        if (!clip) return fail(err, "no such clip");
+        if (clip->muted == muted) return fail(err, "clip is already in that mute state");
+        clip->muted = muted;
+        return true;
+    });
+}
+
 bool Engine::setClipGain(DalnokClipId id, float gainDb, std::string &err) {
     return edit("Clip Gain", true, [&](Model &m) {
         ClipState *c = m.clip(id);
@@ -1907,6 +1917,14 @@ std::unique_ptr<RenderState> Engine::compile(std::vector<StretchJob> *needed, co
             rt.instrument = false;
         for (const auto &c : model_.clips) {
             if (c.track != t.id || c.alt) continue; // takes in a folder don't play; the comp's pieces do
+            if (c.muted) {
+                if (c.midi()) rt.mutedMidiSignature = (rt.mutedMidiSignature * 1099511628211ULL) ^ static_cast<uint64_t>(c.id);
+                if (c.slot >= 0) {
+                    RenderSlot sl; sl.slot = c.slot; sl.follow = c.follow; sl.followLoops = std::max(1, c.followLoops);
+                    sl.length = c.length; sl.muted = true; rt.slots.push_back(std::move(sl));
+                }
+                continue;
+            }
             if (c.slot >= 0 && c.midi()) { // launcher slot: notes relative to the loop start
                 if (!rt.instrument) continue;
                 RenderSlot sl;
@@ -1936,7 +1954,7 @@ std::unique_ptr<RenderState> Engine::compile(std::vector<StretchJob> *needed, co
                     // Extend a crossing note through those pieces without retriggering it.
                     while (timelineEnd - at < n.length) {
                         const auto next = std::find_if(model_.clips.begin(), model_.clips.end(), [&](const ClipState &part) {
-                            return part.track == c.track && part.notes == c.notes && part.start == timelineEnd &&
+                            return part.track == c.track && !part.muted && part.notes == c.notes && part.start == timelineEnd &&
                                    std::abs(part.offset - sourceEnd) <= 1;
                         });
                         if (next == model_.clips.end() || next->length <= 0) break;

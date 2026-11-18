@@ -396,6 +396,13 @@ const CommandDef kCommands[] = {
          if (!needInt(a, "clip", c, err) || !needNumber(a, "db", db, err)) return DALNOK_ERR_INVALID_ARG;
          return status(e.setClipGain(c, static_cast<float>(db), err), err);
      }},
+    {"clip.setMuted", "Mute or Unmute Clip", "{clip, muted}", [](ARGS) {
+         DalnokClipId c;
+         if (!needInt(a, "clip", c, err)) return DALNOK_ERR_INVALID_ARG;
+         const auto *m = a.get("muted");
+         if (!m || !m->isBool()) return err = "muted must be a boolean", DALNOK_ERR_INVALID_ARG;
+         return status(e.setClipMuted(c, m->boolean, err), err);
+     }},
     {"clip.setStretch", "Time Stretch Clip", "{clip, length?, rate?, pitch?, preservePitch?}", [](ARGS) {
          DalnokClipId c;
          if (!needInt(a, "clip", c, err)) return DALNOK_ERR_INVALID_ARG;

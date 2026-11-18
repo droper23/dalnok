@@ -908,6 +908,9 @@ final class SelfTest {
               "Cut/Copy/Paste go through the responder chain (text fields keep ⌘C/⌘V)")
         let before = t0.clips.count
         w.timeline.selectClips([c.id])
+        check(perform("Mute Clip", exact: true) && s.clip(c.id)?.muted == true, "Clip ▸ Mute Clip mutes the selected clip")
+        check(menuItem("Unmute Clip", exact: true)?.isEnabled == true, "the clip menu offers Unmute Clip")
+        check(perform("Unmute Clip", exact: true) && s.clip(c.id)?.muted == false, "Clip ▸ Unmute Clip restores the selected clip")
         check(perform("Duplicate", exact: true) && s.track(t0.id)?.clips.count == before + 1, "Edit ▸ Duplicate adds a copy")
         let dup = w.timeline.selectedClip.flatMap { s.clip($0) }
         check(dup?.start == c.end && dup?.length == c.length && dup?.offset == c.offset && e.undoName == "Duplicate",

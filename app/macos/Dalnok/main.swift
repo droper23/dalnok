@@ -325,6 +325,7 @@ func buildMenu(target: MainWindowController) -> NSMenu {
         item("Piano Roll", #selector(W.openPianoRoll(_:)), "p", []),
         item("Open Take Folder", #selector(W.openTakeFolder(_:)), ""),
         item("Make Take Folder", #selector(W.makeTakeFolder(_:)), ""),
+        item("Mute Clip", #selector(W.toggleClipMute(_:)), ""),
         quantize,
         .separator(),
         item("Add Short Fades", #selector(W.addShortFades(_:)), "f", [.control]),

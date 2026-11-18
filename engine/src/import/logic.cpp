@@ -12,6 +12,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "import/import.hpp"
 #include "import/logic_plugins.hpp"
+#include "import/logic_mixer.hpp"
 #include "media.hpp"
 
 #include <algorithm>
@@ -162,7 +163,7 @@ bool importLogic(const std::string &path, Result &out, std::string &err) {
     std::map<uint32_t, const Chunk *> sequences;
     // A MIDI region's MSeq and its note EvSq share an id. The duration follows the variable-length,
     // even-padded region name: record +0x72 + padded name length (960-PPQ ticks).
-    struct MidiRegion { uint32_t length; std::string name; };
+    struct MidiRegion { uint32_t length; std::string name; bool muted, muteKnown; };
     std::map<uint32_t, MidiRegion> midiRegionInfo;
     std::set<uint32_t> ambiguousMidiIds;
     for (const auto &c : chunks) {
@@ -175,7 +176,9 @@ bool importLogic(const std::string &path, Result &out, std::string &err) {
         const uint32_t length = rd<uint32_t>(d, c.payload + durationOffset);
         if (length == 0 || length >= 0x3fffffff) continue;
         if (ambiguousMidiIds.count(id)) continue;
-        if (!midiRegionInfo.emplace(id, MidiRegion{length, d.substr(c.payload + 18, nameLength)}).second) {
+        const bool muteKnown = c.length - durationOffset >= 19 && static_cast<uint8_t>(d[c.payload + durationOffset + 18]) <= 1;
+        const bool muted = muteKnown && d[c.payload + durationOffset + 18] != 0;
+        if (!midiRegionInfo.emplace(id, MidiRegion{length, d.substr(c.payload + 18, nameLength), muted, muteKnown}).second) {
             midiRegionInfo.erase(id);
             ambiguousMidiIds.insert(id);
         }
@@ -213,12 +216,12 @@ bool importLogic(const std::string &path, Result &out, std::string &err) {
     }
 
     // Notes of a MIDI region's sequence (ticks relative to 38,400, Logic's 960 PPQ), from records
-    // 0x90 (32 bytes): position +4, velocity +11, pitch +12, length +28. Positions were checked in Logic's piano roll.
-    // Drummer regions use a longer record (0x4090) whose notes aren't Logic's performance; they're skipped.
+    // Compact (0x90) and extended (0x4090) note events share position, velocity, pitch and length fields.
+    // The extended words can carry additional per-note data whose meaning is not yet decoded.
     struct Note { uint32_t pos, length; int pitch, velocity; };
-    auto notesOf = [&](uint32_t seq, bool &drummer) {
+    int extendedNotes = 0;
+    auto notesOf = [&](uint32_t seq) {
         std::vector<Note> out;
-        drummer = false;
         const auto it = sequences.find(seq);
         if (it == sequences.end()) return out;
         const Chunk &c = *it->second;
@@ -228,9 +231,9 @@ bool importLogic(const std::string &path, Result &out, std::string &err) {
             if ((t & 0xff) == 0xf1) break;
             size_t size = 16;
             while (size + 16 <= c.length - i && (rd<uint32_t>(d, c.payload + i + size + 4) >> 31) == 1) size += 16;
-            if (t == 0x4090) drummer = true;
-            if (t == 0x90 && size >= 32) {
+            if ((t == 0x90 && size >= 32) || (t == 0x4090 && size >= 48)) {
                 const auto len = rd<uint32_t>(d, c.payload + i + 28);
+                if (t == 0x4090) ++extendedNotes;
                 out.push_back({rd<uint32_t>(d, c.payload + i + 4), len, static_cast<uint8_t>(d[c.payload + i + 12]),
                                static_cast<uint8_t>(d[c.payload + i + 11])});
             }
@@ -238,7 +241,6 @@ bool importLogic(const std::string &path, Result &out, std::string &err) {
         }
         return out;
     };
-    int drummerRegions = 0;
     Builder b(rep, rate);
     const fs::path audioDir = pkg / "Media" / "Audio Files";
     // Row numbers can be reused for different channel strips in different sequences.
@@ -260,15 +262,13 @@ bool importLogic(const std::string &path, Result &out, std::string &err) {
         }
     }
     rep.skip("ambiguousRegionIds", static_cast<int>(ambiguousIds.size()));
-    int pieceFallbacks = 0, estimatedMidiLengths = 0, notesOutsideMidiRegions = 0, notesCrossingMidiRegions = 0;
+    int pieceFallbacks = 0, estimatedMidiLengths = 0, unknownMidiMute = 0, notesOutsideMidiRegions = 0, notesCrossingMidiRegions = 0;
     // Tracks in Logic's row order (placements are stored in time order).
     std::stable_sort(placements.begin(), placements.end(), [](const Placement &a, const Placement &b) { return a.track < b.track; });
     const double ticksPerBar = kPpq * 4.0 * meterNum / meterDen;
     for (const auto &p : placements) {
         if (p.midi) {
-            bool drummer = false;
-            const auto notes = notesOf(p.link, drummer);
-            if (drummer) { ++drummerRegions; continue; }
+            const auto notes = notesOf(p.link);
             if (notes.empty() || p.pos < kTickOrigin) continue; // a track folder or an empty region
             const bool hasRow = p.section < sectionRows.size() && p.track >= 1 && p.track <= sectionRows[p.section].size();
             const uint32_t strip = hasRow ? sectionRows[p.section][p.track - 1] : 0;
@@ -293,9 +293,11 @@ bool importLogic(const std::string &path, Result &out, std::string &err) {
             }
             const bool knownLength = info != midiRegionInfo.end();
             if (!knownLength) ++estimatedMidiLengths;
+            if (!knownLength || !info->second.muteKnown) ++unknownMidiMute;
             const double ticks = knownLength ? info->second.length : std::max(1.0, std::ceil(end / ticksPerBar - 1e-9)) * ticksPerBar;
             const std::string regionName = knownLength && !info->second.name.empty() ? info->second.name : "MIDI";
-            b.addMidiClip(tracks[key], (p.pos - kTickOrigin) * secPerTick, ticks * secPerTick, out, regionName);
+            b.addMidiClip(tracks[key], (p.pos - kTickOrigin) * secPerTick, ticks * secPerTick, out, regionName,
+                          knownLength && info->second.muted);
             ++midiRegions;
             continue;
         }
@@ -327,6 +329,18 @@ bool importLogic(const std::string &path, Result &out, std::string &err) {
     for (const auto &[key, track] : tracks)
         if (key.second <= UINT32_MAX) pluginBindings.push_back({static_cast<uint32_t>(key.second), track, b.isInstrumentTrack(track)});
     importLogicPlugins(d, pluginBindings, b, rep);
+    const auto mixer = logicMixer(d);
+    int missingMix = 0, clampedMix = 0;
+    for (const auto &[key, track] : tracks) {
+        if (key.second > UINT32_MAX) { ++missingMix; continue; }
+        const auto found = mixer.find(static_cast<uint32_t>(key.second));
+        if (found == mixer.end()) { ++missingMix; continue; }
+        const auto &mix = found->second;
+        b.setTrackMix(track, mix.gainDb, mix.pan, mix.muted);
+        if (mix.gainClamped) ++clampedMix;
+    }
+    rep.skip("logicUnmappedTrackMix", missingMix);
+    rep.skip("logicClampedTrackGain", clampedMix);
     // Unused pieces (Logic keeps every piece a region was ever split into) aren't missing material.
     int unplaced = 0, unusedPieces = 0;
     for (size_t i = 0; i < regions.size(); ++i)
@@ -337,19 +351,21 @@ bool importLogic(const std::string &path, Result &out, std::string &err) {
     rep.skip("unresolvedPlacements", unresolved);
     rep.skip("midiNotesOutsideRegion", notesOutsideMidiRegions);
     rep.skip("midiNotesCrossingRegionEnd", notesCrossingMidiRegions);
+    rep.skip("midiRegionMuteUnknown", unknownMidiMute);
     if (estimatedMidiLengths > 0)
         rep.notes.push_back(std::to_string(estimatedMidiLengths) + " MIDI region(s) lack a uniquely identified duration; their lengths were estimated from notes.");
+    if (unknownMidiMute > 0)
+        rep.notes.push_back("Some MIDI regions have an unrecognized mute state and were imported unmuted; check them against Logic.");
     if (notesOutsideMidiRegions || notesCrossingMidiRegions)
         rep.notes.push_back("Some MIDI notes begin outside their region or extend past its end; Dalnok's playback is limited to the region boundary.");
     if (midiRegions > 0)
         rep.notes.push_back(std::to_string(midiRegions) + " MIDI region(s) imported onto instrument tracks. Tracks without an imported instrument use Dalnok Poly.");
-    rep.skip("drummerRegions", drummerRegions);
-    if (drummerRegions > 0)
-        rep.notes.push_back("Drummer regions aren't imported (their notes are generated by Logic's Drummer). In Logic, "
-                            "convert them to MIDI regions first (Convert to MIDI Region) to bring them over.");
+    rep.skip("midiNoteExtensions", extendedNotes);
+    if (extendedNotes > 0)
+        rep.notes.push_back("Some MIDI notes carry additional Logic-specific data that is not decoded; note timing, pitch, velocity and length were imported.");
     rep.notes.push_back("EXPERIMENTAL: Logic's project format is undocumented. Audio files and region trims are verified; "
                         "region positions, track assignment and track names match Logic's own per-track renders on a test "
-                        "project. Track volume, pan, track stacks, Logic-native plug-ins, automation and take folders are not imported, so "
+                        "project. Track stacks, Logic-native plug-ins, automation and take folders are not imported, so "
                         "levels differ from Logic. Logic's File ▸ Export ▸ Project to Final Cut Pro XML "
                         "is an alternative, but may render audio and change clip boundaries; compare the result with the original.");
     out.document = b.document();

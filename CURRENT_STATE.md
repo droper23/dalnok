@@ -5,6 +5,12 @@ milestone: M11 VST3 hosting (ADR-0009 stage 3) done; editors, parameters and AU 
 ---
 # Current State
 
+## Latest session (Logic mixer, region mute, Drummer notes; 2026-11-17)
+- Logic import maps channel-strip volume, pan and track mute (AuCO records linked through Envi; ambiguous records are skipped and reported). MIDI region mute is imported as clip mute; clips can be muted in Dalnok (Clip ▸ Mute Clip, C API 27, format 12). Drummer regions now import their notes as editable MIDI; Logic's Drum Kit is not hostable, so they need a replacement instrument.
+- Audio Units restore with ClassInfoFromDocument first. Audio Unit creation/teardown is serialized (a parallel test run crashed in Apple's DLS synth during concurrent teardown).
+- oviii: 17 tracks, 37 clips, 7 Audio Units. Guitar Rig 7 rejects even its own freshly read state with kAudioUnitErr_Unauthorized: no Guitar Rig licence is registered in Native Access on this Mac, so that needs activation, not a Dalnok change. Still not identical: 13 Logic-native processors (Channel EQ, Chorus, ChromaGlow, ChromaVerb, Drum Kit, Limiter), sends/buses/stacks, automation.
+- Verification: 176 engine tests (5 parallel runs), 17 hosting tests, self-tests 458 Graphite / 475 Warm Analog.
+
 ## Latest session (Logic MIDI and Audio Units; 2026-11-17)
 - Logic MIDI import now uses MSeq region lengths and the note-sequence origin observed in Logic's arrangement. Notes outside or crossing a region are reported; compare unfamiliar Logic versions carefully.
 - Recognized Audio Units are assigned to their channel strips with saved class-info state. Missing or state-rejecting plug-ins retain their original state and are reported in the import sheet and device panel. Logic-native processors are reported as unsupported; they are not replaced with equivalent sound. Mixer levels, pan, routing, automation, Drummer and take folders remain incomplete, so an imported project is not necessarily identical.

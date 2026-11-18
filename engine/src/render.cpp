@@ -243,6 +243,10 @@ void renderBlock(const RenderState &state, int64_t pos, int frames, float *left,
     for (const RenderTrack &t : state.tracks) {
         TrackRuntime &rt = *t.runtime;
         SynthState &synth = synths ? synths[index] : rt.play;
+        if (synth.mutedMidiSignature != t.mutedMidiSignature) {
+            // Stop notes that may have belonged to a newly muted clip, including hosted instruments.
+            synth.reset(); synth.pluginExpected = -1; synth.mutedMidiSignature = t.mutedMidiSignature;
+        }
         ++index;
         // Solo follows routing: a soloed bus keeps what feeds it audible, and a soloed source keeps its buses.
         bool linkedSolo = false;
@@ -270,7 +274,16 @@ void renderBlock(const RenderState &state, int64_t pos, int frames, float *left,
         if (slot) {
             const int64_t start0 = rt.slotStart.load(std::memory_order_relaxed);
             const int64_t rel = ((pos - start0) % slot->length + slot->length) % slot->length; // block ends by the loop end
-            if (slot->hasAudio) {
+            if (slot->muted) {
+                clear(s.trackL, frames); clear(s.trackR, frames);
+                if (t.instrumentPlugin) {
+                    const PluginNote *live = s.liveNotes; const int liveCount = s.liveNoteCount;
+                    if (static_cast<int32_t>(index - 1) != state.liveTrack) { s.liveNotes = nullptr; s.liveNoteCount = 0; }
+                    renderPluginNotes(t.instrumentPlugin, nullptr, nullptr, 0, synth, rel, frames, s);
+                    s.liveNotes = live; s.liveNoteCount = liveCount;
+                }
+                any = true;
+            } else if (slot->hasAudio) {
                 clear(s.trackL, frames); clear(s.trackR, frames);
                 mixClip(slot->clip, rel, frames, s.trackL, s.trackR);
                 any = true;

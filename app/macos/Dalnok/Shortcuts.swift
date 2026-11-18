@@ -224,6 +224,7 @@ private let specs: [String: Spec] = [
     "openTakeFolder:": Spec(id: "clip.open_takes", category: "Clips", detail: "Open the selected take folder for comping."),
     "makeTakeFolder:": Spec(id: "clip.make_take_folder", category: "Clips", detail: "Make a take folder from the selected clips."),
     "addShortFades:": Spec(id: "clip.short_fades", category: "Clips", detail: "Add short fades to the selected clip."),
+    "toggleClipMute:": Spec(id: "clip.toggle_mute", category: "Clips", detail: "Mute or unmute the selected clip."),
     "removeFades:": Spec(id: "clip.remove_fades", category: "Clips", detail: "Remove the selected clip's fades."),
     "doubleSpeed:": Spec(id: "clip.double_speed", category: "Clips", detail: "Play the selected clip twice as fast."),
     "halfSpeed:": Spec(id: "clip.half_speed", category: "Clips", detail: "Play the selected clip half as fast."),

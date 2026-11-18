@@ -28,7 +28,7 @@
 extern "C" {
 #endif
 
-#define DALNOK_API_VERSION 26
+#define DALNOK_API_VERSION 27
 
 typedef enum {
     DALNOK_OK = 0,
@@ -488,6 +488,9 @@ int32_t dalnok_engine_poll_jobs(DalnokEngine *engine);
 
 /* Clip (region) gain in dB, applied before the track fader. Clamped to +24. */
 DalnokStatus dalnok_clip_set_gain_db(DalnokEngine *engine, DalnokClipId clip, float gain_db);
+/* Muted clips remain editable and saved; they do not contribute audio or MIDI. */
+DalnokStatus dalnok_clip_set_muted(DalnokEngine *engine, DalnokClipId clip, bool muted);
+bool dalnok_clip_muted(const DalnokEngine *engine, DalnokClipId clip);
 
 /* ---- Plugins (discovery only; hosting is later Phase 4 work) ---------
  * Lists VST3 and CLAP bundles in the standard folders (plus `extra_folder`,

@@ -41,6 +41,8 @@ public:
     // Opaque plugin state (control thread).
     virtual bool getState(std::string &bytes) = 0;
     virtual bool setState(const std::string &bytes) = 0;
+    // Restoring a saved document can differ from loading a preset (notably for Audio Units).
+    virtual bool setStateFromDocument(const std::string &bytes) { return setState(bytes); }
     virtual std::string stateError() const { return {}; }
 
     // Parameters (control thread). Changes reach the audio thread through a bounded queue and are
