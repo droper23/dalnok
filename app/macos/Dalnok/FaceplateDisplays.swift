@@ -159,6 +159,8 @@ enum FaceplateDisplay {
 @MainActor
 class FaceplateScreen: NSView {
     var poweredOff = false { didSet { if poweredOff != oldValue { needsDisplay = true } } }
+    /// How lit the backlight or lamps are (0 … 1): fades with bypass (DeviceView drives it).
+    var light: CGFloat = 1 { didSet { if light != oldValue { needsDisplay = true } } }
     /// Stable per unit (its name), so each unit's dust stays where it is.
     var seed: UInt64 = 1 { didSet { needsDisplay = true } }
     /// Displays that render their own unlit state (the moving-coil meter keeps its face, just without lamps).
@@ -168,18 +170,20 @@ class FaceplateScreen: NSView {
     override var isFlipped: Bool { true }
     final override func draw(_ dirtyRect: NSRect) {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
-        if poweredOff && !drawsOwnOffState {
-            let w = FaceplateDisplay.bezel(ctx, bounds)
+        // The screen's contents fade with its backlight into dark glass (fully dark: only the glass is drawn).
+        let off = drawsOwnOffState ? 0 : 1 - light
+        if off < 0.99 { drawScreen(dirtyRect) }
+        if off > 0.01 {
+            let w = off >= 0.99 ? FaceplateDisplay.bezel(ctx, bounds) : bounds.insetBy(dx: 4, dy: 4)
             ctx.saveGState()
+            ctx.setAlpha(min(1, off))
             ctx.addPath(CGPath(roundedRect: w, cornerWidth: 3, cornerHeight: 3, transform: nil)); ctx.clip()
             let bg = [NSColor(white: 0.035, alpha: 1).cgColor, NSColor(white: 0.055, alpha: 1).cgColor] as CFArray
             if let g = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: bg, locations: [0, 1]) {
                 ctx.drawLinearGradient(g, start: CGPoint(x: 0, y: w.minY), end: CGPoint(x: 0, y: w.maxY), options: [])
             }
             ctx.restoreGState()
-            FaceplateDisplay.glass(ctx, w, radius: 3)
-        } else {
-            drawScreen(dirtyRect)
+            if off >= 0.99 { FaceplateDisplay.glass(ctx, w, radius: 3) }
         }
         FaceplateDisplay.wear(ctx, bounds.insetBy(dx: 4, dy: 4), radius: 3, seed: seed, amount: Faceplate.wear, lightFace: lightFace)
     }
@@ -374,7 +378,7 @@ final class MovingCoilMeter: FaceplateScreen {
         let now = CACurrentMediaTime(), dt = min(0.05, now - last)
         last = now
         guard !Motion.reduced else { needle = target; needsDisplay = true; return }
-        let wn = 19.0, zeta = 0.79 // ≈ 300 ms to 99 %, ≈ 1.5 % overshoot
+        let wn = Faceplate.fastVU ? 57.0 : 19.0, zeta = 0.79 // ≈ 300 ms (or 100 ms) to 99 %, ≈ 1.5 % overshoot
         for _ in 0..<6 {
             let h = dt / 6
             velocity += (wn * wn * (target - needle) - 2 * zeta * wn * velocity) * h
@@ -400,7 +404,8 @@ final class MovingCoilMeter: FaceplateScreen {
                                    endCenter: CGPoint(x: window.midX, y: window.midY + window.height * 0.15), endRadius: window.width * 0.62, options: [])
         }
         let lamp = [NSColor(srgbRed: 1.0, green: 0.86, blue: 0.55, alpha: 0.38).cgColor, NSColor(srgbRed: 1.0, green: 0.86, blue: 0.55, alpha: 0).cgColor] as CFArray
-        if !poweredOff, let g = CGGradient(colorsSpace: space, colors: lamp, locations: [0, 1]) {
+        if light > 0.01, let g = CGGradient(colorsSpace: space, colors: lamp, locations: [0, 1]) {
+            ctx.setAlpha(light); defer { ctx.setAlpha(1) }
             for fx in [0.22, 0.78] {
                 let c = CGPoint(x: window.minX + window.width * fx, y: window.maxY + 2)
                 ctx.drawRadialGradient(g, startCenter: c, startRadius: 0, endCenter: c, endRadius: window.height * 0.75, options: [])
@@ -489,7 +494,7 @@ final class MovingCoilMeter: FaceplateScreen {
         ctx.restoreGState()
         Faceplate.screw(ctx, CGPoint(x: pivot.x, y: window.maxY - bridgeR * 0.45))
         // Lamps out: the face falls into shadow (the glass still catches the room's light).
-        if poweredOff { ctx.setFillColor(NSColor(srgbRed: 0.04, green: 0.035, blue: 0.03, alpha: 0.66).cgColor); ctx.fill(window) }
+        if light < 0.99 { ctx.setFillColor(NSColor(srgbRed: 0.04, green: 0.035, blue: 0.03, alpha: 0.66 * (1 - light)).cgColor); ctx.fill(window) }
         // Curved glass: a soft reflection across the upper face and an inner shadow from the bezel.
         let sheen = CGMutablePath()
         sheen.move(to: CGPoint(x: window.minX, y: window.minY + window.height * 0.30))

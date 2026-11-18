@@ -6,6 +6,8 @@ milestone: M11 VST3 hosting (ADR-0009 stage 3) done; editors, parameters and AU 
 # Current State
 
 ## Latest session (0.1.0 follow-ups; 2026-11-18, later)
+- Bypass is animated and configurable (explicit CA animations on the unit layer plus a veil; light levels driven by a 60 Hz fade in `DeviceView`). `PlateButton` keys track their own presses so they work while the unit is drawn shrunk.
+- Self-test note: when the owner uses the Mac during a run, focus- and timing-sensitive checks can fail; the LCD check now waits for the next frame.
 - **Gain ring lit on silent tracks: found.** oviii's `leaving-consolidatedMaster8.wav` carries a constant DC offset of 0.04 (−27 dBFS) through its silent parts; the meters read it as signal. Track and master meters now remove DC (`meterLevel`, render.hpp; engine test `metersIgnoreDcOffset`). The earlier hover fix stays.
 - **Settings overhaul**: `Settings.swift` is a sidebar window with General, Appearance, Audio & MIDI, Recording, Plug-ins and Keyboard Shortcuts panes. The shortcut editor's content moved into the Shortcuts pane (`shortcutsEditor` now returns `settings.shortcuts`; its sheets attach to the Settings window).
 - **Track heights**: per-track (engine `TrackState.height`, saved, undoable, C API 29) plus the default height (48–400 pt). All lane math goes through `Session.laneTop/laneHeight/laneIndex`. ⌥-scroll sizes all tracks (⌘-scroll still zooms time). Rows under 76 pt hide their knobs.

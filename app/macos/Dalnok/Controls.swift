@@ -561,6 +561,11 @@ class RotaryKnob: NSControl {
 /// +maxDb; the lower half uses the fader's quarter-power amplitude taper down to −∞.
 @MainActor
 final class GainKnob: RotaryKnob {
+    /// Settings ▸ Appearance: the gain knobs' rings light with their track's level during playback.
+    static var showsLevel: Bool {
+        get { UserDefaults.standard.object(forKey: "gainRingLevel") as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: "gainRingLevel") }
+    }
     static func position(for db: Float) -> Double {
         guard db > -95 else { return 0 }
         if db >= 0 { return 0.5 + 0.5 * Double(min(db, FaderControl.maxDb) / FaderControl.maxDb) }
@@ -587,7 +592,7 @@ final class GainKnob: RotaryKnob {
     override init(frame: NSRect) {
         super.init(frame: frame)
         bipolar = false
-        showsMeter = true
+        showsMeter = Self.showsLevel
         defaultValue = Self.position(for: 0)
         value = defaultValue
         format = { FaderControl.format(GainKnob.db(for: $0)) }

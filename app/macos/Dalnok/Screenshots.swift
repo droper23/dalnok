@@ -112,7 +112,8 @@ enum Screenshots {
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let w = app.main!, s = app.session
         w.window?.setFrameAutosaveName("") // don't remember the tour's window size
-        w.window?.setContentSize(NSSize(width: 1440, height: 900))
+        let width = Double(ProcessInfo.processInfo.environment["DALNOK_TOUR_WIDTH"] ?? "") ?? 1440
+        w.window?.setContentSize(NSSize(width: width, height: 900))
         w.window?.center()
         if MainWindowController.showMixer { w.toggleMixer(nil) }
         if !MainWindowController.showDevicePanel { w.toggleDevicePanel(nil) }
@@ -138,7 +139,30 @@ enum Screenshots {
                 frame += 1
             }
         }
-        RunLoop.main.add(timer, forMode: .common)
+        // DALNOK_TOUR_FRAMES=0: play the tour without writing frames (for a smooth screen recording); print where the
+        // window is (top-left origin, points) so the recording can be cropped to it.
+        if ProcessInfo.processInfo.environment["DALNOK_TOUR_FRAMES"] == "0" {
+            if let win = w.window, let screen = win.screen {
+                let f = win.frame
+                print(String(format: "tour window: %.0f %.0f %.0f %.0f scale %.0f", f.minX, screen.frame.height - f.maxY, f.width, f.height, screen.backingScaleFactor))
+                fflush(stdout)
+            }
+        } else {
+            RunLoop.main.add(timer, forMode: .common)
+        }
+        // DALNOK_TOUR_MODE=plugins: only the device panel matters. A 4-bar cycle plays untouched (the units' meters and
+        // screens move with the music), so a recording of it can be cut into a seamless loop.
+        if ProcessInfo.processInfo.environment["DALNOK_TOUR_MODE"] == "plugins", let first {
+            let bar = s.framesPerBeat * 4, period = Double(bar * 4) / app.engine.sampleRate
+            _ = s.setCycle(true, 0, bar * 4)
+            app.engine.seek(0)
+            let cycles = Int(ProcessInfo.processInfo.environment["DALNOK_TOUR_CYCLES"] ?? "") ?? 3
+            print(String(format: "tour period: %.3f s", period)); fflush(stdout)
+            DispatchQueue.main.asyncAfter(deadline: .now() + Double(cycles) * period + 0.5) {
+                MainActor.assumeIsolated { timer.invalidate(); print("tour: \(frame) frames"); fflush(stdout); exit(0) }
+            }
+            return
+        }
         // The script: (seconds from the start, step).
         let bypassTarget = first?.plugins.first?.id
         let steps: [(Double, () -> Void)] = [
@@ -150,6 +174,7 @@ enum Screenshots {
             (8.0, { w.toggleMixer(nil) }),
             (9.6, { timer.invalidate(); print("tour: \(frame) frames in \(String(format: "%.1f", Date().timeIntervalSince(start))) s"); fflush(stdout); exit(0) }),
         ]
-        for (t, step) in steps { DispatchQueue.main.asyncAfter(deadline: .now() + t) { MainActor.assumeIsolated { step() } } }
+        let settle = Double(ProcessInfo.processInfo.environment["DALNOK_TOUR_DELAY"] ?? "") ?? 0
+        for (t, step) in steps { DispatchQueue.main.asyncAfter(deadline: .now() + settle + t) { MainActor.assumeIsolated { step() } } }
     }
 }

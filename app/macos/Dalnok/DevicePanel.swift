@@ -347,6 +347,8 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
     private weak var faceRow: NSStackView?
     private let path: String
     private let power = PlateButton(title: "", label: "")
+    /// The unit's power key (Graphite), for tests.
+    var powerKey: PlateButton? { Analog.on ? nil : power }
     var bypassed: Bool { session.pluginBypassed(trackId, slot) }
     private(set) var allParameters: [DalnokPluginParameter] = []
     private var indexOf: [UInt32: Int32] = [:]
@@ -356,7 +358,6 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
     var isSelected = false { didSet { if isSelected != oldValue { applySelection() } } }
     /// Bypassed in Graphite: the unit sits back slightly (drawn at this scale about its centre).
     private var recessed = false
-    static let recessedScale: CGFloat = 0.955
     static let defaultCount = 8
     static var ear: CGFloat { Analog.on ? 12 : 0 } // rack ear width
 
@@ -487,42 +488,106 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         addGestureRecognizer(press)
     }
 
-    /// Selection: a white outline with a soft glow around the unit.
+    /// Selection: a white outline with a soft glow around the unit (Settings ▸ Plug-ins can turn it off).
     private func applySelection() {
         guard let layer else { return }
+        let shown = isSelected && Faceplate.selectionGlow
         layer.masksToBounds = false
         layer.borderColor = NSColor.white.withAlphaComponent(0.92).cgColor
-        layer.borderWidth = isSelected ? 1.5 : 0
+        layer.borderWidth = shown ? 1.5 : 0
         layer.shadowColor = NSColor.white.cgColor
         layer.shadowOffset = .zero
         layer.shadowRadius = 7
-        layer.shadowOpacity = isSelected ? 0.55 : 0
+        layer.shadowOpacity = shown ? 0.55 : 0
         setAccessibilitySelected(isSelected)
     }
 
-    /// Bypass: scale the unit down a little about its centre (Graphite only), animated unless Reduce Motion is on.
+    /// The scale a bypassed unit sits back to (Settings ▸ Plug-ins ▸ Shrink).
+    static var recessedScale: CGFloat { 1 - CGFloat(Faceplate.bypassShrink) }
+    /// A thin dark veil over a bypassed unit (Settings ▸ Plug-ins ▸ Dim).
+    private lazy var veil: CALayer = {
+        let l = CALayer()
+        l.backgroundColor = NSColor.black.cgColor
+        l.opacity = 0
+        l.zPosition = 100
+        l.cornerRadius = 5
+        layer?.addSublayer(l)
+        return l
+    }()
+
+    /// Bypass (Graphite): the unit shrinks a little about its centre and dims slightly, over Settings' motion time,
+    /// while its lights fade (see `fadeLights`). Reduce Motion makes the change immediate.
     func setRecessed(_ on: Bool) {
         guard !Analog.on, on != recessed else { return }
         recessed = on
+        let animate = !Motion.reduced && window != nil
+        let from = layer?.presentation()?.transform ?? layer?.transform ?? CATransform3DIdentity
+        let fromOpacity = veil.presentation()?.opacity ?? veil.opacity
         CATransaction.begin()
-        CATransaction.setDisableActions(Motion.reduced || window == nil)
-        CATransaction.setAnimationDuration(0.18)
+        CATransaction.setDisableActions(true)
         applyRecess()
         CATransaction.commit()
+        guard animate, let layer else { return }
+        let duration = Faceplate.bypassMotion
+        let move = CABasicAnimation(keyPath: "transform")
+        move.fromValue = NSValue(caTransform3D: from)
+        move.toValue = NSValue(caTransform3D: layer.transform)
+        move.duration = duration
+        move.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        layer.add(move, forKey: "recess")
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.fromValue = fromOpacity
+        fade.toValue = veil.opacity
+        fade.duration = duration
+        fade.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        veil.add(fade, forKey: "dim")
     }
     private func applyRecess() {
         let s = recessed ? Self.recessedScale : 1
         layer?.setAffineTransform(CGAffineTransform(a: s, b: 0, c: 0, d: s, tx: bounds.width * (1 - s) / 2, ty: bounds.height * (1 - s) / 2))
+        veil.frame = bounds
+        veil.opacity = recessed ? Float(Faceplate.bypassDim) : 0
     }
     override func layout() {
         super.layout()
-        if recessed { CATransaction.begin(); CATransaction.setDisableActions(true); applyRecess(); CATransaction.commit() }
+        CATransaction.begin(); CATransaction.setDisableActions(true); applyRecess(); CATransaction.commit()
+    }
+
+    /// Lights (LED rings, switch lamps, readouts, meters, screens, VU lamps) fade to `target` over Settings' fade time.
+    private var lightLevel: CGFloat?
+    private var lightTimer: Timer?
+    private func fadeLights(to target: CGFloat) {
+        let duration = Motion.reduced || window == nil ? 0 : Faceplate.lightFade
+        guard let from = lightLevel, duration > 0.01 else { lightTimer?.invalidate(); return setLights(target) }
+        lightTimer?.invalidate()
+        lightFade = (from, target, CACurrentMediaTime(), duration)
+        let t = Timer(timeInterval: 1.0 / 60, repeats: true) { [weak self] _ in MainActor.assumeIsolated { self?.lightStep() } }
+        lightTimer = t
+        RunLoop.main.add(t, forMode: .common)
+    }
+    private var lightFade: (from: CGFloat, to: CGFloat, start: CFTimeInterval, duration: Double)?
+    private func lightStep() {
+        guard let f = lightFade else { lightTimer?.invalidate(); return }
+        let p = min(1, (CACurrentMediaTime() - f.start) / f.duration)
+        // Filaments cool fast at first; warming up eases in and out.
+        let eased = f.to < f.from ? 1 - pow(1 - p, 2) : p * p * (3 - 2 * p)
+        setLights(f.from + (f.to - f.from) * CGFloat(eased))
+        if p >= 1 { lightTimer?.invalidate(); lightFade = nil }
+    }
+    private func setLights(_ v: CGFloat) {
+        lightLevel = v
+        for k in knobs { (k.knob as? FaceplateControl)?.light = v }
+        inMeter.light = v; outMeter.light = v
+        (display as? FaceplateScreen)?.light = v
     }
 
     /// Settings ▸ wear changed: redraw the metal and the glass.
     func applyWear() {
         needsDisplay = true
         display?.needsDisplay = true
+        applySelection()
+        CATransaction.begin(); CATransaction.setDisableActions(true); applyRecess(); CATransaction.commit()
+        for k in knobs { (k.knob as? FaceplateControl)?.needsDisplay = true }
     }
     required init?(coder: NSCoder) { fatalError() }
 
@@ -916,6 +981,9 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
             for k in knobs { (k.knob as? FaceplateControl)?.dimmed = off }
             inMeter.poweredOff = off; outMeter.poweredOff = off
             (display as? FaceplateScreen)?.poweredOff = off
+            // New controls (a rebuilt faceplate) start at the current level, then fade toward the new state.
+            if let level = lightLevel { setLights(level) }
+            fadeLights(to: off ? 0 : 1)
             setRecessed(off)
             needsDisplay = true
         }

@@ -53,7 +53,17 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
     let deviceMeters = NSButton(checkboxWithTitle: "Show input and output meters on plug-ins (Graphite)", target: nil, action: nil)
     /// How worn the plug-in units look (Graphite): 0 new … 1 well used.
     let wear = NSSlider(value: 0.25, minValue: 0, maxValue: 1, target: nil, action: nil)
-    private let wearValue = NSTextField(labelWithString: "")
+    let peakHold = NSSlider(value: 1.5, minValue: 0, maxValue: 3, target: nil, action: nil)
+    private let peakHoldValue = NSTextField(labelWithString: "")
+    let vuBallistics = NSPopUpButton(frame: .zero, pullsDown: false)
+    let bypassShrink = NSSlider(value: 0.045, minValue: 0, maxValue: 0.1, target: nil, action: nil)
+    let bypassDim = NSSlider(value: 0.12, minValue: 0, maxValue: 0.5, target: nil, action: nil)
+    let bypassMotion = NSSlider(value: 0.5, minValue: 0.1, maxValue: 1.5, target: nil, action: nil)
+    let lightFade = NSSlider(value: 0.7, minValue: 0, maxValue: 2, target: nil, action: nil)
+    let readoutsFade = NSButton(checkboxWithTitle: "Readouts fade with the other lights (otherwise they switch off at once)", target: nil, action: nil)
+    let selectionGlow = NSButton(checkboxWithTitle: "Outline the selected plug-in", target: nil, action: nil)
+    let gainRings = NSButton(checkboxWithTitle: "Gain knobs light up with their track's level", target: nil, action: nil)
+    private var sliderValues: [NSSlider: (NSTextField, (Double) -> String)] = [:]
     /// The keyboard-shortcut editor, shown in its own pane.
     let shortcuts = ShortcutEditorController()
 
@@ -179,7 +189,7 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
     }
     /// A pane: a title, then rows of (label, control, optional explanation) in a form grid.
     private func pane(_ title: String, _ intro: String, _ rows: [(String, NSView, String?)]) -> NSView {
-        let v = NSView()
+        let v = FlippedView()
         let heading = NSTextField(labelWithString: title)
         heading.font = Theme.ui(20, .semibold)
         heading.textColor = Theme.text
@@ -202,9 +212,40 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
             sub.trailingAnchor.constraint(lessThanOrEqualTo: v.trailingAnchor, constant: -28),
             grid.leadingAnchor.constraint(equalTo: v.leadingAnchor, constant: 10), grid.topAnchor.constraint(equalTo: sub.bottomAnchor, constant: 20),
             grid.trailingAnchor.constraint(lessThanOrEqualTo: v.trailingAnchor, constant: -28),
+            grid.bottomAnchor.constraint(equalTo: v.bottomAnchor, constant: -24),
         ])
-        return v
+        // Long panes scroll.
+        let scroll = NSScrollView()
+        scroll.drawsBackground = false
+        scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true
+        v.translatesAutoresizingMaskIntoConstraints = false
+        scroll.documentView = v
+        NSLayoutConstraint.activate([
+            v.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
+            v.trailingAnchor.constraint(equalTo: scroll.contentView.trailingAnchor),
+            v.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
+        ])
+        return scroll
     }
+    /// A slider with its value printed beside it (and optional end captions).
+    private func slider(_ s: NSSlider, _ sel: Selector, width: CGFloat = 200, _ format: @escaping (Double) -> String,
+                        from: String? = nil, to: String? = nil) -> NSView {
+        s.target = self; s.action = sel
+        s.isContinuous = true
+        s.widthAnchor.constraint(equalToConstant: width).isActive = true
+        let value = NSTextField(labelWithString: "")
+        value.font = Theme.mono(10.5); value.textColor = Theme.textDim
+        sliderValues[s] = (value, format)
+        var views: [NSView] = []
+        func caption(_ t: String) -> NSTextField { let l = NSTextField(labelWithString: t); l.font = Theme.ui(10.5); l.textColor = Theme.textDim; return l }
+        if let from { views.append(caption(from)) }
+        views.append(s)
+        if let to { views.append(caption(to)) }
+        views.append(value)
+        return row(views)
+    }
+    private func showSliderValues() { for (s, (label, format)) in sliderValues { label.stringValue = format(s.doubleValue) } }
 
     private func buildPanes() {
         // General
@@ -240,6 +281,7 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
             ("", row([appearanceNote, relaunch]), nil),
             ("Ruler and clock", barsAndBeats, nil),
             ("", secondaryClock, "Real time when the main display shows bars, and bars when it shows real time."),
+            ("Track meters", gainRings, nil),
             ("Track height", row([trackHeight, trackHeightValue, smallButton("Reset All Tracks", #selector(resetTrackHeights))]),
              "Drag a track header's bottom edge to size one track (double-click it for the default), or ⌥-scroll over the tracks to size them all."),
             ("Motion", note("Animations follow System Settings ▸ Accessibility ▸ Display ▸ Reduce motion."), nil),
@@ -267,19 +309,28 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
         // Plug-ins
         deviceMeters.target = self; deviceMeters.action = #selector(metersChanged(_:))
         deviceMeters.toolTip = "Thin level meters on each plug-in's faceplate in the device panel"
-        wear.target = self; wear.action = #selector(wearChanged(_:))
-        wear.isContinuous = true
         wear.toolTip = "Scratches and grime on the metal, dust and smudges on the displays' glass"
         wear.setAccessibilityLabel("Plug-in wear")
-        wear.widthAnchor.constraint(equalToConstant: 200).isActive = true
-        let newLabel = NSTextField(labelWithString: "New"), usedLabel = NSTextField(labelWithString: "Well used")
-        for l in [newLabel, usedLabel, wearValue] { l.font = Theme.ui(10.5); l.textColor = Theme.textDim }
-        wearValue.font = Theme.mono(10.5)
-        paneViews[.plugins] = pane("Plug-ins", "How plug-ins look in the device panel, and where they come from.", [
+        vuBallistics.addItems(withTitles: ["Standard VU (300 ms)", "Fast (100 ms)"])
+        vuBallistics.target = self; vuBallistics.action = #selector(vuChanged(_:))
+        for (b, sel) in [(readoutsFade, #selector(readoutsChanged(_:))), (selectionGlow, #selector(selectionChanged(_:))),
+                         (gainRings, #selector(gainRingsChanged(_:)))] { b.target = self; b.action = sel }
+        let pct: (Double) -> String = { String(format: "%.0f%%", $0 * 100) }, secs: (Double) -> String = { String(format: "%.1f s", $0) }
+        paneViews[.plugins] = pane("Plug-ins", "How plug-ins look and behave in the device panel, and where they come from.", [
             ("Meters", deviceMeters, nil),
-            ("Wear", row([newLabel, wear, usedLabel, wearValue]), "Scratches and grime on the metal; dust, smudges and an aged VU face behind the glass."),
+            ("Peak hold", slider(peakHold, #selector(peakHoldChanged(_:)), secs), "How long the IN/OUT meters hold their highest LED."),
+            ("VU needle", vuBallistics, "The standard movement settles in about 300 ms; the fast one follows transients more closely."),
+            ("Wear", slider(wear, #selector(wearChanged(_:)), pct, from: "New", to: "Well used"),
+             "Scratches and grime on the metal; dust, smudges and an aged VU face behind the glass."),
+            ("Bypassed: shrink", slider(bypassShrink, #selector(bypassChanged(_:)), pct), "How far a turned-off unit sits back."),
+            ("Bypassed: dim", slider(bypassDim, #selector(bypassChanged(_:)), pct), "How much darker a turned-off unit looks."),
+            ("Bypass motion", slider(bypassMotion, #selector(bypassChanged(_:)), secs), "How long the unit takes to sit back or come forward."),
+            ("Lights fade", slider(lightFade, #selector(bypassChanged(_:)), secs), "How long LEDs, screens and lamps take to go out or warm up (0 s: at once)."),
+            ("Readouts", readoutsFade, nil),
+            ("Selection", selectionGlow, nil),
             ("Displays", smallButton("Reset Display Choices", #selector(resetDisplays)), "Back to the display Dalnok picks for each plug-in (right-click a unit ▸ Display to choose one)."),
             ("Library", smallButton("Open Plug-in Manager…", #selector(openPlugins)), "Scan, validate, favourite and tag your VST3, CLAP and Audio Unit plug-ins."),
+            ("", smallButton("Restore Plug-in Defaults", #selector(restorePluginDefaults)), nil),
         ])
     }
 
@@ -307,7 +358,16 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
         metronome.state = MainWindowController.metronomeOn ? .on : .off
         deviceMeters.state = Faceplate.showMeters ? .on : .off
         wear.doubleValue = Faceplate.wear
-        wearValue.stringValue = String(format: "%.0f%%", Faceplate.wear * 100)
+        peakHold.doubleValue = Faceplate.peakHold
+        vuBallistics.selectItem(at: Faceplate.fastVU ? 1 : 0)
+        bypassShrink.doubleValue = Faceplate.bypassShrink
+        bypassDim.doubleValue = Faceplate.bypassDim
+        bypassMotion.doubleValue = Faceplate.bypassMotion
+        lightFade.doubleValue = Faceplate.lightFade
+        readoutsFade.state = Faceplate.readoutsFade ? .on : .off
+        selectionGlow.state = Faceplate.selectionGlow ? .on : .off
+        gainRings.state = GainKnob.showsLevel ? .on : .off
+        showSliderValues()
     }
 
     /// The device pull-downs list what the main window's menus list, built fresh each time they open.
@@ -385,9 +445,24 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
         refresh()
     }
     @objc func metersChanged(_ sender: Any?) { Faceplate.showMeters = deviceMeters.state == .on }
-    @objc func wearChanged(_ sender: Any?) {
-        Faceplate.wear = wear.doubleValue
-        wearValue.stringValue = String(format: "%.0f%%", Faceplate.wear * 100)
+    @objc func wearChanged(_ sender: Any?) { Faceplate.wear = wear.doubleValue; showSliderValues() }
+    @objc func peakHoldChanged(_ sender: Any?) { Faceplate.peakHold = peakHold.doubleValue; showSliderValues() }
+    @objc func vuChanged(_ sender: Any?) { Faceplate.fastVU = vuBallistics.indexOfSelectedItem == 1 }
+    @objc func bypassChanged(_ sender: Any?) {
+        Faceplate.bypassShrink = bypassShrink.doubleValue
+        Faceplate.bypassDim = bypassDim.doubleValue
+        Faceplate.bypassMotion = bypassMotion.doubleValue
+        Faceplate.lightFade = lightFade.doubleValue
+        showSliderValues()
+    }
+    @objc func readoutsChanged(_ sender: Any?) { Faceplate.readoutsFade = readoutsFade.state == .on }
+    @objc func selectionChanged(_ sender: Any?) { Faceplate.selectionGlow = selectionGlow.state == .on }
+    @objc func gainRingsChanged(_ sender: Any?) { GainKnob.showsLevel = gainRings.state == .on }
+    @objc private func restorePluginDefaults() {
+        for key in Faceplate.preferenceKeys { UserDefaults.standard.removeObject(forKey: key) }
+        NotificationCenter.default.post(name: Faceplate.wearChanged, object: nil)
+        NotificationCenter.default.post(name: Faceplate.metersChanged, object: nil)
+        refresh()
     }
     @objc private func resetDisplays() {
         for key in UserDefaults.standard.dictionaryRepresentation().keys where key.hasPrefix("faceplate.display.") {

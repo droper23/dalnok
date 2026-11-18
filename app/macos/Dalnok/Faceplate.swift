@@ -28,6 +28,34 @@ enum Faceplate {
     }
     static let wearChanged = Notification.Name("DalnokFaceplateWearChanged")
 
+    // Bypass and display preferences (Settings ▸ Plug-ins). Each posts `wearChanged` so the units redraw.
+    private static func number(_ key: String, _ fallback: Double, _ range: ClosedRange<Double>) -> Double {
+        (UserDefaults.standard.object(forKey: key) as? Double ?? fallback).clamped(to: range)
+    }
+    private static func store(_ key: String, _ value: Any) {
+        UserDefaults.standard.set(value, forKey: key)
+        NotificationCenter.default.post(name: wearChanged, object: nil)
+    }
+    /// How much a bypassed unit shrinks (fraction of its size, 0 … 0.1).
+    static var bypassShrink: Double { get { number("bypassShrink", 0.045, 0...0.1) } set { store("bypassShrink", newValue) } }
+    /// How much a bypassed unit darkens (0 … 0.5).
+    static var bypassDim: Double { get { number("bypassDim", 0.12, 0...0.5) } set { store("bypassDim", newValue) } }
+    /// Seconds a unit takes to sit back or come forward when bypassed (0.1 … 1.5).
+    static var bypassMotion: Double { get { number("bypassMotion", 0.5, 0.1...1.5) } set { store("bypassMotion", newValue) } }
+    /// Seconds its lights take to fade out or warm up (0 … 2).
+    static var lightFade: Double { get { number("lightFade", 0.7, 0...2) } set { store("lightFade", newValue) } }
+    /// Whether the dot-matrix readouts fade with the other lights (otherwise they switch off at once, like a VFD).
+    static var readoutsFade: Bool { get { UserDefaults.standard.bool(forKey: "readoutsFade") } set { store("readoutsFade", newValue) } }
+    /// White outline around the selected unit.
+    static var selectionGlow: Bool { get { UserDefaults.standard.object(forKey: "selectionGlow") as? Bool ?? true } set { store("selectionGlow", newValue) } }
+    /// Seconds the IN/OUT meters hold their peak (0 … 3).
+    static var peakHold: Double { get { number("meterPeakHold", 1.5, 0...3) } set { store("meterPeakHold", newValue) } }
+    /// VU needle ballistics: false = the standard 300 ms movement, true = a faster 100 ms one.
+    static var fastVU: Bool { get { UserDefaults.standard.bool(forKey: "fastVU") } set { store("fastVU", newValue) } }
+    /// Every key above, for tests that restore them.
+    static let preferenceKeys = ["faceplateWear", "deviceMeters", "bypassShrink", "bypassDim", "bypassMotion", "lightFade", "readoutsFade",
+                                 "selectionGlow", "meterPeakHold", "fastVU"]
+
     /// A stable seed from a unit's name (FNV-1a), so its scratches and dust stay put between launches.
     static func seed(_ name: String) -> UInt64 {
         var h: UInt64 = 0xcbf29ce484222325
@@ -277,7 +305,7 @@ enum Faceplate {
     }
 
     /// A lit push switch: a raised key with an LED window.
-    static func pushSwitch(_ ctx: CGContext, _ rect: CGRect, on: Bool, color: NSColor, lit: Bool = true) {
+    static func pushSwitch(_ ctx: CGContext, _ rect: CGRect, on: Bool, color: NSColor, lit: CGFloat = 1) {
         let key = CGPath(roundedRect: rect, cornerWidth: 3, cornerHeight: 3, transform: nil)
         ctx.saveGState()
         ctx.setShadow(offset: CGSize(width: 0, height: on ? -0.5 : -1.5), blur: on ? 1.5 : 3, color: NSColor.black.withAlphaComponent(0.7).cgColor)
@@ -292,26 +320,26 @@ enum Faceplate {
         ctx.restoreGState()
         ctx.addPath(key); ctx.setStrokeColor(NSColor.black.withAlphaComponent(0.6).cgColor); ctx.setLineWidth(0.8); ctx.strokePath()
         let led = CGRect(x: rect.midX - rect.width * 0.3, y: rect.minY + 4, width: rect.width * 0.6, height: 3)
-        if on && lit {
+        ctx.setFillColor(NSColor.black.withAlphaComponent(0.55).cgColor); ctx.fill(led)
+        if on && lit > 0.01 {
             ctx.saveGState()
+            ctx.setAlpha(lit)
             ctx.setShadow(offset: .zero, blur: 5, color: color.cgColor)
             ctx.setFillColor(color.cgColor); ctx.fill(led)
             ctx.restoreGState()
-        } else {
-            ctx.setFillColor(NSColor.black.withAlphaComponent(0.55).cgColor); ctx.fill(led)
         }
     }
 
     /// A small display under each control: a recessed window holding a dot-matrix readout (5 × 7 dots per
     /// character, every dot visible faintly when unlit, the lit ones glowing like a vacuum-fluorescent display).
-    static func readoutWindow(_ ctx: CGContext, _ rect: CGRect, text: String) {
+    static func readoutWindow(_ ctx: CGContext, _ rect: CGRect, text: String, glow: CGFloat = 1) {
         let frame = CGPath(roundedRect: rect, cornerWidth: 2.5, cornerHeight: 2.5, transform: nil)
         ctx.addPath(frame); ctx.setFillColor(NSColor(white: 0.03, alpha: 1).cgColor); ctx.fillPath()
         let screen = rect.insetBy(dx: 1.5, dy: 1.5)
         ctx.saveGState()
         ctx.addPath(CGPath(roundedRect: screen, cornerWidth: 1.5, cornerHeight: 1.5, transform: nil)); ctx.clip()
         ctx.setFillColor(NSColor(srgbRed: 0.010, green: 0.045, blue: 0.040, alpha: 1).cgColor); ctx.fill(screen)
-        DotMatrix.draw(ctx, text, in: screen.insetBy(dx: 1.5, dy: 1.2), color: dotColor)
+        DotMatrix.draw(ctx, text, in: screen.insetBy(dx: 1.5, dy: 1.2), color: dotColor.withAlphaComponent(max(0, min(1, glow))))
         // Glass: a faint sheen across the top half and a shadow under the bezel's top edge.
         ctx.setFillColor(NSColor.white.withAlphaComponent(0.045).cgColor)
         ctx.fill(CGRect(x: screen.minX, y: screen.minY, width: screen.width, height: screen.height * 0.45))
@@ -339,6 +367,8 @@ final class FaceplateControl: NSControl, ParameterControl {
     var bipolar = false
     var tint: NSColor = Theme.accent { didSet { needsDisplay = true } }
     var dimmed = false { didSet { needsDisplay = true } }
+    /// How lit its lights are (0 … 1): fades with bypass (DeviceView drives it).
+    var light: CGFloat = 1 { didSet { if light != oldValue { needsDisplay = true } } }
     /// Printed legends for the scale ends (and, for short selectors, every position).
     var legends: [String] = [] { didSet { needsDisplay = true } }
     var format: (Double) -> String = { String(format: "%.0f%%", $0 * 100) }
@@ -450,11 +480,11 @@ final class FaceplateControl: NSControl, ParameterControl {
         let legendFont = Theme.mono(7.5)
         switch kind {
         case .toggle:
-            Faceplate.pushSwitch(ctx, CGRect(x: c.x - 13, y: c.y - 9, width: 26, height: 19), on: value >= 0.5, color: tint, lit: !dimmed)
+            Faceplate.pushSwitch(ctx, CGRect(x: c.x - 13, y: c.y - 9, width: 26, height: 19), on: value >= 0.5, color: tint, lit: light)
         case .knob, .selector:
             let r: CGFloat = kind == .knob ? 12.5 : 10.5
             Faceplate.scale(ctx, center: c, radius: r, ticks: kind == .selector ? Int(steps) + 1 : 11, value: value,
-                            bipolar: bipolar, color: dimmed ? NSColor(white: 0.22, alpha: 1) : tint)
+                            bipolar: bipolar, color: NSColor(white: 0.22, alpha: 1).blended(withFraction: light, of: tint) ?? tint)
             Faceplate.knob(ctx, center: c, radius: r, angle: Faceplate.angle(value))
             if legends.count >= 2 {
                 // Printed at the ends of the scale, inside this control's own width.
@@ -465,7 +495,9 @@ final class FaceplateControl: NSControl, ParameterControl {
                                   font: legendFont, color: Faceplate.legend, align: .left)
             }
         }
-        Faceplate.readoutWindow(ctx, CGRect(x: 6, y: bounds.height - 14, width: w - 12, height: 13), text: dimmed ? "" : format(value))
+        // Readouts fade with the lights, or (by default) switch off at once like a vacuum-fluorescent display.
+        let readout: CGFloat = Faceplate.readoutsFade ? light : (dimmed ? 0 : 1)
+        Faceplate.readoutWindow(ctx, CGRect(x: 6, y: bounds.height - 14, width: w - 12, height: 13), text: readout > 0.01 ? format(value) : "", glow: readout)
         if window?.firstResponder === self {
             ctx.setStrokeColor(NSColor.keyboardFocusIndicatorColor.cgColor); ctx.setLineWidth(1.5)
             ctx.strokeEllipse(in: CGRect(x: c.x - 22, y: c.y - 22, width: 44, height: 44))
@@ -528,6 +560,8 @@ final class FaceplateMeter: NSView {
     let caption: String
     /// Bypassed unit: every LED dark.
     var poweredOff = false { didSet { if poweredOff != oldValue { needsDisplay = true } } }
+    /// How lit the LEDs are (0 … 1): fades with bypass.
+    var light: CGFloat = 1 { didSet { if light != oldValue { needsDisplay = true } } }
     private var levelDb: (Float, Float) = (-120, -120)
     private var hold: (Float, Float) = (-120, -120)
     private var holdAt: (Double, Double) = (0, 0)
@@ -545,14 +579,15 @@ final class FaceplateMeter: NSView {
     required init?(coder: NSCoder) { fatalError() }
     override var isFlipped: Bool { true }
 
-    /// Linear peaks since the last frame. Instant attack, 24 dB/s fall, 1.5 s peak hold.
+    /// Linear peaks since the last frame. Instant attack, 24 dB/s fall, peak hold (Settings ▸ Plug-ins, 1.5 s by default).
     func push(_ l: Float, _ r: Float) {
         let now = CACurrentMediaTime(), dt = Float(now - last)
         last = now
         func db(_ x: Float) -> Float { x > 0 ? 20 * log10(x) : -120 }
         let next = (max(db(l), levelDb.0 - 24 * dt), max(db(r), levelDb.1 - 24 * dt))
-        if next.0 >= hold.0 || now - holdAt.0 > 1.5 { hold.0 = next.0; holdAt.0 = now }
-        if next.1 >= hold.1 || now - holdAt.1 > 1.5 { hold.1 = next.1; holdAt.1 = now }
+        let holdFor = Faceplate.peakHold
+        if next.0 >= hold.0 || now - holdAt.0 > holdFor { hold.0 = next.0; holdAt.0 = now }
+        if next.1 >= hold.1 || now - holdAt.1 > holdFor { hold.1 = next.1; holdAt.1 = now }
         if Int(next.0 * 4) != Int(levelDb.0 * 4) || Int(next.1 * 4) != Int(levelDb.1 * 4) { needsDisplay = true }
         levelDb = next
         setAccessibilityValue(String(format: "%.0f dB", max(levelDb.0, levelDb.1)))
@@ -590,15 +625,15 @@ final class FaceplateMeter: NSView {
                 let color: NSColor = segDb >= -1.5 ? NSColor(srgbRed: 1.0, green: 0.27, blue: 0.20, alpha: 1)
                     : segDb >= -9 ? NSColor(srgbRed: 1.0, green: 0.72, blue: 0.22, alpha: 1) : NSColor(srgbRed: 0.42, green: 0.95, blue: 0.48, alpha: 1)
                 let led = CGRect(x: slot.minX + pad + CGFloat(ch) * (ledW + gap), y: ledY(i), width: ledW, height: ledH)
-                let on = !poweredOff && (i < lit || i == peak && peak >= lit)
+                let on = light > 0.01 && (i < lit || i == peak && peak >= lit)
                 let lens = CGPath(roundedRect: led, cornerWidth: 0.9, cornerHeight: 0.9, transform: nil)
+                ctx.addPath(lens); ctx.setFillColor((color.blended(withFraction: 0.84, of: .black) ?? color).cgColor); ctx.fillPath()
                 if on {
                     ctx.saveGState()
+                    ctx.setAlpha(light)
                     ctx.setShadow(offset: .zero, blur: 3.5, color: color.withAlphaComponent(0.85).cgColor)
                     ctx.addPath(lens); ctx.setFillColor(color.cgColor); ctx.fillPath()
                     ctx.restoreGState()
-                } else {
-                    ctx.addPath(lens); ctx.setFillColor((color.blended(withFraction: 0.84, of: .black) ?? color).cgColor); ctx.fillPath()
                 }
                 // Domed lens: a highlight across the top of each LED.
                 ctx.saveGState()
@@ -730,8 +765,25 @@ final class PlateButton: NSButton {
         case .system: super.intrinsicContentSize
         case .key: NSSize(width: ceil(Faceplate.glyphs(label, font: labelFont, kern: 0.9).width) + 18, height: 17)
         case .power: NSSize(width: 20, height: 20)
-        case .powerIcon: NSSize(width: 16, height: 16)
+        case .powerIcon: NSSize(width: 24, height: 24) // the glowing symbol is 12 pt; the whole square takes the press
         }
+    }
+    /// Hardware keys take a press anywhere on them and act on release, even if the pointer drifted off a little or the
+    /// unit is drawn shrunk (bypassed): AppKit's own button tracking doesn't know about the unit's scale.
+    override func mouseDown(with event: NSEvent) {
+        guard style != .system, isEnabled else { return super.mouseDown(with: event) }
+        isHighlighted = true
+        let start = event.locationInWindow
+        var inside = true
+        while let e = window?.nextEvent(matching: [.leftMouseDragged, .leftMouseUp]) {
+            inside = hypot(e.locationInWindow.x - start.x, e.locationInWindow.y - start.y) < 24
+            isHighlighted = inside
+            if e.type == .leftMouseUp { break }
+        }
+        isHighlighted = false
+        guard inside else { return }
+        if style == .power || style == .powerIcon { state = state == .on ? .off : .on }
+        sendAction(action, to: target)
     }
     override func draw(_ dirtyRect: NSRect) {
         guard style != .system, let ctx = NSGraphicsContext.current?.cgContext else { return super.draw(dirtyRect) }
@@ -894,7 +946,7 @@ enum DotMatrix {
         }
         ctx.addPath(off); ctx.setFillColor(ghost); ctx.fillPath()
         ctx.saveGState()
-        ctx.setShadow(offset: .zero, blur: 2.2, color: color.withAlphaComponent(0.85).cgColor)
+        ctx.setShadow(offset: .zero, blur: 2.2, color: color.withAlphaComponent(0.85 * color.alphaComponent).cgColor)
         ctx.addPath(lit); ctx.setFillColor(color.cgColor); ctx.fillPath()
         ctx.restoreGState()
     }

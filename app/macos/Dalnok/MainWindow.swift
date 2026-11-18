@@ -592,6 +592,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         for row in headers.rows {
             let (l, r) = levels[row.trackId] ?? (0, 0)
             row.meter.push(l, r)
+            if row.gain.showsMeter != GainKnob.showsLevel { row.gain.showsMeter = GainKnob.showsLevel }
             row.gain.updateMeter(max(row.meter.levelDb.0, row.meter.levelDb.1))
         }
         if !mixer.isHidden { mixer.pushMeters { levels[$0] ?? (0, 0) }; mixer.master.meter.push(ml0, mr0); if Analog.on { mixer.master.needle.push(ml0, mr0) } }

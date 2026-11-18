@@ -1,5 +1,8 @@
 # Dalnok
 
+> **dal·nok** /ˈdɒlnok/ · *noun* (Hungarian)<br>
+> bard; a singer-poet.
+
 An open-source digital audio workstation for macOS (and later Windows and Linux). The goal is pro-grade
 recording, editing, and mixing in a fast, focused native app.
 
@@ -33,23 +36,30 @@ Two appearances, the same app. **Graphite** draws every plug-in as a hardware un
 **Warm Analog** turns them into pedals patched with cables, beside a tape transport.
 
 <table>
-<tr><td align="center"><img src="assets/screenshots/tour-graphite.gif" alt="Graphite: playing a project with plug-ins, showing and hiding the mixer, bypassing a unit and switching tracks" width="100%"><br><sub>Graphite</sub></td>
-<td align="center"><img src="assets/screenshots/tour-warm-analog.gif" alt="Warm Analog: the same project as pedals, with the mixer shown and hidden" width="100%"><br><sub>Warm Analog</sub></td></tr>
+<tr><td align="center"><img src="assets/screenshots/tour-graphite.gif" alt="Graphite: playing a project with plug-ins, showing and hiding the mixer, bypassing a unit and switching tracks" width="100%"><br><sub>Graphite · <a href="assets/videos/tour-graphite.mp4">video</a></sub></td>
+<td align="center"><img src="assets/screenshots/tour-warm-analog.gif" alt="Warm Analog: the same project as pedals, with the mixer shown and hidden" width="100%"><br><sub>Warm Analog · <a href="assets/videos/tour-warm-analog.mp4">video</a></sub></td></tr>
 </table>
 
 ### Plug-in faceplates (Graphite)
-Drag an EQ's bands on its screen; dynamics get a VU gain-reduction meter, distortion a transfer curve, delays an
-energy history. Bypassed units sit back with their lights off, and Settings can age them with scratches and dust.
+Each unit gets a display that suits it: an EQ screen with draggable bands, a VU gain-reduction meter for dynamics, a
+goniometer for stereo, a transfer curve for distortion and more. Bypassed units sit back with their lights off, and
+Settings can age them with scratches and dust.
 
-![Plug-in faceplates: Dalnok Channel EQ with its band handles, a VU gain-reduction meter and a delay's energy history](assets/screenshots/faceplates.png)
+![An EQ, a multiband compressor and a reverb on a mix bus: the EQ screen, the VU needle and the goniometer moving with the music](assets/screenshots/plugins-graphite.gif)
+<sub><a href="assets/videos/plugins-graphite.mp4">video</a></sub>
 
 ### Warm Analog
 ![Dalnok in the Warm Analog appearance](assets/screenshots/warm-analog.png)
 
-<table>
-<tr><td width="58%"><img src="assets/screenshots/analog-pedals.png" alt="Warm Analog plug-ins as patched pedals" width="100%"></td>
-<td width="42%"><img src="assets/screenshots/analog-transport.png" alt="Warm Analog tape transport and VFD position display with the second clock" width="100%"></td></tr>
-</table>
+A tape transport with reels that hold as much tape as the project has sound, and a glowing VFD position display
+(here with the second, real-time clock under it):
+
+![Warm Analog tape transport and VFD position display](assets/screenshots/analog-transport.png)
+
+Every plug-in becomes a pedal with its own look, patched in order from the track's input to its output:
+
+![Warm Analog pedals: an EQ, a multiband compressor and a reverb](assets/screenshots/plugins-warm-analog.gif)
+<sub><a href="assets/videos/plugins-warm-analog.mp4">video</a></sub>
 
 ### MIDI and settings
 <table>
@@ -58,7 +68,7 @@ energy history. Bypassed units sit back with their lights off, and Settings can 
 <tr><td colspan="2" align="center"><img src="assets/screenshots/settings.png" alt="Settings: every preference in one window, keyboard shortcuts included" width="70%"><br><sub>Settings</sub></td></tr>
 </table>
 
-All screenshots and animations come from the real app with generated projects (`scripts/make-test-project.sh`,
+All screenshots and screen recordings come from the real app with generated projects (`scripts/make-test-project.sh`,
 `Dalnok <project> --tour <dir>`), using Dalnok's own and Apple's built-in plug-ins.
 
 ## Install (preview build)

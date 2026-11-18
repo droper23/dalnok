@@ -13,7 +13,7 @@ final class SelfTest {
     let workdir: URL
     private var failures = 0
     /// Preferences the test changes; all are restored at the end so a run never alters the owner's settings.
-    private static let restoredKeys = ["copyAudioOnSave", "comingFrom", "onboardingDone", "recordingInputUID", "rulerBarsAndBeats", "metronome", "showDevicePanel", "countIn", "showMixer", "showLauncher", "automationMode", "pedal.AUDelay", "shortcuts.preset", "shortcuts.overrides", "shortcuts.userPresets"] + PluginLibrary.keys + ["tapeSpeed", "trackHeight", "secondaryClock", "faceplateWear"]
+    private static let restoredKeys = ["copyAudioOnSave", "comingFrom", "onboardingDone", "recordingInputUID", "rulerBarsAndBeats", "metronome", "showDevicePanel", "countIn", "showMixer", "showLauncher", "automationMode", "pedal.AUDelay", "shortcuts.preset", "shortcuts.overrides", "shortcuts.userPresets"] + PluginLibrary.keys + ["tapeSpeed", "trackHeight", "secondaryClock", "gainRingLevel"] + Faceplate.preferenceKeys
     private let previousPreferences: [String: Any]
     private var w: MainWindowController { app.main }
     private var s: Session { app.session }
@@ -1600,8 +1600,18 @@ final class SelfTest {
             let scale = delay.layer?.affineTransform().a ?? 1
             check(faces.allSatisfy(\.dimmed) && delay.inMeter.poweredOff && (delay.display as? FaceplateScreen)?.poweredOff == true
                   && abs(scale - DeviceView.recessedScale) < 1e-6, "bypassing turns the unit's lights and screen off and sets it back (scale \(scale))")
+            check(faces.allSatisfy { $0.light == 0 } && delay.inMeter.light == 0, "its lights are out once the fade ends")
+            // The power key turns a shrunk unit back on from a press anywhere on the key, released a little off it.
+            if let power = delay.powerKey {
+                let at = power.convert(CGPoint(x: power.bounds.maxX - 2, y: power.bounds.maxY - 2), to: nil)
+                NSApp.postEvent(mouse(.leftMouseUp, CGPoint(x: at.x + 6, y: at.y - 5)), atStart: true)
+                power.mouseDown(with: mouse(.leftMouseDown, at))
+                check(!s.pluginBypassed(track, slot), "a press at the edge of the power key turns the bypassed unit back on")
+                delay.toggleBypass()
+            } else { check(false, "the unit has a power key") }
             delay.toggleBypass()
-            check(faces.allSatisfy { !$0.dimmed } && !delay.inMeter.poweredOff && (delay.layer?.affineTransform().a ?? 0) == 1, "turning it on lights them again")
+            check(faces.allSatisfy { !$0.dimmed && $0.light == 1 } && !delay.inMeter.poweredOff && (delay.layer?.affineTransform().a ?? 0) == 1,
+                  "turning it on lights them again")
             // Selection: pressing a unit selects it (white outline); the others are not selected.
             delay.onSelect?()
             check(panel.selectedSlot == delay.slot && delay.isSelected && (delay.layer?.borderWidth ?? 0) > 0
@@ -2206,8 +2216,8 @@ final class SelfTest {
         let wasBars = TimelineView.barsAndBeats
         if !wasBars { _ = perform("Bars and Beats Ruler") }
         e.seek(Int64(e.sampleRate * 60 / 96 * 3) + Int64(e.sampleRate * 60 / 96)) // bar 2, beat 2
-        try? await Task.sleep(for: .milliseconds(150))
-        check(w.transport.timeLabel.stringValue.hasPrefix("2.2.1."), "LCD shows bars and beats (\(w.transport.timeLabel.stringValue))")
+        for _ in 0..<10 where !w.transport.timeLabel.stringValue.hasPrefix("2.2.1.") { try? await Task.sleep(for: .milliseconds(100)) } // the display updates on the next frame
+        check(w.transport.timeLabel.stringValue.hasPrefix("2.2.1."), "LCD shows bars and beats (\(w.transport.timeLabel.stringValue), \(e.isPlaying ? "playing" : "stopped"))")
         check(w.timeline.barsLabel(e.sampleRate * 60 / 96 * 3, wholeBars: false) == "2", "ruler labels bar 2 at its downbeat")
         _ = s.setTempo(96, 3, 8)
         let eighth = e.sampleRate * 60 / 96 / 2
