@@ -341,6 +341,9 @@ class RotaryKnob: NSControl {
             arc.addArc(center: c, radius: ringR, startAngle: angle(from) - 0.04, endAngle: angle(from) + 0.04, clockwise: false)
         }
         haloValue.path = arc
+        // The glow follows the lit arc (dashed into LED dots in Warm Analog) without an offscreen blur of the layer.
+        let lit = haloValue.lineDashPattern.map { d in arc.copy(dashingWithPhase: 0, lengths: d.map { CGFloat(truncating: $0) }) } ?? arc
+        haloValue.shadowPath = lit.copy(strokingWithWidth: haloValue.lineWidth, lineCap: .round, lineJoin: .round, miterLimit: 1)
         // Face covers the ring at rest (scale 1); scales around its center.
         face.bounds = bounds
         face.position = c
@@ -693,7 +696,11 @@ final class ToggleChip: NSControl {
         CATransaction.setDisableActions(true)
         face.bounds = bounds
         face.position = CGPoint(x: bounds.midX, y: bounds.midY)
+        // Explicit shadow shapes: without them every chip's shadow is a blur of its rendered content (an offscreen
+        // pass per chip; hundreds in a large project, and seconds in window captures).
+        face.shadowPath = CGPath(roundedRect: face.bounds, cornerWidth: face.cornerRadius, cornerHeight: face.cornerRadius, transform: nil)
         glow.frame = bounds
+        glow.shadowPath = CGPath(roundedRect: glow.bounds, cornerWidth: face.cornerRadius, cornerHeight: face.cornerRadius, transform: nil)
         label.frame = CGRect(x: 0, y: (bounds.height - 13) / 2, width: bounds.width, height: 13)
         label.contentsScale = window?.backingScaleFactor ?? 2
         CATransaction.commit()

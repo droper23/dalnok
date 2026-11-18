@@ -13,7 +13,7 @@ final class SelfTest {
     let workdir: URL
     private var failures = 0
     /// Preferences the test changes; all are restored at the end so a run never alters the owner's settings.
-    private static let restoredKeys = ["copyAudioOnSave", "comingFrom", "onboardingDone", "recordingInputUID", "rulerBarsAndBeats", "metronome", "showDevicePanel", "countIn", "showMixer", "showLauncher", "automationMode", "pedal.AUDelay", "shortcuts.preset", "shortcuts.overrides", "shortcuts.userPresets"] + PluginLibrary.keys + ["tapeSpeed"]
+    private static let restoredKeys = ["copyAudioOnSave", "comingFrom", "onboardingDone", "recordingInputUID", "rulerBarsAndBeats", "metronome", "showDevicePanel", "countIn", "showMixer", "showLauncher", "automationMode", "pedal.AUDelay", "shortcuts.preset", "shortcuts.overrides", "shortcuts.userPresets"] + PluginLibrary.keys + ["tapeSpeed", "trackHeight"]
     private let previousPreferences: [String: Any]
     private var w: MainWindowController { app.main }
     private var s: Session { app.session }
@@ -475,6 +475,7 @@ final class SelfTest {
         await clipEditing()
         deadControls()
         await tapeMachine()
+        await markersAndTrackTools()
         try? w.snapshot(to: workdir.appendingPathComponent("selftest.png"))
         await migrationSteps()
         // Settings: exercise the menu, appearance selection, and project preference.
@@ -629,6 +630,18 @@ final class SelfTest {
               r.resolve(KeyCombo("up"), context: .pianoRoll)?.id == "midi.transpose_up" && r.allConflicts().isEmpty,
               "the same key does different things in the arrangement and the piano roll")
         check(ShortcutRegistry.reservedBySystem(KeyCombo("space", .command)) != nil, "⌘Space is flagged as belonging to macOS")
+        // While renaming a track, ⌃ and ⌥ keys edit and type; only ⌘ shortcuts run (regression: ⌃F/⌃H/⌥' were taken).
+        if let row = w.headers.rows.first {
+            let fades0 = s.engine.undoName
+            row.beginRename()
+            await wait(0.1)
+            check(MainWindowController.isTyping, "renaming puts a field editor in charge")
+            _ = NSApp.mainMenu?.performKeyEquivalent(with: keyEvent("h", code: 4, .control))
+            _ = NSApp.mainMenu?.performKeyEquivalent(with: keyEvent("'", code: 39, .option))
+            check(s.tracks.count > 0 && s.engine.undoName == fades0 && s.hiddenCount == 0, "⌃H and ⌥' reach the text field, not Hide Track or Add Marker")
+            row.cancelRename()
+            await wait(0.1)
+        }
         // A dialog owns Return and Escape: shortcuts stay out of its way (regression: Return ran Go to Start under an alert).
         let alert = NSAlert(); alert.messageText = "Shortcut test"; alert.addButton(withTitle: "OK")
         alert.beginSheetModal(for: w.window!) { _ in }
@@ -684,6 +697,82 @@ final class SelfTest {
         check(MainWindowController.metronomeOn == m0, "metronome back to where it was")
     }
 
+    // MARK: Markers, duplicate track, zoom to selection, vertical zoom
+
+    private func markersAndTrackTools() async {
+        let e = s.engine
+        e.pause()
+        e.seek(Int64(e.sampleRate * 2)); await wait(0.15)
+        check(perform("Add Marker", exact: true) && s.markers.count == 1 && e.undoName == "Add Marker", "Transport ▸ Add Marker adds one at the playhead")
+        e.seek(Int64(e.sampleRate * 6)); await wait(0.15)
+        _ = perform("Add Marker", exact: true)
+        e.seek(0); await wait(0.15)
+        var ok = perform("Next Marker", exact: true); await wait(0.15)
+        check(ok && abs(e.position - Int64(e.sampleRate * 2)) < 2, "Next Marker jumps to the first marker (\(e.position))")
+        ok = perform("Next Marker", exact: true); await wait(0.15)
+        check(ok && abs(e.position - Int64(e.sampleRate * 6)) < 2, "and then to the next (\(e.position))")
+        ok = perform("Previous Marker", exact: true); await wait(0.15)
+        check(ok && abs(e.position - Int64(e.sampleRate * 2)) < 2, "Previous Marker goes back (\(e.position))")
+        // Drag the first marker's flag on the ruler: it moves (snapped) as one undo step; a click seeks to it.
+        let tl = w.timeline, m0 = s.markers[0]
+        let flag = tl.convert(CGPoint(x: tl.xPos(forFrame: Double(m0.frame)) + 4, y: 6), to: nil)
+        tl.mouseDown(with: mouse(.leftMouseDown, flag))
+        tl.mouseDragged(with: mouse(.leftMouseDragged, CGPoint(x: flag.x + 80, y: flag.y)))
+        tl.mouseUp(with: mouse(.leftMouseUp, CGPoint(x: flag.x + 80, y: flag.y)))
+        let moved = s.markers.first { $0.id == m0.id }
+        check((moved?.frame ?? 0) > m0.frame && e.undoName == "Move Marker", "dragging a marker flag moves it (\(m0.frame) → \(moved?.frame ?? -1))")
+        _ = perform("Undo")
+        check(s.markers.first { $0.id == m0.id }?.frame == m0.frame, "undo puts it back")
+        e.seek(0); await wait(0.15)
+        tl.mouseDown(with: mouse(.leftMouseDown, flag)); tl.mouseUp(with: mouse(.leftMouseUp, flag))
+        await wait(0.15)
+        check(abs(e.position - m0.frame) < 2, "clicking a marker flag moves the playhead there")
+        s.renameMarker(m0.id, "Verse")
+        check(fixedString(s.markers[0].name) == "Verse", "markers can be renamed")
+        check(perform("Delete Marker", exact: true) && s.markers.count == 1, "Delete Marker removes the marker at the playhead")
+        _ = perform("Undo"); _ = perform("Undo")
+        s.markers.forEach { s.removeMarker($0.id) }
+        // Duplicate Track (⌃⌘D): below the original, with its clips; one undo step.
+        if let t = s.tracks.first(where: { !$0.isBus && !$0.isStack && !$0.clips.isEmpty }) {
+            w.headers.select(t.id)
+            let n = s.tracks.count
+            check(perform("Duplicate Track", exact: true) && s.tracks.count == n + 1, "Track ▸ Duplicate Track adds a copy")
+            let i = s.tracks.firstIndex { $0.id == t.id } ?? 0
+            let copy = s.tracks[min(i + 1, s.tracks.count - 1)]
+            check(copy.name == t.name + " copy" && copy.clips.count == t.clips.count && w.selectedTrack == copy.id,
+                  "the copy sits below with the same clips and is selected (\(copy.name))")
+            _ = perform("Undo")
+            check(s.tracks.count == n, "undo removes the copy")
+        }
+        // Hide Track / Show All Tracks: out of view, still playing; the header title counts them.
+        if let t = s.tracks.first {
+            w.headers.select(t.id)
+            let n = s.tracks.count
+            check(perform("Hide Track", exact: true) && s.tracks.count == n - 1 && s.hiddenCount == 1 && w.headers.row(t.id) == nil,
+                  "Track ▸ Hide Track removes it from the arrangement")
+            check(s.allTracks.contains { $0.id == t.id }, "the hidden track is still in the project")
+            check(perform("Show All Tracks", exact: true) && s.tracks.count == n && s.hiddenCount == 0, "Show All Tracks brings it back")
+        }
+        // Zoom to selection and vertical zoom.
+        if let c = s.tracks.flatMap(\.clips).first {
+            tl.selectClips([c.id])
+            check(perform("Zoom to Selection", exact: true), "View ▸ Zoom to Selection")
+            let x0 = tl.xPos(forFrame: Double(c.start)), x1 = tl.xPos(forFrame: Double(c.end))
+            check(x0 >= 0 && x1 <= tl.bounds.width && (x1 - x0) > tl.bounds.width * 0.8, "the selected clip fills the view (\(Int(x0))–\(Int(x1)) of \(Int(tl.bounds.width)))")
+            tl.selectClips([])
+            _ = perform("Zoom to Fit")
+        }
+        let h0 = Theme.trackHeight
+        check(perform("Taller Tracks", exact: true) && Theme.trackHeight > h0, "View ▸ Taller Tracks (\(h0) → \(Theme.trackHeight))")
+        w.window?.layoutIfNeeded()
+        if let row = w.headers.rows.dropFirst().first {
+            check(abs(row.frame.height - Theme.trackHeight) < 0.5 && abs(row.frame.minY - (Theme.trackHeight - w.headers.scrollY)) < 0.5,
+                  "header rows follow the new height and stay aligned with the lanes")
+        }
+        check(perform("Shorter Tracks", exact: true) && abs(Theme.trackHeight - h0) < 0.5, "Shorter Tracks returns to \(h0)")
+        w.window?.layoutIfNeeded()
+    }
+
     // MARK: Dead controls: nothing may look usable while doing nothing
 
     private func deadControls() {
@@ -704,6 +793,21 @@ final class SelfTest {
         }
         for win in [w.window, w.pluginManager.window, w.shortcutsEditor.window].compactMap({ $0 }) { if let c = win.contentView { walk(c) } }
         check(buttons.isEmpty, "no enabled button without an action (\(buttons))")
+        // Accessibility: every visible, enabled control has a name VoiceOver can read.
+        var unnamed: [String] = []
+        func walkNames(_ v: NSView) {
+            if !v.isHidden, let c = v as? NSControl, !(c is NSScroller), c.isEnabled, !(c is NSTextField && !(c as! NSTextField).isEditable) {
+                let label = c.accessibilityLabel() ?? ""
+                let title = (c as? NSButton)?.title ?? (c as? NSPopUpButton)?.titleOfSelectedItem ?? (c as? NSSearchField)?.placeholderString ?? ""
+                let segs = (c as? NSSegmentedControl).map { sc in (0..<sc.segmentCount).compactMap { sc.label(forSegment: $0) }.joined() } ?? ""
+                if label.isEmpty && title.isEmpty && segs.isEmpty && (c as? NSTextField)?.placeholderString?.isEmpty != false {
+                    unnamed.append(String(describing: type(of: c)) + (c.toolTip.map { " (\($0.prefix(30)))" } ?? ""))
+                }
+            }
+            v.subviews.forEach(walkNames)
+        }
+        for win in [w.window, w.pluginManager.window, w.shortcutsEditor.window].compactMap({ $0 }) { if let c = win.contentView { walkNames(c) } }
+        check(unnamed.isEmpty, "every enabled control has an accessible name (\(Set(unnamed).sorted().prefix(12)))")
     }
 
     // MARK: Tape machine (Analog Mode transport)

@@ -4,6 +4,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include <array>
 #include "json.hpp"
 
 #include <map>
@@ -34,6 +35,10 @@ public:
     int32_t addMedia(const std::string &path);
     double mediaSeconds(int32_t media) const;   // 0 if unknown
     int32_t addTrack(const std::string &name, float gainDb, float pan, bool mute, bool solo);
+    /// An instrument track (Dalnok Poly plays it; the source DAW's instrument isn't imported).
+    int32_t addInstrumentTrack(const std::string &name);
+    struct Note { double start, length; int pitch, velocity; }; // seconds from the clip's start
+    void addMidiClip(int32_t track, double start, double length, const std::vector<Note> &notes, const std::string &name);
     // Times in seconds. offset = position within the source.
     using Stretch = ClipStretch;
     // `rate` = source seconds per timeline second (time-stretch when ≠ 1).
@@ -47,8 +52,9 @@ public:
 
 private:
     struct Media { std::string path; double seconds = 0; int64_t frames = 0; int32_t channels = 0; bool exists = false; };
-    struct Clip { int32_t media; int64_t start, offset, length, fadeIn, fadeOut; bool equalPower; float gainDb; std::string name; Stretch st; };
-    struct Track { std::string name; float gainDb, pan; bool mute, solo; std::vector<Clip> clips; };
+    struct Clip { int32_t media; int64_t start, offset, length, fadeIn, fadeOut; bool equalPower; float gainDb; std::string name; Stretch st;
+                  std::vector<std::array<int64_t, 4>> notes = {}; bool midi = false; };
+    struct Track { std::string name; float gainDb, pan; bool mute, solo; std::vector<Clip> clips; bool instrument = false; };
     int64_t frames(double seconds) const;
 
     Report &report_;

@@ -616,6 +616,37 @@ final class TimelineView: NSView {
             if let label = mark.1 { (label as NSString).draw(at: CGPoint(x: x + 4, y: 2), withAttributes: attrs) }
         }
         drawTempoMarkers(ctx)
+        drawMarkers(ctx)
+    }
+
+    // MARK: Markers: flags along the top of the ruler (click: go there; drag: move; double-click: rename)
+
+    var onRenameMarker: ((Int32) -> Void)?
+    private var markerDrag: (id: Int32, x: CGFloat, frame: Int64, moved: Bool, preview: Int64)?
+    private static let markerColor = Theme.hex(0xE0A43A)
+    private func markerRect(_ m: DalnokMarker, frame: Int64? = nil) -> CGRect {
+        let x = xPos(forFrame: Double(frame ?? m.frame))
+        let w = (fixedString(m.name) as NSString).size(withAttributes: [.font: Theme.ui(9, .semibold)]).width + 8
+        return CGRect(x: x, y: 1, width: min(140, w), height: 12)
+    }
+    func marker(atPoint p: CGPoint) -> DalnokMarker? {
+        session.markers.reversed().first { markerRect($0).insetBy(dx: -2, dy: -1).contains(p) }
+    }
+    private func drawMarkers(_ ctx: CGContext) {
+        let attrs: [NSAttributedString.Key: Any] = [.font: Theme.ui(9, .semibold), .foregroundColor: Theme.hex(0x1A1400)]
+        for m in session.markers {
+            let f = markerDrag?.id == m.id ? markerDrag!.preview : m.frame
+            let r = markerRect(m, frame: f)
+            guard r.maxX > 0, r.minX < bounds.width else { continue }
+            ctx.setFillColor(Self.markerColor.cgColor)
+            ctx.addPath(CGPath(roundedRect: r, cornerWidth: 2, cornerHeight: 2, transform: nil)); ctx.fillPath()
+            ctx.fill(CGRect(x: r.minX, y: 1, width: 1.5, height: Theme.rulerHeight - 2))
+            ctx.saveGState(); ctx.clip(to: r.insetBy(dx: 3, dy: 0))
+            (fixedString(m.name) as NSString).draw(at: CGPoint(x: r.minX + 4, y: r.minY), withAttributes: attrs)
+            ctx.restoreGState()
+            ctx.setFillColor(Self.markerColor.withAlphaComponent(0.16).cgColor) // a guide through the lanes
+            ctx.fill(CGRect(x: r.minX, y: Theme.rulerHeight, width: 1, height: bounds.height - Theme.rulerHeight))
+        }
     }
 
     /// A stack's lane: its members' clips as slim bars in their colours (a map of the stack), one row each.
@@ -939,6 +970,11 @@ final class TimelineView: NSView {
     override func mouseDown(with event: NSEvent) {
         onActivate?()
         let p = convert(event.locationInWindow, from: nil)
+        if p.y < Theme.rulerHeight, let m = marker(atPoint: p) {
+            if event.clickCount == 2 { onRenameMarker?(m.id); return }
+            markerDrag = (m.id, p.x, m.frame, false, m.frame)
+            return
+        }
         if p.y >= Theme.rulerHeight / 2 && p.y < Theme.rulerHeight { seek(toX: p.x); scrubbing = true; return } // lower half: playhead
         if p.y >= Theme.rulerHeight && autoMouseDown(p, event) { return }
         if p.y < Theme.rulerHeight { // upper half: cycle
@@ -980,6 +1016,12 @@ final class TimelineView: NSView {
 
     override func mouseDragged(with event: NSEvent) {
         let p = convert(event.locationInWindow, from: nil)
+        if var d = markerDrag {
+            d.moved = d.moved || abs(p.x - d.x) >= 3
+            if d.moved { d.preview = snap(max(0, Double(d.frame) + Double(p.x - d.x) * framesPerPoint), bypass: event.modifierFlags.contains(.control)) }
+            markerDrag = d; needsDisplay = true
+            return
+        }
         if var m = marquee {
             m.end = CGPoint(x: min(max(p.x, 0), bounds.width), y: min(max(p.y, Theme.rulerHeight), bounds.height))
             m.moved = m.moved || hypot(m.end.x - m.start.x, m.end.y - m.start.y) >= 3
@@ -1089,6 +1131,13 @@ final class TimelineView: NSView {
     }
 
     override func mouseUp(with event: NSEvent) {
+        if let d = markerDrag {
+            markerDrag = nil
+            if d.moved, d.preview != d.frame { session.moveMarker(d.id, to: d.preview) }
+            else { session.engine.seek(d.frame); updatePlayhead(); onSeek?() }
+            needsDisplay = true
+            return
+        }
         if scrubbing { scrubbing = false; return }
         if autoDrag != nil { autoDrag = nil; session.engine.endGroup(); ValueBubble.hide(); return }
         if let r = rulerDrag {

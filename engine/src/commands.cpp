@@ -172,6 +172,36 @@ const CommandDef kCommands[] = {
          if (!needInt(a, "track", t, err) || !needInt(a, "slot", slot, err) || !needInt(a, "source", src, err)) return DALNOK_ERR_INVALID_ARG;
          return status(e.setSidechain(t, slot, src, err), err);
      }},
+    {"marker.add", "Add Marker", "{frame, name?}", [](ARGS) {
+         double f;
+         if (!needNumber(a, "frame", f, err) || !std::isfinite(f) || f < 0) return err = "frame must be >= 0", DALNOK_ERR_INVALID_ARG;
+         return e.addMarker(static_cast<int64_t>(f), a.getString("name", ""), err) ? DALNOK_OK : DALNOK_ERR_INVALID_ARG;
+     }},
+    {"marker.remove", "Delete Marker", "{id}", [](ARGS) {
+         int32_t id;
+         if (!needInt(a, "id", id, err)) return DALNOK_ERR_INVALID_ARG;
+         return status(e.removeMarker(id, err), err);
+     }},
+    {"marker.move", "Move Marker", "{id, frame}", [](ARGS) {
+         int32_t id; double f;
+         if (!needInt(a, "id", id, err) || !needNumber(a, "frame", f, err)) return DALNOK_ERR_INVALID_ARG;
+         return status(e.moveMarker(id, static_cast<int64_t>(f), err), err);
+     }},
+    {"marker.rename", "Rename Marker", "{id, name}", [](ARGS) {
+         int32_t id;
+         if (!needInt(a, "id", id, err)) return DALNOK_ERR_INVALID_ARG;
+         return status(e.renameMarker(id, a.getString("name", ""), err), err);
+     }},
+    {"track.setHidden", "Hide Track", "{track (0 = all, with hidden false), hidden}", [](ARGS) {
+         DalnokTrackId t;
+         if (!needInt(a, "track", t, err)) return DALNOK_ERR_INVALID_ARG;
+         return status(e.setTrackHidden(t, a.getBool("hidden", true), err), err);
+     }},
+    {"track.duplicate", "Duplicate Track", "{track}", [](ARGS) {
+         DalnokTrackId t;
+         if (!needInt(a, "track", t, err)) return DALNOK_ERR_INVALID_ARG;
+         return e.duplicateTrack(t, err) ? DALNOK_OK : DALNOK_ERR_INVALID_ARG;
+     }},
     {"plugin.move", "Move Plug-in", "{track, slot, index}", [](ARGS) {
          DalnokTrackId t; int32_t slot, index;
          if (!needInt(a, "track", t, err) || !needInt(a, "slot", slot, err) || !needInt(a, "index", index, err)) return DALNOK_ERR_INVALID_ARG;

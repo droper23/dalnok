@@ -697,6 +697,112 @@ int32_t Engine::addPlugin(DalnokTrackId track, const std::string &path, const st
     return id;
 }
 
+// ---- Markers ----------------------------------------------------------------
+
+static void sortMarkers(std::vector<Marker> &ms) {
+    std::stable_sort(ms.begin(), ms.end(), [](const Marker &a, const Marker &b) { return a.frame < b.frame; });
+}
+
+int32_t Engine::addMarker(int64_t frame, const std::string &name, std::string &err) {
+    if (frame < 0) return fail(err, "a marker needs a position >= 0"), 0;
+    const int32_t id = nextMarker_;
+    const bool ok = edit("Add Marker", false, [&](Model &m) {
+        m.markers.push_back({id, frame, name.empty() ? "Marker " + std::to_string(m.markers.size() + 1) : name});
+        sortMarkers(m.markers);
+        return true;
+    });
+    if (!ok) return 0;
+    ++nextMarker_;
+    return id;
+}
+bool Engine::removeMarker(int32_t id, std::string &err) {
+    return edit("Delete Marker", false, [&](Model &m) {
+        const auto before = m.markers.size();
+        std::erase_if(m.markers, [id](const Marker &x) { return x.id == id; });
+        return m.markers.size() != before || fail(err, "no such marker");
+    });
+}
+bool Engine::moveMarker(int32_t id, int64_t frame, std::string &err) {
+    if (frame < 0) return fail(err, "a marker needs a position >= 0");
+    return edit("Move Marker", false, [&](Model &m) {
+        auto it = std::find_if(m.markers.begin(), m.markers.end(), [id](const Marker &x) { return x.id == id; });
+        if (it == m.markers.end()) return fail(err, "no such marker");
+        it->frame = frame;
+        sortMarkers(m.markers);
+        return true;
+    });
+}
+bool Engine::renameMarker(int32_t id, const std::string &name, std::string &err) {
+    if (name.empty()) return fail(err, "a marker needs a name");
+    return edit("Rename Marker", false, [&](Model &m) {
+        auto it = std::find_if(m.markers.begin(), m.markers.end(), [id](const Marker &x) { return x.id == id; });
+        if (it == m.markers.end()) return fail(err, "no such marker");
+        it->name = name;
+        return true;
+    });
+}
+
+DalnokTrackId Engine::duplicateTrack(DalnokTrackId track, std::string &err) {
+    const TrackState *src = model_.track(track);
+    if (!src) return fail(err, "no such track"), 0;
+    if (src->isStack) return fail(err, "duplicate the tracks inside a stack one by one"), 0;
+    // New plug-in instances first (loading plug-in code can't happen inside a model edit).
+    std::vector<PluginSlot> slots;
+    std::map<int32_t, int32_t> slotMap;
+    std::vector<std::pair<int32_t, std::shared_ptr<PluginProcessor>>> made;
+    int32_t nextSlot = nextPlugin_;
+    for (const auto &p : src->plugins) {
+        PluginSlot s = p;
+        s.id = nextSlot++;
+        slotMap[p.id] = s.id;
+        std::string state;
+        if (!pluginState(p.id, state)) state = p.state;
+        s.state = state;
+        std::string loadErr;
+        if (pluginInstance(p.id)) {
+            std::shared_ptr<PluginProcessor> inst(loadPlugin(p.format, p.path, p.classId, sampleRate_, kMaxBlock, false, loadErr));
+            if (inst) { if (!state.empty()) inst->setState(state); made.emplace_back(s.id, std::move(inst)); }
+        }
+        slots.push_back(std::move(s));
+    }
+    const auto id = nextTrack_;
+    const auto firstClip = nextClip_;
+    DalnokClipId nextClipId = firstClip;
+    for (auto &[sid, inst] : made) plugins_[sid] = inst; // before the edit: it compiles the new render state
+    const bool ok = edit("Duplicate Track", true, [&](Model &m) {
+        auto it = std::find_if(m.tracks.begin(), m.tracks.end(), [track](const TrackState &t) { return t.id == track; });
+        if (it == m.tracks.end()) return fail(err, "no such track");
+        TrackState t = *it;
+        t.id = id;
+        t.name = it->name + " copy";
+        t.solo = false;
+        t.armed = false;
+        t.customColor = it->customColor;
+        t.runtime = std::make_shared<TrackRuntime>();
+        t.plugins = slots;
+        for (auto &l : t.pluginAuto) l.slot = slotMap.count(l.slot) ? slotMap[l.slot] : l.slot;
+        std::vector<ClipState> copies;
+        for (const auto &c : m.clips) {
+            if (c.track != track || c.alt || c.folder != 0) continue; // take folders stay with the original
+            ClipState d = c;
+            d.id = nextClipId++;
+            d.track = id;
+            copies.push_back(std::move(d));
+        }
+        // Tracks fed by sidechains or sending to this one keep pointing at the original.
+        m.tracks.insert(it + 1, std::move(t));
+        for (auto &c : copies) m.clips.push_back(std::move(c));
+        return true;
+    });
+    if (!ok) { for (auto &[sid, inst] : made) plugins_.erase(sid); return 0; }
+    nextPlugin_ = nextSlot;
+    nextClip_ = nextClipId;
+    ++nextTrack_;
+    syncRuntimes();
+    ++revision_;
+    return id;
+}
+
 bool Engine::removePlugin(DalnokTrackId track, int32_t id, std::string &err) {
     return edit("Remove Plug-in", true, [&](Model &m) {
         TrackState *t = m.track(track);
@@ -1264,6 +1370,20 @@ bool Engine::setStackCollapsed(DalnokTrackId stack, bool collapsed, std::string 
         TrackState *t = m.track(stack);
         if (!t || !t->isStack) return fail(err, "not a track stack");
         t->collapsed = collapsed;
+        return true;
+    });
+}
+
+bool Engine::setTrackHidden(DalnokTrackId track, bool hidden, std::string &err) {
+    if (track == 0 && !hidden) {
+        if (std::none_of(model_.tracks.begin(), model_.tracks.end(), [](const TrackState &t) { return t.hidden; })) return fail(err, "no hidden tracks");
+        return edit("Show All Tracks", false, [&](Model &m) { for (auto &t : m.tracks) t.hidden = false; return true; });
+    }
+    return edit(hidden ? "Hide Track" : "Show Track", false, [&](Model &m) {
+        TrackState *t = m.track(track);
+        if (!t) return fail(err, "no such track");
+        if (t->hidden == hidden) return fail(err, hidden ? "already hidden" : "not hidden");
+        t->hidden = hidden;
         return true;
     });
 }

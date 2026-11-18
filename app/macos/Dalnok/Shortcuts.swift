@@ -240,6 +240,17 @@ private let specs: [String: Spec] = [
     "showCommandPalette:": Spec(id: "view.command_palette", category: "Views and Windows", detail: "Search every command.", keywords: ["find", "search", "actions"]),
     "zoomIn": Spec(id: "view.zoom_in", category: "Timeline and Navigation", detail: "Zoom the arrangement in horizontally."),
     "zoomOut": Spec(id: "view.zoom_out", category: "Timeline and Navigation", detail: "Zoom the arrangement out horizontally."),
+    "addMarker:": Spec(id: "transport.add_marker", category: "Timeline and Navigation", detail: "Add a marker at the playhead.", keywords: ["locator", "cue"]),
+    "previousMarker:": Spec(id: "transport.previous_marker", category: "Timeline and Navigation", detail: "Move the playhead to the previous marker.", keywords: ["jump", "locator"]),
+    "nextMarker:": Spec(id: "transport.next_marker", category: "Timeline and Navigation", detail: "Move the playhead to the next marker.", keywords: ["jump", "locator"]),
+    "renameMarkerAtPlayhead:": Spec(id: "transport.rename_marker", category: "Timeline and Navigation", detail: "Rename the marker at the playhead."),
+    "deleteMarkerAtPlayhead:": Spec(id: "transport.delete_marker", category: "Timeline and Navigation", detail: "Delete the marker at the playhead."),
+    "hideTrack:": Spec(id: "track.hide", category: "Tracks", detail: "Hide the selected track (it keeps playing).", keywords: ["hide", "visibility"]),
+    "showAllTracks:": Spec(id: "track.show_all", category: "Tracks", detail: "Show every hidden track.", keywords: ["unhide", "visibility"]),
+    "duplicateTrack:": Spec(id: "track.duplicate", category: "Tracks", detail: "Duplicate the selected track with its clips, plug-ins and settings.", keywords: ["copy track"]),
+    "zoomToSelection:": Spec(id: "view.zoom_to_selection", category: "Timeline and Navigation", detail: "Fit the selected clips in the window."),
+    "tallerTracks:": Spec(id: "view.taller_tracks", category: "Timeline and Navigation", detail: "Vertical zoom in: taller tracks.", keywords: ["vertical zoom", "track height"]),
+    "shorterTracks:": Spec(id: "view.shorter_tracks", category: "Timeline and Navigation", detail: "Vertical zoom out: shorter tracks.", keywords: ["vertical zoom", "track height"]),
     "zoomToFit": Spec(id: "view.zoom_to_fit", category: "Timeline and Navigation", detail: "Fit the whole project in the window.", keywords: ["fit project"]),
     "toggleMixer:": Spec(id: "mixer.toggle", category: "Mixer", detail: "Show or hide the mixer.", keywords: ["console"]),
     "toggleDevicePanel:": Spec(id: "view.device_panel", category: "Plug-ins", detail: "Show or hide the selected track's plug-ins.", keywords: ["effects", "pedalboard", "inserts"]),
@@ -483,7 +494,7 @@ final class ShortcutRegistry {
             "cmd+tab": "App switcher", "cmd+space": "Spotlight", "ctrl+space": "Input source", "opt+cmd+space": "Finder search",
             "cmd+`": "Cycle windows", "shift+cmd+3": "Screenshot", "shift+cmd+4": "Screenshot", "shift+cmd+5": "Screenshot", "opt+cmd+escape": "Force Quit",
             "ctrl+up": "Mission Control", "ctrl+down": "App windows", "ctrl+left": "Previous Space", "ctrl+right": "Next Space",
-            "opt+cmd+d": "Dock", "ctrl+cmd+q": "Lock Screen",
+            "opt+cmd+d": "Dock", "ctrl+cmd+d": "Look Up", "ctrl+cmd+q": "Lock Screen",
         ]
         return table[k.storage]
     }

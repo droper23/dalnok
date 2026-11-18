@@ -333,6 +333,9 @@ bool dalnok_launcher_recording(const DalnokEngine *engine);
  * Closing a stack is a display state, saved with the project. Stacks don't nest yet. */
 DalnokTrackId dalnok_track_stack_create(DalnokEngine *engine, const DalnokTrackId *members, int32_t count, const char *name);
 DalnokStatus dalnok_track_stack_set_collapsed(DalnokEngine *engine, DalnokTrackId stack, bool collapsed);
+/* Hide a track from the arrangement and mixer (API 26; it keeps playing). track 0 + hidden=false shows all. Undoable. */
+DalnokStatus dalnok_track_set_hidden(DalnokEngine *engine, DalnokTrackId track, bool hidden);
+bool dalnok_track_hidden(const DalnokEngine *engine, DalnokTrackId track);
 DalnokStatus dalnok_track_stack_ungroup(DalnokEngine *engine, DalnokTrackId stack);
 
 /* Sidechain: feeds `source`'s post-insert, pre-fader signal into the plug-in's sidechain input (0 = none).
@@ -343,6 +346,21 @@ bool dalnok_plugin_has_sidechain(const DalnokEngine *engine, int32_t slot);
 /* Bypass (API 25): a bypassed effect passes audio through untouched (it leaves the insert chain and the
  * delay compensation); a bypassed instrument is silent. Saved with the project; undoable. */
 DalnokStatus dalnok_plugin_set_bypassed(DalnokEngine *engine, DalnokTrackId track, int32_t slot, bool bypassed);
+/* Markers (API 26): named timeline positions, sorted by frame. Edits are undoable; saved from format 11. */
+typedef struct {
+    int32_t id;
+    int64_t frame;
+    char name[128];
+} DalnokMarker;
+int32_t dalnok_marker_count(const DalnokEngine *engine);
+DalnokStatus dalnok_marker_at(const DalnokEngine *engine, int32_t index, DalnokMarker *out);
+int32_t dalnok_marker_add(DalnokEngine *engine, int64_t frame, const char *name); /* returns the id, 0 on failure */
+DalnokStatus dalnok_marker_remove(DalnokEngine *engine, int32_t id);
+DalnokStatus dalnok_marker_move(DalnokEngine *engine, int32_t id, int64_t frame);
+DalnokStatus dalnok_marker_rename(DalnokEngine *engine, int32_t id, const char *name);
+/* Duplicates a track below itself (API 26): settings, sends, automation, clips and plug-ins with their state.
+ * Take folders stay with the original. Stacks are refused. Returns the new track, 0 on failure. One undo step. */
+DalnokTrackId dalnok_track_duplicate(DalnokEngine *engine, DalnokTrackId track);
 /* Reorders a track's plug-ins (API 26): moves `slot` to `index` (0 = first in the chain). Undoable. */
 DalnokStatus dalnok_plugin_move(DalnokEngine *engine, DalnokTrackId track, int32_t slot, int32_t index);
 bool dalnok_plugin_bypassed(const DalnokEngine *engine, DalnokTrackId track, int32_t slot);

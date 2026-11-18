@@ -485,6 +485,8 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
     }
     private var renameCancelled = false
 
+    /// Ends a rename without changing the name (Escape does the same).
+    func cancelRename() { renameCancelled = true; window?.makeFirstResponder(nil) }
     /// Escape cancels the rename and keeps the old name; Return commits.
     func control(_ control: NSControl, textView: NSTextView, doCommandBy sel: Selector) -> Bool {
         guard sel == #selector(NSResponder.cancelOperation(_:)) else { return false }
@@ -664,7 +666,8 @@ final class TrackHeaderColumn: NSView, TrackScrollHost {
     override func draw(_ dirtyRect: NSRect) {
         Theme.panel.setFill()
         bounds.fill()
-        let title = "TRACKS" as NSString
+        let hiddenCount = session.hiddenCount
+        let title = (hiddenCount > 0 ? "TRACKS · \(hiddenCount) HIDDEN" : "TRACKS") as NSString
         title.draw(at: NSPoint(x: 16, y: 7), withAttributes: [.font: Theme.ui(10, .semibold), .foregroundColor: Theme.textDim, .kern: 0.8])
         Theme.separator.setFill()
         NSRect(x: 0, y: Theme.rulerHeight - 1, width: bounds.width, height: 1).fill()

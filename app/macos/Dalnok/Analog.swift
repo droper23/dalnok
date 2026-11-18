@@ -10,10 +10,27 @@ enum Analog {
 
     // MARK: Surfaces
 
+    /// Renders a texture once into a 2× bitmap and returns it as a pattern color. (An NSImage with a drawing handler
+    /// can be redrawn every time the pattern is used, which made Warm Analog windows several seconds slower to draw.)
+    static func bakedPattern(width: Int, height: Int, _ draw: @escaping (NSRect) -> Bool) -> NSColor {
+        let size = NSSize(width: width, height: height)
+        guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: width * 2, pixelsHigh: height * 2, bitsPerSample: 8,
+                                         samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
+                                         bytesPerRow: 0, bitsPerPixel: 0) else { return Theme.panel }
+        rep.size = size
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        _ = draw(NSRect(origin: .zero, size: size))
+        NSGraphicsContext.restoreGraphicsState()
+        let image = NSImage(size: size)
+        image.addRepresentation(rep)
+        return NSColor(patternImage: image)
+    }
+
     /// A seamless faceplate texture (fine grain plus faint horizontal brushing), as a pattern color.
     static let faceplate: NSColor = {
         let size = 128
-        let image = NSImage(size: NSSize(width: size, height: size), flipped: false) { rect in
+        return bakedPattern(width: size, height: size) { rect in
             Theme.panel.setFill(); rect.fill()
             var seed: UInt32 = 0x1234_5678
             func rnd() -> CGFloat { seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5; return CGFloat(seed % 1000) / 1000 }
@@ -27,13 +44,12 @@ enum Analog {
             }
             return true
         }
-        return NSColor(patternImage: image)
     }()
 
     /// Walnut end cheeks (console side panels): vertical grain with darker streaks, as a pattern color.
     static let walnut: NSColor = {
         let w = 16, h = 256
-        let image = NSImage(size: NSSize(width: w, height: h), flipped: false) { rect in
+        return bakedPattern(width: w, height: h) { rect in
             Theme.hex(0x4A2E1C).setFill(); rect.fill()
             var seed: UInt32 = 0x9E37_79B9
             func rnd() -> CGFloat { seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5; return CGFloat(seed % 1000) / 1000 }
@@ -49,7 +65,6 @@ enum Analog {
             }
             return true
         }
-        return NSColor(patternImage: image)
     }()
     static let cheekWidth: CGFloat = 12
 

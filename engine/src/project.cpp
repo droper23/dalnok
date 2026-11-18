@@ -30,7 +30,7 @@ namespace fs = std::filesystem;
 namespace dalnok {
 
 namespace {
-constexpr int kFormatVersion = 10; // 10: plug-in bypass; 3: shared MIDI sources; 4: tempo/meter maps; 5: routing; 6: automation; 7: take folders; 8: plug-in automation; 9: launcher slots
+constexpr int kFormatVersion = 11; // 11: markers; 10: plug-in bypass; 3: shared MIDI sources; 4: tempo/meter maps; 5: routing; 6: automation; 7: take folders; 8: plug-in automation; 9: launcher slots
 constexpr int kConstantTempoVersion = 3; // written when there are no tempo or meter changes, so older builds still open it
 
 bool readFile(const std::string &path, std::string &out, std::string &err) {
@@ -198,6 +198,7 @@ json::Value Engine::describe() const {
         if (t.stack) tv.set("stack", t.stack);
         if (t.isStack) tv.set("isStack", true);
         if (t.collapsed) tv.set("collapsed", true);
+        if (t.hidden) tv.set("hidden", true); // view-only: older builds ignore it and play the same
         if (!t.sends.empty()) {
             json::Value sends = json::Value::makeArray();
             for (const auto &snd : t.sends) {
@@ -387,7 +388,18 @@ bool Engine::saveProject(const std::string &path, std::string &err, bool copyMed
     for (const auto &t : model_.tracks) pluginAutomation = pluginAutomation || !t.pluginAuto.empty();
     bool bypass = false;
     for (const auto &t : model_.tracks) for (const auto &p : t.plugins) bypass = bypass || p.bypassed;
-    doc.set("version", bypass ? 10 : launcher ? 9 : pluginAutomation ? 8 : !model_.folders.empty() ? 7 : automation ? 6 : routing ? 5 : model_.tempo.size() > 1 || model_.meters.size() > 1 ? 4 : kConstantTempoVersion);
+    if (!model_.markers.empty()) {
+        json::Value ms = json::Value::makeArray();
+        for (const auto &mk : model_.markers) {
+            json::Value v = json::Value::makeObject();
+            v.set("id", mk.id);
+            v.set("frame", static_cast<double>(mk.frame));
+            v.set("name", mk.name);
+            ms.push(std::move(v));
+        }
+        doc.set("markers", std::move(ms));
+    }
+    doc.set("version", !model_.markers.empty() ? 11 : bypass ? 10 : launcher ? 9 : pluginAutomation ? 8 : !model_.folders.empty() ? 7 : automation ? 6 : routing ? 5 : model_.tempo.size() > 1 || model_.meters.size() > 1 ? 4 : kConstantTempoVersion);
     json::Value body = describe();
     for (auto &[key, value] : body.object) {
         if (key != "media") continue;
@@ -505,6 +517,7 @@ std::unique_ptr<Engine::PreparedProject> Engine::prepareDocument(const json::Val
                 }
             t.isStack = tv.getBool("isStack", false) && t.kind == kTrackBus;
             t.collapsed = t.isStack && tv.getBool("collapsed", false);
+            t.hidden = tv.getBool("hidden", false);
             for (const auto &[key, pts] : {std::pair<const char *, std::vector<AutoPoint> *>{"volumeAutomation", &t.volumeAuto},
                                            {"panAutomation", &t.panAuto}}) {
                 const json::Value *list = tv.get(key);
@@ -654,6 +667,20 @@ std::unique_ptr<Engine::PreparedProject> Engine::prepareDocument(const json::Val
             model.tracks.push_back(std::move(t));
         }
     }
+    // Markers: unique positive ids, positions >= 0.
+    if (const json::Value *ml = doc.get("markers")) {
+        if (!ml->isArray()) { err = "invalid markers"; return nullptr; }
+        std::set<int32_t> seen;
+        for (const auto &mv : ml->array) {
+            Marker mk;
+            mk.id = static_cast<int32_t>(toInt(mv, "id"));
+            mk.frame = scale(toInt(mv, "frame"));
+            mk.name = mv.getString("name", "Marker");
+            if (mk.id <= 0 || mk.frame < 0 || !seen.insert(mk.id).second) { err = "a marker is damaged"; return nullptr; }
+            model.markers.push_back(std::move(mk));
+        }
+        std::stable_sort(model.markers.begin(), model.markers.end(), [](const Marker &a, const Marker &b) { return a.frame < b.frame; });
+    }
     // Take folders: every take must exist on the folder's track; comp segments must be valid.
     if (const json::Value *fl = doc.get("takeFolders")) {
         if (!fl->isArray()) { err = "invalid take folders"; return nullptr; }
@@ -786,6 +813,7 @@ void Engine::applyProject(std::unique_ptr<PreparedProject> p, bool recovered) {
     nextClip_ = std::max(nextClip_, p->maxClip + 1);
     nextMedia_ = std::max(nextMedia_, p->maxMedia + 1);
     nextColor_ = p->maxColor + 1;
+    for (const auto &mk : model_.markers) nextMarker_ = std::max(nextMarker_, mk.id + 1);
     std::string ignored;
     if (!setCycle(p->cycleOn, p->cycleStart, p->cycleEnd, ignored)) cycleOn_.store(false, std::memory_order_release);
     syncRuntimes();

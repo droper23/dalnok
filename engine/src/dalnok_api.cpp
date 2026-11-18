@@ -407,6 +407,36 @@ DalnokTrackId dalnok_plugin_sidechain(const DalnokEngine *e, DalnokTrackId t, in
     for (const auto &p : tr->plugins) if (p.id == slot) return p.sidechain;
     return 0;
 }
+int32_t dalnok_marker_count(const DalnokEngine *e) { return e ? static_cast<int32_t>(e->impl.model().markers.size()) : 0; }
+DalnokStatus dalnok_marker_at(const DalnokEngine *e, int32_t index, DalnokMarker *out) {
+    if (!e || !out || index < 0 || index >= static_cast<int32_t>(e->impl.model().markers.size())) return DALNOK_ERR_INVALID_ARG;
+    const auto &m = e->impl.model().markers[static_cast<size_t>(index)];
+    *out = DalnokMarker{};
+    out->id = m.id;
+    out->frame = m.frame;
+    std::snprintf(out->name, sizeof out->name, "%s", m.name.c_str());
+    return DALNOK_OK;
+}
+int32_t dalnok_marker_add(DalnokEngine *e, int64_t frame, const char *name) {
+    std::string err;
+    return e ? e->impl.addMarker(frame, name ? name : "", err) : 0;
+}
+DalnokStatus dalnok_marker_remove(DalnokEngine *e, int32_t id) {
+    std::string err;
+    return e ? statusFor(e->impl.removeMarker(id, err), err) : DALNOK_ERR_INVALID_ARG;
+}
+DalnokStatus dalnok_marker_move(DalnokEngine *e, int32_t id, int64_t frame) {
+    std::string err;
+    return e ? statusFor(e->impl.moveMarker(id, frame, err), err) : DALNOK_ERR_INVALID_ARG;
+}
+DalnokStatus dalnok_marker_rename(DalnokEngine *e, int32_t id, const char *name) {
+    std::string err;
+    return e ? statusFor(e->impl.renameMarker(id, name ? name : "", err), err) : DALNOK_ERR_INVALID_ARG;
+}
+DalnokTrackId dalnok_track_duplicate(DalnokEngine *e, DalnokTrackId t) {
+    std::string err;
+    return e ? e->impl.duplicateTrack(t, err) : 0;
+}
 DalnokStatus dalnok_plugin_move(DalnokEngine *e, DalnokTrackId t, int32_t slot, int32_t index) {
     std::string err;
     return e ? statusFor(e->impl.movePlugin(t, slot, index, err), err) : DALNOK_ERR_INVALID_ARG;
@@ -471,6 +501,14 @@ DalnokTrackId dalnok_track_stack_create(DalnokEngine *e, const DalnokTrackId *me
     if (!e || !members || count < 1) return 0;
     std::string err;
     return e->impl.makeStack(std::vector<DalnokTrackId>(members, members + count), name ? name : "", err);
+}
+DalnokStatus dalnok_track_set_hidden(DalnokEngine *e, DalnokTrackId t, bool hidden) {
+    std::string err;
+    return e ? statusFor(e->impl.setTrackHidden(t, hidden, err), err) : DALNOK_ERR_INVALID_ARG;
+}
+bool dalnok_track_hidden(const DalnokEngine *e, DalnokTrackId t) {
+    const auto *tr = e ? e->impl.model().track(t) : nullptr;
+    return tr && tr->hidden;
 }
 DalnokStatus dalnok_track_stack_set_collapsed(DalnokEngine *e, DalnokTrackId stack, bool collapsed) {
     std::string err;

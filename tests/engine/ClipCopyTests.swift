@@ -88,3 +88,35 @@ struct Clipboard {
         #expect(dalnok_undo(e) && clipInfo(e, out[0]).id == 0)
     }
 }
+
+struct DuplicateTrack {
+    @Test func duplicateCopiesSettingsAndClipsAndRendersTheSame() throws {
+        let e = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(e) }
+        let a = dalnok_track_add(e, "Gtr")
+        let url = tempDir().appendingPathComponent("g.wav")
+        _ = try writeTestWav(url, frames: 4_800)
+        var media: OpaquePointer?
+        dalnok_media_load(url.path, 48_000, &media, nil, 0)
+        let clip = DalnokEngine.dalnok_clip_add(e, a, dalnok_pool_add(e, media!, url.path), 100, 0, 4_000)
+        dalnok_media_release(media)
+        dalnok_clip_set_gain_db(e, clip, -3)
+        dalnok_track_set_gain_db(e, a, -6)
+        dalnok_track_set_pan(e, a, -0.5)
+        var single = [Float](repeating: 0, count: 4_800), sr = single
+        _ = dalnok_render_offline(e, 0, 4_800, &single, &sr)
+        let b = dalnok_track_duplicate(e, a)
+        #expect(b != 0 && undoName(e) == "Duplicate Track" && dalnok_track_count(e) == 2 && dalnok_track_at(e, 1) == b)
+        var info = DalnokTrackInfo()
+        dalnok_track_info(e, b, &info)
+        #expect(name(info.name) == "Gtr copy" && abs(info.gain_db - -6) < 1e-6 && abs(info.pan - -0.5) < 1e-6)
+        let copy = clipInfo(e, dalnok_track_clip_at(e, b, 0))
+        #expect(copy.id != clip && copy.start == 100 && copy.length == 4_000 && abs(copy.gain_db - -3) < 1e-6)
+        var both = [Float](repeating: 0, count: 4_800), br = both
+        _ = dalnok_render_offline(e, 0, 4_800, &both, &br)
+        let worst = zip(both, single).map { abs($0 - 2 * $1) }.max() ?? 1
+        #expect(worst < 1e-5, "two identical tracks sum to exactly twice one (worst \(worst))")
+        #expect(dalnok_undo(e) && dalnok_track_count(e) == 1)
+        _ = dalnok_render_offline(e, 0, 4_800, &both, &br)
+        #expect(both == single, "undo removes the copy and its clips")
+    }
+}

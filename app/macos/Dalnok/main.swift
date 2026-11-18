@@ -183,8 +183,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 /// is disabled, so they must not match at all.
 final class MainMenu: NSMenu {
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        let mods = event.modifierFlags.intersection([.command, .control, .option])
-        if mods.isEmpty, MainActor.assumeIsolated({ MainWindowController.isTyping }) { return false }
+        // While a text field is being edited, it owns every key without ⌘: plain keys type, ⌥ keys type characters
+        // (⌥' is æ), and ⌃ keys edit (⌃H deletes backward, ⌃F moves forward).
+        if !event.modifierFlags.contains(.command), MainActor.assumeIsolated({ MainWindowController.isTyping }) { return false }
         // The registry decides: it runs the command bound in the active context, leaves piano-roll keys to the
         // piano roll, and never lets a menu item fire a key that belongs to another context.
         nonisolated(unsafe) let e = event
@@ -283,6 +284,9 @@ func buildMenu(target: MainWindowController) -> NSMenu {
         item("Automation: Latch", #selector(W.automationLatch(_:)), ""),
         item("Rename Track", #selector(W.renameTrack(_:)), ""),
         item("Delete Track", #selector(W.deleteTrack(_:)), "\u{8}", [.command]),
+        item("Duplicate Track", #selector(W.duplicateTrack(_:)), "d", [.control, .shift]),
+        item("Hide Track", #selector(W.hideTrack(_:)), "h", [.control]),
+        item("Show All Tracks", #selector(W.showAllTracks(_:)), "h", [.control, .shift]),
         .separator(),
         item("Move Track Up", #selector(W.moveTrackUp(_:)), String(UnicodeScalar(NSUpArrowFunctionKey)!), [.command, .option]),
         item("Move Track Down", #selector(W.moveTrackDown(_:)), String(UnicodeScalar(NSDownArrowFunctionKey)!), [.command, .option]),
@@ -343,6 +347,12 @@ func buildMenu(target: MainWindowController) -> NSMenu {
         item("Set Punch to Cycle", #selector(W.setPunchToCycle(_:)), ""),
         item("Edit Tempo", #selector(W.editTempo(_:)), "t", [.command, .option]),
         .separator(),
+        item("Add Marker", #selector(W.addMarker(_:)), "'", [.option]),
+        item("Previous Marker", #selector(W.previousMarker(_:)), ",", [.option]),
+        item("Next Marker", #selector(W.nextMarker(_:)), ".", [.option]),
+        item("Rename Marker…", #selector(W.renameMarkerAtPlayhead(_:)), ""),
+        item("Delete Marker", #selector(W.deleteMarkerAtPlayhead(_:)), ""),
+        .separator(),
         item("Add Tempo Change at Playhead", #selector(W.addTempoChange(_:)), "t", [.command, .option, .shift]),
         item("Add Time Signature Change at Playhead", #selector(W.addMeterChange(_:)), ""),
         item("Remove Tempo Change at Playhead", #selector(W.removeTempoChange(_:)), ""),
@@ -367,6 +377,9 @@ func buildMenu(target: MainWindowController) -> NSMenu {
         item("Zoom In", #selector(W.zoomIn), "="),
         item("Zoom Out", #selector(W.zoomOut), "-"),
         item("Zoom to Fit", #selector(W.zoomToFit), "0"),
+        item("Zoom to Selection", #selector(W.zoomToSelection(_:)), "z", []),
+        item("Taller Tracks", #selector(W.tallerTracks(_:)), String(UnicodeScalar(NSDownArrowFunctionKey)!), [.command]),
+        item("Shorter Tracks", #selector(W.shorterTracks(_:)), String(UnicodeScalar(NSUpArrowFunctionKey)!), [.command]),
         .separator(),
         item("Bars and Beats Ruler", #selector(W.toggleBarsAndBeats(_:)), "b", [.command, .option]),
         item("Device Panel", #selector(W.toggleDevicePanel(_:)), "d", [.command, .option]),

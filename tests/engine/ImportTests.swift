@@ -316,6 +316,81 @@ func skipped(_ r: [String: Any], _ key: String) -> Int { (r["skipped"] as? [Stri
                 "\(c.map { ($0.start, $0.offset, $0.length) })")
     }
 
+    /// Regression (a 2026 Logic 12.2 project imported 1 of 24 clips and no MIDI): a placement record can run past
+    /// 80 bytes with continuation lines; a placement names a piece of a split region (+0x28); MIDI regions (0x20)
+    /// point at a sequence of 0x90 note records; Drummer regions (0x4090 notes) are skipped and reported.
+    @Test func longRecordsSplitPiecesAndMidiRegions() throws {
+        let pkg = tempDir().appendingPathComponent("Pieces.logicx")
+        let alt = pkg.appendingPathComponent("Alternatives/000"), media = pkg.appendingPathComponent("Media/Audio Files")
+        try FileManager.default.createDirectory(at: alt, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: media, withIntermediateDirectories: true)
+        try writeTestWav(media.appendingPathComponent("Take.wav"), frames: 480_000)
+        var fl = Data(repeating: 0, count: 8); let nm = "Take.wav"
+        fl.append(contentsOf: le(UInt16(nm.utf16.count))); for u in nm.utf16 { fl.append(contentsOf: le(u)) }
+        func region(offset: UInt32, length: UInt32) -> Data {
+            var rg = Data(repeating: 0, count: 120)
+            rg.replaceSubrange(6..<10, with: le(offset)); rg.replaceSubrange(22..<26, with: le(length))
+            return rg
+        }
+        func line(_ w0: UInt32, _ w1: UInt32, _ w2: UInt32 = 0, _ w3: UInt32 = 0) -> Data { Data(le(w0) + le(w1) + le(w2) + le(w3)) }
+        /// An 80-byte placement (continuation lines have the top bit of their second word set), plus `extra` lines.
+        func placement(_ type: UInt32, pos: UInt32, row: UInt8, link: UInt32, piece: UInt32, extra: Int = 0) -> Data {
+            var r = line(type, pos) + line(0, 0x8900_0000 | UInt32(row), 0, 0x3fff_ffff) + line(link, 0x8800_0000, piece, link)
+                + line(0x600, 0x8a06_0000) + line(0, 0x8900_0000)
+            for k in 0..<extra { r += line(UInt32(k + 7), 0x8800_0000, 0xdead, 0xbeef) }
+            return r
+        }
+        let end = line(0xf1, 0x3fff_ffff)
+        let bar: UInt32 = 3_840
+        // Two pieces of one split region (id 40): piece 0 = samples 0..12000, piece 1 = 12000..36000.
+        // Bar 2: piece 1 in a long record (200 continuation lines); bar 3: piece 0; bar 4: MIDI region -> sequence 104;
+        // bar 5: a Drummer region -> sequence 108.
+        var arrange = placement(0x24, pos: 34_560 + bar, row: 1, link: 40, piece: 1, extra: 200)
+        arrange += placement(0x24, pos: 34_560 + 2 * bar, row: 1, link: 40, piece: 0)
+        var midiRef = line(0x20, 34_560 + 3 * bar) + line(0x80, 0x8900_0000 | 2, 0, 0x3fff_ffff) + line(104, 0x8800_0000)
+            + line(0x600, 0x8a06_0000) + line(0, 0x8800_0000)
+        arrange += midiRef
+        midiRef = line(0x20, 34_560 + 4 * bar) + line(0x80, 0x8900_0000 | 3, 0, 0x3fff_ffff) + line(108, 0x8800_0000)
+            + line(0x600, 0x8a06_0000) + line(0, 0x8800_0000)
+        arrange += midiRef + end
+        // Notes: 0x90, pos +4, velocity +11, pitch +12, length +28 (960 PPQ, relative to bar 1).
+        func note(_ pos: UInt32, pitch: UInt8, vel: UInt8, len: UInt32) -> Data {
+            var a = line(0x90, pos); a[11] = vel; a[12] = pitch; a[15] = 1
+            return a + line(0x40, 0x8900_0000, 0, len)
+        }
+        let notes = note(34_560, pitch: 60, vel: 80, len: 960) + note(34_560 + 1_920, pitch: 64, vel: 100, len: 480) + end
+        var drum = line(0x4090, 34_560); drum[12] = 36
+        let drums = drum + line(0, 0x8900_0000) + line(0, 0x8900_0000) + end
+        var body = chunk("Song", Data(repeating: 0, count: 8))
+        body.append(chunk("AuFl", fl))
+        body.append(chunk("AuRg", region(offset: 0, length: 12_000), id: 40, sub: 0))
+        body.append(chunk("AuRg", region(offset: 12_000, length: 24_000), id: 40, sub: 1))
+        body.append(chunk("EvSq", arrange, id: 4))
+        body.append(chunk("EvSq", notes, id: 104))
+        body.append(chunk("EvSq", drums, id: 108))
+        var file = Data([0x23, 0x47, 0xc0, 0xab]); file.append(Data(repeating: 0, count: 12))
+        file.append(contentsOf: le(UInt64(body.count))); file.append(body)
+        try file.write(to: alt.appendingPathComponent("ProjectData"))
+        let plist = ["BeatsPerMinute": 120, "SampleRate": 48_000] as [String: Any]
+        try PropertyListSerialization.data(fromPropertyList: plist, format: .binary, options: 0).write(to: alt.appendingPathComponent("MetaData.plist"))
+
+        let (e, r) = try importInto(pkg.path); defer { dalnok_engine_destroy(e) }
+        // 120 BPM, 48 kHz: one bar = 96000 frames.
+        let audio = clips(e).filter { !$0.info.midi }.map(\.info).sorted { $0.start < $1.start }
+        #expect(audio.count == 2, "both placements survive the long record (\(audio.count))")
+        #expect(audio.first?.start == 96_000 && audio.first?.offset == 12_000 && audio.first?.length == 24_000, "bar 2 plays piece 1")
+        #expect(audio.last?.start == 192_000 && audio.last?.offset == 0 && audio.last?.length == 12_000, "bar 3 plays piece 0")
+        let midi = clips(e).filter { $0.info.midi }
+        #expect(midi.count == 1 && midi.first?.info.start == 288_000, "the MIDI region lands at bar 4 on an instrument track")
+        if let m = midi.first {
+            var got = [DalnokNote](repeating: DalnokNote(), count: 4)
+            let n = dalnok_midi_clip_notes(e, m.info.id, &got, 4)
+            #expect(n == 2 && got[0].pitch == 60 && got[0].velocity == 80 && got[0].start == 0 && got[0].length == 24_000)
+            #expect(got[1].pitch == 64 && got[1].velocity == 100 && got[1].start == 48_000 && got[1].length == 12_000)
+        }
+        #expect((r["skipped"] as? [String: Any])?["drummerRegions"] as? Int == 1, "the Drummer region is reported, not imported")
+    }
+
     /// Placements link to the region's header id, not its document position: a leftover split region
     /// (same id, sub-index 1) sits between real regions.
     @Test func linksPlacementsByRegionIdNotOrder() throws {
@@ -399,7 +474,8 @@ func skipped(_ r: [String: Any], _ key: String) -> Int { (r["skipped"] as? [Stri
                 c[1].start == 384_000 && c[1].offset == 1_000 && c[1].length == 200_000 &&
                 c[2].start == 768_000 && c[2].offset == 1_000 && c[2].length == 200_000,
                 "\(c.map { ($0.start, $0.offset, $0.length) })")
-        #expect((r["skipped"] as? [String: Any])?["unplacedRegions"] as? Int == 1)
+        // The unused leftover piece "A.1" is reported as such, not as missing material.
+        #expect((r["skipped"] as? [String: Any])?["unusedRegionPieces"] as? Int == 1 && (r["skipped"] as? [String: Any])?["unplacedRegions"] == nil)
         // Duplicate primary IDs are ambiguous: neither region may be chosen silently.
         body.append(chunk("AuRg", region("Duplicate", offset: 0, length: 48_000), id: 4))
         var ambiguousFile = Data([0x23, 0x47, 0xc0, 0xab]); ambiguousFile.append(Data(repeating: 0, count: 12))

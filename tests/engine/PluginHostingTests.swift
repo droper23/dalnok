@@ -203,4 +203,21 @@ struct PluginHosting {
         dalnok_track_plugin_info(e, t, 0, &info)
         #expect(info.id == a)
     }
+
+    @Test func duplicatingATrackCopiesItsPluginsWithTheirState() throws {
+        let (e, t) = audioSession(); defer { dalnok_engine_destroy(e) }
+        let slot = dalnok_plugin_add(e, t, testVst3, gainClass, nil, 0)
+        dalnok_plugin_set_state(e, slot, floatState(0.25))
+        let one = renderStereo(e, 4_800)
+        let d = dalnok_track_duplicate(e, t)
+        var info = DalnokPluginSlotInfo()
+        #expect(d != 0 && dalnok_track_plugin_info(e, d, 0, &info) == DALNOK_OK && info.loaded && info.id != slot)
+        var b64 = [CChar](repeating: 0, count: 64)
+        dalnok_plugin_get_state(e, info.id, &b64, 64)
+        #expect(cstr(b64) == floatState(0.25), "the copy has its own instance with the same state")
+        let two = renderStereo(e, 4_800)
+        #expect(zip(two.0, one.0).allSatisfy { abs($0 - 2 * $1) < 1e-6 }, "both tracks process through gain 0.25")
+        dalnok_plugin_set_state(e, info.id, floatState(1))
+        #expect(renderStereo(e, 4_800).0 != two.0, "changing the copy's plug-in leaves the original alone")
+    }
 }

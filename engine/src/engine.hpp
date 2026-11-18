@@ -69,6 +69,7 @@ struct TrackState {
     DalnokTrackId stack = 0;   // member of this summing stack (a bus track), 0 = none
     bool isStack = false;      // a bus track that is a summing stack (its members follow it in display order)
     bool collapsed = false;    // stack shown closed (members hidden in the arrangement)
+    bool hidden = false;       // hidden from the arrangement and mixer (still plays)
     std::vector<Send> sends;   // to bus tracks
     bool armed = false;       // record-enabled
     int32_t inputChannel = 0; // zero-based input of the recording device (audio tracks)
@@ -125,8 +126,16 @@ struct TakeFolder {
     std::vector<CompSegment> comp;   // sorted, non-overlapping
 };
 
+// A named position on the timeline (navigation and arrangement landmarks).
+struct Marker {
+    int32_t id = 0;
+    int64_t frame = 0;
+    std::string name;
+};
+
 struct Model {
     std::vector<TrackState> tracks; // display order
+    std::vector<Marker> markers;    // sorted by frame
     std::vector<TakeFolder> folders;
     float masterGainDb = 0; // the master fader
     int32_t scenes = 8;     // launcher slots per track
@@ -280,6 +289,16 @@ public:
     bool setPluginBypassed(DalnokTrackId track, int32_t slot, bool bypassed, std::string &err);
     // Moves a plug-in to `index` in the track's list (insert order = processing order). Undoable.
     bool movePlugin(DalnokTrackId track, int32_t slot, int32_t index, std::string &err);
+    // Duplicates a track right below it: settings, routing, sends, automation, clips (new ids) and plug-ins (new
+    // instances with the same state; missing plug-ins keep their saved state). Stacks can't be duplicated yet.
+    DalnokTrackId duplicateTrack(DalnokTrackId track, std::string &err);
+    // Hide tracks from view (they keep playing). `track` 0 with hidden=false shows every track. Undoable.
+    bool setTrackHidden(DalnokTrackId track, bool hidden, std::string &err);
+    // Markers (undoable): add returns the id; positions are timeline frames (>= 0).
+    int32_t addMarker(int64_t frame, const std::string &name, std::string &err);
+    bool removeMarker(int32_t id, std::string &err);
+    bool moveMarker(int32_t id, int64_t frame, std::string &err);
+    bool renameMarker(int32_t id, const std::string &name, std::string &err);
     bool pluginHasSidechain(int32_t slot) const { auto it = plugins_.find(slot); return it != plugins_.end() && it->second && it->second->hasSidechain(); }
     // Summing stacks: a stack bus placed above its members, which are routed into it. One undo step each.
     DalnokTrackId makeStack(const std::vector<DalnokTrackId> &members, const std::string &name, std::string &err);
@@ -468,6 +487,7 @@ private:
     PluginMap plugins_;                       // live instances by slot id
     std::map<int32_t, std::string> pluginErrors_;
     int32_t nextPlugin_ = 1;
+    int32_t nextMarker_ = 1;
     uint64_t pluginEdits_ = 0;
     // Recording (control thread)
     bool recording_ = false;

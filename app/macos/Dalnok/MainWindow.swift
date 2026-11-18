@@ -272,6 +272,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         headers.onAddTrack = { [weak self] in self?.newTrack(nil) }
         timeline.onVerticalScroll = { [weak self] y in self?.headers.scrollY = y; self?.launcher.scrollY = y }
         headers.onScroll = { [weak self] e in self?.timeline.scroll(with: e, zoomAnchorX: 0) }
+        timeline.onRenameMarker = { [weak self] id in self?.renameMarker(id) }
         launcher.onScroll = { [weak self] e in self?.timeline.scroll(with: e, zoomAnchorX: 0) }
         timeline.onClipSelected = { [weak self] clip in self?.headers.selectedTrack = clip.track }
         timeline.onOpenClip = { [weak self] clip in
@@ -1261,6 +1262,81 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         timeline.selectClips(ids)
     }
 
+    // MARK: Markers, duplicate track, zoom
+
+    /// The marker at the playhead (or within 4 pt of it).
+    private var markerAtPlayhead: DalnokMarker? {
+        let pos = session.engine.position, tol = Int64(timeline.framesPerPoint * 4)
+        return session.markers.min { abs($0.frame - pos) < abs($1.frame - pos) }.flatMap { abs($0.frame - pos) <= tol ? $0 : nil }
+    }
+    @objc func addMarker(_ sender: Any?) {
+        let pos = session.engine.position
+        if session.markers.contains(where: { $0.frame == pos }) { return flash("There's already a marker here") }
+        session.addMarker(at: pos)
+        timeline.needsDisplay = true
+    }
+    @objc func previousMarker(_ sender: Any?) { jumpMarker(-1) }
+    @objc func nextMarker(_ sender: Any?) { jumpMarker(1) }
+    private func jumpMarker(_ d: Int) {
+        let pos = session.engine.position
+        let target = d > 0 ? session.markers.first { $0.frame > pos } : session.markers.last { $0.frame < pos }
+        guard let m = target else { return NSSound.beep() }
+        session.engine.seek(m.frame)
+        timeline.updatePlayhead()
+        flash(fixedString(m.name))
+    }
+    @objc func renameMarkerAtPlayhead(_ sender: Any?) { if let m = markerAtPlayhead { renameMarker(m.id) } }
+    @objc func deleteMarkerAtPlayhead(_ sender: Any?) {
+        guard let m = markerAtPlayhead else { return }
+        session.removeMarker(m.id); timeline.needsDisplay = true
+    }
+    /// Asks for a marker's new name in a sheet (Cancel keeps it).
+    func renameMarker(_ id: Int32) {
+        guard let m = session.markers.first(where: { $0.id == id }), let window else { return }
+        let alert = NSAlert()
+        alert.messageText = "Rename Marker"
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 22))
+        field.stringValue = fixedString(m.name)
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Rename"); alert.addButton(withTitle: "Cancel")
+        alert.window.initialFirstResponder = field
+        alert.beginSheetModal(for: window) { [weak self] r in
+            let name = field.stringValue.trimmingCharacters(in: .whitespaces)
+            guard r == .alertFirstButtonReturn, !name.isEmpty else { return }
+            MainActor.assumeIsolated { self?.session.renameMarker(id, name); self?.timeline.needsDisplay = true }
+        }
+    }
+    /// Track ▸ Hide Track (⌃H): out of the arrangement and mixer; it keeps playing. Show All Tracks brings them back.
+    @objc func hideTrack(_ sender: Any?) {
+        guard let t = selectedTrack else { return }
+        let ids = session.tracks.map(\.id), i = ids.firstIndex(of: t) ?? 0
+        session.setHidden(t, true)
+        headers.needsDisplay = true
+        if let next = session.tracks.indices.contains(i) ? session.tracks[i].id : session.tracks.last?.id { headers.select(next) }
+        flash("Hidden: \(session.allTracks.first { $0.id == t }?.name ?? "track") (Track ▸ Show All Tracks)")
+    }
+    @objc func showAllTracks(_ sender: Any?) { session.showAllTracks(); headers.needsDisplay = true }
+    @objc func duplicateTrack(_ sender: Any?) {
+        guard let t = selectedTrack else { return }
+        let id = dalnok_track_duplicate(session.engine.handle, t)
+        session.refresh()
+        if id != 0 { headers.select(id) } else { flash("Tracks inside a stack can be duplicated one by one") }
+    }
+    @objc func zoomToSelection(_ sender: Any?) {
+        let clips = timeline.selectedClips.compactMap { session.clip($0) }
+        guard let a = clips.map(\.start).min(), let b = clips.map(\.end).max(), b > a else { return NSSound.beep() }
+        let width = max(100, timeline.bounds.width)
+        timeline.framesPerPoint = max(0.25, Double(b - a) / Double(width * 0.9))
+        timeline.scrollFrame = max(0, Double(a) - Double(width * 0.05) * timeline.framesPerPoint)
+    }
+    @objc func tallerTracks(_ sender: Any?) { setTrackHeight(Theme.trackHeight * 1.25) }
+    @objc func shorterTracks(_ sender: Any?) { setTrackHeight(Theme.trackHeight / 1.25) }
+    private func setTrackHeight(_ h: CGFloat) {
+        Theme.trackHeight = h
+        headers.needsLayout = true; headers.sync()
+        timeline.clampScrollY(); timeline.needsDisplay = true; launcher.needsDisplay = true
+    }
+
     // MARK: Tape machine (Analog Mode transport)
 
     private(set) var tapeDeck: TapeDeckController?
@@ -1590,6 +1666,18 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             return !pianoRollIsKey && dalnok_clipboard_count(session.engine.handle) > 0 && !session.tracks.isEmpty
         case #selector(selectAll(_:)):
             return !pianoRollIsKey && session.tracks.contains { !$0.clips.isEmpty }
+        case #selector(previousMarker(_:)), #selector(nextMarker(_:)):
+            return !session.markers.isEmpty
+        case #selector(renameMarkerAtPlayhead(_:)), #selector(deleteMarkerAtPlayhead(_:)):
+            return markerAtPlayhead != nil
+        case #selector(hideTrack(_:)): return selectedTrack != nil
+        case #selector(showAllTracks(_:)): return session.hiddenCount > 0
+        case #selector(duplicateTrack(_:)):
+            return selectedTrack.flatMap { session.track($0) }.map { !$0.isStack } ?? false
+        case #selector(zoomToSelection(_:)):
+            return !timeline.selectedClips.isEmpty
+        case #selector(tallerTracks(_:)): return Theme.trackHeight < 220
+        case #selector(shorterTracks(_:)): return Theme.trackHeight > 88
         case #selector(toggleAnalogStyle(_:)):
             item.state = Theme.activeStyle == .warmAnalog ? .on : .off
             return !session.engine.isRecording

@@ -107,6 +107,24 @@ int32_t Builder::addTrack(const std::string &name, float gainDb, float pan, bool
     return static_cast<int32_t>(tracks_.size() - 1);
 }
 
+int32_t Builder::addInstrumentTrack(const std::string &name) {
+    const int32_t t = addTrack(name, 0, 0, false, false);
+    tracks_[static_cast<size_t>(t)].instrument = true;
+    return t;
+}
+
+void Builder::addMidiClip(int32_t track, double start, double length, const std::vector<Note> &notes, const std::string &name) {
+    if (track < 0 || track >= static_cast<int32_t>(tracks_.size()) || length <= 0) return;
+    Clip c{0, frames(std::max(0.0, start)), 0, std::max<int64_t>(1, frames(length)), 0, 0, false, 0, name, {}};
+    c.midi = true;
+    for (const auto &n : notes) {
+        if (!(n.start >= 0) || !(n.length > 0) || n.pitch < 0 || n.pitch > 127) { report_.skip("invalidNotes"); continue; }
+        c.notes.push_back({frames(n.start), std::max<int64_t>(1, frames(n.length)), n.pitch, std::clamp(n.velocity, 1, 127)});
+    }
+    tracks_[static_cast<size_t>(track)].clips.push_back(std::move(c));
+    ++report_.clips;
+}
+
 void Builder::addClip(int32_t track, int32_t media, double start, double offset, double length, const std::string &name,
                       float gainDb, double fadeIn, double fadeOut, bool equalPower, Stretch st) {
     if (track < 0 || track >= static_cast<int32_t>(tracks_.size()) || media <= 0) return;
@@ -168,6 +186,7 @@ json::Value Builder::document() const {
         tv.set("id", static_cast<int64_t>(i + 1));
         tv.set("name", t.name);
         tv.set("color", static_cast<int64_t>(i));
+        if (t.instrument) { tv.set("kind", "instrument"); tv.set("instrument", "dalnok.poly"); }
         tv.set("gainDb", std::isfinite(t.gainDb) ? Value(static_cast<double>(t.gainDb)) : Value());
         tv.set("pan", static_cast<double>(t.pan));
         tv.set("mute", t.mute);
@@ -176,7 +195,18 @@ json::Value Builder::document() const {
         for (const Clip &c : t.clips) {
             Value cv = Value::makeObject();
             cv.set("id", clipId++);
-            cv.set("media", c.media);
+            if (c.midi) {
+                cv.set("kind", "midi");
+                Value notes = Value::makeArray();
+                for (const auto &n : c.notes) {
+                    Value nv = Value::makeArray();
+                    for (auto x : n) nv.push(x);
+                    notes.push(std::move(nv));
+                }
+                cv.set("notes", std::move(notes));
+            } else {
+                cv.set("media", c.media);
+            }
             cv.set("start", c.start);
             cv.set("offset", c.offset);
             cv.set("length", c.length);
@@ -196,6 +226,8 @@ json::Value Builder::document() const {
         tracks.push(std::move(tv));
     }
     doc.set("tracks", std::move(tracks));
+    // MIDI and instrument tracks need project version 2.
+    if (std::any_of(tracks_.begin(), tracks_.end(), [](const Track &t) { return t.instrument; })) doc.set("version", 2);
     return doc;
 }
 

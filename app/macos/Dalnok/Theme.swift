@@ -59,7 +59,23 @@ enum Theme {
 
     // MARK: Metrics (4-pt grid)
     static let rulerHeight: CGFloat = 28
-    static let trackHeight: CGFloat = 88
+    static let baseTrackHeight: CGFloat = 88
+    /// Vertical zoom (View ▸ Taller/Shorter Tracks): 88 to 220 pt, remembered between launches.
+    static var trackHeight: CGFloat {
+        get {
+            if let h = cachedTrackHeight { return h }
+            let v = UserDefaults.standard.double(forKey: "trackHeight")
+            let h = v >= 88 ? min(220, CGFloat(v)) : baseTrackHeight
+            cachedTrackHeight = h
+            return h
+        }
+        set {
+            let h = min(220, max(88, newValue))
+            cachedTrackHeight = h
+            UserDefaults.standard.set(Double(h), forKey: "trackHeight")
+        }
+    }
+    nonisolated(unsafe) private static var cachedTrackHeight: CGFloat?
     static let headerWidth: CGFloat = 248
     static let transportHeight: CGFloat = 52
     static let trafficLightInset: CGFloat = 78

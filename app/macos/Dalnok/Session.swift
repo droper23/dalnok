@@ -52,6 +52,7 @@ struct TrackView {
     var stack: DalnokTrackId = 0  // summing stack this track is in
     var isStack = false
     var collapsed = false
+    var hidden = false // Track ▸ Hide Track (still plays)
     var sends: [DalnokSend] = []
     var volumeAuto: [DalnokAutoPoint] = [], panAuto: [DalnokAutoPoint] = []
     func automation(_ target: Int32) -> [DalnokAutoPoint] { target == 1 ? panAuto : volumeAuto }
@@ -140,6 +141,7 @@ final class Session {
                                  sends: Array(sends.prefix(min(sendCount, 16))),
                                  volumeAuto: automationPoints(tid, 0), panAuto: automationPoints(tid, 1)))
         }
+        for k in out.indices { out[k].hidden = dalnok_track_hidden(h, out[k].id) }
         allTracks = out
         // Tracks inside a closed stack (at any depth) are hidden from the arrangement, headers and mixer.
         let byId = Dictionary(uniqueKeysWithValues: out.map { ($0.id, $0) })
@@ -148,7 +150,7 @@ final class Session {
             while parent != 0, let p = byId[parent] { if p.collapsed { return true }; parent = p.stack }
             return false
         }
-        tracks = out.filter { !hidden($0) }
+        tracks = out.filter { !hidden($0) && !$0.hidden }
         onChange?()
         return true
     }
@@ -174,6 +176,9 @@ final class Session {
     func makeStack(_ members: [DalnokTrackId], name: String = "") -> DalnokTrackId {
         let id = dalnok_track_stack_create(h, members, Int32(members.count), name); refresh(); return id
     }
+    var hiddenCount: Int { allTracks.filter(\.hidden).count }
+    func setHidden(_ t: DalnokTrackId, _ hidden: Bool) { dalnok_track_set_hidden(h, t, hidden); refresh() }
+    func showAllTracks() { dalnok_track_set_hidden(h, 0, false); refresh() }
     func setStackCollapsed(_ stack: DalnokTrackId, _ collapsed: Bool) { dalnok_track_stack_set_collapsed(h, stack, collapsed); refresh() }
     func ungroupStack(_ stack: DalnokTrackId) { dalnok_track_stack_ungroup(h, stack); refresh() }
     func clip(_ id: DalnokClipId) -> ClipView? {
@@ -318,6 +323,15 @@ final class Session {
     var meter: (Int32, Int32) { var n: Int32 = 4, d: Int32 = 4; dalnok_meter(h, &n, &d); return (n, d) }
     func setTempo(_ bpm: Double, _ num: Int32, _ den: Int32) -> Bool { let ok = dalnok_tempo_set(h, bpm, num, den) == DALNOK_OK; refresh(); return ok }
     var framesPerBeat: Int64 { Int64((engine.sampleRate * 60 / bpm).rounded()) }
+
+    // Markers (sorted by position).
+    var markers: [DalnokMarker] {
+        (0..<dalnok_marker_count(h)).map { i in var m = DalnokMarker(); _ = dalnok_marker_at(h, i, &m); return m }
+    }
+    @discardableResult func addMarker(at frame: Int64, name: String = "") -> Int32 { let id = dalnok_marker_add(h, frame, name); refresh(); return id }
+    func moveMarker(_ id: Int32, to frame: Int64) { dalnok_marker_move(h, id, max(0, frame)); refresh() }
+    func renameMarker(_ id: Int32, _ name: String) { dalnok_marker_rename(h, id, name); refresh() }
+    func removeMarker(_ id: Int32) { dalnok_marker_remove(h, id); refresh() }
 
     // Tempo and meter maps. Beats are quarter notes from the origin; bars are zero-based.
     var tempoPoints: [DalnokTempoPoint] {
