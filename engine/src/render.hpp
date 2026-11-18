@@ -67,6 +67,16 @@ inline void writeTap(std::atomic<float> *buf, std::atomic<uint32_t> &pos, const 
     if (advance) pos.store(p + static_cast<uint32_t>(frames), std::memory_order_release);
 }
 
+// Writes a block of a plug-in's stereo output into its display tap (before the mono write advances the position).
+inline void writeTapStereo(PluginProcessor::Tap &tap, const float *l, const float *r, int frames) DALNOK_NONBLOCKING {
+    constexpr uint32_t mask = PluginProcessor::Tap::kSize - 1;
+    const uint32_t p = tap.pos.load(std::memory_order_relaxed);
+    for (int i = 0; i < frames; ++i) {
+        tap.outL[(p + static_cast<uint32_t>(i)) & mask].store(l[i], std::memory_order_relaxed);
+        tap.outR[(p + static_cast<uint32_t>(i)) & mask].store(r[i], std::memory_order_relaxed);
+    }
+}
+
 enum FadeCurve : int32_t { kFadeLinear = 0, kFadeEqualPower = 1 };
 
 struct RenderClip {

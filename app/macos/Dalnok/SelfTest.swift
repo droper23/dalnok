@@ -1548,19 +1548,41 @@ final class SelfTest {
             check(toggle.kind == .toggle && selector.kind == .selector && pressed == 1, "on/off parameters are push switches, short choices are selectors")
             check(Faceplate.legend("20000 Hz") == "20k" && Faceplate.legend("0.10") == "0.1", "scale legends are short (20k, 0.1)")
             check(!delay.inMeter.isHidden && !delay.outMeter.isHidden, "each unit shows input and output meters")
-            // Displays: a scope for the delay, a gain-reduction meter for the limiter, a response screen for EQs.
-            check(delay.displayKind == .scope && delay.display is ScopeScreen, "AUDelay gets an oscilloscope")
-            if let lim = panel.devices.last { check(lim.displayKind == .gainReduction && lim.display is GainReductionMeter, "AUPeakLimiter gets a gain-reduction meter") }
-            check(FaceplateDisplay.kind(name: "Dalnok Channel EQ", path: "channel-eq", instrument: false) == .response
-                  && FaceplateDisplay.kind(name: "AUNBandEQ", path: "aufx:nbeq:appl", instrument: false) == .response,
-                  "EQs get a response screen")
-            check(GainReductionMeter.position(0) == 0 && GainReductionMeter.position(20) == 1
-                  && GainReductionMeter.position(3) > 3.0 / 20, "the gain-reduction scale spreads its first few dB")
-            let gr = GainReductionMeter()
+            // Displays chosen by category: energy history for the delay, a VU gain-reduction meter for the limiter, and so on.
+            check(delay.displayKind == .history && delay.display is HistoryScreen, "AUDelay gets an energy-history screen")
+            if let lim = panel.devices.last {
+                check(lim.displayKind == .gainReduction && (lim.display as? MovingCoilMeter)?.mode == .gainReduction, "AUPeakLimiter gets a gain-reduction meter")
+            }
+            let kinds: [(String, String, FaceplateDisplay.Kind)] = [
+                ("Dalnok Channel EQ", "channel-eq", .response), ("AUNBandEQ", "aufx:nbeq:appl", .response), ("AUHipass", "aufx:hpas:appl", .response),
+                ("AUDynamicsProcessor", "aufx:dcmp:appl", .gainReduction), ("AUMultibandCompressor", "aufx:mcmp:appl", .gainReduction),
+                ("AUDistortion", "aufx:dist:appl", .transfer), ("AUMatrixReverb", "aufx:mrev:appl", .history), ("AUDelay", "aufx:dely:appl", .history),
+                ("Stereo Chorus", "", .goniometer), ("Wide Imager", "", .goniometer), ("MFlanger", "", .goniometer), ("MCompressor", "", .gainReduction), ("AUPitch", "aufx:tmpt:appl", .analyzer),
+                ("Spectrum Analyzer", "", .analyzer), ("Gain Utility", "", .vu), ("Mystery Box", "", .scope)]
+            let wrong = kinds.filter { FaceplateDisplay.kind(name: $0.0, path: $0.1, instrument: false) != $0.2 }.map(\.0)
+            check(wrong.isEmpty, "every category gets its display (wrong: \(wrong))")
+            check(MovingCoilMeter.position(3) == 1 && abs(MovingCoilMeter.position(0) - 0.708) < 0.001
+                  && abs(MovingCoilMeter.position(-20) - 0.0708) < 0.001, "the VU scale is proportional to voltage (0 VU about two-thirds across)")
+            let gr = MovingCoilMeter(mode: .gainReduction)
             gr.update(reported: 6, inRms: 0, outRms: 0)
             check(abs(gr.reductionDb - 6) < 1e-9, "a reported reduction drives the needle")
             gr.update(reported: nil, inRms: 0.5, outRms: 0.5); gr.update(reported: nil, inRms: 0.5, outRms: 0.25)
             check(abs(gr.reductionDb - 6.02) < 0.1, "otherwise the reduction is measured through the plug-in (\(gr.reductionDb) dB)")
+            let vu = MovingCoilMeter(mode: .output)
+            vu.update(rms: Float(pow(10, -18.0 / 20)))
+            check(abs(vu.levelVu) < 0.01, "an output VU reads 0 VU at −18 dBFS RMS")
+            let gonio = GoniometerScreen()
+            let sine = (0..<1_024).map { Float(sin(Double($0) * 0.07)) * 0.5 }
+            gonio.push(left: sine, right: sine)
+            check(gonio.correlation > 0.99, "a mono signal reads +1 correlation")
+            gonio.push(left: sine, right: sine.map { -$0 }); for _ in 0..<12 { gonio.push(left: sine, right: sine.map { -$0 }) }
+            check(gonio.correlation < -0.9, "an out-of-phase signal reads −1 (\(gonio.correlation))")
+            let history = HistoryScreen()
+            history.push(inRms: 0, outRms: 0.1)
+            check(abs(history.latest.output + 20) < 0.01 && history.latest.input == -90, "the history screen records output energy after the input stops")
+            let transfer = TransferScreen()
+            transfer.push(input: sine, output: sine.map { tanh(3 * $0) })
+            check(transfer.pointCount == 512, "the transfer screen plots output against input")
             Faceplate.showMeters = false
             check(delay.inMeter.isHidden && delay.outMeter.isHidden, "Settings can turn the device meters off")
             Faceplate.showMeters = true

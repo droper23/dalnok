@@ -4,7 +4,14 @@
 ### Added (2026-11-18, Graphite faceplates)
 - Graphite draws each plug-in in the device panel as a hardware unit on a brushed graphite faceplate. Knobs carry printed scales with the plug-in's own end values. On/off parameters become lit push switches and short choices become stepped selectors. Related parameters share engraved sections, and every control has a value readout.
 - Faceplate displays: a moving-coil gain-reduction meter for dynamics, a response screen for EQs (the exact curve with band markers for Dalnok's EQs; a measured curve for hosted ones; both over a live spectrum), and a phosphor oscilloscope for everything else. The engine adds `dalnok_plugin_tap` and `dalnok_plugin_response`.
-- Faceplate hardware details: the unit's name is laser-etched into the plate. CONTROLS and EDITOR are machined keys, and the power button is a round key with a lit ring. The meters are recessed LED ladders with domed lenses, peak hold and a printed dB scale.
+- More faceplate displays, by category:
+  - Distortion: a transfer-curve screen (output against input).
+  - Reverb and delay: an energy-history screen.
+  - Modulation and stereo: a goniometer with a correlation bar.
+  - Pitch, restoration and analysis: a third-octave LED analyzer.
+  - Utility: an output VU meter.
+- Gain reduction now shows on a VU movement modelled on real meters (−20…+3 VU face, needle resting at 0 VU in GR mode, 300 ms ballistics, bridge, curved glass). Third-party plug-ins whose names carry a vendor prefix ("MFlanger") are categorized correctly. The engine adds `dalnok_plugin_tap_stereo`.
+- Faceplate hardware details: the unit's name is laser-etched into the plate. CONTROLS and EDITOR are machined keys, and the power button is a glowing icon. The meters are recessed LED ladders with domed lenses, peak hold and a printed dB scale.
 - Input/output LED meters on each unit. Settings ▸ Plug-ins can hide them. The engine adds `dalnok_meter_plugin` and `dalnok_plugin_parameter_text` (C API 28).
 ### Fixed (2026-11-18, Channel EQ parity)
 - Dalnok Channel EQ's low and high cuts were swapped. Shelves and all cut slopes now match Logic (measured cascades for every shown Q below 1).

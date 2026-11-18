@@ -13,6 +13,17 @@ milestone: M11 VST3 hosting (ADR-0009 stage 3) done; editors, parameters and AU 
   - EQs and filters: a response screen. Dalnok's EQs draw their exact curve (`dalnok_plugin_response`) with numbered band markers; hosted EQs get a curve measured from the signal, marked MEASURED. Both draw over a live spectrum.
   - Everything else: a phosphor oscilloscope.
   - The engine adds a lock-free per-plug-in display tap (`dalnok_plugin_tap`).
+- Displays by category:
+  - Dynamics: VU gain reduction.
+  - EQ and filters: response.
+  - Distortion: transfer curve.
+  - Reverb and delay: energy history.
+  - Modulation and stereo: goniometer.
+  - Pitch, restoration and analysis: LED analyzer.
+  - Utility: VU output.
+  - Everything else: oscilloscope.
+
+  Checked visually with Apple's AUs and a VST3 flanger (`p1`–`p3` test projects in the scratchpad; nothing committed). The VU design follows the VU standard: a −20…+3 scale, 0 VU at 71 %, about 300 ms to settle and about 1.5 % overshoot.
 - Faceplate hardware details (owner feedback): etched unit names (`EtchedLabel`), machined keys for CONTROLS, EDITOR and power (`PlateButton`), and LED-ladder meters with peak hold and a printed scale.
 - Self-tests at 44.1 kHz: six timing checks (16th quantize, step entry, the LCD at beat boundaries) fail with and without these changes. Every check passes at 48 kHz. This looks like a real beat/frame rounding bug at 44.1 kHz (the LCD reads 2.1.4.239 at bar 2), so investigate it next.
 - Engine: per-plug-in input and output peak meters (`dalnok_meter_plugin`) and value text for any parameter value (`dalnok_plugin_parameter_text`), implemented for VST3, CLAP, AU and built-ins. C API version 28.

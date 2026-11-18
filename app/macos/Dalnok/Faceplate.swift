@@ -97,9 +97,6 @@ enum Faceplate {
         ctx.addPath(path); ctx.setStrokeColor(NSColor.black.withAlphaComponent(0.55).cgColor); ctx.setLineWidth(1); ctx.strokePath()
         ctx.setStrokeColor(NSColor.white.withAlphaComponent(0.13).cgColor)
         ctx.move(to: CGPoint(x: rect.minX + 5, y: rect.maxY - 1.5)); ctx.addLine(to: CGPoint(x: rect.maxX - 5, y: rect.maxY - 1.5)); ctx.strokePath()
-        // Track-colour accent under the header.
-        ctx.setFillColor((dimmed ? NSColor.gray : accent).withAlphaComponent(0.85).cgColor)
-        ctx.fill(CGRect(x: rect.minX + 10, y: rect.maxY - 27, width: 18, height: 2))
         for p in [CGPoint(x: rect.minX + 6, y: rect.minY + 6), CGPoint(x: rect.maxX - 6, y: rect.minY + 6),
                   CGPoint(x: rect.minX + 6, y: rect.maxY - 6), CGPoint(x: rect.maxX - 6, y: rect.maxY - 6)] {
             screw(ctx, p)
@@ -612,7 +609,7 @@ final class EtchedLabel: NSView {
 /// Outside Graphite it draws as a plain button.
 @MainActor
 final class PlateButton: NSButton {
-    enum Style { case system, key, power }
+    enum Style { case system, key, power, powerIcon }
     var style: Style = .system { didSet { if style != .system { isBordered = false; title = "" }; invalidateIntrinsicContentSize(); needsDisplay = true } }
     var label = "" { didSet { invalidateIntrinsicContentSize(); needsDisplay = true } }
     var lit: NSColor = Theme.accent
@@ -630,6 +627,7 @@ final class PlateButton: NSButton {
         case .system: super.intrinsicContentSize
         case .key: NSSize(width: ceil(Faceplate.glyphs(label, font: labelFont, kern: 0.9).width) + 18, height: 17)
         case .power: NSSize(width: 20, height: 20)
+        case .powerIcon: NSSize(width: 16, height: 16)
         }
     }
     override func draw(_ dirtyRect: NSRect) {
@@ -637,6 +635,19 @@ final class PlateButton: NSButton {
         let pressed = isHighlighted
         let enabled = isEnabled
         if isFlipped { ctx.translateBy(x: 0, y: bounds.height); ctx.scaleBy(x: 1, y: -1) } // draw y-up
+        if style == .powerIcon {
+            // Just the symbol: glowing in the unit's colour when on, a dim etched mark when bypassed.
+            let c = CGPoint(x: bounds.midX, y: bounds.midY), on = state == .on && enabled
+            ctx.saveGState()
+            if on { ctx.setShadow(offset: .zero, blur: 5, color: lit.withAlphaComponent(0.95).cgColor) }
+            ctx.setStrokeColor((on ? lit : NSColor(white: 0.42, alpha: 1)).cgColor)
+            ctx.setLineWidth(1.6); ctx.setLineCap(.round)
+            ctx.addArc(center: CGPoint(x: c.x, y: c.y - 0.5), radius: 5, startAngle: .pi / 2 + 0.7, endAngle: .pi / 2 - 0.7, clockwise: false)
+            ctx.strokePath()
+            ctx.move(to: CGPoint(x: c.x, y: c.y - 0.5)); ctx.addLine(to: CGPoint(x: c.x, y: c.y + 5.6)); ctx.strokePath()
+            ctx.restoreGState()
+            return
+        }
         if style == .power {
             let c = CGPoint(x: bounds.midX, y: bounds.midY), r: CGFloat = 8.5
             let on = state == .on && enabled

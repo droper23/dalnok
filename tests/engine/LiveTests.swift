@@ -136,6 +136,9 @@ func liveEngine(_ samples: [Float]) -> (OpaquePointer, DalnokTrackId, OpaquePoin
         let worst = zip(inBuf, outBuf).map { abs($1 - 2 * $0) }.max() ?? 1
         #expect(worst < 1e-5, "output is the input through the plug-in (x2), aligned: \(worst)")
         #expect(dalnok_plugin_tap(e, 999_999, nil, nil, 16) == 0)
+        var l = [Float](repeating: 0, count: 1_024), r = l
+        #expect(dalnok_plugin_tap_stereo(e, slot, &l, &r, 1_024) == 1_024)
+        #expect(zip(zip(l, r), outBuf).allSatisfy { abs(0.5 * ($0.0 + $0.1) - $1) < 1e-6 }, "the stereo output matches the mono tap")
     }
 
     @Test func structuralEditsWhilePlayingAreAdopted() {

@@ -761,6 +761,20 @@ int32_t dalnok_plugin_tap(DalnokEngine *e, int32_t slot, float *in, float *out, 
     }
     return static_cast<int32_t>(n);
 }
+int32_t dalnok_plugin_tap_stereo(DalnokEngine *e, int32_t slot, float *left, float *right, int32_t frames) {
+    PluginProcessor *p = e ? e->impl.pluginInstance(slot) : nullptr;
+    if (!p || frames <= 0) return 0;
+    PluginProcessor::Tap *tap = p->tap.load(std::memory_order_acquire);
+    if (!tap) return dalnok_plugin_tap(e, slot, nullptr, nullptr, frames); // starts it
+    constexpr uint32_t size = PluginProcessor::Tap::kSize, mask = size - 1;
+    const uint32_t n = std::min<uint32_t>(static_cast<uint32_t>(frames), size);
+    const uint32_t end = tap->pos.load(std::memory_order_acquire), start = end - n;
+    for (uint32_t i = 0; i < n; ++i) {
+        if (left) left[i] = tap->outL[(start + i) & mask].load(std::memory_order_relaxed);
+        if (right) right[i] = tap->outR[(start + i) & mask].load(std::memory_order_relaxed);
+    }
+    return static_cast<int32_t>(n);
+}
 DalnokStatus dalnok_plugin_response(const DalnokEngine *e, int32_t slot, const double *hz, int32_t count, double *db) {
     PluginProcessor *p = e ? e->impl.pluginInstance(slot) : nullptr;
     if (!p || !hz || !db || count <= 0) return DALNOK_ERR_INVALID_ARG;

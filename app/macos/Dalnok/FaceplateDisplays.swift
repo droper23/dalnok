@@ -4,30 +4,50 @@
 // phosphor oscilloscope. They read the engine's per-plug-in meters and display tap (live playback only).
 // SPDX-License-Identifier: GPL-3.0-or-later
 import Accelerate
+import DalnokEngine
 import AppKit
 
 @MainActor
 enum FaceplateDisplay {
-    enum Kind: Equatable { case gainReduction, response, scope }
+    enum Kind: Equatable { case gainReduction, vu, response, transfer, history, goniometer, analyzer, scope }
 
     static func kind(name: String, path: String, instrument: Bool) -> Kind {
         if instrument { return .scope }
         let parts = path.split(separator: ":")
         let format = parts.count == 3 && parts.allSatisfy({ $0.count == 4 }) ? "AU" : path.hasSuffix(".clap") ? "CLAP" : "VST3"
-        let c = PluginTaxonomy.classify(name: name, kind: "effect", format: format, path: path, categories: []).category
+        let c = PluginTaxonomy.classify(name: name, kind: "effect", format: format, path: path, categories: declared[path] ?? []).category
         switch c {
         case "Compression", "Limiting", "Gate / Expander": return .gainReduction
         case "EQ", "Filtering": return .response
+        case "Distortion / Saturation": return .transfer
+        case "Reverb", "Delay / Echo": return .history
+        case "Chorus / Flanger / Phaser", "Modulation", "Stereo Imaging", "Spatial Audio": return .goniometer
+        case "Pitch / Time", "Restoration / Noise Reduction", "Metering / Analysis": return .analyzer
+        case "Utility / Gain": return .vu
         default: return .scope
         }
     }
 
+    /// Categories plug-ins declare (VST3 subcategories, CLAP features), from the plug-in metadata, by path. Read once.
+    static let declared: [String: [String]] = {
+        let n = dalnok_plugins_scan(nil, false, nil, 0)
+        guard n > 0 else { return [:] }
+        var buf = [CChar](repeating: 0, count: n + 1)
+        dalnok_plugins_scan(nil, false, &buf, buf.count)
+        let text = String(decoding: buf.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
+        let list = (try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [[String: Any]] ?? []
+        var out: [String: [String]] = [:]
+        for p in list { if let path = p["path"] as? String, let c = p["categories"] as? [String], !c.isEmpty { out[path] = c } }
+        return out
+    }()
+
     /// Display size for a unit whose controls take `rows` rows.
     static func size(_ kind: Kind, rows: Int) -> NSSize {
         switch kind {
-        case .gainReduction: NSSize(width: 150, height: rows > 1 ? 112 : 96)
-        case .response: NSSize(width: rows > 1 ? 236 : 200, height: rows > 1 ? 140 : 96)
-        case .scope: NSSize(width: rows > 1 ? 168 : 150, height: rows > 1 ? 120 : 96)
+        case .gainReduction, .vu: NSSize(width: rows > 1 ? 172 : 150, height: rows > 1 ? 120 : 104)
+        case .response, .history, .analyzer: NSSize(width: rows > 1 ? 236 : 200, height: rows > 1 ? 140 : 104)
+        case .transfer, .goniometer: NSSize(width: rows > 1 ? 140 : 112, height: rows > 1 ? 140 : 104)
+        case .scope: NSSize(width: rows > 1 ? 168 : 150, height: rows > 1 ? 120 : 104)
         }
     }
 
@@ -142,140 +162,191 @@ final class SpectrumAnalyzer {
     }
 }
 
-// MARK: Gain-reduction meter
+// MARK: Moving-coil (VU) meter
 
-/// A backlit moving-coil gain-reduction meter. The needle rests at 0 and swings left as the plug-in reduces gain.
-/// The reading is the plug-in's own gain-reduction output when it reports one, else the level change through it
-/// (output over input) measured relative to its make-up gain.
+/// A backlit moving-coil VU meter, drawn after real VU movements: a cream face with a −20…+3 VU scale (0 VU about
+/// two-thirds across, a red band past 0), a 0–100 % scale beneath, a tapered needle on a damped movement (about
+/// 300 ms to settle with roughly 1.5 % overshoot), a black bridge over the pivot, and curved glass.
+/// In gain-reduction mode the needle rests at 0 VU and falls left by the reduction, as on classic compressors.
 @MainActor
-final class GainReductionMeter: NSView {
-    private var needle: Double = 0, velocity: Double = 0 // needle position: 0 = rest (0 dB), 1 = full scale (20 dB)
-    private var target: Double = 0
+final class MovingCoilMeter: NSView {
+    enum Mode { case gainReduction, output }
+    let mode: Mode
+    private var needle: Double, velocity: Double = 0, target: Double
     private var last = CACurrentMediaTime()
     private var makeup: Double = 0, makeupSeen = false
     private(set) var reductionDb: Double = 0
-    static let scale: [Double] = [0, 1, 2, 3, 5, 7, 10, 15, 20]
+    private(set) var levelVu: Double = -20
 
     override var isFlipped: Bool { true }
-    init() {
+    init(mode: Mode) {
+        self.mode = mode
+        needle = mode == .gainReduction ? Self.position(0) : 0
+        target = needle
         super.init(frame: .zero)
         setAccessibilityElement(true)
         setAccessibilityRole(.levelIndicator)
-        setAccessibilityLabel("Gain reduction")
+        setAccessibilityLabel(mode == .gainReduction ? "Gain reduction" : "Output level (VU)")
     }
     required init?(coder: NSCoder) { fatalError() }
 
-    /// Needle travel for a reduction in dB (wider near 0, like a printed GR scale).
-    static func position(_ db: Double) -> Double { pow(max(0, min(20, db)) / 20, 0.6) }
+    /// Needle travel (0…1 of the scale) for a reading in VU: proportional to voltage, full scale at +3 VU.
+    static func position(_ vu: Double) -> Double { min(1.04, pow(10, vu / 20) / pow(10, 3.0 / 20)) }
+    /// Kept for callers that think in reduction: the needle travel for `db` of gain reduction.
+    static func reductionPosition(_ db: Double) -> Double { position(-max(0, db)) }
 
-    /// Feeds one frame: either the plug-in's reported reduction (dB, positive), or input/output RMS (linear).
+    /// Gain-reduction mode: the plug-in's reported reduction (dB, positive), else input/output RMS (linear).
     func update(reported: Double?, inRms: Float, outRms: Float) {
         if let r = reported {
             reductionDb = abs(r)
         } else if inRms > 0.003 && outRms > 0 {
-            // Level change through the plug-in; its make-up gain is the highest change seen recently (when it isn't reducing).
+            // Level change through the plug-in, relative to its make-up gain (the highest change seen recently).
             let change = 20 * log10(Double(outRms / inRms))
-            if !makeupSeen || change > makeup { makeup = change; makeupSeen = true } else { makeup -= 0.02 } // slowly forgets
+            if !makeupSeen || change > makeup { makeup = change; makeupSeen = true } else { makeup -= 0.02 }
             reductionDb = max(0, makeup - change)
         } else {
             reductionDb = 0
         }
-        target = Self.position(reductionDb)
+        target = Self.reductionPosition(reductionDb)
         setAccessibilityValue(String(format: "%.1f dB", reductionDb))
         step()
     }
+    /// Output mode: the signal's RMS (linear, full scale = 1); 0 VU reads −18 dBFS RMS.
+    func update(rms: Float) {
+        levelVu = rms > 0 ? 20 * log10(Double(rms)) + 18 : -60
+        target = rms > 0 ? Self.position(levelVu) : 0
+        setAccessibilityValue(String(format: "%.1f VU", levelVu))
+        step()
+    }
 
-    /// Needle ballistics: a damped spring (about 300 ms to settle, a touch of overshoot), like a real movement.
     private func step() {
         let now = CACurrentMediaTime(), dt = min(0.05, now - last)
         last = now
         guard !Motion.reduced else { needle = target; needsDisplay = true; return }
-        let k = 160.0, c = 2 * sqrt(k) * 0.72
-        for _ in 0..<4 {
-            let h = dt / 4
-            velocity += (k * (target - needle) - c * velocity) * h
+        let wn = 19.0, zeta = 0.79 // ≈ 300 ms to 99 %, ≈ 1.5 % overshoot
+        for _ in 0..<6 {
+            let h = dt / 6
+            velocity += (wn * wn * (target - needle) - 2 * zeta * wn * velocity) * h
             needle += velocity * h
         }
-        needle = max(-0.02, min(1.03, needle))
+        needle = max(-0.01, min(1.06, needle)) // the movement's end stops
         needsDisplay = true
     }
 
     override func draw(_ dirtyRect: NSRect) {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
-        let window = FaceplateDisplay.bezel(ctx, bounds)
-        let r: CGFloat = 3
-        let face = CGPath(roundedRect: window, cornerWidth: r, cornerHeight: r, transform: nil)
+        let window = FaceplateDisplay.bezel(ctx, bounds, radius: 6)
+        let faceR: CGFloat = 3
+        let facePath = CGPath(roundedRect: window, cornerWidth: faceR, cornerHeight: faceR, transform: nil)
+        let space = CGColorSpaceCreateDeviceRGB()
         ctx.saveGState()
-        ctx.addPath(face); ctx.clip()
-        // Backlit face: warm cream, brightest low in the middle where the lamp sits.
-        ctx.setFillColor(NSColor(srgbRed: 0.86, green: 0.80, blue: 0.64, alpha: 1).cgColor); ctx.fill(window)
-        let lamp = [NSColor(srgbRed: 1, green: 0.96, blue: 0.82, alpha: 0.95).cgColor, NSColor(srgbRed: 0.80, green: 0.72, blue: 0.54, alpha: 0).cgColor] as CFArray
-        if let g = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: lamp, locations: [0, 1]) {
-            ctx.drawRadialGradient(g, startCenter: CGPoint(x: window.midX, y: window.maxY), startRadius: 0,
-                                   endCenter: CGPoint(x: window.midX, y: window.maxY), endRadius: window.width * 0.75, options: [])
+        ctx.addPath(facePath); ctx.clip()
+        // Face: warm paper, lit from two lamps behind the lower corners, falling off towards the edges.
+        ctx.setFillColor(NSColor(srgbRed: 0.80, green: 0.73, blue: 0.56, alpha: 1).cgColor); ctx.fill(window)
+        let paper = [NSColor(srgbRed: 0.97, green: 0.93, blue: 0.80, alpha: 1).cgColor, NSColor(srgbRed: 0.84, green: 0.77, blue: 0.60, alpha: 0).cgColor] as CFArray
+        if let g = CGGradient(colorsSpace: space, colors: paper, locations: [0, 1]) {
+            ctx.drawRadialGradient(g, startCenter: CGPoint(x: window.midX, y: window.midY + window.height * 0.15), startRadius: 0,
+                                   endCenter: CGPoint(x: window.midX, y: window.midY + window.height * 0.15), endRadius: window.width * 0.62, options: [])
         }
-        // Scale: an arc around a pivot below the window.
-        let pivot = CGPoint(x: window.midX, y: window.maxY + window.height * 0.62)
-        let radius = window.height * 1.22
-        let span = 0.47 // radians each side of vertical
-        func angle(_ pos: Double) -> CGFloat { CGFloat(span - 2 * span * pos) } // 0 dB on the right
-        func pt(_ a: CGFloat, _ rr: CGFloat) -> CGPoint { CGPoint(x: pivot.x + rr * sin(a), y: pivot.y - rr * cos(a)) }
-        let ink = NSColor(white: 0.10, alpha: 0.92)
-        ctx.setStrokeColor(ink.cgColor); ctx.setLineWidth(1)
-        ctx.addArc(center: pivot, radius: radius, startAngle: -.pi / 2 - CGFloat(span), endAngle: -.pi / 2 + CGFloat(span), clockwise: false)
-        ctx.strokePath()
-        // Heavy-reduction band in red (10 dB and beyond).
-        ctx.setStrokeColor(NSColor(srgbRed: 0.72, green: 0.12, blue: 0.10, alpha: 0.9).cgColor); ctx.setLineWidth(3)
-        let a10 = angle(Self.position(10)), a20 = angle(1)
-        ctx.addArc(center: pivot, radius: radius + 2, startAngle: -.pi / 2 + a20, endAngle: -.pi / 2 + a10, clockwise: false)
-        ctx.strokePath()
-        ctx.setStrokeColor(ink.cgColor)
-        let font = NSFont.systemFont(ofSize: 7.5, weight: .semibold)
-        for db in Self.scale {
-            let a = angle(Self.position(db))
-            ctx.setLineWidth(db == 0 ? 1.4 : 1)
-            ctx.move(to: pt(a, radius)); ctx.addLine(to: pt(a, radius + (db == 0 || db == 10 || db == 20 ? 6 : 4))); ctx.strokePath()
-            let p = pt(a, radius + 11)
-            FaceplateDisplay.text(db == 0 ? "0" : String(format: "%.0f", db), at: CGRect(x: p.x - 9, y: p.y - 5, width: 18, height: 10), font: font,
-                                  color: db >= 10 ? NSColor(srgbRed: 0.62, green: 0.10, blue: 0.08, alpha: 1) : ink)
+        let lamp = [NSColor(srgbRed: 1.0, green: 0.86, blue: 0.55, alpha: 0.38).cgColor, NSColor(srgbRed: 1.0, green: 0.86, blue: 0.55, alpha: 0).cgColor] as CFArray
+        if let g = CGGradient(colorsSpace: space, colors: lamp, locations: [0, 1]) {
+            for fx in [0.22, 0.78] {
+                let c = CGPoint(x: window.minX + window.width * fx, y: window.maxY + 2)
+                ctx.drawRadialGradient(g, startCenter: c, startRadius: 0, endCenter: c, endRadius: window.height * 0.75, options: [])
+            }
         }
-        for i in 0..<20 where !Self.scale.contains(Double(i)) {
-            let a = angle(Self.position(Double(i)))
-            ctx.setLineWidth(0.6)
-            ctx.move(to: pt(a, radius)); ctx.addLine(to: pt(a, radius + 2.5)); ctx.strokePath()
+        // Scale geometry: the pivot sits under the bridge at the bottom centre.
+        let pivot = CGPoint(x: window.midX, y: window.maxY + window.height * 0.10)
+        let R = window.height * 0.80, span = 0.80
+        func ang(_ pos: Double) -> CGFloat { CGFloat(-span + 2 * span * pos) }
+        func pt(_ a: CGFloat, _ r: CGFloat) -> CGPoint { CGPoint(x: pivot.x + r * sin(a), y: pivot.y - r * cos(a)) }
+        func arc(_ p0: Double, _ p1: Double, _ r: CGFloat) {
+            ctx.addArc(center: pivot, radius: r, startAngle: -.pi / 2 + ang(p0), endAngle: -.pi / 2 + ang(p1), clockwise: false)
         }
-        FaceplateDisplay.text("GAIN REDUCTION", at: CGRect(x: window.minX, y: window.maxY - window.height * 0.47, width: window.width, height: 10),
-                              font: NSFont.systemFont(ofSize: 6.5, weight: .bold), color: ink.withAlphaComponent(0.8))
-        FaceplateDisplay.text("dB", at: CGRect(x: window.minX, y: window.maxY - window.height * 0.47 + 9, width: window.width, height: 10),
-                              font: NSFont.systemFont(ofSize: 7, weight: .regular), color: ink.withAlphaComponent(0.7))
-        // Needle with its shadow on the face, then the pivot cover.
-        let a = angle(needle)
-        let tip = pt(a, radius + 7), base = pt(a, window.height * 0.62)
+        let ink = NSColor(srgbRed: 0.08, green: 0.07, blue: 0.06, alpha: 0.92), red = NSColor(srgbRed: 0.74, green: 0.10, blue: 0.08, alpha: 1)
+        let p0 = Self.position(0)
+        ctx.setStrokeColor(ink.cgColor); ctx.setLineWidth(1.0); arc(0, p0, R); ctx.strokePath()
+        ctx.setStrokeColor(red.cgColor); ctx.setLineWidth(3.2); arc(p0, 1, R + 1.6); ctx.strokePath()
+        ctx.setLineWidth(1.0); arc(p0, 1, R); ctx.strokePath()
+        let numFont = NSFont(name: "Futura-Medium", size: 7.6) ?? NSFont.systemFont(ofSize: 7.6, weight: .medium)
+        for vu in [-20.0, -10, -7, -5, -3, -2, -1, 0, 1, 2, 3] {
+            let a = ang(Self.position(vu)), plus = vu >= 0
+            ctx.setStrokeColor((plus ? red : ink).cgColor); ctx.setLineWidth(vu == 0 ? 1.4 : 1.0)
+            ctx.move(to: pt(a, R)); ctx.addLine(to: pt(a, R + (vu == 0 || vu == -20 ? 7 : 5.5))); ctx.strokePath()
+            let label = vu == 0 ? "0" : String(format: "%.0f", abs(vu))
+            let p = pt(a, R + 12)
+            FaceplateDisplay.text(label, at: CGRect(x: p.x - 9, y: p.y - 5, width: 18, height: 10), font: numFont, color: plus ? red : ink)
+        }
+        for vu in [-15.0, -6, -4, -0.5, 0.5, 1.5, 2.5] {
+            let a = ang(Self.position(vu))
+            ctx.setStrokeColor((vu >= 0 ? red : ink).cgColor); ctx.setLineWidth(0.7)
+            ctx.move(to: pt(a, R)); ctx.addLine(to: pt(a, R + 3)); ctx.strokePath()
+        }
+        // Signs at the scale ends, and the percentage scale beneath the arc.
+        let signFont = NSFont.systemFont(ofSize: 9, weight: .bold)
+        let minus = pt(ang(Self.position(-20)) - 0.05, R + 20), plusPt = pt(ang(1) + 0.07, R + 12)
+        FaceplateDisplay.text("−", at: CGRect(x: minus.x - 6, y: minus.y - 6, width: 12, height: 12), font: signFont, color: ink)
+        FaceplateDisplay.text("+", at: CGRect(x: plusPt.x - 6, y: plusPt.y - 6, width: 12, height: 12), font: signFont, color: red)
+        let small = NSFont.systemFont(ofSize: 5, weight: .medium)
+        for pct in stride(from: 0.0, through: 100, by: 20) {
+            let a = ang(pct / 100 * p0)
+            ctx.setStrokeColor(ink.withAlphaComponent(0.8).cgColor); ctx.setLineWidth(0.6)
+            ctx.move(to: pt(a, R - 1)); ctx.addLine(to: pt(a, R - 4)); ctx.strokePath()
+            let p = pt(a, R - 9)
+            FaceplateDisplay.text(String(format: "%.0f", pct), at: CGRect(x: p.x - 8, y: p.y - 3.5, width: 16, height: 7), font: small, color: ink.withAlphaComponent(0.75))
+        }
+        let vuFont = NSFont(name: "Futura-Bold", size: window.height * 0.17) ?? NSFont.systemFont(ofSize: window.height * 0.17, weight: .heavy)
+        FaceplateDisplay.text("VU", at: CGRect(x: window.minX, y: window.maxY - window.height * 0.52, width: window.width, height: window.height * 0.22),
+                              font: vuFont, color: ink)
+        FaceplateDisplay.text(mode == .gainReduction ? "GAIN REDUCTION" : "OUTPUT", at: CGRect(x: window.minX, y: window.maxY - window.height * 0.31,
+                              width: window.width, height: 8), font: NSFont.systemFont(ofSize: 5.2, weight: .semibold), color: ink.withAlphaComponent(0.7))
+        // Needle: tapered, with its shadow on the face (light from the front, slightly above).
+        let a = ang(needle)
+        func needlePath(_ off: CGPoint) -> CGPath {
+            let base = pt(a, R * 0.30), tip = pt(a, R + 8)
+            let nx = cos(a), ny = sin(a) // perpendicular to the needle in flipped coordinates
+            let p = CGMutablePath()
+            p.move(to: CGPoint(x: base.x - nx * 1.0 + off.x, y: base.y - ny * 1.0 + off.y))
+            p.addLine(to: CGPoint(x: tip.x - nx * 0.28 + off.x, y: tip.y - ny * 0.28 + off.y))
+            p.addLine(to: CGPoint(x: tip.x + nx * 0.28 + off.x, y: tip.y + ny * 0.28 + off.y))
+            p.addLine(to: CGPoint(x: base.x + nx * 1.0 + off.x, y: base.y + ny * 1.0 + off.y))
+            p.closeSubpath()
+            return p
+        }
         ctx.saveGState()
-        ctx.setStrokeColor(NSColor.black.withAlphaComponent(0.18).cgColor); ctx.setLineWidth(1.6)
-        ctx.move(to: CGPoint(x: base.x + 2.5, y: base.y + 2)); ctx.addLine(to: CGPoint(x: tip.x + 2.5, y: tip.y + 2)); ctx.strokePath()
+        ctx.setShadow(offset: .zero, blur: 1.6, color: NSColor.black.withAlphaComponent(0.25).cgColor)
+        ctx.addPath(needlePath(CGPoint(x: 2.2, y: 2.4))); ctx.setFillColor(NSColor.black.withAlphaComponent(0.16).cgColor); ctx.fillPath()
         ctx.restoreGState()
-        ctx.setStrokeColor(NSColor(white: 0.06, alpha: 1).cgColor); ctx.setLineWidth(1.1); ctx.setLineCap(.round)
-        ctx.move(to: base); ctx.addLine(to: tip); ctx.strokePath()
-        ctx.setLineCap(.butt)
-        // The movement's housing: a dark dome over the pivot, lit from above.
-        let dome = CGRect(x: window.midX - window.width * 0.26, y: window.maxY - window.height * 0.17, width: window.width * 0.52, height: window.height * 0.5)
-        let domePath = CGPath(ellipseIn: dome, transform: nil)
+        ctx.addPath(needlePath(.zero)); ctx.setFillColor(NSColor(white: 0.05, alpha: 1).cgColor); ctx.fillPath()
+        // The bridge over the movement: a black arch with a soft top highlight and the zero-adjust screw.
+        let bridgeR = R * 0.36
+        let bridge = CGRect(x: pivot.x - bridgeR, y: pivot.y - bridgeR, width: 2 * bridgeR, height: 2 * bridgeR)
         ctx.saveGState()
-        ctx.setShadow(offset: CGSize(width: 0, height: -1), blur: 3, color: NSColor.black.withAlphaComponent(0.45).cgColor)
-        ctx.addPath(domePath); ctx.setFillColor(NSColor(white: 0.10, alpha: 1).cgColor); ctx.fillPath()
+        ctx.setShadow(offset: CGSize(width: 0, height: -1.5), blur: 3, color: NSColor.black.withAlphaComponent(0.45).cgColor)
+        ctx.setFillColor(NSColor(white: 0.07, alpha: 1).cgColor); ctx.fillEllipse(in: bridge)
         ctx.restoreGState()
         ctx.saveGState()
-        ctx.addPath(domePath); ctx.clip()
-        let sheen = [NSColor(white: 0.30, alpha: 1).cgColor, NSColor(white: 0.08, alpha: 1).cgColor] as CFArray
-        if let g = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: sheen, locations: [0, 1]) {
-            ctx.drawLinearGradient(g, start: CGPoint(x: 0, y: dome.minY), end: CGPoint(x: 0, y: dome.minY + dome.height * 0.35), options: [])
+        ctx.addEllipse(in: bridge); ctx.clip()
+        let gloss = [NSColor(white: 0.34, alpha: 1).cgColor, NSColor(white: 0.07, alpha: 1).cgColor] as CFArray
+        if let g = CGGradient(colorsSpace: space, colors: gloss, locations: [0, 1]) {
+            ctx.drawLinearGradient(g, start: CGPoint(x: 0, y: bridge.minY), end: CGPoint(x: 0, y: bridge.minY + bridgeR * 0.45), options: [])
         }
         ctx.restoreGState()
+        Faceplate.screw(ctx, CGPoint(x: pivot.x, y: window.maxY - bridgeR * 0.45))
+        // Curved glass: a soft reflection across the upper face and an inner shadow from the bezel.
+        let sheen = CGMutablePath()
+        sheen.move(to: CGPoint(x: window.minX, y: window.minY + window.height * 0.30))
+        sheen.addQuadCurve(to: CGPoint(x: window.maxX, y: window.minY + window.height * 0.18), control: CGPoint(x: window.midX, y: window.minY + window.height * 0.05))
+        sheen.addLine(to: CGPoint(x: window.maxX, y: window.minY)); sheen.addLine(to: CGPoint(x: window.minX, y: window.minY)); sheen.closeSubpath()
+        ctx.addPath(sheen); ctx.setFillColor(NSColor.white.withAlphaComponent(0.13).cgColor); ctx.fillPath()
+        let shade = [NSColor.black.withAlphaComponent(0.35).cgColor, NSColor.black.withAlphaComponent(0).cgColor] as CFArray
+        if let g = CGGradient(colorsSpace: space, colors: shade, locations: [0, 1]) {
+            ctx.drawLinearGradient(g, start: CGPoint(x: 0, y: window.minY), end: CGPoint(x: 0, y: window.minY + 7), options: [])
+            ctx.drawLinearGradient(g, start: CGPoint(x: window.minX, y: 0), end: CGPoint(x: window.minX + 5, y: 0), options: [])
+            ctx.drawLinearGradient(g, start: CGPoint(x: window.maxX, y: 0), end: CGPoint(x: window.maxX - 5, y: 0), options: [])
+        }
         ctx.restoreGState()
-        FaceplateDisplay.glass(ctx, window, radius: r)
-        // Pivot screw on the cover.
-        Faceplate.screw(ctx, CGPoint(x: window.midX, y: window.maxY - window.height * 0.08))
+        ctx.addPath(facePath); ctx.setStrokeColor(NSColor.black.withAlphaComponent(0.9).cgColor); ctx.setLineWidth(1); ctx.strokePath()
     }
 }
 
@@ -477,5 +548,290 @@ final class ScopeScreen: NSView {
         }
         ctx.restoreGState()
         FaceplateDisplay.glass(ctx, window, radius: r)
+    }
+}
+
+// MARK: Screens shared by the newer displays
+
+@MainActor
+enum Screen {
+    /// A dark glass screen in its bezel: returns the drawing area (clip is set; call `finish` afterwards).
+    static func begin(_ ctx: CGContext, _ bounds: CGRect, top: NSColor, bottom: NSColor) -> CGRect {
+        let window = FaceplateDisplay.bezel(ctx, bounds)
+        ctx.saveGState()
+        ctx.addPath(CGPath(roundedRect: window, cornerWidth: 3, cornerHeight: 3, transform: nil)); ctx.clip()
+        let bg = [top.cgColor, bottom.cgColor] as CFArray
+        if let g = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: bg, locations: [0, 1]) {
+            ctx.drawLinearGradient(g, start: CGPoint(x: 0, y: window.minY), end: CGPoint(x: 0, y: window.maxY), options: [])
+        }
+        return window
+    }
+    static func finish(_ ctx: CGContext, _ window: CGRect) {
+        ctx.restoreGState()
+        FaceplateDisplay.glass(ctx, window, radius: 3)
+    }
+    static let lcdTop = NSColor(srgbRed: 0.035, green: 0.055, blue: 0.07, alpha: 1)
+    static let lcdBottom = NSColor(srgbRed: 0.055, green: 0.085, blue: 0.10, alpha: 1)
+    static let grid = NSColor(srgbRed: 0.45, green: 0.62, blue: 0.70, alpha: 1)
+    static let amber = NSColor(srgbRed: 1.0, green: 0.72, blue: 0.30, alpha: 1)
+}
+
+// MARK: Transfer curve (distortion)
+
+/// The plug-in's transfer curve, measured: output plotted against input, sample by sample, on an amber phosphor
+/// screen. A clean gain is a straight diagonal; saturation bends it; time effects blur it into a cloud.
+@MainActor
+final class TransferScreen: NSView {
+    private var frames: [[CGPoint]] = []
+    override var isFlipped: Bool { true }
+    init() { super.init(frame: .zero); setAccessibilityElement(true); setAccessibilityRole(.image); setAccessibilityLabel("Transfer curve") }
+    required init?(coder: NSCoder) { fatalError() }
+    var pointCount: Int { frames.last?.count ?? 0 }
+
+    func push(input: [Float], output: [Float]) {
+        let peak = max(input.map(abs).max() ?? 0, 1e-6)
+        guard peak > 0.003 else { return clear() }
+        var pts: [CGPoint] = []
+        pts.reserveCapacity(input.count / 2)
+        for i in stride(from: 0, to: min(input.count, output.count), by: 2) {
+            pts.append(CGPoint(x: CGFloat(input[i] / peak), y: CGFloat(max(-1.2, min(1.2, output[i] / peak)))))
+        }
+        frames.append(pts)
+        if frames.count > 3 { frames.removeFirst() }
+        needsDisplay = true
+    }
+    func clear() { if !frames.isEmpty { frames = []; needsDisplay = true } }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+        let w = Screen.begin(ctx, bounds, top: NSColor(srgbRed: 0.06, green: 0.04, blue: 0.02, alpha: 1), bottom: NSColor(srgbRed: 0.03, green: 0.02, blue: 0.01, alpha: 1))
+        let plot = w.insetBy(dx: 6, dy: 6)
+        let a = Screen.amber
+        ctx.setStrokeColor(a.withAlphaComponent(0.12).cgColor); ctx.setLineWidth(0.5)
+        for i in 1..<4 {
+            let x = plot.minX + plot.width * CGFloat(i) / 4, y = plot.minY + plot.height * CGFloat(i) / 4
+            ctx.move(to: CGPoint(x: x, y: plot.minY)); ctx.addLine(to: CGPoint(x: x, y: plot.maxY))
+            ctx.move(to: CGPoint(x: plot.minX, y: y)); ctx.addLine(to: CGPoint(x: plot.maxX, y: y))
+        }
+        ctx.strokePath()
+        ctx.setStrokeColor(a.withAlphaComponent(0.22).cgColor); ctx.setLineDash(phase: 0, lengths: [2, 2])
+        ctx.move(to: CGPoint(x: plot.minX, y: plot.maxY)); ctx.addLine(to: CGPoint(x: plot.maxX, y: plot.minY)); ctx.strokePath()
+        ctx.setLineDash(phase: 0, lengths: [])
+        for (k, pts) in frames.enumerated() {
+            let newest = k == frames.count - 1
+            ctx.saveGState()
+            if newest { ctx.setShadow(offset: .zero, blur: 3, color: a.withAlphaComponent(0.8).cgColor) }
+            ctx.setFillColor(a.withAlphaComponent(newest ? 0.75 : 0.22).cgColor)
+            for p in pts {
+                let x = plot.midX + p.x * plot.width / 2, y = plot.midY - p.y * plot.height / 2
+                ctx.fill(CGRect(x: x - 0.6, y: y - 0.6, width: 1.2, height: 1.2))
+            }
+            ctx.restoreGState()
+        }
+        FaceplateDisplay.text("IN", at: CGRect(x: plot.maxX - 14, y: plot.maxY - 8, width: 14, height: 8), font: Theme.mono(6), color: a.withAlphaComponent(0.5), align: .right)
+        FaceplateDisplay.text("OUT", at: CGRect(x: plot.minX, y: plot.minY, width: 20, height: 8), font: Theme.mono(6), color: a.withAlphaComponent(0.5), align: .left)
+        Screen.finish(ctx, w)
+    }
+}
+
+// MARK: Energy history (reverb, delay)
+
+/// The output's level over the last few seconds, scrolling right to left, with the input as a thin line:
+/// reverb tails and echo repeats show as energy that carries on after the input stops.
+@MainActor
+final class HistoryScreen: NSView {
+    static let columns = 180
+    private var output = [Float](repeating: -90, count: columns), input = [Float](repeating: -90, count: columns)
+    var tint: NSColor = Theme.accent
+    override var isFlipped: Bool { true }
+    init() { super.init(frame: .zero); setAccessibilityElement(true); setAccessibilityRole(.image); setAccessibilityLabel("Level history") }
+    required init?(coder: NSCoder) { fatalError() }
+    var latest: (input: Float, output: Float) { (input.last ?? -90, output.last ?? -90) }
+
+    /// One column: input and output RMS (linear).
+    func push(inRms: Float, outRms: Float) {
+        func db(_ x: Float) -> Float { x > 1e-6 ? max(-90, 20 * log10(x)) : -90 }
+        output.removeFirst(); output.append(db(outRms))
+        input.removeFirst(); input.append(db(inRms))
+        needsDisplay = true
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+        let w = Screen.begin(ctx, bounds, top: Screen.lcdTop, bottom: Screen.lcdBottom)
+        let plot = w.insetBy(dx: 2, dy: 4)
+        func y(_ db: Float) -> CGFloat { plot.minY + plot.height * CGFloat(max(0, min(1, -db / 60))) }
+        func x(_ i: Int) -> CGFloat { plot.minX + plot.width * CGFloat(i) / CGFloat(Self.columns - 1) }
+        let g = Screen.grid
+        for db: Float in [-12, -24, -36, -48] {
+            ctx.setStrokeColor(g.withAlphaComponent(0.10).cgColor); ctx.setLineWidth(0.5)
+            ctx.move(to: CGPoint(x: plot.minX, y: y(db))); ctx.addLine(to: CGPoint(x: plot.maxX, y: y(db))); ctx.strokePath()
+            FaceplateDisplay.text(String(format: "%.0f", db), at: CGRect(x: plot.minX + 1, y: y(db) - 8, width: 20, height: 8), font: Theme.mono(6),
+                                  color: g.withAlphaComponent(0.45), align: .left)
+        }
+        for sec in 1..<6 { // a tick each second (one column ≈ 33 ms)
+            let i = Self.columns - 1 - sec * 30
+            guard i > 0 else { continue }
+            ctx.setStrokeColor(g.withAlphaComponent(0.08).cgColor)
+            ctx.move(to: CGPoint(x: x(i), y: plot.minY)); ctx.addLine(to: CGPoint(x: x(i), y: plot.maxY)); ctx.strokePath()
+        }
+        let area = CGMutablePath()
+        area.move(to: CGPoint(x: plot.minX, y: plot.maxY))
+        for (i, v) in output.enumerated() { area.addLine(to: CGPoint(x: x(i), y: y(v))) }
+        area.addLine(to: CGPoint(x: plot.maxX, y: plot.maxY)); area.closeSubpath()
+        ctx.saveGState()
+        ctx.addPath(area); ctx.clip()
+        let fill = [tint.withAlphaComponent(0.55).cgColor, tint.withAlphaComponent(0.06).cgColor] as CFArray
+        if let gr = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: fill, locations: [0, 1]) {
+            ctx.drawLinearGradient(gr, start: CGPoint(x: 0, y: plot.minY), end: CGPoint(x: 0, y: plot.maxY), options: [])
+        }
+        ctx.restoreGState()
+        let top = CGMutablePath()
+        for (i, v) in output.enumerated() { if i == 0 { top.move(to: CGPoint(x: x(i), y: y(v))) } else { top.addLine(to: CGPoint(x: x(i), y: y(v))) } }
+        ctx.saveGState()
+        ctx.setShadow(offset: .zero, blur: 4, color: tint.withAlphaComponent(0.8).cgColor)
+        ctx.addPath(top); ctx.setStrokeColor(tint.cgColor); ctx.setLineWidth(1.2); ctx.strokePath()
+        ctx.restoreGState()
+        let line = CGMutablePath()
+        for (i, v) in input.enumerated() { if i == 0 { line.move(to: CGPoint(x: x(i), y: y(v))) } else { line.addLine(to: CGPoint(x: x(i), y: y(v))) } }
+        ctx.addPath(line); ctx.setStrokeColor(NSColor.white.withAlphaComponent(0.45).cgColor); ctx.setLineWidth(0.8); ctx.strokePath()
+        FaceplateDisplay.text("OUT", at: CGRect(x: plot.maxX - 40, y: plot.minY + 1, width: 18, height: 8), font: Theme.mono(6), color: tint, align: .right)
+        FaceplateDisplay.text("IN", at: CGRect(x: plot.maxX - 18, y: plot.minY + 1, width: 16, height: 8), font: Theme.mono(6), color: NSColor.white.withAlphaComponent(0.55), align: .right)
+        Screen.finish(ctx, w)
+    }
+}
+
+// MARK: Goniometer (modulation, stereo)
+
+/// A stereo goniometer: mid up, side across (L and R on the diagonals), with a correlation bar beneath.
+/// Mono is a vertical line; wide stereo fills the screen; out-of-phase content leans horizontal.
+@MainActor
+final class GoniometerScreen: NSView {
+    private var frames: [[CGPoint]] = []
+    private var gain: CGFloat = 1
+    private(set) var correlation: Double = 1
+    override var isFlipped: Bool { true }
+    static let phosphor = NSColor(srgbRed: 0.55, green: 0.85, blue: 1.0, alpha: 1)
+    init() { super.init(frame: .zero); setAccessibilityElement(true); setAccessibilityRole(.image); setAccessibilityLabel("Stereo goniometer") }
+    required init?(coder: NSCoder) { fatalError() }
+
+    func push(left: [Float], right: [Float]) {
+        let n = min(left.count, right.count)
+        var lr: Double = 0, ll: Double = 0, rr: Double = 0, peak: Float = 0
+        var pts: [CGPoint] = []
+        pts.reserveCapacity(n / 2)
+        for i in 0..<n {
+            let l = left[i], r = right[i]
+            lr += Double(l * r); ll += Double(l * l); rr += Double(r * r)
+            peak = max(peak, abs(l), abs(r))
+            if i % 2 == 0 { pts.append(CGPoint(x: CGFloat(r - l) * 0.7071, y: CGFloat(l + r) * 0.7071)) }
+        }
+        guard peak > 0.002 else { return clear() }
+        correlation += ((ll * rr > 0 ? lr / sqrt(ll * rr) : 1) - correlation) * 0.3
+        gain += (min(8, 0.75 / CGFloat(peak)) - gain) * 0.2 // slow automatic gain, like a scope's AGC
+        frames.append(pts)
+        if frames.count > 3 { frames.removeFirst() }
+        needsDisplay = true
+    }
+    func clear() { if !frames.isEmpty { frames = []; needsDisplay = true } }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+        let w = Screen.begin(ctx, bounds, top: NSColor(srgbRed: 0.02, green: 0.04, blue: 0.07, alpha: 1), bottom: NSColor(srgbRed: 0.01, green: 0.02, blue: 0.04, alpha: 1))
+        let barH: CGFloat = 12
+        let plot = CGRect(x: w.minX + 4, y: w.minY + 4, width: w.width - 8, height: w.height - barH - 10)
+        let c = CGPoint(x: plot.midX, y: plot.midY), r = min(plot.width, plot.height) / 2
+        let p = Self.phosphor
+        ctx.setStrokeColor(p.withAlphaComponent(0.14).cgColor); ctx.setLineWidth(0.6)
+        ctx.strokeEllipse(in: CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r))
+        for a in [0.0, .pi / 4, .pi / 2, 3 * .pi / 4] {
+            ctx.move(to: CGPoint(x: c.x - r * CGFloat(cos(a)), y: c.y - r * CGFloat(sin(a)))); ctx.addLine(to: CGPoint(x: c.x + r * CGFloat(cos(a)), y: c.y + r * CGFloat(sin(a))))
+        }
+        ctx.strokePath()
+        let tf = Theme.mono(6)
+        FaceplateDisplay.text("L", at: CGRect(x: c.x - r * 0.72 - 8, y: c.y - r * 0.72 - 8, width: 8, height: 8), font: tf, color: p.withAlphaComponent(0.5))
+        FaceplateDisplay.text("R", at: CGRect(x: c.x + r * 0.72, y: c.y - r * 0.72 - 8, width: 8, height: 8), font: tf, color: p.withAlphaComponent(0.5))
+        FaceplateDisplay.text("M", at: CGRect(x: c.x + 2, y: plot.minY, width: 8, height: 8), font: tf, color: p.withAlphaComponent(0.5), align: .left)
+        for (k, pts) in frames.enumerated() {
+            let newest = k == frames.count - 1
+            ctx.saveGState()
+            ctx.addEllipse(in: CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r)); ctx.clip()
+            if newest { ctx.setShadow(offset: .zero, blur: 3, color: p.withAlphaComponent(0.8).cgColor) }
+            ctx.setFillColor(p.withAlphaComponent(newest ? 0.7 : 0.2).cgColor)
+            for q in pts { ctx.fill(CGRect(x: c.x + q.x * gain * r - 0.6, y: c.y - q.y * gain * r - 0.6, width: 1.2, height: 1.2)) }
+            ctx.restoreGState()
+        }
+        // Correlation: −1 … +1, with the reading as a lit marker.
+        let bar = CGRect(x: w.minX + 8, y: w.maxY - barH, width: w.width - 16, height: 4)
+        ctx.setFillColor(NSColor.black.withAlphaComponent(0.6).cgColor); ctx.fill(bar)
+        ctx.setFillColor(NSColor(srgbRed: 0.9, green: 0.3, blue: 0.25, alpha: 0.35).cgColor); ctx.fill(CGRect(x: bar.minX, y: bar.minY, width: bar.width / 2, height: bar.height))
+        ctx.setFillColor(NSColor(srgbRed: 0.4, green: 0.9, blue: 0.5, alpha: 0.30).cgColor); ctx.fill(CGRect(x: bar.midX, y: bar.minY, width: bar.width / 2, height: bar.height))
+        let mx = bar.minX + bar.width * CGFloat((correlation + 1) / 2)
+        ctx.saveGState()
+        ctx.setShadow(offset: .zero, blur: 3, color: p.cgColor)
+        ctx.setFillColor(p.cgColor); ctx.fill(CGRect(x: mx - 1.5, y: bar.minY - 1.5, width: 3, height: bar.height + 3))
+        ctx.restoreGState()
+        FaceplateDisplay.text("−1", at: CGRect(x: bar.minX - 2, y: bar.maxY + 0.5, width: 14, height: 7), font: Theme.mono(5.5), color: p.withAlphaComponent(0.5), align: .left)
+        FaceplateDisplay.text("+1", at: CGRect(x: bar.maxX - 12, y: bar.maxY + 0.5, width: 14, height: 7), font: Theme.mono(5.5), color: p.withAlphaComponent(0.5), align: .right)
+        Screen.finish(ctx, w)
+    }
+}
+
+// MARK: LED spectrum analyzer (pitch, restoration, analysis)
+
+/// A third-octave real-time analyzer built from LED columns, with peak-hold LEDs, like a hardware RTA.
+@MainActor
+final class LedAnalyzer: NSView {
+    static let bands: [Double] = (0..<24).map { 50 * pow(2, Double($0) / 3) } // 50 Hz … 10 kHz
+    static let rows = 14
+    private(set) var levels = [Float](repeating: -90, count: bands.count)
+    private var peaks = [Float](repeating: -90, count: bands.count), peakAt = [Double](repeating: 0, count: bands.count)
+    private var top: Float = -20
+    override var isFlipped: Bool { true }
+    init() { super.init(frame: .zero); setAccessibilityElement(true); setAccessibilityRole(.image); setAccessibilityLabel("Spectrum analyzer") }
+    required init?(coder: NSCoder) { fatalError() }
+
+    /// Band levels in dB (relative); the display ranges itself to the loudest band (48 dB shown).
+    func push(_ db: [Float]) {
+        guard db.count == levels.count else { return }
+        let now = CACurrentMediaTime()
+        let loud = db.max() ?? -90
+        top = max(loud, top - 0.4)
+        for i in levels.indices {
+            levels[i] = max(db[i], levels[i] - 2.5)
+            if levels[i] >= peaks[i] || now - peakAt[i] > 1.2 { peaks[i] = levels[i]; peakAt[i] = now }
+        }
+        needsDisplay = true
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+        let w = Screen.begin(ctx, bounds, top: NSColor(white: 0.03, alpha: 1), bottom: NSColor(white: 0.05, alpha: 1))
+        let plot = w.insetBy(dx: 5, dy: 5).offsetBy(dx: 0, dy: -3)
+        let n = levels.count, rows = Self.rows, gap: CGFloat = 1.2
+        let colW = (plot.width - gap * CGFloat(n - 1)) / CGFloat(n)
+        let rowH = (plot.height - 6 - gap * CGFloat(rows - 1)) / CGFloat(rows)
+        for i in 0..<n {
+            let lit = Int(((levels[i] - top + 48) / 48 * Float(rows)).rounded(.down))
+            let peak = Int(((peaks[i] - top + 48) / 48 * Float(rows)).rounded(.down)) - 1
+            for r in 0..<rows {
+                let color: NSColor = r >= rows - 2 ? NSColor(srgbRed: 1, green: 0.3, blue: 0.22, alpha: 1)
+                    : r >= rows - 5 ? NSColor(srgbRed: 1, green: 0.74, blue: 0.25, alpha: 1) : NSColor(srgbRed: 0.42, green: 0.95, blue: 0.5, alpha: 1)
+                let rect = CGRect(x: plot.minX + CGFloat(i) * (colW + gap), y: plot.minY + plot.height - 6 - CGFloat(r + 1) * rowH - CGFloat(r) * gap,
+                                  width: colW, height: rowH)
+                let on = r < lit || r == peak
+                if on {
+                    ctx.saveGState(); ctx.setShadow(offset: .zero, blur: 2.5, color: color.withAlphaComponent(0.8).cgColor)
+                    ctx.setFillColor(color.cgColor); ctx.fill(rect); ctx.restoreGState()
+                } else {
+                    ctx.setFillColor((color.blended(withFraction: 0.86, of: .black) ?? color).cgColor); ctx.fill(rect)
+                }
+            }
+        }
+        for (i, t) in [(2, "63"), (8, "250"), (14, "1k"), (20, "4k")] {
+            FaceplateDisplay.text(t, at: CGRect(x: plot.minX + CGFloat(i) * (colW + gap) - 6, y: plot.maxY - 5, width: colW + 12, height: 7),
+                                  font: Theme.mono(5.5), color: NSColor(white: 0.55, alpha: 1))
+        }
+        Screen.finish(ctx, w)
     }
 }

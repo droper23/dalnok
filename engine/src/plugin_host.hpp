@@ -45,7 +45,8 @@ public:
     // asks, never replaced or freed while the processor lives; the render writes it only once it exists.
     struct Tap {
         static constexpr uint32_t kSize = 8192; // power of two
-        std::atomic<float> in[kSize]{}, out[kSize]{};
+        std::atomic<float> in[kSize]{}, out[kSize]{};      // mono
+        std::atomic<float> outL[kSize]{}, outR[kSize]{};   // the output in stereo (goniometer)
         std::atomic<uint32_t> pos{0};
     };
     std::atomic<Tap *> tap{nullptr};

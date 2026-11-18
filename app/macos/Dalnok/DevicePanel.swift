@@ -9,7 +9,7 @@ import DalnokEngine
 
 @MainActor
 final class DevicePanel: NSView {
-    static var height: CGFloat { Analog.on ? 268 : 218 } // Warm Analog: upright stomp boxes; Graphite: two rows of faceplate controls
+    static var height: CGFloat { Analog.on ? 268 : 226 } // Warm Analog: upright stomp boxes; Graphite: two rows of faceplate controls
     let session: Session
     var track: DalnokTrackId? { didSet { if oldValue != track { rebuild() } } }
     private(set) var devices: [DeviceView] = []
@@ -377,7 +377,7 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
             etchedTitle.text = name
             title.isHidden = true
             for b in [editButton, openButton] { b.style = .key }
-            power.style = .power
+            power.style = .powerIcon
             power.lit = color.blended(withFraction: 0.25, of: .white) ?? color
         } else { etchedTitle.isHidden = true }
         let header = NSStackView(views: [power, title, etchedTitle, NSView(), sidechain, editButton, openButton])
@@ -402,11 +402,17 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         if !Analog.on && loaded {
             displayKind = FaceplateDisplay.kind(name: name, path: path, instrument: instrument)
             let d: NSView = switch displayKind {
-            case .gainReduction: GainReductionMeter()
+            case .gainReduction: MovingCoilMeter(mode: .gainReduction)
+            case .vu: MovingCoilMeter(mode: .output)
             case .response: ResponseScreen()
+            case .transfer: TransferScreen()
+            case .history: HistoryScreen()
+            case .goniometer: GoniometerScreen()
+            case .analyzer: LedAnalyzer()
             case .scope: ScopeScreen()
             }
             (d as? ResponseScreen)?.tint = color.blended(withFraction: 0.35, of: .white) ?? color
+            (d as? HistoryScreen)?.tint = color.blended(withFraction: 0.35, of: .white) ?? color
             d.translatesAutoresizingMaskIntoConstraints = false
             display = d
         }
@@ -423,7 +429,7 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         body.orientation = .vertical
         body.alignment = pedal == nil ? .leading : .centerX
         body.spacing = 4
-        body.edgeInsets = pedal == nil ? NSEdgeInsets(top: 7, left: 14 + Self.ear, bottom: 10, right: 14 + Self.ear)
+        body.edgeInsets = pedal == nil ? NSEdgeInsets(top: 12, left: 16 + Self.ear, bottom: 10, right: 16 + Self.ear)
                                        : NSEdgeInsets(top: 0, left: Self.ear, bottom: 2, right: Self.ear)
         body.translatesAutoresizingMaskIntoConstraints = false
         addSubview(body)
@@ -606,13 +612,38 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         let h = session.engine.handle
         let off = bypassed
         switch displayKind {
-        case .gainReduction:
-            guard let meter = display as? GainReductionMeter else { return }
-            if off { return meter.update(reported: 0, inRms: 0, outRms: 0) }
+        case .gainReduction, .vu:
+            guard let meter = display as? MovingCoilMeter else { return }
             var inBuf = [Float](repeating: 0, count: 1_024), outBuf = inBuf
             let n = Int(dalnok_plugin_tap(h, slot, &inBuf, &outBuf, 1_024))
-            func rms(_ x: [Float]) -> Float { var r: Float = 0; vDSP_rmsqv(x, 1, &r, vDSP_Length(n)); return r }
-            meter.update(reported: reportedReduction(), inRms: n > 0 ? rms(inBuf) : 0, outRms: n > 0 ? rms(outBuf) : 0)
+            func rms(_ x: [Float]) -> Float { var r: Float = 0; if n > 0 { vDSP_rmsqv(x, 1, &r, vDSP_Length(n)) }; return r }
+            if meter.mode == .output { return meter.update(rms: off ? 0 : rms(outBuf)) }
+            if off { return meter.update(reported: 0, inRms: 0, outRms: 0) }
+            meter.update(reported: reportedReduction(), inRms: rms(inBuf), outRms: rms(outBuf))
+        case .transfer:
+            guard let screen = display as? TransferScreen, tick % 2 == 0 else { return }
+            var inBuf = [Float](repeating: 0, count: 1_024), outBuf = inBuf
+            if !off, dalnok_plugin_tap(h, slot, &inBuf, &outBuf, 1_024) == 1_024 { screen.push(input: inBuf, output: outBuf) } else { screen.clear() }
+        case .history:
+            guard let screen = display as? HistoryScreen, tick % 2 == 0 else { return }
+            var inBuf = [Float](repeating: 0, count: 1_536), outBuf = inBuf
+            let n = Int(dalnok_plugin_tap(h, slot, &inBuf, &outBuf, 1_536))
+            var ri: Float = 0, ro: Float = 0
+            if n > 0 { vDSP_rmsqv(inBuf, 1, &ri, vDSP_Length(n)); vDSP_rmsqv(outBuf, 1, &ro, vDSP_Length(n)) }
+            screen.push(inRms: ri, outRms: off ? 0 : ro)
+        case .goniometer:
+            guard let screen = display as? GoniometerScreen, tick % 2 == 0 else { return }
+            var l = [Float](repeating: 0, count: 1_024), r = l
+            if !off, dalnok_plugin_tap_stereo(h, slot, &l, &r, 1_024) == 1_024 { screen.push(left: l, right: r) } else { screen.clear() }
+        case .analyzer:
+            guard let screen = display as? LedAnalyzer, tick % 2 == 0 else { return }
+            var inBuf = [Float](repeating: 0, count: SpectrumAnalyzer.n), outBuf = inBuf
+            guard dalnok_plugin_tap(h, slot, &inBuf, &outBuf, Int32(SpectrumAnalyzer.n)) == Int32(SpectrumAnalyzer.n) else { return }
+            let a = analyzer ?? SpectrumAnalyzer()
+            analyzer = a
+            a.push(input: inBuf, output: off ? [Float](repeating: 0, count: SpectrumAnalyzer.n) : outBuf)
+            let rate = Double(dalnok_engine_sample_rate(h))
+            screen.push(LedAnalyzer.bands.map { a.outputDb(at: $0, rate: rate) })
         case .response:
             guard let screen = display as? ResponseScreen else { return }
             let freqs = ResponseScreen.frequencies

@@ -209,6 +209,8 @@ DalnokStatus dalnok_meter_plugin(DalnokEngine *engine, int32_t slot, float *in_l
  * scope). The first call starts the tap and returns 0; later calls return the samples copied. Main thread.
  * Only the live path feeds it. Either pointer may be NULL. */
 int32_t dalnok_plugin_tap(DalnokEngine *engine, int32_t slot, float *in, float *out, int32_t frames);
+/* The same window of the plug-in's output in stereo (goniometer). Starts the tap like dalnok_plugin_tap. */
+int32_t dalnok_plugin_tap_stereo(DalnokEngine *engine, int32_t slot, float *left, float *right, int32_t frames);
 /* Exact magnitude response (dB) at `count` frequencies, for plug-ins that can compute it (Dalnok's EQs).
  * DALNOK_ERR_NOT_FOUND otherwise. Main thread. */
 DalnokStatus dalnok_plugin_response(const DalnokEngine *engine, int32_t slot, const double *hz, int32_t count, double *db);

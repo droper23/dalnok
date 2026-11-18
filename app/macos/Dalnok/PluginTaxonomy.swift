@@ -27,8 +27,13 @@ enum PluginTaxonomy {
         }
         return out
     }
+    /// Whole-word matches, prefix matches for keys ending in "*", and, for distinctive keys of six letters or more,
+    /// matches inside a word (vendor-prefixed names such as "MFlanger" or "MCompressor").
     private static func has(_ w: Set<String>, _ keys: [String]) -> Bool {
-        keys.contains { k in w.contains(k) || (k.hasSuffix("*") && w.contains { $0.hasPrefix(k.dropLast()) }) }
+        keys.contains { k in
+            w.contains(k) || (k.hasSuffix("*") && w.contains { $0.hasPrefix(k.dropLast()) })
+                || (k.count >= 6 && !k.hasSuffix("*") && k.allSatisfy(\.isLetter) && w.contains { $0.count > k.count && $0.contains(k) })
+        }
     }
 
     /// Apple Audio Unit subtypes (the four-character codes after "aufx:").
