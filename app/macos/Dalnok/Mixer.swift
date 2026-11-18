@@ -261,6 +261,8 @@ final class ChannelStrip: NSView {
         color = t.muted ? TrackTint(base: t.color).muted : t.color
         needsDisplay = true
         name.stringValue = t.name
+        fader.setAccessibilityLabel("Volume, \(t.name)")
+        pan.setAccessibilityLabel("Pan, \(t.name)")
         name.textColor = Analog.on ? (t.muted ? Theme.textFaint : OKLCH.adjust(t.color, dl: 0.2, chromaScale: 0.7))
                                    : (t.muted ? Theme.textDim : Theme.text)
         scribble.color = t.color

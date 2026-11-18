@@ -5,6 +5,7 @@
 - Logic import handles long continuation records, split-region pieces and MIDI notes; unsupported Drummer regions are reported. MIDI region lengths still derive from the last note, rounded to bars.
 - Markers with navigation, duplicate and hidden tracks, track height, vertical zoom and zoom to selection. Only ⌘ shortcuts run while editing text.
 - Warm Analog puts tape reels and transport keys in the control bar, sharing wind and stop behavior with the Tape Machine window.
+- Mixer channel volume and pan controls now have track-specific accessibility names.
 ### Added (2026-11-17, overhaul parts 2–3)
 - Keyboard shortcut registry and editor (⌥⌘K): every command with a stable id, category and context; any number of shortcuts; presets approximating Logic Pro, Ableton Live, REAPER, Pro Tools, Cubase and Studio One; conflicts, macOS-reserved keys, saved sets, JSON import/export (ADR-0010).
 - Plug-in browser: categories, fuzzy search, format/vendor filters, favorites, recents, most used, collections, tags; double-click or drag onto a track or the device panel. Plug-in chain reordering (drag or Move Left/Right; C API 26).
