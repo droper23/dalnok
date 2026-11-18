@@ -100,20 +100,23 @@ The order follows payoff per effort and how often each effect appears in the own
   | 32–51 | Remaining slots: other flags, not yet mapped |
 
 - **Each band is exactly one biquad.** A least-squares biquad fit leaves −140 dB residual for every variant, which is float precision. The centre frequency and peak gain are exact, with no frequency cramping of f0.
-- **In RBJ form** (b = [1 + αA, −2cos w, 1 − αA], a = [1 + α/A, −2cos w, 1 − α/A], A = 10^(dB/40)), the effective α corresponds to:
-
-  Q_rbj = Q_eff(Q) / A × c(w), where c(w) ≈ (w/2)/tan(w/2)
-
-  The c(w) approximation holds within 0.1 % up to 3 kHz, and within about 1 % at 6–20 kHz (not exact yet).
-- **The 1/A term**: boost and cut are symmetric. With coupling off it holds from +3 to +24 dB.
-- **Q_eff lies on a grid of exactly 1/300 decade**: log10(Q_eff) × 300 is an integer for all 21 Q values tested. Most stored Q values round to the nearest step. Q = 0.4, 0.5, 0.7, 0.8, 3.0 and 3.5 land 1–4 steps away from that, so the mapping from stored value to grid index is still unknown.
+- **Exact model, Q-Couple off** (`tools/logic-parity/cheq_model.py`). It nulls against Logic at −132 to −148 dB on all 30 variants: boost and cut, Q 0.1–10, 100 Hz–20 kHz. That is identical to float precision.
+  - **Q knob**: 128 steps, Q_i = 10^(−1 + 3i/127), displayed to 2 significant figures. A stored Q snaps to the nearest displayed value, with ties going to the lower one. Logic's own UI only ever stores displayed values.
+  - **Effective Q**: Q_e = 10^(round(300·log10(Q_display))/300), a grid of 1/300 decade.
+  - **Coefficients**: with w = 2πf/fs and A = 10^(|dB|/40), α = sin w · A / (2·Q_e·(w/2)/tan(w/2)).
+    - Boost: b = [1 + αA, −2cos w, 1 − αA], a = [1 + α/A, −2cos w, 1 − α/A].
+    - Cut: the same with A and 1/A swapped (symmetric, Zölzer-style).
+    - Frequency and gain are used exactly as set.
+  - **Logic's Controls view** (plug-in window View ▸ Controls) exposes every parameter through Accessibility, with its knob index (`ax/axparam.swift`):
+    - Q: 0–127.
+    - Gain: 0–480 in 0.1 dB steps.
+    - Frequency: indexed; 20 Hz is 0, 100 Hz is 250 and 7500 Hz is 900. The frequency law is still to be mapped.
 - **Gain-Q coupling on** (Logic's default) adds a further Q factor that depends on gain and is asymmetric between boost and cut. At Q 1 and 1 kHz, Q_rbj is 1.103 at +6 dB, 1.266 at +12 dB and 2.792 at −12 dB. The coupling strength probably sits in another slot among 40–43.
 - **Next**:
-  1. Pin down the Q index mapping with a dense sweep. Four bands per instance would give four times the throughput.
-  2. Find the exact c(w).
-  3. Model the coupling law.
-  4. Measure the shelves, the low and high cuts (slope codes 0–?), HQ mode and the master gain.
-  5. Implement Dalnok Channel EQ and require a −120 dB null against these renders.
+  1. Model the Q-Couple law; Logic's default is on.
+  2. Map how stored frequency and gain values snap to the knobs.
+  3. Measure the shelves, the low and high cuts (slope codes), HQ mode, the master gain and the processing modes.
+  4. Implement Dalnok Channel EQ in the engine with an offline-render test against generated fixtures.
 
 ## Open questions for the owner
 - Confirm the clean-room rules above, and decide whether Drum Kit may use the installed Apple samples.
