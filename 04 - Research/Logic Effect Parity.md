@@ -142,9 +142,16 @@ The order follows payoff per effort and how often each effect appears in the own
     | Asymmetric Medium cut | 12 | 23 | 69 | 129 | 180 | 224 | 296 | 353 |
     | Asymmetric Strong cut | | | | | | 302 | | |
 
-  - A closed form for k(gain) has not been found yet. Neither linear-in-dB nor power-of-A fits. If none turns up, measure the table at all 481 gain steps; four bands per instance and fitting them jointly would give about 20 points per export.
+  - **Closed form** (from MADSP's `GetQScaleFromGainAndStrength`):
+
+    k = 1 + s·|g|·(0.06 + 0.005625·|g|)
+
+    - s = strength for boosts and strength × asym for cuts.
+    - Light = 0.5, Medium = 1, Strong = 2; the asymmetric modes use asym = 3.
+    - Strength 10 is a special case: k = 10^(|g|/20).
+    - The product Q_display·k is then rounded to the 1/300-decade grid.
+    - `cheq_model.peak(..., couple=True, mode=...)` nulls at −132 to −147 dB on all 45 coupled renders, covering every mode, boost and cut, Q 1 and 4, and 100 Hz to 20 kHz.
 - **Next**:
-  1. Find the closed form of the Q-Couple law (data above), or measure it as a table.
   2. Map how stored frequency and gain values snap to the knobs.
   3. Measure the shelves, the low and high cuts (slope codes), HQ mode, the master gain and the processing modes.
   4. Implement Dalnok Channel EQ in the engine with an offline-render test against generated fixtures.
