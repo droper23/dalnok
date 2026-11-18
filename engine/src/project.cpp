@@ -30,7 +30,7 @@ namespace fs = std::filesystem;
 namespace dalnok {
 
 namespace {
-constexpr int kFormatVersion = 12; // 11: markers; 10: plug-in bypass; 3: shared MIDI sources; 4: tempo/meter maps; 5: routing; 6: automation; 7: take folders; 8: plug-in automation; 9: launcher slots
+constexpr int kFormatVersion = 13; // 13: built-in plug-ins; 12: clip mute; 11: markers; 10: plug-in bypass; 3: shared MIDI sources; 4: tempo/meter maps; 5: routing; 6: automation; 7: take folders; 8: plug-in automation; 9: launcher slots
 constexpr int kConstantTempoVersion = 3; // written when there are no tempo or meter changes, so older builds still open it
 
 bool readFile(const std::string &path, std::string &out, std::string &err) {
@@ -401,7 +401,10 @@ bool Engine::saveProject(const std::string &path, std::string &err, bool copyMed
         doc.set("markers", std::move(ms));
     }
     const bool clipMute = std::any_of(model_.clips.begin(), model_.clips.end(), [](const ClipState &c) { return c.muted; });
-    doc.set("version", clipMute ? 12 : !model_.markers.empty() ? 11 : bypass ? 10 : launcher ? 9 : pluginAutomation ? 8 : !model_.folders.empty() ? 7 : automation ? 6 : routing ? 5 : model_.tempo.size() > 1 || model_.meters.size() > 1 ? 4 : kConstantTempoVersion);
+    const bool builtin = std::any_of(model_.tracks.begin(), model_.tracks.end(), [](const TrackState &t) {
+        return std::any_of(t.plugins.begin(), t.plugins.end(), [](const PluginSlot &p) { return p.format == "dalnok"; });
+    });
+    doc.set("version", builtin ? 13 : clipMute ? 12 : !model_.markers.empty() ? 11 : bypass ? 10 : launcher ? 9 : pluginAutomation ? 8 : !model_.folders.empty() ? 7 : automation ? 6 : routing ? 5 : model_.tempo.size() > 1 || model_.meters.size() > 1 ? 4 : kConstantTempoVersion);
     json::Value body = describe();
     for (auto &[key, value] : body.object) {
         if (key != "media") continue;
@@ -561,7 +564,7 @@ std::unique_ptr<Engine::PreparedProject> Engine::prepareDocument(const json::Val
                     if (const json::Value *ids = pv.get("controls"); ids && ids->isArray())
                         for (const auto &c : ids->array)
                             if (c.isNumber() && c.number >= 0 && c.number <= 4294967295.0) slot.controls.push_back(static_cast<uint32_t>(c.number));
-                    if (slot.id <= 0 || !seen.insert(slot.id).second || (slot.format != "vst3" && slot.format != "au" && slot.format != "clap") ||
+                    if (slot.id <= 0 || !seen.insert(slot.id).second || (slot.format != "vst3" && slot.format != "au" && slot.format != "clap" && slot.format != "dalnok") ||
                         !base64Decode(pv.getString("state", ""), slot.state)) {
                         err = "invalid plug-in on track " + t.name;
                         return nullptr;

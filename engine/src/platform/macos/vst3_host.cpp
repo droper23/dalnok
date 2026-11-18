@@ -3,6 +3,7 @@
 // filling fixed buffers and calling IAudioProcessor::process.
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "plugin_host.hpp"
+#include "fx/builtin.hpp"
 
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Weverything"
@@ -554,6 +555,7 @@ std::unique_ptr<PluginProcessor> loadVst3(const std::string &bundle, const std::
 
 std::unique_ptr<PluginProcessor> loadPlugin(const std::string &format, const std::string &path, const std::string &classId,
                                             double sampleRate, int maxBlock, bool offline, std::string &err) {
+    if (format == "dalnok") return loadBuiltin(path, sampleRate, maxBlock, err);
     if (format == "au") return loadAudioUnit(path, sampleRate, maxBlock, err);
     if (format == "vst3") return loadVst3(path, classId, sampleRate, maxBlock, offline, err);
     if (format == "clap") return loadClap(path, classId, sampleRate, maxBlock, err);

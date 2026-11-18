@@ -9,7 +9,7 @@ import AppKit
 import DalnokEngine
 
 extension NSPasteboard.PasteboardType {
-    /// A plug-in being dragged from the browser: its add path ("au:…", a .vst3 or .clap bundle).
+    /// A plug-in being dragged from the browser: its add path ("au:…", "dalnok:…", a .vst3 or .clap bundle).
     static let dalnokPlugin = NSPasteboard.PasteboardType("org.dalnok.plugin")
     /// A device-panel unit being dragged to a new place in its chain: its slot id.
     static let dalnokSlot = NSPasteboard.PasteboardType("org.dalnok.slot")
@@ -55,7 +55,7 @@ final class PluginManagerController: NSWindowController, NSTableViewDataSource, 
         var group: PluginGroup = .effects
         var category = "Other Effects"
         /// What Dalnok's engine is given to load it.
-        var addPath: String { format == "AU" ? "au:" + path : path }
+        var addPath: String { format == "AU" ? "au:" + path : format == "DALNOK" ? "dalnok:" + path : path }
         var failed: Bool { ["failed", "crashed", "timeout"].contains(status) }
     }
     /// Sidebar entries.

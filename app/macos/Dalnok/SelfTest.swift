@@ -1385,6 +1385,15 @@ final class SelfTest {
         pm.filter("reverb apple")
         check(!pm.rows.isEmpty && pm.rows.allSatisfy { $0.category == "Reverb" || $0.name.lowercased().contains("reverb") }, "search by capability and vendor")
         pm.filter("")
+        // Built-in plug-ins (ADR-0011) are listed, always valid, and insert through their dalnok: path.
+        if let eq = pm.all.first(where: { $0.format == "DALNOK" && $0.path == "channel-eq" }) {
+            check(eq.addPath == "dalnok:channel-eq" && eq.group == .effects && !eq.failed, "Dalnok Channel EQ is listed as an effect (\(eq.addPath), \(eq.category))")
+            let track = s.tracks.first { !$0.isInstrument }?.id ?? 0
+            let before = dalnok_track_plugin_count(s.engine.handle, track)
+            let slot = (try? s.addPlugin(track, path: eq.addPath)) ?? 0
+            check(slot != 0 && dalnok_track_plugin_count(s.engine.handle, track) == before + 1, "the browser's path inserts Dalnok Channel EQ")
+            if slot != 0 { s.removePlugin(track, slot) }
+        } else { check(false, "Dalnok Channel EQ is listed in the plug-in browser") }
         // Favourites, collections, tags, format filter.
         if let delay = pm.all.first(where: { $0.name == "AUDelay" }) {
             pm.toggleFavorite(delay)

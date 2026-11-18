@@ -8,7 +8,9 @@
 # plug-in-free reference track (Audio 10) and renders/bypass (the same export with plug-ins bypassed).
 S=${PARITY_DIR:?set PARITY_DIR to the measurement folder}
 PD="$S/meas.logicx/Alternatives/000/ProjectData"; run=$1; shift
-front() { [ "$(osascript -e 'tell application "System Events" to get name of first process whose frontmost is true')" = "Logic Pro Creator Studio" ]; }
+locked() { python3 -c 'import Quartz,sys; d=Quartz.CGSessionCopyCurrentDictionary() or {}; sys.exit(0 if d.get("CGSSessionScreenIsLocked",0) or not d.get("kCGSSessionOnConsoleKey",1) else 1)'; }
+front() { ! locked && [ "$(osascript -e 'tell application "System Events" to get name of first process whose frontmost is true')" = "Logic Pro Creator Studio" ]; }
+locked && { echo "screen locked: refusing to post input"; exit 2; }
 # 1. close the project if open
 if $S/axapp | grep -q 'AXWindow meas.logicx'; then
   osascript -e 'tell application "Logic Pro Creator Studio" to activate'; sleep 1; front || { echo "not front"; exit 1; }
@@ -26,6 +28,7 @@ $S/axapp | grep -q 'alert' && { $S/axapp | grep AXStaticText | head -3; echo "un
 osascript -e 'tell application "Logic Pro Creator Studio" to activate'; sleep 1; front || { echo "not front"; exit 1; }
 # 4. export
 mkdir -p "$S/renders/$run"; rm -f "$S/renders/$run"/*.wav
+front || { echo "not front or locked"; exit 1; }
 $S/drive key 14 cmd,shift; sleep 2.5
 $S/drive key 5 cmd,shift; sleep 1.5; $S/drive type "$S/renders/$run/"; sleep 1; $S/drive key 36; sleep 2
 if $S/axdump "Bypass Effect" 60 | grep -q '| 1$'; then $S/drive click 1016 440; sleep 0.8; fi

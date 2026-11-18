@@ -1,6 +1,13 @@
 # Changelog
 
 ## [Unreleased]
+### Added (2026-11-18, Logic effect parity)
+- Built-in plug-in format (`dalnok:`; ADR-0011) and **Dalnok Channel EQ**. Its peak bands and Gain-Q coupling match Logic's Channel EQ to float precision. Shelves, low/high cuts and oversampling are implemented but not yet verified against Logic. Logic Channel EQ settings import directly (parameter ids equal Logic's slots). Project format 13.
+- Logic import maps channel volume, pan and mute, imports MIDI region mute as clip mute (Clip ▸ Mute Clip), and imports Drummer regions' notes.
+- `tools/logic-parity/`: clean-room measurement loop (patch a Logic project, export from Logic, fit and null).
+### Fixed (2026-11-18)
+- Audio Unit creation and teardown are serialized (Apple's DLS synth crashed on concurrent teardown).
+- `scripts/ci/rt-effects.sh` was missing the CLAP include path.
 ### Changed (Logic import)
 - Import MIDI region boundaries and note positions from Logic's sequence metadata, avoiding overlaps caused by estimated lengths. Notes beyond region boundaries are reported.
 - Restore recognized Audio Units on their channel strips using their saved class-info state. Report unsupported Logic-native processors and plug-ins that cannot load; preserve rejected state.

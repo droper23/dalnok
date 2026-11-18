@@ -2,11 +2,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "import/logic_plugins.hpp"
 #include "import/import.hpp"
+#include "json.hpp"
 #include "pugixml.hpp"
 
 #include <algorithm>
 #include <cstring>
+#include <cmath>
 #include <map>
+#include <optional>
 #include <set>
 
 namespace dalnok::import {
@@ -17,7 +20,30 @@ template <typename T> T read(const std::string &d, size_t off) {
     return v;
 }
 struct Chunk { std::string tag; size_t offset, payload, length; };
-struct Plugin { unsigned order; std::string id, name, state; bool instrument = false, supported = false; };
+struct Plugin { unsigned order; std::string id, name, state; bool instrument = false, supported = false; std::string builtin; };
+constexpr uint32_t kChannelEqSubtype = 0xec;
+// Native parameter block after the AuCU header: size, ?, count, "GAMETSPP", subtype, ?, then `count` floats.
+std::optional<std::pair<uint32_t, std::vector<float>>> nativeParams(const std::string &data, const Chunk &c) {
+    const size_t b = c.payload + 172;
+    if (c.length < 172 + 28 || data.compare(b + 12, 8, "GAMETSPP") != 0) return std::nullopt;
+    const uint32_t count = read<uint32_t>(data, b + 8), subtype = read<uint32_t>(data, b + 20);
+    if (count > 4096 || 28 + size_t(count) * 4 > c.length - 172) return std::nullopt;
+    std::vector<float> v(count);
+    for (uint32_t i = 0; i < count; ++i) v[i] = read<float>(data, b + 28 + 4 * size_t(i));
+    return std::make_pair(subtype, std::move(v));
+}
+std::string channelEqState(const std::vector<float> &v) {
+    // Dalnok Channel EQ parameter ids are Logic's slot numbers (fx/channel_eq.hpp).
+    json::Value doc = json::Value::makeObject(), values = json::Value::makeObject();
+    doc.set("plugin", "channel-eq");
+    doc.set("version", 1);
+    for (uint32_t i = 0; i < v.size() && i <= 43; ++i) {
+        if (i > 32 && i < 41) continue; // analyzer and display settings
+        if (std::isfinite(v[i])) values.set(std::to_string(i), static_cast<double>(v[i]));
+    }
+    doc.set("values", std::move(values));
+    return json::serialize(doc);
+}
 std::string fourcc(const std::string &d, size_t off) {
     if (off > d.size() || 4 > d.size() - off) return {};
     std::string s(d.rbegin() + static_cast<std::ptrdiff_t>(d.size() - off - 4),
@@ -94,10 +120,17 @@ void importLogicPlugins(const std::string &data, const std::vector<LogicTrackBin
                     p.supported = true;
                 }
             }
+        } else if (const auto native = nativeParams(data, c)) {
+            // Logic's own processors store a flat float parameter block; convert the ones Dalnok re-implements.
+            if (native->first == kChannelEqSubtype && native->second.size() >= 44) {
+                p.builtin = "channel-eq";
+                p.state = channelEqState(native->second);
+                p.supported = true;
+            }
         }
         plugins[channel].push_back(std::move(p));
     }
-    int imported = 0, unsupported = 0, ambiguous = 0;
+    int imported = 0, converted = 0, unsupported = 0, ambiguous = 0;
     std::set<std::string> unsupportedNames;
     for (const auto &binding : tracks) {
         const auto strip = strips.find(binding.strip);
@@ -115,11 +148,15 @@ void importLogicPlugins(const std::string &data, const std::vector<LogicTrackBin
                 ++unsupported; unsupportedNames.insert(p.name); continue;
             }
             if (p.instrument) hadInstrument = true;
+            if (!p.builtin.empty()) { builder.addBuiltin(binding.track, p.builtin, "Dalnok " + p.name, p.state); ++converted; continue; }
             builder.addAudioUnit(binding.track, p.id, p.name, p.instrument, p.state);
             ++imported;
         }
     }
     if (imported) report.notes.push_back(std::to_string(imported) + " Audio Unit plug-in(s) retained with Logic's class-info state. Availability and state acceptance must be checked in the device panel; Logic-specific processors are not converted.");
+    if (converted)
+        report.notes.push_back(std::to_string(converted) + " Logic Channel EQ(s) converted to Dalnok Channel EQ. Peak bands and Gain-Q coupling "
+                               "match Logic exactly; shelves, low/high cuts and oversampling are not yet verified against Logic.");
     report.skip("unsupportedLogicPlugins", unsupported);
     report.skip("ambiguousLogicPluginChannels", ambiguous);
     if (unsupported) {

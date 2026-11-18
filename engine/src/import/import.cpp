@@ -126,6 +126,11 @@ bool Builder::isInstrumentTrack(int32_t track) const {
     return track >= 0 && track < static_cast<int32_t>(tracks_.size()) && tracks_[static_cast<size_t>(track)].instrument;
 }
 
+void Builder::addBuiltin(int32_t track, const std::string &id, const std::string &name, const std::string &state) {
+    if (track < 0 || track >= static_cast<int32_t>(tracks_.size())) return;
+    tracks_[static_cast<size_t>(track)].plugins.push_back({id, name, state, false, "dalnok"});
+}
+
 void Builder::addAudioUnit(int32_t track, const std::string &id, const std::string &name, bool instrument, const std::string &state) {
     if (track < 0 || track >= static_cast<int32_t>(tracks_.size())) return;
     const auto first = name.find_first_not_of(" \t\r\n"), last = name.find_last_not_of(" \t\r\n");
@@ -249,7 +254,7 @@ json::Value Builder::document() const {
             Value plugins = Value::makeArray();
             for (const auto &p : t.plugins) {
                 Value pv = Value::makeObject();
-                pv.set("id", pluginId++); pv.set("format", "au"); pv.set("path", p.id);
+                pv.set("id", pluginId++); pv.set("format", p.format); pv.set("path", p.id);
                 pv.set("name", p.name); pv.set("instrument", p.instrument); pv.set("state", base64Encode(p.state));
                 plugins.push(std::move(pv));
             }
@@ -261,6 +266,7 @@ json::Value Builder::document() const {
     // MIDI and instrument tracks need project version 2.
     if (std::any_of(tracks_.begin(), tracks_.end(), [](const Track &t) { return t.instrument; })) doc.set("version", 2);
     if (std::any_of(tracks_.begin(), tracks_.end(), [](const Track &t) { return std::any_of(t.clips.begin(), t.clips.end(), [](const Clip &c) { return c.muted; }); })) doc.set("version", 12);
+    if (std::any_of(tracks_.begin(), tracks_.end(), [](const Track &t) { return std::any_of(t.plugins.begin(), t.plugins.end(), [](const Plugin &p) { return p.format == "dalnok"; }); })) doc.set("version", 13);
     return doc;
 }
 

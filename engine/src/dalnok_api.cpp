@@ -4,6 +4,7 @@
 #include "commands.hpp"
 #include "capture_recovery.hpp"
 #include "engine.hpp"
+#include "fx/builtin.hpp"
 #include "midi.hpp"
 #include "record.hpp"
 #include "plugins.hpp"
@@ -41,6 +42,32 @@ std::vector<MidiNote> toNotes(const DalnokNote *notes, int32_t count) {
 DalnokStatus statusFor(bool ok, const std::string &err) {
     if (ok) return DALNOK_OK;
     return err.rfind("no such", 0) == 0 ? DALNOK_ERR_NOT_FOUND : DALNOK_ERR_INVALID_ARG;
+}
+} // namespace
+
+namespace {
+// Built-in plug-ins (ADR-0011) are part of the engine: listed with every scan and always valid.
+json::Value withBuiltins(json::Value list, bool validated) {
+    for (const auto &b : builtinPlugins()) {
+        json::Value v = json::Value::makeObject();
+        v.set("format", "dalnok");
+        v.set("name", b.name);
+        v.set("vendor", "Dalnok");
+        v.set("version", "1");
+        v.set("kind", "effect");
+        v.set("path", b.id);
+        json::Value cats = json::Value::makeArray();
+        cats.push(json::Value(b.category));
+        v.set("categories", std::move(cats));
+        if (validated) {
+            json::Value scan = json::Value::makeObject();
+            scan.set("status", "ok");
+            scan.set("cached", false);
+            v.set("scan", std::move(scan));
+        }
+        list.push(std::move(v));
+    }
+    return list;
 }
 } // namespace
 
@@ -221,6 +248,7 @@ DalnokStatus dalnok_midi_inject(DalnokEngine *e, uint8_t status, uint8_t d1, uin
 }
 uint64_t dalnok_midi_dropped(const DalnokEngine *e) { return e ? e->impl.midiDropped() : 0; }
 
+
 size_t dalnok_plugins_scan(const char *extra, bool au, char *out, size_t len) {
     auto folders = pluginFolders();
     if (extra && *extra) folders.push_back(extra);
@@ -229,7 +257,7 @@ size_t dalnok_plugins_scan(const char *extra, bool au, char *out, size_t len) {
         auto units = listAudioUnits();
         list.insert(list.end(), units.begin(), units.end());
     }
-    return copyOut(out, len, json::serialize(pluginsToJson(list)));
+    return copyOut(out, len, json::serialize(withBuiltins(pluginsToJson(list), false)));
 }
 
 int32_t dalnok_plugin_add(DalnokEngine *e, DalnokTrackId t, const char *path, const char *cid, char *err, size_t len) {
@@ -353,7 +381,9 @@ size_t dalnok_plugins_validate(const char *scanner, const char *cache, const cha
         const std::string f = lower(filter);
         std::erase_if(list, [&](const PluginInfo &p) { return lower(p.name).find(f) == std::string::npos; });
     }
-    return copyOut(out, len, json::serialize(validatePlugins(list, scanner, cache ? cache : "", std::max(500, timeoutMs), rescan)));
+    json::Value result = validatePlugins(list, scanner, cache ? cache : "", std::max(500, timeoutMs), rescan);
+    if (!onlyExtra && !(filter && *filter)) result = withBuiltins(std::move(result), true);
+    return copyOut(out, len, json::serialize(result));
 }
 
 DalnokTrackId dalnok_track_add_instrument(DalnokEngine *e, const char *name) {

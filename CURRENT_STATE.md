@@ -5,6 +5,16 @@ milestone: M11 VST3 hosting (ADR-0009 stage 3) done; editors, parameters and AU 
 ---
 # Current State
 
+## Latest session (Dalnok Channel EQ; 2026-11-18)
+- Owner decisions: disassembling Logic is allowed (no verbatim copying), Apple samples may be used with a fallback, and the bar is exact or indistinguishable. See [[Logic Effect Parity]] (Working rules).
+- Q-Couple law read from MADSP; with it, every Channel EQ peak-band render nulls at −132 to −148 dB (75 variants).
+- ADR-0011 built-in plug-ins: `dalnok:channel-eq` in `engine/src/fx/`. The importer converts Logic Channel EQ records with the GAMETSPP block. One oviii instance uses a different 12 KB layout and is still reported as unsupported.
+- Verification: 181 engine tests; the real-time effect analysis is clean (script fixed). GUI self-tests: 459 Graphite / 476 Warm Analog pass. "REWIND turns the reels backwards" fails, including on the unchanged baseline: it is environmental, and the screen was locked overnight.
+- Next:
+  1. With the screen unlocked, run `tools/logic-parity` batches for the shelves, the cuts (slope codes, then fit cascades), HQ and master gain, and the 12 KB Channel EQ layout.
+  2. Then Limiter, Chorus, ChromaVerb, ChromaGlow and Drum Kit (Apple samples with a fallback).
+  3. `batch.sh` now refuses to run while the screen is locked. An earlier run typed at the lock screen; that must not happen again.
+
 ## Latest session (Logic effect parity research; 2026-11-17)
 - Guitar Rig works after activation in Native Access (NTKDaemon must be running). All 7 oviii Audio Units load with their saved state.
 - Clean-room measurement loop: `tools/logic-parity/`. It patches a Logic project made in Logic, exports all tracks, and fits the results. Logic renders are deterministic.

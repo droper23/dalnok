@@ -85,6 +85,48 @@ import Testing
         #expect(dalnok_track_plugin_info(e, second, 0, &secondInfo) == DALNOK_OK && !secondInfo.loaded && name(secondInfo.name) == "Missing")
         #expect(((report["skipped"] as? [String: Int])?["unsupportedLogicPlugins"] ?? 0) == 1)
     }
+    @Test func convertsChannelEqToTheBuiltInPlugin() throws {
+        let pkg = tempDir().appendingPathComponent("ChannelEQ.logicx")
+        let alt = pkg.appendingPathComponent("Alternatives/000"), folder = pkg.appendingPathComponent("Media/Audio Files")
+        try FileManager.default.createDirectory(at: alt, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try writeTestWav(folder.appendingPathComponent("sample.wav"), frames: 48_000)
+        var fl = Data(repeating: 0, count: 8); fl.append(contentsOf: le(UInt16(10))); for c in "sample.wav".utf16 { fl.append(contentsOf: le(c)) }
+        var region = Data(repeating: 0, count: 120); region.replaceSubrange(22..<26, with: le(UInt32(48_000)))
+        var env = Data(repeating: 0, count: 220); env.replaceSubrange(158..<160, with: le(UInt16(4))); env.replaceSubrange(160..<164, with: "Test".utf8); env.replaceSubrange(164..<166, with: le(UInt16(1)))
+        var track = Data(repeating: 0, count: 58); track.replaceSubrange(8..<12, with: le(UInt32(20)))
+        var event = Data(repeating: 0, count: 96); event.replaceSubrange(0..<4, with: le(UInt32(0x24))); event.replaceSubrange(4..<8, with: le(UInt32(34_560))); event[0x14] = 1; event.replaceSubrange(0x2c..<0x30, with: le(UInt32(40))); event[80] = 0xf1
+        // Logic's native Channel EQ: AuCU header, then size, flags, count, "GAMETSPP", subtype 0xec, 0, 52 floats.
+        var values = [Float](repeating: 0, count: 52)
+        let preset: [Float] = [0, 20, 2, 0.71, 1, 75, 0, 1, 1, 100, 0, 0.6, 1, 250, 0, 0.3, 1, 1000, 12, 1, 1, 2500, 0, 0.2, 1, 7500, 0, 1, 0, 20000, 4, 0.71]
+        for (i, v) in preset.enumerated() { values[i] = v }
+        values[41] = 1; values[42] = -1
+        var block = Data(le(UInt32(240))) + Data(le(UInt32(1))) + Data(le(UInt32(52))) + Data("GAMETSPP".utf8) + Data(le(UInt32(0xec))) + Data(le(UInt32(0)))
+        for v in values { block.append(contentsOf: le(v.bitPattern)) }
+        var native = Data(repeating: 0, count: 172); native.replaceSubrange(0..<4, with: le(UInt32(0x1a8))); native.replaceSubrange(120..<130, with: "Channel EQ".utf8)
+        native.replaceSubrange(140..<144, with: le(UInt32(0xec))); native.append(block)
+        var body = chunk("Envi", env, id: 20) + chunk("AuCO", Data(repeating: 0, count: 201), id: 36, sub: 0)
+        body += chunk("AuCU", native, id: 36, sub: 0, kind: 2)
+        body += chunk("AuFl", fl) + chunk("AuRg", region, id: 40) + chunk("MSeq", Data(repeating: 0, count: 8)) + chunk("Trak", track) + chunk("EvSq", Data(event.prefix(80)) + Data(repeating: 0, count: 16))
+        var file = Data([0x23, 0x47, 0xc0, 0xab]); file.append(Data(repeating: 0, count: 12)); file.append(contentsOf: le(UInt64(body.count))); file.append(body)
+        try file.write(to: alt.appendingPathComponent("ProjectData"))
+        let (e, report) = try importInto(pkg.path); defer { dalnok_engine_destroy(e) }
+        let t = dalnok_track_at(e, 0)
+        var info = DalnokPluginSlotInfo()
+        #expect(dalnok_track_plugin_count(e, t) == 1 && dalnok_track_plugin_info(e, t, 0, &info) == DALNOK_OK)
+        #expect(info.loaded && name(info.name) == "Dalnok Channel EQ" && name(info.path) == "channel-eq", "\(name(info.name)) \(name(info.path))")
+        var gain = DalnokPluginParameter(), freq = DalnokPluginParameter()
+        for i in 0..<dalnok_plugin_parameter_count(e, info.id) {
+            var p = DalnokPluginParameter()
+            guard dalnok_plugin_parameter(e, info.id, i, &p) == DALNOK_OK else { continue }
+            if p.id == 18 { gain = p }
+            if p.id == 17 { freq = p }
+        }
+        #expect(abs(gain.value - 0.75) < 1e-9, "Peak 3 gain is +12 dB")   // -24…+24 dB
+        #expect(abs(freq.value - log(1000.0 / 20) / log(1000.0)) < 1e-6, "Peak 3 frequency is 1 kHz")
+        #expect(((report["skipped"] as? [String: Int])?["unsupportedLogicPlugins"] ?? 0) == 0)
+        #expect((report["notes"] as? [String] ?? []).contains { $0.contains("converted to Dalnok Channel EQ") })
+    }
     @Test func importsAudioUnitInstrumentOnMidiTrack() throws {
         let source = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(source) }
         let sourceTrack = dalnok_track_add_instrument(source, "Source")
