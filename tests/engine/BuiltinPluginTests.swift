@@ -154,6 +154,27 @@ private func cascade(_ x: [Float], _ sections: [([Double], [Double])]) -> [Doubl
         #expect(worst < 2e-6, "shelf \(high ? "high" : "low") \(hz) Hz \(gain) dB Q \(q) differs by \(worst)")
     }
 
+    @Test func channelEqReportsItsExactResponse() {
+        let (e, t) = audioSession(); defer { dalnok_engine_destroy(e) }
+        let slot = dalnok_plugin_add(e, t, "dalnok:channel-eq", nil, nil, 0)
+        dalnok_plugin_set_parameter(e, slot, 17, logNorm(1_000, 20, 20_000)) // peak 3: 1 kHz, +12 dB, Q 1
+        dalnok_plugin_set_parameter(e, slot, 18, (12.0 + 24) / 48)
+        dalnok_plugin_set_parameter(e, slot, 19, logNorm(1, 0.1, 100))
+        let hz: [Double] = [50, 400, 1_000, 2_500, 15_000]
+        var db = [Double](repeating: 0, count: hz.count)
+        #expect(dalnok_plugin_response(e, slot, hz, Int32(hz.count), &db) == DALNOK_OK)
+        let (b, a) = referencePeak(hz: 1_000, gainDb: 12, q: 1, rate: 48_000, coupleMode: -1)
+        for (f, got) in zip(hz, db) {
+            let w = 2 * Double.pi * f / 48_000
+            func mag(_ c: [Double]) -> Double { hypot(c[0] + c[1] * cos(w) + c[2] * cos(2 * w), -(c[1] * sin(w) + c[2] * sin(2 * w))) }
+            let want = 20 * log10(mag(b) / mag(a))
+            #expect(abs(got - want) < 1e-9, "response at \(f) Hz: \(got) dB, expected \(want)")
+        }
+        #expect(abs(db[2] - 12) < 1e-6 && abs(db[0]) < 0.1)
+        // Hosted plug-ins that can't compute it say so.
+        #expect(dalnok_plugin_response(e, 999, hz, 1, &db) == DALNOK_ERR_INVALID_ARG)
+    }
+
     @Test func channelEqDescribesAnyValue() {
         let (e, t) = audioSession(); defer { dalnok_engine_destroy(e) }
         let slot = dalnok_plugin_add(e, t, "dalnok:channel-eq", nil, nil, 0)

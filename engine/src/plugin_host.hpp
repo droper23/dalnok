@@ -41,6 +41,17 @@ public:
     virtual void process(float *left, float *right, int frames, const PluginNote *notes, int noteCount) DALNOK_NONBLOCKING = 0;
     // Peak levels entering and leaving process() since the UI last read them (the render raises, the UI resets).
     std::atomic<float> meterIn[2]{}, meterOut[2]{};
+    // Recent mono input and output for displays (spectrum, scope). Created on the main thread the first time the UI
+    // asks, never replaced or freed while the processor lives; the render writes it only once it exists.
+    struct Tap {
+        static constexpr uint32_t kSize = 8192; // power of two
+        std::atomic<float> in[kSize]{}, out[kSize]{};
+        std::atomic<uint32_t> pos{0};
+    };
+    std::atomic<Tap *> tap{nullptr};
+    std::unique_ptr<Tap> tapStorage;
+    // Exact magnitude response in dB at `hz` (main thread), for plug-ins that can compute it (built-in EQs).
+    virtual bool response(const double *hz, int count, double *db) { (void)hz; (void)count; (void)db; return false; }
     // Opaque plugin state (control thread).
     virtual bool getState(std::string &bytes) = 0;
     virtual bool setState(const std::string &bytes) = 0;

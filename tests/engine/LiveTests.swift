@@ -122,6 +122,22 @@ func liveEngine(_ samples: [Float]) -> (OpaquePointer, DalnokTrackId, OpaquePoin
         #expect(dalnok_meter_plugin(e, 999_999, nil, nil, nil, nil) == DALNOK_ERR_NOT_FOUND)
     }
 
+    @Test func pluginTapDeliversRecentInputAndOutput() {
+        let (e, t, m) = liveEngine((0..<48_000).map { Float(sin(Double($0) * 0.05)) * 0.25 })
+        defer { dalnok_media_release(m); dalnok_engine_destroy(e) }
+        let slot = dalnok_plugin_add(e, t, "dalnok:channel-eq", nil, nil, 0)
+        dalnok_plugin_set_parameter(e, slot, 32, (6.0206 + 24) / 48) // master gain x2
+        var inBuf = [Float](repeating: 0, count: 1_024), outBuf = inBuf
+        #expect(dalnok_plugin_tap(e, slot, &inBuf, &outBuf, 1_024) == 0, "the first call starts the tap")
+        dalnok_transport_play(e)
+        _ = pump(e, 4_096)
+        #expect(dalnok_plugin_tap(e, slot, &inBuf, &outBuf, 1_024) == 1_024)
+        #expect(inBuf.contains { abs($0) > 0.1 }, "input reaches the tap")
+        let worst = zip(inBuf, outBuf).map { abs($1 - 2 * $0) }.max() ?? 1
+        #expect(worst < 1e-5, "output is the input through the plug-in (x2), aligned: \(worst)")
+        #expect(dalnok_plugin_tap(e, 999_999, nil, nil, 16) == 0)
+    }
+
     @Test func structuralEditsWhilePlayingAreAdopted() {
         let (e, t, m) = liveEngine([Float](repeating: 0.5, count: 48_000))
         defer { dalnok_media_release(m); dalnok_engine_destroy(e) }

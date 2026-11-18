@@ -25,6 +25,7 @@ class ChannelEq final : public BuiltinProcessor {
 public:
     explicit ChannelEq(double sampleRate);
     void process(float *left, float *right, int frames, const PluginNote *notes, int noteCount) DALNOK_NONBLOCKING override;
+    bool response(const double *hz, int count, double *db) override;
 
     enum : uint32_t {
         kLowCutOn = 0, kLowCutFreq, kLowCutSlope, kLowCutQ,
@@ -38,6 +39,7 @@ public:
 
 private:
     void changed() DALNOK_NONBLOCKING override;
+    template <class Get> int design(Get v, std::array<Biquad, kSections> &out, double &gain) const DALNOK_NONBLOCKING;
     double sampleRate_;
     std::array<double, 128> qShown_;
     std::array<Biquad, kSections> coef_{};

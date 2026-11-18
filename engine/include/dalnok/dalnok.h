@@ -205,6 +205,13 @@ void dalnok_meter_master(DalnokEngine *engine, float *left, float *right);
  * Instruments report output only. Any pointer may be NULL. */
 DalnokStatus dalnok_meter_plugin(DalnokEngine *engine, int32_t slot, float *in_left, float *in_right,
                                  float *out_left, float *out_right);
+/* The latest `frames` (<= 8192) samples entering and leaving a plug-in, mixed to mono, for displays (spectrum,
+ * scope). The first call starts the tap and returns 0; later calls return the samples copied. Main thread.
+ * Only the live path feeds it. Either pointer may be NULL. */
+int32_t dalnok_plugin_tap(DalnokEngine *engine, int32_t slot, float *in, float *out, int32_t frames);
+/* Exact magnitude response (dB) at `count` frequencies, for plug-ins that can compute it (Dalnok's EQs).
+ * DALNOK_ERR_NOT_FOUND otherwise. Main thread. */
+DalnokStatus dalnok_plugin_response(const DalnokEngine *engine, int32_t slot, const double *hz, int32_t count, double *db);
 /* The master fader (dB, <= +12; <= -96 is silence). Undoable; the master meter reads after it. */
 DalnokStatus dalnok_master_set_gain_db(DalnokEngine *engine, float gain_db);
 float dalnok_master_gain_db(const DalnokEngine *engine);

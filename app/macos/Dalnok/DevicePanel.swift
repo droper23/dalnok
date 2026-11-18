@@ -3,6 +3,7 @@
 // plug-in ("Edit Controls"), saved in the project and undoable. Knob turns go straight to the plug-in;
 // changes made in the plug-in's own window show up here (the knobs glide and light their ring).
 // SPDX-License-Identifier: GPL-3.0-or-later
+import Accelerate
 import AppKit
 import DalnokEngine
 
@@ -159,7 +160,7 @@ final class DevicePanel: NSView {
             devices.forEach { $0.removeFromSuperview() }
             if devices.first?.trackId != t?.id { knownCables = [] } // a different track: draw its cables fresh
             devices = plugins.map { p in
-                let d = DeviceView(session: session, track: t!.id, slot: p.id, name: p.name, loaded: p.loaded, color: t!.color, vendor: p.vendor, instrument: p.instrument, error: p.error)
+                let d = DeviceView(session: session, track: t!.id, slot: p.id, name: p.name, loaded: p.loaded, color: t!.color, vendor: p.vendor, instrument: p.instrument, error: p.error, path: p.path)
                 d.onOpen = { [weak self] in self?.onOpen?(t!.id, p.id) }
                 d.onMove = { [weak self] delta in
                     guard let self, let from = self.devices.firstIndex(where: { $0.slot == p.id }) else { return }
@@ -305,6 +306,13 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
     /// Graphite: the faceplate's sections (between the input and output meters).
     private let sectionsRow = NSStackView()
     let inMeter = FaceplateMeter(caption: "IN"), outMeter = FaceplateMeter(caption: "OUT")
+    /// Graphite: the unit's instrument panel (gain-reduction meter, response screen or oscilloscope).
+    private(set) var displayKind: FaceplateDisplay.Kind = .scope
+    private(set) var display: NSView?
+    private var displaySize: [NSLayoutConstraint] = []
+    private var analyzer: SpectrumAnalyzer?
+    private var tick = 0
+    private let path: String
     private let power = NSButton(title: "", target: nil, action: nil)
     var bypassed: Bool { session.pluginBypassed(trackId, slot) }
     private(set) var allParameters: [DalnokPluginParameter] = []
@@ -313,7 +321,7 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
     static let defaultCount = 8
     static var ear: CGFloat { Analog.on ? 12 : 0 } // rack ear width
 
-    init(session: Session, track: DalnokTrackId, slot: Int32, name: String, loaded: Bool, color: NSColor, vendor: String = "", instrument: Bool = false, error: String = "") {
+    init(session: Session, track: DalnokTrackId, slot: Int32, name: String, loaded: Bool, color: NSColor, vendor: String = "", instrument: Bool = false, error: String = "", path: String = "") {
         self.session = session
         self.trackId = track
         self.slot = slot
@@ -321,6 +329,7 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         self.unavailableMessage = (instrument ? "Not loaded: instrument silent." : "Not loaded: effect bypassed.")
             + (error.isEmpty ? " Settings are kept." : " " + error)
         self.color = color
+        self.path = path
         super.init(frame: .zero)
         wantsLayer = true
         layer?.cornerRadius = Analog.on ? 2 : 5
@@ -365,6 +374,7 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         power.isHidden = Analog.on
         let header = NSStackView(views: [power, title, NSView(), sidechain, editButton, openButton])
         header.spacing = 6
+        header.setContentHuggingPriority(.required, for: .vertical) // stays at the top whatever the controls' height
         if Analog.on {
             title.isHidden = true // the name is lettered on the pedal
             for b in [editButton, openButton] { b.contentTintColor = Theme.textDim; b.font = Theme.ui(9.5, .semibold) }
@@ -381,7 +391,18 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         sectionsRow.orientation = .horizontal
         sectionsRow.alignment = .top
         sectionsRow.spacing = 6
-        let faceRow = NSStackView(views: [inMeter, sectionsRow, NSView(), outMeter])
+        if !Analog.on && loaded {
+            displayKind = FaceplateDisplay.kind(name: name, path: path, instrument: instrument)
+            let d: NSView = switch displayKind {
+            case .gainReduction: GainReductionMeter()
+            case .response: ResponseScreen()
+            case .scope: ScopeScreen()
+            }
+            (d as? ResponseScreen)?.tint = color.blended(withFraction: 0.35, of: .white) ?? color
+            d.translatesAutoresizingMaskIntoConstraints = false
+            display = d
+        }
+        let faceRow = NSStackView(views: [inMeter] + (display.map { [$0] } ?? []) + [sectionsRow, NSView(), outMeter])
         faceRow.alignment = .centerY
         faceRow.spacing = 8
         for m in [inMeter, outMeter] {
@@ -511,6 +532,12 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         if ids.isEmpty { return note("No automatable parameters. Use Open for the plug-in's own window.") }
         let params = ids.compactMap { id in current(id).map { (id: id, p: $0) } }
         let rows = params.count > 6 ? 2 : 1
+        if let display {
+            NSLayoutConstraint.deactivate(displaySize)
+            let size = FaceplateDisplay.size(displayKind, rows: rows)
+            displaySize = [display.widthAnchor.constraint(equalToConstant: size.width), display.heightAnchor.constraint(equalToConstant: size.height)]
+            NSLayoutConstraint.activate(displaySize)
+        }
         let groups = Faceplate.sections(params.map { (id: $0.id, title: fixedString($0.p.title)) })
         var views: [FaceplateSection] = []
         for g in groups {
@@ -555,13 +582,92 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         for m in [inMeter, outMeter] { m.isHidden = !(loaded && Faceplate.showMeters) }
     }
 
-    /// Graphite: reads this unit's input and output levels (called every frame while the panel shows).
+    /// Graphite: reads this unit's levels and feeds its meters and display (called every frame while the panel shows).
     func pollMeters() {
-        guard pedal == nil, loaded, !inMeter.isHidden else { return }
+        guard pedal == nil, loaded else { return }
         var il: Float = 0, ir: Float = 0, ol: Float = 0, orr: Float = 0
         guard dalnok_meter_plugin(session.engine.handle, slot, &il, &ir, &ol, &orr) == DALNOK_OK else { return }
-        inMeter.push(il, ir)
-        outMeter.push(ol, orr)
+        if !inMeter.isHidden { inMeter.push(il, ir); outMeter.push(ol, orr) }
+        tick += 1
+        updateDisplay()
+    }
+
+    /// The display's data: gain reduction (reported or measured), the response curve and spectrum, or the scope trace.
+    private func updateDisplay() {
+        guard let display else { return }
+        let h = session.engine.handle
+        let off = bypassed
+        switch displayKind {
+        case .gainReduction:
+            guard let meter = display as? GainReductionMeter else { return }
+            if off { return meter.update(reported: 0, inRms: 0, outRms: 0) }
+            var inBuf = [Float](repeating: 0, count: 1_024), outBuf = inBuf
+            let n = Int(dalnok_plugin_tap(h, slot, &inBuf, &outBuf, 1_024))
+            func rms(_ x: [Float]) -> Float { var r: Float = 0; vDSP_rmsqv(x, 1, &r, vDSP_Length(n)); return r }
+            meter.update(reported: reportedReduction(), inRms: n > 0 ? rms(inBuf) : 0, outRms: n > 0 ? rms(outBuf) : 0)
+        case .response:
+            guard let screen = display as? ResponseScreen else { return }
+            let freqs = ResponseScreen.frequencies
+            if tick % 3 == 0 {
+                var db = [Double](repeating: 0, count: freqs.count)
+                if dalnok_plugin_response(h, slot, freqs, Int32(freqs.count), &db) == DALNOK_OK {
+                    screen.curve = off ? [Double](repeating: 0, count: freqs.count) : db
+                    screen.measured = false
+                    screen.markers = off ? [] : bandMarkers()
+                } else if let a = analyzer, a.frames > 3, !off {
+                    // Hosted EQs: the response measured from the signal, held where the input is too quiet.
+                    let rate = Double(dalnok_engine_sample_rate(h)), floor = a.inputPeak * 1e-6
+                    var c = screen.curve ?? [Double](repeating: 0, count: freqs.count)
+                    for (i, f) in freqs.enumerated() { if let v = a.responseDb(at: f, rate: rate, floor: floor) { c[i] += (Double(v) - c[i]) * 0.3 } }
+                    screen.curve = c
+                    screen.measured = true
+                }
+            }
+            if tick % 2 == 0 {
+                var inBuf = [Float](repeating: 0, count: SpectrumAnalyzer.n), outBuf = inBuf
+                if dalnok_plugin_tap(h, slot, &inBuf, &outBuf, Int32(SpectrumAnalyzer.n)) == Int32(SpectrumAnalyzer.n) {
+                    let a = analyzer ?? SpectrumAnalyzer()
+                    analyzer = a
+                    if outBuf.contains(where: { $0 != 0 }) {
+                        a.push(input: inBuf, output: outBuf)
+                        let rate = Double(dalnok_engine_sample_rate(h))
+                        screen.spectrum = freqs.map { a.outputDb(at: $0, rate: rate) }
+                    } else if screen.spectrum != nil { screen.spectrum = nil }
+                }
+            }
+        case .scope:
+            guard let scope = display as? ScopeScreen, tick % 2 == 0 else { return }
+            var outBuf = [Float](repeating: 0, count: 2_048)
+            let n = Int(dalnok_plugin_tap(h, slot, nil, &outBuf, 2_048))
+            if n == 2_048, outBuf.contains(where: { abs($0) > 1e-5 }) { scope.push(outBuf) } else { scope.clear() }
+        }
+    }
+
+    /// Dalnok Channel EQ's enabled bands, numbered like its sections (1 low cut … 8 high cut), for the screen.
+    private func bandMarkers() -> [(hz: Double, label: String)] {
+        guard path == "channel-eq" else { return [] }
+        let bands: [UInt32] = [0, 4, 8, 12, 16, 20, 24, 28]
+        var out: [(Double, String)] = []
+        for (i, base) in bands.enumerated() {
+            var on = DalnokPluginParameter(), freq = DalnokPluginParameter()
+            guard let a = indexOf[base], let b = indexOf[base + 1],
+                  dalnok_plugin_parameter(session.engine.handle, slot, a, &on) == DALNOK_OK, on.value >= 0.5,
+                  dalnok_plugin_parameter(session.engine.handle, slot, b, &freq) == DALNOK_OK,
+                  let hz = Double(fixedString(freq.display).filter { "0123456789.".contains($0) }) else { continue }
+            out.append((hz, String(i + 1)))
+        }
+        return out
+    }
+
+    /// A gain reduction the plug-in reports itself (a read-only parameter such as "Gain Reduction" or
+    /// "Compression Amount"), in dB.
+    private func reportedReduction() -> Double? {
+        guard let p = allParameters.first(where: { p in
+            let t = fixedString(p.title).lowercased()
+            return p.read_only && (t.contains("reduction") || t == "gr" || t.contains("compression amount"))
+        }), let now = current(p.id) else { return nil }
+        let digits = fixedString(now.display).filter { "0123456789.-".contains($0) }
+        return Double(digits).map(abs)
     }
 
     private func display(_ p: DalnokPluginParameter) -> String {

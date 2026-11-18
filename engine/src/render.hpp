@@ -59,6 +59,14 @@ inline void raisePeaks(std::atomic<float> (&m)[2], const float *l, const float *
     raisePeak(m[1], pr);
 }
 
+// Writes a block into a plug-in's display tap (mono). `advance` moves the write position (after the output).
+inline void writeTap(std::atomic<float> *buf, std::atomic<uint32_t> &pos, const float *l, const float *r, int frames, bool advance) DALNOK_NONBLOCKING {
+    constexpr uint32_t mask = PluginProcessor::Tap::kSize - 1;
+    const uint32_t p = pos.load(std::memory_order_relaxed);
+    for (int i = 0; i < frames; ++i) buf[(p + static_cast<uint32_t>(i)) & mask].store(0.5f * (l[i] + r[i]), std::memory_order_relaxed);
+    if (advance) pos.store(p + static_cast<uint32_t>(frames), std::memory_order_release);
+}
+
 enum FadeCurve : int32_t { kFadeLinear = 0, kFadeEqualPower = 1 };
 
 struct RenderClip {

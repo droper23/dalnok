@@ -3,6 +3,7 @@
 ## [Unreleased]
 ### Added (2026-11-18, Graphite faceplates)
 - Graphite draws each plug-in in the device panel as a hardware unit on a brushed graphite faceplate. Knobs carry printed scales with the plug-in's own end values. On/off parameters become lit push switches and short choices become stepped selectors. Related parameters share engraved sections, and every control has a value readout.
+- Faceplate displays: a moving-coil gain-reduction meter for dynamics, a response screen for EQs (the exact curve with band markers for Dalnok's EQs; a measured curve for hosted ones; both over a live spectrum), and a phosphor oscilloscope for everything else. The engine adds `dalnok_plugin_tap` and `dalnok_plugin_response`.
 - Input/output LED meters on each unit. Settings ▸ Plug-ins can hide them. The engine adds `dalnok_meter_plugin` and `dalnok_plugin_parameter_text` (C API 28).
 ### Fixed (2026-11-18, Channel EQ parity)
 - Dalnok Channel EQ's low and high cuts were swapped. Shelves and all cut slopes now match Logic (measured cascades for every shown Q below 1).

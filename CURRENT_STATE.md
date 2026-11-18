@@ -8,8 +8,14 @@ milestone: M11 VST3 hosting (ADR-0009 stage 3) done; editors, parameters and AU 
 ## Latest session (Channel EQ shelves and cuts; Graphite faceplates; 2026-11-18)
 - **Channel EQ** now matches Logic for the shelves (−139 to −149 dB) and all cut slopes (6–48 dB/Oct). Steep slopes below Q 1 use cascades measured at every shown Q (199 renders, `tools/logic-parity/cut_table.py` generates `engine/src/fx/channel_eq_cuts.inc`). The low and high cuts had been swapped. Still to do: master gain and HQ (oversampling).
 - **Graphite device panel**: each plug-in is drawn on a brushed graphite faceplate (`app/macos/Dalnok/Faceplate.swift`). Parameters get knobs with printed scales, stepped selectors or lit push switches. Related parameters share engraved sections, and IN/OUT LED meters can be turned off in Settings ▸ Plug-ins. The owner asked for "more realistic, more than just knobs".
+- **Faceplate displays** (`FaceplateDisplays.swift`), chosen by plug-in category:
+  - Dynamics: a backlit moving-coil gain-reduction meter with spring ballistics. It reads the plug-in's own reported reduction, or else the level change measured through it.
+  - EQs and filters: a response screen. Dalnok's EQs draw their exact curve (`dalnok_plugin_response`) with numbered band markers; hosted EQs get a curve measured from the signal, marked MEASURED. Both draw over a live spectrum.
+  - Everything else: a phosphor oscilloscope.
+  - The engine adds a lock-free per-plug-in display tap (`dalnok_plugin_tap`).
+- Self-tests at 44.1 kHz: six timing checks (16th quantize, step entry, the LCD at beat boundaries) fail with and without these changes. Every check passes at 48 kHz. This looks like a real beat/frame rounding bug at 44.1 kHz (the LCD reads 2.1.4.239 at bar 2), so investigate it next.
 - Engine: per-plug-in input and output peak meters (`dalnok_meter_plugin`) and value text for any parameter value (`dalnok_plugin_parameter_text`), implemented for VST3, CLAP, AU and built-ins. C API version 28.
-- Verification: 184 engine tests pass. Self-tests: 470 Graphite and 477 Warm Analog, all passing (REWIND passes with the screen unlocked). The real-time analysis is clean, and `rt-effects.sh` now finds Homebrew's versioned `llvm@N`.
+- Verification: 186 engine tests pass. Self-tests at 48 kHz: 470 Graphite and 477 Warm Analog, all passing; the display checks were added afterwards and run at 44.1 kHz (see above). The real-time analysis is clean, and `rt-effects.sh` now finds Homebrew's versioned `llvm@N`.
 - Next:
   1. Faceplate polish with the owner: Channel EQ's default controller, a bespoke layout for built-ins (an EQ curve display), and gain-reduction meters for dynamics plug-ins.
   2. Channel EQ master gain and HQ (Logic time needed), then Limiter, Chorus, ChromaVerb, ChromaGlow and Drum Kit.

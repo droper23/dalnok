@@ -151,13 +151,17 @@ void renderPluginNotes(PluginProcessor *plugin, const RenderNote *starts, const 
     clear(s.trackR, frames);
     plugin->process(s.trackL, s.trackR, frames, s.events, count);
     raisePeaks(plugin->meterOut, s.trackL, s.trackR, frames);
+    if (PluginProcessor::Tap *tap = plugin->tap.load(std::memory_order_acquire)) writeTap(tap->out, tap->pos, s.trackL, s.trackR, frames, true);
 }
 
 void runInserts(const RenderTrack &t, int frames, Scratch &s) DALNOK_NONBLOCKING {
     for (PluginProcessor *p : t.inserts) {
+        PluginProcessor::Tap *tap = p->tap.load(std::memory_order_acquire);
         raisePeaks(p->meterIn, s.trackL, s.trackR, frames);
+        if (tap) writeTap(tap->in, tap->pos, s.trackL, s.trackR, frames, false);
         p->process(s.trackL, s.trackR, frames, nullptr, 0);
         raisePeaks(p->meterOut, s.trackL, s.trackR, frames);
+        if (tap) writeTap(tap->out, tap->pos, s.trackL, s.trackR, frames, true);
     }
 }
 } // namespace

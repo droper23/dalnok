@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <complex>
 #include <cstdio>
 #include <cstdlib>
 #include <deque>
@@ -186,34 +187,52 @@ int channelEqCut(bool high, double hz, int slopeCode, double q, double sampleRat
 ChannelEq::ChannelEq(double sampleRate)
     : BuiltinProcessor("channel-eq", "Dalnok Channel EQ", channelEqParams()), sampleRate_(sampleRate), qShown_(channelEqQTable()) {}
 
-void ChannelEq::changed() DALNOK_NONBLOCKING {
+// Builds the cascade from parameter values read through `v` (the audio thread's copy, or the main thread's for the
+// response display). Returns the number of sections; `gain` is the master gain (linear).
+template <class Get>
+int ChannelEq::design(Get v, std::array<Biquad, kSections> &out, double &gain) const DALNOK_NONBLOCKING {
     int n = 0;
-    const bool couple = rt(kCouple) >= 0.5;
-    const int mode = static_cast<int>(std::lround(rt(kCoupleMode)));
+    const bool couple = v(kCouple) >= 0.5;
+    const int mode = static_cast<int>(std::lround(v(kCoupleMode)));
     // The cut bands run first and last, shelves and peaks in between (order does not change an LTI cascade).
-    if (rt(kLowCutOn) >= 0.5) {
+    for (const uint32_t base : {kLowCutOn, kHighCutOn}) {
+        if (v(base) < 0.5) continue;
         std::array<Biquad, 4> s{};
-        const int m = channelEqCut(false, rt(kLowCutFreq), static_cast<int>(std::lround(rt(kLowCutSlope))),
-                                   snapQ(qShown_, rt(kLowCutQ)), sampleRate_, s);
-        for (int i = 0; i < m && n < kSections; ++i) coef_[static_cast<size_t>(n++)] = s[static_cast<size_t>(i)];
+        const int m = channelEqCut(base == kHighCutOn, v(base + 1), static_cast<int>(std::lround(v(base + 2))),
+                                   snapQ(qShown_, v(base + 3)), sampleRate_, s);
+        for (int i = 0; i < m && n < kSections; ++i) out[static_cast<size_t>(n++)] = s[static_cast<size_t>(i)];
     }
-    for (uint32_t base : {kLowShelfOn, kHighShelfOn})
-        if (rt(base) >= 0.5 && rt(base + 2) != 0)
-            coef_[static_cast<size_t>(n++)] = channelEqShelf(base == kHighShelfOn, rt(base + 1), rt(base + 2),
-                                                             snapQ(qShown_, rt(base + 3)), sampleRate_);
+    for (const uint32_t base : {kLowShelfOn, kHighShelfOn})
+        if (v(base) >= 0.5 && v(base + 2) != 0 && n < kSections)
+            out[static_cast<size_t>(n++)] = channelEqShelf(base == kHighShelfOn, v(base + 1), v(base + 2), snapQ(qShown_, v(base + 3)), sampleRate_);
     for (uint32_t base = kPeak1On; base < kHighShelfOn; base += 4)
-        if (rt(base) >= 0.5 && rt(base + 2) != 0)
-            coef_[static_cast<size_t>(n++)] = channelEqPeak(rt(base + 1), rt(base + 2), snapQ(qShown_, rt(base + 3)),
-                                                            sampleRate_, couple, mode);
-    if (rt(kHighCutOn) >= 0.5) {
-        std::array<Biquad, 4> s{};
-        const int m = channelEqCut(true, rt(kHighCutFreq), static_cast<int>(std::lround(rt(kHighCutSlope))),
-                                   snapQ(qShown_, rt(kHighCutQ)), sampleRate_, s);
-        for (int i = 0; i < m && n < kSections; ++i) coef_[static_cast<size_t>(n++)] = s[static_cast<size_t>(i)];
-    }
+        if (v(base) >= 0.5 && v(base + 2) != 0 && n < kSections)
+            out[static_cast<size_t>(n++)] = channelEqPeak(v(base + 1), v(base + 2), snapQ(qShown_, v(base + 3)), sampleRate_, couple, mode);
+    gain = std::pow(10.0, v(kMasterGain) / 20.0);
+    return n;
+}
+
+void ChannelEq::changed() DALNOK_NONBLOCKING {
+    const int n = design([this](uint32_t id) DALNOK_NONBLOCKING { return rt(id); }, coef_, gain_);
     if (n != active_) for (auto &ch : state_) for (auto &st : ch) st = {};
     active_ = n;
-    gain_ = std::pow(10.0, rt(kMasterGain) / 20.0);
+}
+
+bool ChannelEq::response(const double *hz, int count, double *db) {
+    std::array<Biquad, kSections> c{};
+    double gain = 1;
+    const int n = design([this](uint32_t id) { return value(id); }, c, gain);
+    for (int i = 0; i < count; ++i) {
+        const double w = 2 * kPi * std::min(hz[i] / sampleRate_, 0.5);
+        const std::complex<double> z1 = std::polar(1.0, -w), z2 = z1 * z1;
+        double mag = gain;
+        for (int s = 0; s < n; ++s) {
+            const Biquad &q = c[static_cast<size_t>(s)];
+            mag *= std::abs((q.b0 + q.b1 * z1 + q.b2 * z2) / (1.0 + q.a1 * z1 + q.a2 * z2));
+        }
+        db[i] = 20 * std::log10(std::max(mag, 1e-12));
+    }
+    return true;
 }
 
 void ChannelEq::process(float *left, float *right, int frames, const PluginNote *, int) DALNOK_NONBLOCKING {

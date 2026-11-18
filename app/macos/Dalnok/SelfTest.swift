@@ -1548,6 +1548,19 @@ final class SelfTest {
             check(toggle.kind == .toggle && selector.kind == .selector && pressed == 1, "on/off parameters are push switches, short choices are selectors")
             check(Faceplate.legend("20000 Hz") == "20k" && Faceplate.legend("0.10") == "0.1", "scale legends are short (20k, 0.1)")
             check(!delay.inMeter.isHidden && !delay.outMeter.isHidden, "each unit shows input and output meters")
+            // Displays: a scope for the delay, a gain-reduction meter for the limiter, a response screen for EQs.
+            check(delay.displayKind == .scope && delay.display is ScopeScreen, "AUDelay gets an oscilloscope")
+            if let lim = panel.devices.last { check(lim.displayKind == .gainReduction && lim.display is GainReductionMeter, "AUPeakLimiter gets a gain-reduction meter") }
+            check(FaceplateDisplay.kind(name: "Dalnok Channel EQ", path: "channel-eq", instrument: false) == .response
+                  && FaceplateDisplay.kind(name: "AUNBandEQ", path: "aufx:nbeq:appl", instrument: false) == .response,
+                  "EQs get a response screen")
+            check(GainReductionMeter.position(0) == 0 && GainReductionMeter.position(20) == 1
+                  && GainReductionMeter.position(3) > 3.0 / 20, "the gain-reduction scale spreads its first few dB")
+            let gr = GainReductionMeter()
+            gr.update(reported: 6, inRms: 0, outRms: 0)
+            check(abs(gr.reductionDb - 6) < 1e-9, "a reported reduction drives the needle")
+            gr.update(reported: nil, inRms: 0.5, outRms: 0.5); gr.update(reported: nil, inRms: 0.5, outRms: 0.25)
+            check(abs(gr.reductionDb - 6.02) < 0.1, "otherwise the reduction is measured through the plug-in (\(gr.reductionDb) dB)")
             Faceplate.showMeters = false
             check(delay.inMeter.isHidden && delay.outMeter.isHidden, "Settings can turn the device meters off")
             Faceplate.showMeters = true

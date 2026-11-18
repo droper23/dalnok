@@ -743,6 +743,29 @@ DalnokStatus dalnok_meter_plugin(DalnokEngine *e, int32_t slot, float *il, float
     }
     return DALNOK_OK;
 }
+int32_t dalnok_plugin_tap(DalnokEngine *e, int32_t slot, float *in, float *out, int32_t frames) {
+    PluginProcessor *p = e ? e->impl.pluginInstance(slot) : nullptr;
+    if (!p || frames <= 0) return 0;
+    PluginProcessor::Tap *tap = p->tap.load(std::memory_order_acquire);
+    if (!tap) {
+        p->tapStorage = std::make_unique<PluginProcessor::Tap>();
+        p->tap.store(p->tapStorage.get(), std::memory_order_release);
+        return 0;
+    }
+    constexpr uint32_t size = PluginProcessor::Tap::kSize, mask = size - 1;
+    const uint32_t n = std::min<uint32_t>(static_cast<uint32_t>(frames), size);
+    const uint32_t end = tap->pos.load(std::memory_order_acquire), start = end - n;
+    for (uint32_t i = 0; i < n; ++i) {
+        if (in) in[i] = tap->in[(start + i) & mask].load(std::memory_order_relaxed);
+        if (out) out[i] = tap->out[(start + i) & mask].load(std::memory_order_relaxed);
+    }
+    return static_cast<int32_t>(n);
+}
+DalnokStatus dalnok_plugin_response(const DalnokEngine *e, int32_t slot, const double *hz, int32_t count, double *db) {
+    PluginProcessor *p = e ? e->impl.pluginInstance(slot) : nullptr;
+    if (!p || !hz || !db || count <= 0) return DALNOK_ERR_INVALID_ARG;
+    return p->response(hz, count, db) ? DALNOK_OK : DALNOK_ERR_NOT_FOUND;
+}
 void dalnok_meter_master(DalnokEngine *e, float *l, float *r) {
     float a = 0, b = 0;
     if (e) e->impl.readMasterMeter(a, b);
