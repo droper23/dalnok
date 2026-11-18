@@ -455,6 +455,7 @@ public:
         return true;
     }
 
+    std::string categories() const override { return subCategories_; }
     int32_t parameterCount() override { return controller_ ? controller_->getParameterCount() : 0; }
     bool parameter(int32_t index, PluginParameter &out) override {
         ParameterInfo info{};

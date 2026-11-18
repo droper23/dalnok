@@ -211,16 +211,26 @@ enum Faceplate {
         }
     }
 
-    /// A recessed readout window with the value in it.
+    /// A small display under each control: a recessed window holding a dot-matrix readout (5 × 7 dots per
+    /// character, every dot visible faintly when unlit, the lit ones glowing like a vacuum-fluorescent display).
     static func readoutWindow(_ ctx: CGContext, _ rect: CGRect, text: String) {
-        let path = CGPath(roundedRect: rect, cornerWidth: 2.5, cornerHeight: 2.5, transform: nil)
-        ctx.addPath(path); ctx.setFillColor(NSColor(white: 0.07, alpha: 0.85).cgColor); ctx.fillPath()
-        ctx.setStrokeColor(NSColor.white.withAlphaComponent(0.07).cgColor); ctx.setLineWidth(0.8)
-        ctx.move(to: CGPoint(x: rect.minX + 2, y: rect.maxY - 0.4)); ctx.addLine(to: CGPoint(x: rect.maxX - 2, y: rect.maxY - 0.4)); ctx.strokePath()
-        let para = NSMutableParagraphStyle(); para.alignment = .center; para.lineBreakMode = .byTruncatingTail
-        (text as NSString).draw(with: rect.insetBy(dx: 2, dy: 1).offsetBy(dx: 0, dy: 0.5), options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine],
-                                attributes: [.font: Theme.mono(9), .foregroundColor: readout, .paragraphStyle: para])
+        let frame = CGPath(roundedRect: rect, cornerWidth: 2.5, cornerHeight: 2.5, transform: nil)
+        ctx.addPath(frame); ctx.setFillColor(NSColor(white: 0.03, alpha: 1).cgColor); ctx.fillPath()
+        let screen = rect.insetBy(dx: 1.5, dy: 1.5)
+        ctx.saveGState()
+        ctx.addPath(CGPath(roundedRect: screen, cornerWidth: 1.5, cornerHeight: 1.5, transform: nil)); ctx.clip()
+        ctx.setFillColor(NSColor(srgbRed: 0.010, green: 0.045, blue: 0.040, alpha: 1).cgColor); ctx.fill(screen)
+        DotMatrix.draw(ctx, text, in: screen.insetBy(dx: 1.5, dy: 1.2), color: dotColor)
+        // Glass: a faint sheen across the top half and a shadow under the bezel's top edge.
+        ctx.setFillColor(NSColor.white.withAlphaComponent(0.045).cgColor)
+        ctx.fill(CGRect(x: screen.minX, y: screen.minY, width: screen.width, height: screen.height * 0.45))
+        ctx.setFillColor(NSColor.black.withAlphaComponent(0.5).cgColor); ctx.fill(CGRect(x: screen.minX, y: screen.minY, width: screen.width, height: 0.8))
+        ctx.restoreGState()
+        // Lip of the cut-out: dark above, a catch of light below.
+        ctx.setStrokeColor(NSColor.white.withAlphaComponent(0.09).cgColor); ctx.setLineWidth(0.8)
+        ctx.move(to: CGPoint(x: rect.minX + 2, y: rect.maxY + 0.4)); ctx.addLine(to: CGPoint(x: rect.maxX - 2, y: rect.maxY + 0.4)); ctx.strokePath()
     }
+    static let dotColor = NSColor(srgbRed: 0.47, green: 0.98, blue: 0.84, alpha: 1)
 }
 
 // MARK: A parameter on the faceplate
@@ -694,5 +704,105 @@ final class PlateButton: NSButton {
             ctx.move(to: CGPoint(x: rect.minX, y: top - 0.8)); ctx.addLine(to: CGPoint(x: rect.maxX, y: top - 0.8))
             ctx.strokePath(); ctx.restoreGState()
         }
+    }
+}
+
+/// A 5 × 7 dot-matrix character set (upper case, digits and the symbols parameter values use) and its renderer.
+@MainActor
+enum DotMatrix {
+    /// Rows top to bottom; bit 4 is the leftmost dot.
+    static let glyphs: [Character: [UInt8]] = [
+        "0": [0b01110, 0b10001, 0b10011, 0b10101, 0b11001, 0b10001, 0b01110],
+        "1": [0b00100, 0b01100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110],
+        "2": [0b01110, 0b10001, 0b00001, 0b00010, 0b00100, 0b01000, 0b11111],
+        "3": [0b11111, 0b00010, 0b00100, 0b00010, 0b00001, 0b10001, 0b01110],
+        "4": [0b00010, 0b00110, 0b01010, 0b10010, 0b11111, 0b00010, 0b00010],
+        "5": [0b11111, 0b10000, 0b11110, 0b00001, 0b00001, 0b10001, 0b01110],
+        "6": [0b00110, 0b01000, 0b10000, 0b11110, 0b10001, 0b10001, 0b01110],
+        "7": [0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b01000, 0b01000],
+        "8": [0b01110, 0b10001, 0b10001, 0b01110, 0b10001, 0b10001, 0b01110],
+        "9": [0b01110, 0b10001, 0b10001, 0b01111, 0b00001, 0b00010, 0b01100],
+        "A": [0b01110, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001],
+        "B": [0b11110, 0b10001, 0b10001, 0b11110, 0b10001, 0b10001, 0b11110],
+        "C": [0b01110, 0b10001, 0b10000, 0b10000, 0b10000, 0b10001, 0b01110],
+        "D": [0b11100, 0b10010, 0b10001, 0b10001, 0b10001, 0b10010, 0b11100],
+        "E": [0b11111, 0b10000, 0b10000, 0b11110, 0b10000, 0b10000, 0b11111],
+        "F": [0b11111, 0b10000, 0b10000, 0b11110, 0b10000, 0b10000, 0b10000],
+        "G": [0b01110, 0b10001, 0b10000, 0b10111, 0b10001, 0b10001, 0b01111],
+        "H": [0b10001, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001],
+        "I": [0b01110, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110],
+        "J": [0b00111, 0b00010, 0b00010, 0b00010, 0b00010, 0b10010, 0b01100],
+        "K": [0b10001, 0b10010, 0b10100, 0b11000, 0b10100, 0b10010, 0b10001],
+        "L": [0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b11111],
+        "M": [0b10001, 0b11011, 0b10101, 0b10101, 0b10001, 0b10001, 0b10001],
+        "N": [0b10001, 0b10001, 0b11001, 0b10101, 0b10011, 0b10001, 0b10001],
+        "O": [0b01110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110],
+        "P": [0b11110, 0b10001, 0b10001, 0b11110, 0b10000, 0b10000, 0b10000],
+        "Q": [0b01110, 0b10001, 0b10001, 0b10001, 0b10101, 0b10010, 0b01101],
+        "R": [0b11110, 0b10001, 0b10001, 0b11110, 0b10100, 0b10010, 0b10001],
+        "S": [0b01111, 0b10000, 0b10000, 0b01110, 0b00001, 0b00001, 0b11110],
+        "T": [0b11111, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100],
+        "U": [0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110],
+        "V": [0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01010, 0b00100],
+        "W": [0b10001, 0b10001, 0b10001, 0b10101, 0b10101, 0b10101, 0b01010],
+        "X": [0b10001, 0b10001, 0b01010, 0b00100, 0b01010, 0b10001, 0b10001],
+        "Y": [0b10001, 0b10001, 0b10001, 0b01010, 0b00100, 0b00100, 0b00100],
+        "Z": [0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b10000, 0b11111],
+        " ": [0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000],
+        ".": [0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b01100, 0b01100],
+        "-": [0b00000, 0b00000, 0b00000, 0b11111, 0b00000, 0b00000, 0b00000],
+        "+": [0b00000, 0b00100, 0b00100, 0b11111, 0b00100, 0b00100, 0b00000],
+        "%": [0b11000, 0b11001, 0b00010, 0b00100, 0b01000, 0b10011, 0b00011],
+        "/": [0b00000, 0b00001, 0b00010, 0b00100, 0b01000, 0b10000, 0b00000],
+        ":": [0b00000, 0b01100, 0b01100, 0b00000, 0b01100, 0b01100, 0b00000],
+        "(": [0b00010, 0b00100, 0b01000, 0b01000, 0b01000, 0b00100, 0b00010],
+        ")": [0b01000, 0b00100, 0b00010, 0b00010, 0b00010, 0b00100, 0b01000],
+        "°": [0b01100, 0b10010, 0b10010, 0b01100, 0b00000, 0b00000, 0b00000],
+        ",": [0b00000, 0b00000, 0b00000, 0b00000, 0b01100, 0b00100, 0b01000],
+        "=": [0b00000, 0b00000, 0b11111, 0b00000, 0b11111, 0b00000, 0b00000],
+        "?": [0b01110, 0b10001, 0b00001, 0b00010, 0b00100, 0b00000, 0b00100],
+        "#": [0b01010, 0b01010, 0b11111, 0b01010, 0b11111, 0b01010, 0b01010],
+        "…": [0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b10101]
+    ]
+
+    /// The glyph for a character: lower case as upper case, unknown characters as "?".
+    static func glyph(_ c: Character) -> [UInt8] {
+        if let g = glyphs[c] { return g }
+        let mapped: Character = c == "\u{2212}" ? "-" : c == "\u{00B5}" ? "U" : Character(String(c).uppercased())
+        return glyphs[mapped] ?? glyphs["?"]!
+    }
+
+    /// Draws `text` across a row of character cells filling `rect` (flipped context), centred; the dot pitch shrinks for
+    /// long values and very long ones end in "…". Every cell shows its unlit dots.
+    static func draw(_ ctx: CGContext, _ text: String, in rect: CGRect, color: NSColor) {
+        var chars = Array(text)
+        var pitch = min(1.15, rect.height / 7)
+        var cells = max(1, Int((rect.width + pitch) / (6 * pitch)))
+        if chars.count > cells {
+            pitch = max(0.72, rect.width / CGFloat(chars.count * 6 - 1))
+            cells = max(1, Int((rect.width + pitch) / (6 * pitch) + 0.001))
+            if chars.count > cells { chars = Array(chars.prefix(cells - 1)) + ["…"] }
+        }
+        let dot = pitch * 0.8
+        let used = CGFloat(cells * 6 - 1) * pitch
+        let x0 = rect.midX - used / 2, y0 = rect.midY - 3.5 * pitch
+        let first = (cells - chars.count) / 2
+        let ghost = color.withAlphaComponent(0.07).cgColor
+        let lit = CGMutablePath(), off = CGMutablePath()
+        for cell in 0..<cells {
+            let i = cell - first
+            let g = i >= 0 && i < chars.count ? glyph(chars[i]) : glyphs[" "]!
+            for (r, bits) in g.enumerated() {
+                for col in 0..<5 {
+                    let d = CGRect(x: x0 + CGFloat(cell * 6 + col) * pitch, y: y0 + CGFloat(r) * pitch, width: dot, height: dot)
+                    if bits & (0b10000 >> UInt8(col)) != 0 { lit.addEllipse(in: d) } else { off.addEllipse(in: d) }
+                }
+            }
+        }
+        ctx.addPath(off); ctx.setFillColor(ghost); ctx.fillPath()
+        ctx.saveGState()
+        ctx.setShadow(offset: .zero, blur: 2.2, color: color.withAlphaComponent(0.85).cgColor)
+        ctx.addPath(lit); ctx.setFillColor(color.cgColor); ctx.fillPath()
+        ctx.restoreGState()
     }
 }

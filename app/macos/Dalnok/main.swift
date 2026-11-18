@@ -40,10 +40,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let args = Array(CommandLine.arguments.dropFirst())
         func value(_ flag: String) -> String? { args.firstIndex(of: flag).flatMap { $0 + 1 < args.count ? args[$0 + 1] : nil } }
-        let flagValues = Set(["--snapshot", "--selftest", "--screenshots", "--plugin-snapshot", "--uiwalk"].compactMap(value))
+        let flagValues = Set(["--snapshot", "--selftest", "--screenshots", "--plugin-snapshot", "--uiwalk", "--plugin-report"].compactMap(value))
         let files = args.filter { !$0.hasPrefix("-") && !flagValues.contains($0) }.map { URL(fileURLWithPath: $0) }
         let snapshot = value("--snapshot").map { URL(fileURLWithPath: $0) }
 
+        // Developer check: --plugin-report <out.tsv> lists every installed plug-in with its declared categories, the
+        // browser category Dalnok gives it and the faceplate display it gets, then quits.
+        if let out = value("--plugin-report") {
+            print("plugin report: \(PluginManagerController.writeReport(to: out)) plug-ins -> \(out)")
+            exit(0)
+        }
         // Developer check: --plugin-snapshot <bundle.vst3> <out.png> opens the plug-in's editor and captures it.
         if let i = args.firstIndex(of: "--plugin-snapshot"), i + 2 < args.count {
             let bundle = args[i + 1], out = URL(fileURLWithPath: args[i + 2])
@@ -96,7 +102,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self else { return }
             if args.contains("--play") { engine.play() }
             if let snapshot {
-                DispatchQueue.main.asyncAfter(deadline: .now() + (args.contains("--play") ? 1.5 : 0.4)) {
+                let wait = Double(ProcessInfo.processInfo.environment["DALNOK_SNAPSHOT_DELAY"] ?? "") ?? (args.contains("--play") ? 1.5 : 0.4) // seconds
+                DispatchQueue.main.asyncAfter(deadline: .now() + wait) {
                     do { try self.main.snapshot(to: snapshot); print("snapshot: \(snapshot.path)") }
                     catch { print("snapshot failed: \(error)") }
                     let s = self.engine.stats()

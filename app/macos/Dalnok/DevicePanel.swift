@@ -313,6 +313,8 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
     private var displaySize: [NSLayoutConstraint] = []
     private var analyzer: SpectrumAnalyzer?
     private var tick = 0
+    private var instrument = false
+    private weak var faceRow: NSStackView?
     private let path: String
     private let power = PlateButton(title: "", label: "")
     var bypassed: Bool { session.pluginBypassed(trackId, slot) }
@@ -399,31 +401,20 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         sectionsRow.orientation = .horizontal
         sectionsRow.alignment = .top
         sectionsRow.spacing = 6
+        self.instrument = instrument
         if !Analog.on && loaded {
-            displayKind = FaceplateDisplay.kind(name: name, path: path, instrument: instrument)
-            let d: NSView = switch displayKind {
-            case .gainReduction: MovingCoilMeter(mode: .gainReduction)
-            case .vu: MovingCoilMeter(mode: .output)
-            case .response: ResponseScreen()
-            case .transfer: TransferScreen()
-            case .history: HistoryScreen()
-            case .goniometer: GoniometerScreen()
-            case .analyzer: LedAnalyzer()
-            case .scope: ScopeScreen()
-            }
-            (d as? ResponseScreen)?.tint = color.blended(withFraction: 0.35, of: .white) ?? color
-            (d as? HistoryScreen)?.tint = color.blended(withFraction: 0.35, of: .white) ?? color
-            d.translatesAutoresizingMaskIntoConstraints = false
-            display = d
+            loadParameters()
+            display = makeDisplay(automaticKind())
         }
         let faceRow = NSStackView(views: [inMeter] + (display.map { [$0] } ?? []) + [sectionsRow, NSView(), outMeter])
+        self.faceRow = faceRow
         faceRow.alignment = .centerY
         faceRow.spacing = 8
         for m in [inMeter, outMeter] {
             m.translatesAutoresizingMaskIntoConstraints = false
             m.widthAnchor.constraint(equalToConstant: FaceplateMeter.width).isActive = true
             m.heightAnchor.constraint(equalToConstant: 118).isActive = true
-            m.isHidden = !(loaded && Faceplate.showMeters)
+            m.isHidden = !(loaded && Faceplate.showMeters) || (m === inMeter && instrument) // an instrument has no audio input
         }
         let body = NSStackView(views: pedal.map { [header, $0] } ?? [header, above, faceRow, below])
         body.orientation = .vertical
@@ -594,6 +585,7 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
 
     func applyMeterSetting() {
         for m in [inMeter, outMeter] { m.isHidden = !(loaded && Faceplate.showMeters) }
+        if instrument { inMeter.isHidden = true } // an instrument has no audio input
     }
 
     /// Graphite: reads this unit's levels and feeds its meters and display (called every frame while the panel shows).
@@ -680,6 +672,50 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
             let n = Int(dalnok_plugin_tap(h, slot, nil, &outBuf, 2_048))
             if n == 2_048, outBuf.contains(where: { abs($0) > 1e-5 }) { scope.push(outBuf) } else { scope.clear() }
         }
+    }
+
+    /// The display this plug-in gets (FaceplateDisplay.kind): the owner's choice, else what it declares, its
+    /// parameters, then its name.
+    func automaticKind() -> FaceplateDisplay.Kind {
+        var buf = [CChar](repeating: 0, count: 1_024)
+        dalnok_plugin_categories(session.engine.handle, slot, &buf, buf.count)
+        let declared = String(decoding: buf.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self).split(separator: "|").map(String.init)
+        return FaceplateDisplay.kind(name: title.stringValue, path: path, instrument: instrument, declared: declared,
+                                     parameters: allParameters.map { fixedString($0.title) })
+    }
+
+    private func makeDisplay(_ kind: FaceplateDisplay.Kind) -> NSView {
+        displayKind = kind
+        analyzer = nil
+        let d: NSView = switch kind {
+        case .gainReduction: MovingCoilMeter(mode: .gainReduction)
+        case .vu: MovingCoilMeter(mode: .output)
+        case .response: ResponseScreen()
+        case .transfer: TransferScreen()
+        case .history: HistoryScreen()
+        case .goniometer: GoniometerScreen()
+        case .analyzer: LedAnalyzer()
+        case .scope: ScopeScreen()
+        }
+        (d as? ResponseScreen)?.tint = color.blended(withFraction: 0.35, of: .white) ?? color
+        (d as? HistoryScreen)?.tint = color.blended(withFraction: 0.35, of: .white) ?? color
+        d.translatesAutoresizingMaskIntoConstraints = false
+        return d
+    }
+
+    /// Right-click ▸ Display: replaces the unit's display and remembers the choice for this plug-in (nil: automatic).
+    func chooseDisplay(_ kind: FaceplateDisplay.Kind?) {
+        FaceplateDisplay.setOverride(title.stringValue, kind)
+        guard let row = faceRow, let old = display, let i = row.arrangedSubviews.firstIndex(of: old) else { return }
+        NSLayoutConstraint.deactivate(displaySize)
+        old.removeFromSuperview()
+        let d = makeDisplay(kind ?? automaticKind())
+        display = d
+        row.insertArrangedSubview(d, at: i)
+        let rows = knobs.count > 6 ? 2 : 1
+        let size = FaceplateDisplay.size(displayKind, rows: rows)
+        displaySize = [d.widthAnchor.constraint(equalToConstant: size.width), d.heightAnchor.constraint(equalToConstant: size.height)]
+        NSLayoutConstraint.activate(displaySize)
     }
 
     /// Dalnok Channel EQ's enabled bands, numbered like its sections (1 low cut … 8 high cut), for the screen.
@@ -806,6 +842,14 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         m.addItem(item("Move Right (Later in Chain)", { [weak self] in self?.onMove?(1) }, enabled: i < chain.count - 1))
         m.addItem(item("Remove Plug-in", { [weak self] in guard let self else { return }; self.session.removePlugin(self.trackId, self.slot) }))
         if pedal != nil { m.addItem(.separator()); pedalLookItems(m) }
+        if display != nil {
+            m.addItem(.separator())
+            let sub = NSMenu(), chosen = FaceplateDisplay.override(title.stringValue)
+            sub.addItem(item("Automatic", { [weak self] in self?.chooseDisplay(nil) }, on: chosen == nil))
+            sub.addItem(.separator())
+            for k in FaceplateDisplay.Kind.allCases { sub.addItem(item(k.title, { [weak self] in self?.chooseDisplay(k) }, on: chosen == k)) }
+            let parent = NSMenuItem(title: "Display", action: nil, keyEquivalent: ""); parent.submenu = sub; m.addItem(parent)
+        }
         return m
     }
     override func menu(for event: NSEvent) -> NSMenu? { deviceMenu() }

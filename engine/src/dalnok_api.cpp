@@ -775,6 +775,12 @@ int32_t dalnok_plugin_tap_stereo(DalnokEngine *e, int32_t slot, float *left, flo
     }
     return static_cast<int32_t>(n);
 }
+size_t dalnok_plugin_categories(const DalnokEngine *e, int32_t slot, char *text, size_t len) {
+    PluginProcessor *p = e ? e->impl.pluginInstance(slot) : nullptr;
+    const std::string c = p ? p->categories() : std::string();
+    if (text && len) snprintf(text, len, "%s", c.c_str());
+    return c.size();
+}
 DalnokStatus dalnok_plugin_response(const DalnokEngine *e, int32_t slot, const double *hz, int32_t count, double *db) {
     PluginProcessor *p = e ? e->impl.pluginInstance(slot) : nullptr;
     if (!p || !hz || !db || count <= 0) return DALNOK_ERR_INVALID_ARG;

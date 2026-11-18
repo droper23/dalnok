@@ -35,6 +35,9 @@ public:
     virtual uint32_t latency() const = 0;  // frames
     virtual const std::string &name() const = 0;
     virtual const std::string &vendor() const = 0;
+    // What the plug-in declares it is, '|'-separated: VST3 subcategories, CLAP features, Audio Unit tags, or a
+    // built-in's category. Empty when it declares nothing.
+    virtual std::string categories() const { return {}; }
     virtual const std::string &classId() const = 0; // hex
     // Processes in place: effects read left/right, instruments overwrite them. frames <= kMaxBlock.
     // Calls into plugin code, which cannot be checked for real-time safety (ADR-0009).

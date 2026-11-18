@@ -178,6 +178,8 @@ private func cascade(_ x: [Float], _ sections: [([Double], [Double])]) -> [Doubl
     @Test func channelEqDescribesAnyValue() {
         let (e, t) = audioSession(); defer { dalnok_engine_destroy(e) }
         let slot = dalnok_plugin_add(e, t, "dalnok:channel-eq", nil, nil, 0)
+        var cats = [CChar](repeating: 0, count: 64)
+        #expect(dalnok_plugin_categories(e, slot, &cats, 64) == 5 && cstr(cats) == "Fx|EQ", "declares \(cstr(cats))")
         var text = [CChar](repeating: 0, count: 64)
         #expect(dalnok_plugin_parameter_text(e, slot, 1, 1, &text, 64) == DALNOK_OK && cstr(text) == "20000") // low cut Hz
         #expect(dalnok_plugin_parameter_text(e, slot, 2, 0.5, &text, 64) == DALNOK_OK && cstr(text) == "24 dB/Oct")

@@ -9,36 +9,91 @@ import AppKit
 
 @MainActor
 enum FaceplateDisplay {
-    enum Kind: Equatable { case gainReduction, vu, response, transfer, history, goniometer, analyzer, scope }
+    enum Kind: String, CaseIterable, Equatable {
+        case gainReduction, vu, response, transfer, history, goniometer, analyzer, scope
+        var title: String {
+            switch self {
+            case .gainReduction: "Gain-Reduction Meter"
+            case .vu: "VU Meter"
+            case .response: "EQ Response"
+            case .transfer: "Transfer Curve"
+            case .history: "Level History"
+            case .goniometer: "Goniometer"
+            case .analyzer: "Spectrum Analyzer"
+            case .scope: "Oscilloscope"
+            }
+        }
+    }
 
-    static func kind(name: String, path: String, instrument: Bool) -> Kind {
+    /// The display a plug-in gets. In order: the owner's choice for that plug-in; what the plug-in declares (VST3
+    /// subcategories, CLAP features, Audio Unit tags and Apple subtypes); what its parameters say it does; its name.
+    /// Every step is a fixed rule, so any plug-in, known or not, gets the same answer every time.
+    static func kind(name: String, path: String, instrument: Bool, declared: [String] = [], parameters: [String] = []) -> Kind {
+        if let chosen = override(name) { return chosen }
         if instrument { return .scope }
         let parts = path.split(separator: ":")
         let format = parts.count == 3 && parts.allSatisfy({ $0.count == 4 }) ? "AU" : path.hasSuffix(".clap") ? "CLAP" : "VST3"
-        let c = PluginTaxonomy.classify(name: name, kind: "effect", format: format, path: path, categories: declared[path] ?? []).category
-        switch c {
-        case "Compression", "Limiting", "Gate / Expander": return .gainReduction
-        case "EQ", "Filtering": return .response
-        case "Distortion / Saturation": return .transfer
-        case "Reverb", "Delay / Echo": return .history
-        case "Chorus / Flanger / Phaser", "Modulation", "Stereo Imaging", "Spatial Audio": return .goniometer
-        case "Pitch / Time", "Restoration / Noise Reduction", "Metering / Analysis": return .analyzer
-        case "Utility / Gain": return .vu
-        default: return .scope
+        let cats = declared.isEmpty ? (Self.declared[path] ?? []) : declared
+        // The same classification the plug-in browser shows (declaration first, then name).
+        let category = PluginTaxonomy.classify(name: name, kind: "effect", format: format, path: path, categories: cats).category
+        let weak = category == "Other Effects"
+            || category == "Utility / Gain" && PluginTaxonomy.classify(name: name, kind: "effect", format: format, path: path, categories: []).category == "Other Effects"
+        if !weak { return kind(category: category) }
+        // Nothing specific declared or in the name: the parameters decide.
+        return kind(parameters: parameters) ?? kind(category: category)
+    }
+
+    static func kind(category: String) -> Kind {
+        switch category {
+        case "Compression", "Limiting", "Gate / Expander": .gainReduction
+        case "EQ", "Filtering": .response
+        case "Distortion / Saturation": .transfer
+        case "Reverb", "Delay / Echo": .history
+        case "Chorus / Flanger / Phaser", "Modulation", "Stereo Imaging", "Spatial Audio": .goniometer
+        case "Pitch / Time", "Restoration / Noise Reduction", "Metering / Analysis": .analyzer
+        case "Utility / Gain": .vu
+        default: .scope
         }
+    }
+
+    /// What a plug-in's parameter names say it does, when it declares nothing specific. Nil if they don't say.
+    static func kind(parameters titles: [String]) -> Kind? {
+        let t = titles.map { $0.lowercased() }
+        func count(_ keys: [String]) -> Int { t.filter { title in keys.contains { title.contains($0) } }.count }
+        func any(_ keys: [String]) -> Bool { count(keys) > 0 }
+        if any(["threshold", "ceiling"]) && any(["ratio", "attack", "release", "knee", "ceiling", "range", "hold"]) { return .gainReduction }
+        if count(["freq", "hz"]) >= 2 && count(["gain", " db"]) >= 2 || any(["cutoff"]) && any(["resonance", "reso", " q"]) { return .response }
+        if count(["decay", "room", "size", "pre-delay", "predelay", "diffusion", "damping", "reverb", "early", "late"]) >= 2 { return .history }
+        // Modulation before delay: flangers and choruses have delay and feedback controls too.
+        if any(["rate", "speed"]) && any(["depth", "intensity", "amount"]) || any(["width", "spread", "stereo"]) { return .goniometer }
+        if any(["delay time", "echo"]) || any(["time", "delay"]) && any(["feedback"]) { return .history }
+        if any(["drive", "saturat", "distort", "fuzz", "overdrive", "crush", "bias"]) { return .transfer }
+        if any(["pitch", "semitone", "transpose", "formant", "cents"]) { return .analyzer }
+        if !t.isEmpty && t.count <= 4 && t.allSatisfy({ ["gain", "trim", "volume", "pan", "balance", "polarity", "phase", "mute"].contains(where: $0.contains) }) { return .vu }
+        return nil
+    }
+
+    /// The owner's choice of display for a plug-in (right-click a unit ▸ Display). Nil: automatic.
+    static func override(_ name: String) -> Kind? {
+        UserDefaults.standard.string(forKey: "faceplate.display." + name).flatMap(Kind.init(rawValue:))
+    }
+    static func setOverride(_ name: String, _ kind: Kind?) {
+        UserDefaults.standard.set(kind?.rawValue, forKey: "faceplate.display." + name)
     }
 
     /// Categories plug-ins declare (VST3 subcategories, CLAP features), from the plug-in metadata, by path. Read once.
     static let declared: [String: [String]] = {
-        let n = dalnok_plugins_scan(nil, false, nil, 0)
+        let n = dalnok_plugins_scan(nil, true, nil, 0)
         guard n > 0 else { return [:] }
         var buf = [CChar](repeating: 0, count: n + 1)
-        dalnok_plugins_scan(nil, false, &buf, buf.count)
+        dalnok_plugins_scan(nil, true, &buf, buf.count)
+        var merged: [String: [String]] = PluginManagerController.cachedCategories().reduce(into: [:]) { out, e in
+            if let colon = e.key.firstIndex(of: ":") { out[String(e.key[e.key.index(after: colon)...])] = e.value }
+        }
         let text = String(decoding: buf.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
         let list = (try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [[String: Any]] ?? []
-        var out: [String: [String]] = [:]
-        for p in list { if let path = p["path"] as? String, let c = p["categories"] as? [String], !c.isEmpty { out[path] = c } }
-        return out
+        for p in list { if let path = p["path"] as? String, let c = p["categories"] as? [String], !c.isEmpty { merged[path] = c } }
+        return merged
     }()
 
     /// Display size for a unit whose controls take `rows` rows.
@@ -481,6 +536,7 @@ final class ResponseScreen: NSView {
 @MainActor
 final class ScopeScreen: NSView {
     private var traces: [[Float]] = [] // newest last
+    private(set) var gain: Float = 1    // automatic vertical scale (volts per division), so quiet signals still fill the screen
     override var isFlipped: Bool { true }
     static let phosphor = NSColor(srgbRed: 0.50, green: 1.0, blue: 0.70, alpha: 1)
 
@@ -502,6 +558,8 @@ final class ScopeScreen: NSView {
         // Trigger: the latest rising zero crossing that still leaves a full sweep after it.
         var i = samples.count - span - 1
         while i > 1 { if samples[i - 1] <= 0 && samples[i] > 0 { start = i; break }; i -= 1 }
+        let peak = samples.map(abs).max() ?? 0
+        gain += (min(16, max(1, 0.8 / max(peak, 1e-4))) - gain) * 0.25
         traces.append(Array(samples[start..<min(samples.count, start + span)]))
         if traces.count > 4 { traces.removeFirst() }
         needsDisplay = true
@@ -537,7 +595,7 @@ final class ScopeScreen: NSView {
             let path = CGMutablePath()
             for (i, v) in t.enumerated() {
                 let pt = CGPoint(x: window.minX + window.width * CGFloat(i) / CGFloat(max(1, t.count - 1)),
-                                 y: window.midY - window.height * 0.45 * CGFloat(max(-1, min(1, v))))
+                                 y: window.midY - window.height * 0.45 * CGFloat(max(-1, min(1, v * gain))))
                 if i == 0 { path.move(to: pt) } else { path.addLine(to: pt) }
             }
             ctx.saveGState()

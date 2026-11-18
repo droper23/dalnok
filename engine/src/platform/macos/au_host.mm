@@ -9,6 +9,7 @@
 #import <AppKit/AppKit.h>
 #import <AudioToolbox/AudioToolbox.h>
 #import <AudioUnit/AUCocoaUIView.h>
+#import <AVFoundation/AVFoundation.h>
 #include <atomic>
 #include <map>
 #include <mutex>
@@ -48,6 +49,10 @@ public:
         if (AudioComponentInstanceNew(comp, &unit_) != noErr || !unit_) { err = "cannot create the Audio Unit"; return false; }
         classId_ = id;
         instrument_ = desc.componentType == kAudioUnitType_MusicDevice;
+        // The system's tags for the component ("Delay", "Dynamics", "EQ"…) and its type name.
+        AVAudioUnitComponent *info = [[[AVAudioUnitComponentManager sharedAudioUnitComponentManager] componentsMatchingDescription:desc] firstObject];
+        for (NSString *tag in info.allTagNames) categories_ += (categories_.empty() ? "" : "|") + std::string(tag.UTF8String);
+        if (info.typeName.length) categories_ += (categories_.empty() ? "" : "|") + std::string(info.typeName.UTF8String);
         CFStringRef name = nullptr;
         if (AudioComponentCopyName(comp, &name) == noErr && name) {
             NSString *full = (__bridge NSString *)name;
@@ -218,6 +223,7 @@ public:
         out = format(pi, pi.minValue + std::clamp(normalized, 0.0, 1.0) * (pi.maxValue - pi.minValue));
         return true;
     }
+    std::string categories() const override { return categories_; }
     int32_t parameterCount() override { return static_cast<int32_t>(ids().size()); }
     bool parameter(int32_t index, PluginParameter &out) override {
         const auto list = ids();
@@ -312,7 +318,7 @@ private:
     AudioComponentInstance unit_ = nullptr;
     AudioTimeStamp time_{};
     std::vector<float> inL_, inR_;
-    std::string name_, vendor_, classId_;
+    std::string name_, vendor_, classId_, categories_;
     std::string stateError_;
     bool instrument_ = false, sidechain_ = false;
     SpscQueue<ParamChange, 1024> changes_;

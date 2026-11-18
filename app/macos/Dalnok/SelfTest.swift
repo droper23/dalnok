@@ -1553,14 +1553,31 @@ final class SelfTest {
             if let lim = panel.devices.last {
                 check(lim.displayKind == .gainReduction && (lim.display as? MovingCoilMeter)?.mode == .gainReduction, "AUPeakLimiter gets a gain-reduction meter")
             }
-            let kinds: [(String, String, FaceplateDisplay.Kind)] = [
+            var kinds: [(String, String, FaceplateDisplay.Kind)] = [
                 ("Dalnok Channel EQ", "channel-eq", .response), ("AUNBandEQ", "aufx:nbeq:appl", .response), ("AUHipass", "aufx:hpas:appl", .response),
                 ("AUDynamicsProcessor", "aufx:dcmp:appl", .gainReduction), ("AUMultibandCompressor", "aufx:mcmp:appl", .gainReduction),
                 ("AUDistortion", "aufx:dist:appl", .transfer), ("AUMatrixReverb", "aufx:mrev:appl", .history), ("AUDelay", "aufx:dely:appl", .history),
                 ("Stereo Chorus", "", .goniometer), ("Wide Imager", "", .goniometer), ("MFlanger", "", .goniometer), ("MCompressor", "", .gainReduction), ("AUPitch", "aufx:tmpt:appl", .analyzer),
                 ("Spectrum Analyzer", "", .analyzer), ("Gain Utility", "", .vu), ("Mystery Box", "", .scope)]
+            let named: [(String, String, FaceplateDisplay.Kind)] = [("MDelay", "", .history), ("MAutoDynamicEq", "", .response), ("kHs Haas", "", .goniometer),
+                ("T-De-Esser 2", "", .gainReduction), ("MStereoExpander", "", .goniometer), ("MCharmVerb", "", .history), ("kHs Ring Mod", "", .goniometer),
+                ("MWaveShaper", "", .transfer), ("MAnalyzer", "", .analyzer)]
+            kinds += named
             let wrong = kinds.filter { FaceplateDisplay.kind(name: $0.0, path: $0.1, instrument: false) != $0.2 }.map(\.0)
             check(wrong.isEmpty, "every category gets its display (wrong: \(wrong))")
+            // Plug-ins that declare nothing specific and have unhelpful names: their parameters decide.
+            let byParams: [([String], FaceplateDisplay.Kind?)] = [
+                (["Input", "Threshold", "Ratio", "Attack", "Release"], .gainReduction), (["Low Freq", "Low Gain", "High Freq", "High Gain"], .response),
+                (["Decay", "Size", "Pre-Delay", "Mix"], .history), (["Time", "Feedback", "Mix"], .history),
+                (["Rate", "Depth", "Feedback", "Delay"], .goniometer), (["Drive", "Tone", "Output"], .transfer),
+                (["Pitch", "Mix"], .analyzer), (["Gain", "Pan"], .vu), (["Foo", "Bar"], nil)]
+            let paramWrong = byParams.filter { FaceplateDisplay.kind(parameters: $0.0) != $0.1 }.map { $0.0.joined(separator: "/") }
+            check(paramWrong.isEmpty, "parameter names choose the display when nothing else says (wrong: \(paramWrong))")
+            check(FaceplateDisplay.kind(name: "Couture", path: "", instrument: false, declared: ["Fx"], parameters: ["Attack", "Sustain", "Threshold", "Ratio"])
+                  == .gainReduction, "a plug-in declaring only Fx is sorted by its parameters")
+            FaceplateDisplay.setOverride("Mystery Box", .goniometer)
+            check(FaceplateDisplay.kind(name: "Mystery Box", path: "", instrument: false) == .goniometer, "an owner's display choice wins and is remembered")
+            FaceplateDisplay.setOverride("Mystery Box", nil)
             check(MovingCoilMeter.position(3) == 1 && abs(MovingCoilMeter.position(0) - 0.708) < 0.001
                   && abs(MovingCoilMeter.position(-20) - 0.0708) < 0.001, "the VU scale is proportional to voltage (0 VU about two-thirds across)")
             let gr = MovingCoilMeter(mode: .gainReduction)

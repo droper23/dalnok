@@ -213,6 +213,9 @@ int32_t dalnok_plugin_tap(DalnokEngine *engine, int32_t slot, float *in, float *
 int32_t dalnok_plugin_tap_stereo(DalnokEngine *engine, int32_t slot, float *left, float *right, int32_t frames);
 /* Exact magnitude response (dB) at `count` frequencies, for plug-ins that can compute it (Dalnok's EQs).
  * DALNOK_ERR_NOT_FOUND otherwise. Main thread. */
+/* What a loaded plug-in declares it is, '|'-separated (VST3 subcategories such as "Fx|Dynamics", CLAP features,
+ * Audio Unit tags, a built-in's category). Returns the full length; empty when it declares nothing. Main thread. */
+size_t dalnok_plugin_categories(const DalnokEngine *engine, int32_t slot, char *text, size_t len);
 DalnokStatus dalnok_plugin_response(const DalnokEngine *engine, int32_t slot, const double *hz, int32_t count, double *db);
 /* The master fader (dB, <= +12; <= -96 is silence). Undoable; the master meter reads after it. */
 DalnokStatus dalnok_master_set_gain_db(DalnokEngine *engine, float gain_db);

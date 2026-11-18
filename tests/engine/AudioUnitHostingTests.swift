@@ -25,6 +25,10 @@ import Testing
         guard let mix = parameter(e, slot, titled: "dry/wet"), let time = parameter(e, slot, titled: "delay time") else {
             Issue.record("AUDelay parameters not found"); return
         }
+        // What it declares: the system's Audio Unit tags (used to sort it and choose its display).
+        var cats = [CChar](repeating: 0, count: 256)
+        dalnok_plugin_categories(e, slot, &cats, 256)
+        #expect(cstr(cats).localizedCaseInsensitiveContains("delay"), "AUDelay declares \(cstr(cats))")
         // Text at any value, without changing the parameter (printed knob scales): delay time is 0-2 s.
         var text = [CChar](repeating: 0, count: 64)
         #expect(dalnok_plugin_parameter_text(e, slot, time.id, 0.5, &text, 64) == DALNOK_OK && cstr(text) == "1.00", "\(cstr(text))")

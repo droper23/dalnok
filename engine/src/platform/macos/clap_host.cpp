@@ -96,6 +96,7 @@ public:
         name_ = desc->name ? desc->name : "CLAP";
         vendor_ = desc->vendor ? desc->vendor : "";
         classId_ = desc->id;
+        for (const char *const *f = desc->features; f && *f; ++f) categories_ += (categories_.empty() ? "" : "|") + std::string(*f);
         params_ = static_cast<const clap_plugin_params_t *>(plugin_->get_extension(plugin_, CLAP_EXT_PARAMS));
         state_ = static_cast<const clap_plugin_state_t *>(plugin_->get_extension(plugin_, CLAP_EXT_STATE));
         latency_ = static_cast<const clap_plugin_latency_t *>(plugin_->get_extension(plugin_, CLAP_EXT_LATENCY));
@@ -205,6 +206,7 @@ public:
         return state_->load(plugin_, &s);
     }
 
+    std::string categories() const override { return categories_; }
     int32_t parameterCount() override { return params_ ? static_cast<int32_t>(params_->count(plugin_)) : 0; }
     bool parameter(int32_t index, PluginParameter &out) override {
         clap_param_info_t info{};
@@ -317,6 +319,7 @@ private:
     uint32_t inputs_ = 0;
     bool hasNotes_ = false, instrument_ = false, sidechain_ = false, active_ = false, processing_ = false, guiOpen_ = false;
     std::string name_, vendor_, classId_;
+    std::string categories_;
     std::vector<float> inL_, inR_, silence_;
     static constexpr int kMaxEvents = 1024;
     Event events_[kMaxEvents]{};

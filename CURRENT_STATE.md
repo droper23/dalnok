@@ -13,6 +13,11 @@ milestone: M11 VST3 hosting (ADR-0009 stage 3) done; editors, parameters and AU 
   - EQs and filters: a response screen. Dalnok's EQs draw their exact curve (`dalnok_plugin_response`) with numbered band markers; hosted EQs get a curve measured from the signal, marked MEASURED. Both draw over a live spectrum.
   - Everything else: a phosphor oscilloscope.
   - The engine adds a lock-free per-plug-in display tap (`dalnok_plugin_tap`).
+- **Sorting audit** (`--plugin-report`, with the sandboxed scan in a temporary cache): 454 installed plug-ins.
+  - 451 declare categories once scanned.
+  - Effects in "Other Effects" fell from 140 to 47. The rest have bare product names, and their parameters decide the display when they load.
+  - Instruments have no IN meter, and the oscilloscope scales itself to the signal.
+- **Self-tests at 48 kHz**: 484 in Graphite and 477 in Warm Analog, with no failures. The 44.1 kHz beat/frame rounding issue (below) is still open; it only shows when the output device runs at 44.1 kHz.
 - Displays by category:
   - Dynamics: VU gain reduction.
   - EQ and filters: response.

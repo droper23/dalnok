@@ -91,7 +91,8 @@ final class PluginManagerController: NSWindowController, NSTableViewDataSource, 
             .deletingLastPathComponent().appendingPathComponent("dalnok-scan").path
     }
     static var cachePath: String {
-        (FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first ?? FileManager.default.temporaryDirectory)
+        if let dev = ProcessInfo.processInfo.environment["DALNOK_PLUGIN_CACHE"] { return dev } // developer checks
+        return (FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first ?? FileManager.default.temporaryDirectory)
             .appendingPathComponent("Dalnok/PluginCache.json").path
     }
 
@@ -242,6 +243,7 @@ final class PluginManagerController: NSWindowController, NSTableViewDataSource, 
 
     static func parse(_ text: String, cache: [String: (String, String)]) -> [Plugin] {
         let list = (try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [[String: Any]] ?? []
+        let cachedCategories = self.cachedCategories()
         return list.map { p in
             let scan = p["scan"] as? [String: Any]
             let format = (p["format"] as? String ?? "").uppercased(), path = p["path"] as? String ?? ""
@@ -252,6 +254,7 @@ final class PluginManagerController: NSWindowController, NSTableViewDataSource, 
                                 error: scan?["error"] as? String ?? cache[key]?.1 ?? "", path: path,
                                 cached: scan?["cached"] as? Bool ?? false)
             plugin.categories = p["categories"] as? [String] ?? []
+            if plugin.categories.isEmpty { plugin.categories = cachedCategories[key] ?? [] } // from an earlier out-of-process scan
             let c = PluginTaxonomy.classify(name: plugin.name, kind: plugin.kind, format: format, path: path, categories: plugin.categories)
             plugin.group = c.group
             plugin.category = c.category
@@ -260,6 +263,37 @@ final class PluginManagerController: NSWindowController, NSTableViewDataSource, 
     }
 
     /// Statuses from the last scan, so reopening the window shows them without rescanning.
+    /// Developer report (--plugin-report): every installed plug-in with what it declares and how Dalnok sorts it.
+    static func writeReport(to out: String) -> Int {
+        let n = dalnok_plugins_scan(nil, true, nil, 0)
+        var buf = [CChar](repeating: 0, count: n + 1)
+        dalnok_plugins_scan(nil, true, &buf, buf.count)
+        let list = parse(cString(buf), cache: cachedStatuses())
+        var lines = ["format\tname\tvendor\tkind\tdeclared\tgroup\tcategory\tdisplay"]
+        for p in list.sorted(by: { $0.name.lowercased() < $1.name.lowercased() }) {
+            let display = p.group == .effects ? FaceplateDisplay.kind(name: p.name, path: p.path, instrument: false, declared: p.categories).rawValue : p.group == .instruments ? "scope" : "-"
+            lines.append([p.format, p.name, p.vendor, p.kind, p.categories.joined(separator: "|"), p.group.rawValue, p.category, display].joined(separator: "\t"))
+        }
+        try? lines.joined(separator: "\n").write(toFile: out, atomically: true, encoding: .utf8)
+        return list.count
+    }
+
+    /// Categories an earlier scan read from inside each plug-in (VST3 subcategories, CLAP features), by "format:path".
+    static func cachedCategories() -> [String: [String]] {
+        guard let data = FileManager.default.contents(atPath: cachePath),
+              let doc = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let entries = doc["entries"] as? [String: [String: Any]] else { return [:] }
+        return entries.compactMapValues { e in
+            for c in ((e["result"] as? [String: Any])?["classes"] as? [[String: Any]]) ?? [] {
+                if let f = c["features"] as? [String] { return f }
+                if c["category"] as? String == "Audio Module Class" {
+                    return (c["subCategories"] as? String ?? "").split(separator: "|").map(String.init)
+                }
+            }
+            return nil
+        }
+    }
+
     static func cachedStatuses() -> [String: (String, String)] {
         guard let data = FileManager.default.contents(atPath: cachePath),
               let doc = try? JSONSerialization.jsonObject(with: data) as? [String: Any],

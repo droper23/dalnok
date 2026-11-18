@@ -18,20 +18,37 @@ enum PluginGroup: String, CaseIterable {
 
 enum PluginTaxonomy {
     /// Words a plug-in declares or is named with, lowercased and split at non-letters (so "amp" doesn't match "sample").
+    /// Also splits joined names at case changes ("MAutoDynamicEq" → auto, dynamic, eq; "TDRNova" → tdr, nova).
     static func words(_ text: [String]) -> Set<String> {
         var out = Set<String>()
         for t in text {
             let lower = t.lowercased()
             out.insert(lower)
             for w in lower.split(whereSeparator: { !$0.isLetter && !$0.isNumber }) where !w.isEmpty { out.insert(String(w)) }
+            for w in camelParts(t) where w.count > 1 { out.insert(w) }
         }
         return out
+    }
+    /// "MCharmVerb" → ["m", "charm", "verb"]; an upper-case run before a capitalised word ends one letter early.
+    static func camelParts(_ s: String) -> [String] {
+        var parts: [String] = [], cur = ""
+        let chars = Array(s)
+        for (i, c) in chars.enumerated() {
+            guard c.isLetter || c.isNumber else { if !cur.isEmpty { parts.append(cur) }; cur = ""; continue }
+            let prev: Character? = i > 0 ? chars[i - 1] : nil, next: Character? = i + 1 < chars.count ? chars[i + 1] : nil
+            let boundary = c.isUppercase && (prev?.isLowercase == true || prev?.isNumber == true
+                || (prev?.isUppercase == true && next?.isLowercase == true))
+            if boundary && !cur.isEmpty { parts.append(cur); cur = "" }
+            cur.append(c)
+        }
+        if !cur.isEmpty { parts.append(cur) }
+        return parts.map { $0.lowercased() }
     }
     /// Whole-word matches, prefix matches for keys ending in "*", and, for distinctive keys of six letters or more,
     /// matches inside a word (vendor-prefixed names such as "MFlanger" or "MCompressor").
     private static func has(_ w: Set<String>, _ keys: [String]) -> Bool {
         keys.contains { k in
-            w.contains(k) || (k.hasSuffix("*") && w.contains { $0.hasPrefix(k.dropLast()) })
+            (k.contains(" ") && w.contains { $0.contains(k) }) || w.contains(k) || (k.hasSuffix("*") && w.contains { $0.hasPrefix(k.dropLast()) })
                 || (k.count >= 6 && !k.hasSuffix("*") && k.allSatisfy(\.isLetter) && w.contains { $0.count > k.count && $0.contains(k) })
         }
     }
@@ -77,25 +94,40 @@ enum PluginTaxonomy {
             return (group, "MIDI Utilities")
         case .effects:
             let rules: [(String, [String])] = [
-                ("Metering / Analysis", ["analyzer", "analyser", "analysis", "meter", "metering", "scope", "spectrum", "loudness", "tuner"]),
-                ("Restoration / Noise Reduction", ["restoration", "denoise*", "noise", "declick*", "de-click", "dehum", "repair"]),
+                ("Metering / Analysis", ["analyzer", "analyser", "analysis", "meter", "metering", "scope", "oscilloscope", "spectrum", "loudness", "tuner"]),
+                ("Restoration / Noise Reduction", ["restoration", "denoise*", "noise", "declick*", "de-click", "dehum", "repair", "isolation"]),
                 ("Limiting", ["limiter", "limiting", "maximizer", "maximiser", "clipper"]),
                 ("Gate / Expander", ["gate", "expander", "noisegate"]),
-                ("Compression", ["compressor", "compression", "comp", "dynamics", "de-esser", "deesser", "transient-shaper", "transient", "leveler"]),
+                ("Compression", ["compressor", "compression", "comp", "dynamics", "de-esser", "deesser", "esser", "transient-shaper", "transient", "leveler", "agc", "punch*"]),
                 ("EQ", ["eq", "equalizer", "equaliser", "equalizer"]),
                 ("Reverb", ["reverb", "verb", "rvb", "hall", "plate", "room", "convolution"]),
                 ("Delay / Echo", ["delay", "echo", "tape-delay"]),
-                ("Chorus / Flanger / Phaser", ["chorus", "flanger", "phaser"]),
+                ("Chorus / Flanger / Phaser", ["chorus", "flanger", "phaser", "unison", "doubler", "double*", "ensemble"]),
                 ("Pitch / Time", ["pitch", "pitch-shifter", "pitch-correction", "tune", "autotune", "stretch", "varispeed", "vocoder", "phase-vocoder", "harmonizer"]),
-                ("Distortion / Saturation", ["distortion", "saturation", "saturator", "overdrive", "fuzz", "drive", "amp", "amps", "amplifier", "bitcrush*", "crush*", "lofi", "lo-fi", "tube", "tape", "decimat*"]),
-                ("Modulation", ["modulation", "tremolo", "vibrato", "rotary", "ringmod", "frequency-shifter", "glitch", "auto-pan", "autopan"]),
-                ("Filtering", ["filter", "wah", "formant", "lowpass", "highpass", "bandpass"]),
+                ("Distortion / Saturation", ["distortion", "saturation", "saturator", "overdrive", "fuzz", "drive", "amp", "amps", "amplifier", "bitcrush*", "crush*", "lofi", "lo-fi", "tube", "tape", "decimat*",
+                                             "shaper", "waveshaper", "folder", "wavefolder", "cabinet", "cab", "vinyl", "exciter", "enhancer", "guitar"]),
+                ("Modulation", ["modulation", "tremolo", "vibrato", "rotary", "ringmod", "ring mod", "ring", "frequency-shifter", "shifter", "glitch", "auto-pan",
+                                "autopan", "wobble*", "rhythmizer", "stutter", "morph"]),
+                ("Filtering", ["filter", "wah", "formant", "lowpass", "highpass", "bandpass", "resonator", "comb"]),
                 ("Spatial Audio", ["spatial", "spatializer", "ambisonic", "ambisonics", "binaural", "panner3d"]),
-                ("Stereo Imaging", ["width", "imager", "widener", "panner", "mid-side", "stereo-imager", "stereoizer"]),  // "Stereo" alone is a channel layout tag
-                ("Utility / Gain", ["utility", "gain", "trim", "tools", "tool", "mixing", "mastering", "phase"]),
+                ("Stereo Imaging", ["width", "imager", "imaging", "widener", "panner", "mid-side", "stereo-imager", "stereoizer", "haas", "spread", "pan", "center"]),  // "Stereo" alone is a channel layout tag
+                ("Utility / Gain", ["utility", "gain", "trim", "tools", "tool", "phase", "volume", "mixer", "matrix", "align", "compare", "matcher",
+                                    "metronome", "notepad", "recorder", "looper"]),  // "Mixing"/"Mastering" say where, not what
             ]
-            for (c, keys) in rules where has(w, keys) { return (group, c) }
-            return (group, "Other Effects")
+            // What the plug-in declares decides first; its name only when the declaration says nothing specific.
+            // A declared "Tools"/"Utility" is broad (vendors tag analyzers, tuners and gates that way): a specific name wins.
+            var fallback = "Other Effects"
+            for (i, source) in [words(categories), words([name])].enumerated() {
+                // A "stereo expander/enhancer" widens the image; it isn't a gate or an exciter.
+                if source.contains("stereo") && (source.contains("expander") || source.contains("enhancer")) { return (group, "Stereo Imaging") }
+                if let c = rules.first(where: { has(source, $0.1) })?.0 {
+                    if i == 0 && c == "Utility / Gain" { fallback = c; continue }
+                    return (group, c)
+                }
+                // "Stereo" in a name means a stereo tool; as a VST3 subcategory it only describes the channel layout.
+                if i == 1 && source.contains("stereo") { return (group, "Stereo Imaging") }
+            }
+            return (group, fallback)
         }
     }
 }

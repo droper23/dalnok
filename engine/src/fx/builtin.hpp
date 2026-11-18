@@ -31,6 +31,7 @@ public:
     uint32_t latency() const override { return 0; }
     const std::string &name() const override { return name_; }
     const std::string &vendor() const override { return vendor_; }
+    std::string categories() const override;
     const std::string &classId() const override { return id_; }
     bool getState(std::string &bytes) override;
     bool setState(const std::string &bytes) override;

@@ -1,7 +1,11 @@
 // Audio Unit discovery through the component registry. Components are not instantiated.
+// Categories are the system's tags for each component ("Delay", "Dynamics", "EQ"…), which come from the Audio
+// Unit's own Info.plist, plus its type name.
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "plugins.hpp"
 #include <AudioToolbox/AudioToolbox.h>
+#import <AVFoundation/AVFoundation.h>
+#include <map>
 
 namespace dalnok {
 namespace {
@@ -17,6 +21,17 @@ std::string fourCC(OSType v) {
 
 std::vector<PluginInfo> listAudioUnits() {
     std::vector<PluginInfo> out;
+    // Tags for every installed component, keyed by type:subtype:manufacturer.
+    std::map<std::string, std::vector<std::string>> tags;
+    @autoreleasepool {
+        AudioComponentDescription all{};
+        for (AVAudioUnitComponent *c in [[AVAudioUnitComponentManager sharedAudioUnitComponentManager] componentsMatchingDescription:all]) {
+            const AudioComponentDescription d = c.audioComponentDescription;
+            auto &list = tags[fourCC(d.componentType) + ":" + fourCC(d.componentSubType) + ":" + fourCC(d.componentManufacturer)];
+            for (NSString *t in c.allTagNames) list.emplace_back(t.UTF8String);
+            if (c.typeName.length) list.emplace_back(c.typeName.UTF8String);
+        }
+    }
     AudioComponentDescription any{};
     for (AudioComponent c = AudioComponentFindNext(nullptr, &any); c; c = AudioComponentFindNext(c, &any)) {
         AudioComponentDescription d{};
@@ -30,6 +45,7 @@ std::vector<PluginInfo> listAudioUnits() {
         info.format = "au";
         info.kind = kind;
         info.path = fourCC(d.componentType) + ":" + fourCC(d.componentSubType) + ":" + fourCC(d.componentManufacturer);
+        if (auto t = tags.find(info.path); t != tags.end()) info.categories = t->second;
         CFStringRef name = nullptr;
         if (AudioComponentCopyName(c, &name) == noErr && name) {
             char buf[512]{};

@@ -25,6 +25,11 @@ std::unique_ptr<PluginProcessor> loadBuiltin(const std::string &id, double sampl
     return nullptr;
 }
 
+std::string BuiltinProcessor::categories() const {
+    for (const auto &b : builtinPlugins()) if (id_ == b.id) return std::string("Fx|") + b.category;
+    return "Fx";
+}
+
 BuiltinProcessor::BuiltinProcessor(const char *id, const char *name, std::vector<Param> params)
     : id_(id), name_(name), params_(std::move(params)) {
     uint32_t top = 0;

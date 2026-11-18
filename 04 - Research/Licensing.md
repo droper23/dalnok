@@ -10,7 +10,7 @@ Band are allowed only as optional, clearly isolated components after an ADR.
 ## Current dependencies
 | Dependency | License | Use |
 |---|---|---|
-| Apple AudioToolbox, CoreAudio, CoreMIDI, CoreFoundation, AppKit, AVFoundation | System | Device I/O, MIDI input, Audio Unit discovery, decoding, plists, UI, microphone permission |
+| Apple AudioToolbox, CoreAudio, CoreMIDI, CoreFoundation, AppKit, AVFoundation | System | Device I/O, MIDI input, Audio Unit discovery and tags, decoding, plists, UI, microphone permission |
 | pugixml 1.14 (vendored in `engine/third_party/pugixml`) | MIT | XML parsing for Ableton and FCPXML import |
 | zlib (system `libz`) | zlib | Decompressing Ableton `.als` |
 | Signalsmith Stretch 1.4.0 + Signalsmith Linear 0.6.6 (vendored in `engine/third_party/signalsmith`) | MIT | Time-stretch and pitch shift |
