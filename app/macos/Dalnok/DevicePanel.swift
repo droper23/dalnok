@@ -90,6 +90,9 @@ final class DevicePanel: NSView {
         metersObserver = NotificationCenter.default.addObserver(forName: Faceplate.metersChanged, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.devices.forEach { $0.applyMeterSetting() } }
         }
+        wearObserver = NotificationCenter.default.addObserver(forName: Faceplate.wearChanged, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.devices.forEach { $0.applyWear() } }
+        }
         wantsLayer = true
         layer?.backgroundColor = Theme.panel.cgColor
         registerForDraggedTypes([.dalnokPlugin, .dalnokSlot])
@@ -162,6 +165,7 @@ final class DevicePanel: NSView {
             devices = plugins.map { p in
                 let d = DeviceView(session: session, track: t!.id, slot: p.id, name: p.name, loaded: p.loaded, color: t!.color, vendor: p.vendor, instrument: p.instrument, error: p.error, path: p.path)
                 d.onOpen = { [weak self] in self?.onOpen?(t!.id, p.id) }
+                d.onSelect = { [weak self] in self?.selectedSlot = p.id }
                 d.onMove = { [weak self] delta in
                     guard let self, let from = self.devices.firstIndex(where: { $0.slot == p.id }) else { return }
                     self.move(p.id, toDropIndex: delta > 0 ? from + 2 : from - 1)
@@ -169,6 +173,8 @@ final class DevicePanel: NSView {
                 return d
             }
             devices.forEach { stack.addArrangedSubview($0) }
+            if let s = selectedSlot, !devices.contains(where: { $0.slot == s }) { selectedSlot = nil }
+            devices.forEach { $0.isSelected = $0.slot == selectedSlot }
             addTile.removeFromSuperview()
             if let last = devices.last {
                 stack.addArrangedSubview(addTile)
@@ -191,7 +197,10 @@ final class DevicePanel: NSView {
     func refreshValues() { devices.forEach { $0.refreshValues() } }
     /// Graphite device meters (every frame).
     func pollMeters() { devices.forEach { $0.pollMeters() } }
-    private var metersObserver: NSObjectProtocol?
+    private var metersObserver: NSObjectProtocol?, wearObserver: NSObjectProtocol?
+
+    /// The unit last clicked (white outline glow); nil when none is.
+    var selectedSlot: Int32? { didSet { devices.forEach { $0.isSelected = $0.slot == selectedSlot } } }
 
     // MARK: Patch cables (Warm Analog)
 
@@ -288,6 +297,20 @@ final class DevicePanel: NSView {
     }
 }
 
+/// Reports every primary press in its view (including on controls inside it) without taking the event.
+final class PressRecognizer: NSGestureRecognizer {
+    private let onPress: () -> Void
+    init(_ onPress: @escaping () -> Void) {
+        self.onPress = onPress
+        super.init(target: nil, action: nil)
+        delaysPrimaryMouseButtonEvents = false
+        delaysSecondaryMouseButtonEvents = false
+    }
+    required init?(coder: NSCoder) { fatalError() }
+    override func mouseDown(with event: NSEvent) { onPress(); state = .failed }
+    override func rightMouseDown(with event: NSEvent) { onPress(); state = .failed }
+}
+
 @MainActor
 final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate, NSDraggingSource {
     func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation { .move }
@@ -321,6 +344,12 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
     private(set) var allParameters: [DalnokPluginParameter] = []
     private var indexOf: [UInt32: Int32] = [:]
     var onOpen: (() -> Void)?
+    /// A press anywhere on the unit (its surface or any control) selects it.
+    var onSelect: (() -> Void)?
+    var isSelected = false { didSet { if isSelected != oldValue { applySelection() } } }
+    /// Bypassed in Graphite: the unit sits back slightly (drawn at this scale about its centre).
+    private var recessed = false
+    static let recessedScale: CGFloat = 0.955
     static let defaultCount = 8
     static var ear: CGFloat { Analog.on ? 12 : 0 } // rack ear width
 
@@ -447,6 +476,46 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         refreshControls()
         setAccessibilityElement(true)
         setAccessibilityLabel("\(name) device")
+        let press = PressRecognizer { [weak self] in self?.onSelect?() }
+        addGestureRecognizer(press)
+    }
+
+    /// Selection: a white outline with a soft glow around the unit.
+    private func applySelection() {
+        guard let layer else { return }
+        layer.masksToBounds = false
+        layer.borderColor = NSColor.white.withAlphaComponent(0.92).cgColor
+        layer.borderWidth = isSelected ? 1.5 : 0
+        layer.shadowColor = NSColor.white.cgColor
+        layer.shadowOffset = .zero
+        layer.shadowRadius = 7
+        layer.shadowOpacity = isSelected ? 0.55 : 0
+        setAccessibilitySelected(isSelected)
+    }
+
+    /// Bypass: scale the unit down a little about its centre (Graphite only), animated unless Reduce Motion is on.
+    func setRecessed(_ on: Bool) {
+        guard !Analog.on, on != recessed else { return }
+        recessed = on
+        CATransaction.begin()
+        CATransaction.setDisableActions(Motion.reduced || window == nil)
+        CATransaction.setAnimationDuration(0.18)
+        applyRecess()
+        CATransaction.commit()
+    }
+    private func applyRecess() {
+        let s = recessed ? Self.recessedScale : 1
+        layer?.setAffineTransform(CGAffineTransform(a: s, b: 0, c: 0, d: s, tx: bounds.width * (1 - s) / 2, ty: bounds.height * (1 - s) / 2))
+    }
+    override func layout() {
+        super.layout()
+        if recessed { CATransaction.begin(); CATransaction.setDisableActions(true); applyRecess(); CATransaction.commit() }
+    }
+
+    /// Settings ▸ wear changed: redraw the metal and the glass.
+    func applyWear() {
+        needsDisplay = true
+        display?.needsDisplay = true
     }
     required init?(coder: NSCoder) { fatalError() }
 
@@ -454,7 +523,7 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         super.draw(dirtyRect)
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
         guard Analog.on else {
-            Faceplate.plate(ctx, bounds, accent: color, dimmed: !loaded || bypassed)
+            Faceplate.plate(ctx, bounds, accent: color, dimmed: !loaded || bypassed, seed: Faceplate.seed(title.stringValue), wear: Faceplate.wear)
             return
         }
         // A pedal: the enclosure is the PedalBody; here only the input and output jacks on its sides.
@@ -644,7 +713,6 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
                 if dalnok_plugin_response(h, slot, freqs, Int32(freqs.count), &db) == DALNOK_OK {
                     screen.curve = off ? [Double](repeating: 0, count: freqs.count) : db
                     screen.measured = false
-                    screen.markers = off ? [] : bandMarkers()
                 } else if let a = analyzer, a.frames > 3, !off {
                     // Hosted EQs: the response measured from the signal, held where the input is too quiet.
                     let rate = Double(dalnok_engine_sample_rate(h)), floor = a.inputPeak * 1e-6
@@ -653,6 +721,7 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
                     screen.curve = c
                     screen.measured = true
                 }
+                if screen.dragging == nil { screen.markers = bandMarkers() }
             }
             if tick % 2 == 0 {
                 var inBuf = [Float](repeating: 0, count: SpectrumAnalyzer.n), outBuf = inBuf
@@ -697,7 +766,15 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         case .analyzer: LedAnalyzer()
         case .scope: ScopeScreen()
         }
-        (d as? ResponseScreen)?.tint = color.blended(withFraction: 0.35, of: .white) ?? color
+        if let screen = d as? FaceplateScreen { screen.seed = Faceplate.seed(title.stringValue); screen.poweredOff = loaded && bypassed }
+        if let screen = d as? ResponseScreen {
+            screen.tint = color.blended(withFraction: 0.35, of: .white) ?? color
+            findBands()
+            screen.onBandDrag = { [weak self] i, hz, db in self?.bandDragged(i, hz: hz, db: db) }
+            screen.onBandScroll = { [weak self] i, d in self?.bandScrolled(i, d) }
+            screen.onBandToggle = { [weak self] i in self?.bandToggled(i) }
+            screen.markers = bandMarkers()
+        }
         (d as? HistoryScreen)?.tint = color.blended(withFraction: 0.35, of: .white) ?? color
         d.translatesAutoresizingMaskIntoConstraints = false
         return d
@@ -718,20 +795,56 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         NSLayoutConstraint.activate(displaySize)
     }
 
-    /// Dalnok Channel EQ's enabled bands, numbered like its sections (1 low cut … 8 high cut), for the screen.
-    private func bandMarkers() -> [(hz: Double, label: String)] {
-        guard path == "channel-eq" else { return [] }
-        let bands: [UInt32] = [0, 4, 8, 12, 16, 20, 24, 28]
-        var out: [(Double, String)] = []
-        for (i, base) in bands.enumerated() {
-            var on = DalnokPluginParameter(), freq = DalnokPluginParameter()
-            guard let a = indexOf[base], let b = indexOf[base + 1],
-                  dalnok_plugin_parameter(session.engine.handle, slot, a, &on) == DALNOK_OK, on.value >= 0.5,
-                  dalnok_plugin_parameter(session.engine.handle, slot, b, &freq) == DALNOK_OK,
-                  let hz = Double(fixedString(freq.display).filter { "0123456789.".contains($0) }) else { continue }
-            out.append((hz, String(i + 1)))
+    /// EQ bands found in the plug-in's parameters (EqBands), shown as handles on the response screen.
+    private var eqBands: [EqBand] = []
+    private func findBands() {
+        eqBands = EqBands.find(allParameters.map { EqBands.Param(id: $0.id, title: fixedString($0.title), steps: $0.step_count, readOnly: $0.read_only) })
+    }
+    private func bandMarkers() -> [ResponseScreen.Marker] {
+        eqBands.compactMap { b in
+            guard let hz = b.fixedHz ?? b.freq.flatMap({ current($0) }).flatMap({ EqBands.hz(display($0)) }) else { return nil }
+            let db = b.gain.flatMap { current($0) }.flatMap { EqBands.db(fixedString($0.display)) }
+            let on = b.enable.flatMap { current($0) }.map { ($0.value >= 0.5) != b.enableInverted } ?? true
+            return ResponseScreen.Marker(hz: hz, db: db, label: b.label, on: on, fixedFrequency: b.freq == nil)
         }
-        return out
+    }
+    /// Text of parameter `id` at normalized `v`.
+    private func text(_ id: UInt32, _ v: Double) -> String? {
+        var buf = [CChar](repeating: 0, count: 64)
+        guard dalnok_plugin_parameter_text(session.engine.handle, slot, id, v, &buf, 64) == DALNOK_OK else { return nil }
+        let t = String(decoding: buf.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
+        let u = current(id).map { fixedString($0.units) } ?? ""
+        return u.isEmpty || t.contains(u) ? t : "\(t) \(u)"
+    }
+    /// The normalized value at which the plug-in shows `target` (its value text read back through `parse`), found by
+    /// bisection; works for any monotonic mapping without knowing it.
+    private func normalized(_ id: UInt32, for target: Double, parse: (String) -> Double?) -> Double? {
+        guard let v0 = text(id, 0).flatMap(parse), let v1 = text(id, 1).flatMap(parse), v0 != v1 else { return nil }
+        let rising = v1 > v0
+        var lo = 0.0, hi = 1.0
+        for _ in 0..<24 {
+            let mid = (lo + hi) / 2
+            guard let v = text(id, mid).flatMap(parse) else { return nil }
+            if (v < target) == rising { lo = mid } else { hi = mid }
+        }
+        return (lo + hi) / 2
+    }
+    private func bandDragged(_ i: Int, hz: Double, db: Double) {
+        guard eqBands.indices.contains(i) else { return }
+        let b = eqBands[i]
+        if let f = b.freq, let v = normalized(f, for: hz, parse: EqBands.hz) { set(f, v) }
+        if let g = b.gain, let v = normalized(g, for: db, parse: EqBands.db) { set(g, v) }
+        refreshValues()
+    }
+    private func bandScrolled(_ i: Int, _ delta: Double) {
+        guard eqBands.indices.contains(i), let q = eqBands[i].q, let p = current(q) else { return }
+        set(q, p.value + delta * 0.25)
+        refreshValues()
+    }
+    private func bandToggled(_ i: Int) {
+        guard eqBands.indices.contains(i), let e = eqBands[i].enable, let p = current(e) else { return }
+        set(e, p.value >= 0.5 ? 0 : 1)
+        refreshValues()
     }
 
     /// A gain reduction the plug-in reports itself (a read-only parameter such as "Gain Reduction" or
@@ -789,10 +902,14 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         power.state = off ? .off : .on
         power.contentTintColor = off ? Theme.textFaint : Theme.accent
         title.textColor = !loaded || off ? Theme.textFaint : (Analog.on ? Theme.text : Faceplate.engraving)
-        etchedTitle.dimmed = !loaded || off
+        etchedTitle.dimmed = !loaded // lettering is cut into the metal: bypass doesn't change it
         pedal?.engaged = loaded && !off
         if pedal == nil {
+            // Graphite: bypass turns the unit's lights off (LEDs, screens, meter lamps) and sets it back slightly.
             for k in knobs { (k.knob as? FaceplateControl)?.dimmed = off }
+            inMeter.poweredOff = off; outMeter.poweredOff = off
+            (display as? FaceplateScreen)?.poweredOff = off
+            setRecessed(off)
             needsDisplay = true
         }
     }
@@ -863,6 +980,12 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
     /// Empty surface (layout containers, labels, the pedal enclosure) belongs to the unit, so a press there can start
     /// a drag (and is accepted as a first click); real controls keep their clicks.
     override func hitTest(_ point: NSPoint) -> NSView? {
+        var point = point
+        if recessed { // the layer is drawn scaled about the centre: map the click back onto the unscaled layout
+            let c = CGPoint(x: frame.midX, y: frame.midY), s = Self.recessedScale
+            guard frame.insetBy(dx: frame.width * (1 - s) / 2, dy: frame.height * (1 - s) / 2).contains(point) else { return nil }
+            point = CGPoint(x: c.x + (point.x - c.x) / s, y: c.y + (point.y - c.y) / s)
+        }
         let v = super.hitTest(point)
         if v is NSStackView || v is NSGridView || v is PedalBody || v is FaceplateSection || (v as? NSTextField).map({ !$0.isEditable && !$0.isSelectable }) == true { return self }
         return v

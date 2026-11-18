@@ -165,6 +165,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         engine.shutdown()
         if interactiveLaunch { main.endSessionMarker() }
+        defer {
+            // Some plug-ins (seen with a Qt-based VST3) crash in their own static destructors during exit().
+            // Everything Dalnok owns is saved and shut down by now, so leave without running library teardown.
+            UserDefaults.standard.synchronize()
+            fflush(stdout); fflush(stderr)
+            _exit(0)
+        }
         guard relaunchOnQuit else { return }
         let bundle = Bundle.main.bundleURL
         let p = Process()

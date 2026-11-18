@@ -61,6 +61,8 @@ enum FaceplateDisplay {
         let t = titles.map { $0.lowercased() }
         func count(_ keys: [String]) -> Int { t.filter { title in keys.contains { title.contains($0) } }.count }
         func any(_ keys: [String]) -> Bool { count(keys) > 0 }
+        // Many bands with frequency and gain is an EQ even when it also has dynamics per band (dynamic EQs).
+        if count(["freq", "hz"]) >= 3 && count(["gain"]) >= 3 && !any(["crossover", "xover"]) { return .response }
         if any(["threshold", "ceiling"]) && any(["ratio", "attack", "release", "knee", "ceiling", "range", "hold"]) { return .gainReduction }
         if count(["freq", "hz"]) >= 2 && count(["gain", " db"]) >= 2 || any(["cutoff"]) && any(["resonance", "reso", " q"]) { return .response }
         if count(["decay", "room", "size", "pre-delay", "predelay", "diffusion", "damping", "reverb", "early", "late"]) >= 2 { return .history }
@@ -150,6 +152,91 @@ enum FaceplateDisplay {
     }
 }
 
+// MARK: Power and wear
+
+/// Base for the faceplate's displays. Their backlight follows the unit's power (bypassed: the screen goes dark, the
+/// meter's lamps go out), and their glass gathers dust, smudges and hairline scratches with Settings ▸ wear.
+@MainActor
+class FaceplateScreen: NSView {
+    var poweredOff = false { didSet { if poweredOff != oldValue { needsDisplay = true } } }
+    /// Stable per unit (its name), so each unit's dust stays where it is.
+    var seed: UInt64 = 1 { didSet { needsDisplay = true } }
+    /// Displays that render their own unlit state (the moving-coil meter keeps its face, just without lamps).
+    var drawsOwnOffState: Bool { false }
+    override var isFlipped: Bool { true }
+    final override func draw(_ dirtyRect: NSRect) {
+        guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+        if poweredOff && !drawsOwnOffState {
+            let w = FaceplateDisplay.bezel(ctx, bounds)
+            ctx.saveGState()
+            ctx.addPath(CGPath(roundedRect: w, cornerWidth: 3, cornerHeight: 3, transform: nil)); ctx.clip()
+            let bg = [NSColor(white: 0.035, alpha: 1).cgColor, NSColor(white: 0.055, alpha: 1).cgColor] as CFArray
+            if let g = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: bg, locations: [0, 1]) {
+                ctx.drawLinearGradient(g, start: CGPoint(x: 0, y: w.minY), end: CGPoint(x: 0, y: w.maxY), options: [])
+            }
+            ctx.restoreGState()
+            FaceplateDisplay.glass(ctx, w, radius: 3)
+        } else {
+            drawScreen(dirtyRect)
+        }
+        FaceplateDisplay.wear(ctx, bounds.insetBy(dx: 4, dy: 4), radius: 3, seed: seed, amount: Faceplate.wear)
+    }
+    func drawScreen(_ dirtyRect: NSRect) {}
+}
+
+extension FaceplateDisplay {
+    /// What years of use leave on a display's glass: dust specks, a few greasy smudges, hairline scratches and grime
+    /// settled along the bottom of the bezel. `amount` 0 is factory new; the pattern is fixed by `seed`.
+    static func wear(_ ctx: CGContext, _ window: CGRect, radius: CGFloat, seed: UInt64, amount: Double) {
+        guard amount > 0.001 else { return }
+        var rng = Faceplate.Random(seed: seed ^ 0xA5A5_5A5A_1234_8765)
+        let a = CGFloat(amount)
+        ctx.saveGState()
+        ctx.addPath(CGPath(roundedRect: window, cornerWidth: radius, cornerHeight: radius, transform: nil)); ctx.clip()
+        let space = CGColorSpaceCreateDeviceRGB()
+        // Smudges: soft, uneven haze catching the light.
+        for _ in 0..<Int((1 + 4 * amount).rounded()) {
+            let c = CGPoint(x: window.minX + rng.unit * window.width, y: window.minY + rng.unit * window.height)
+            let r = (0.18 + 0.30 * rng.unit) * min(window.width, window.height)
+            let colors = [NSColor(white: 0.85, alpha: 0.075 * a * (0.5 + rng.unit)).cgColor, NSColor(white: 0.85, alpha: 0).cgColor] as CFArray
+            if let g = CGGradient(colorsSpace: space, colors: colors, locations: [0, 1]) {
+                ctx.saveGState()
+                ctx.translateBy(x: c.x, y: c.y); ctx.scaleBy(x: 1, y: 0.55 + 0.4 * rng.unit); ctx.rotate(by: rng.unit * .pi)
+                ctx.drawRadialGradient(g, startCenter: .zero, startRadius: 0, endCenter: .zero, endRadius: r, options: [])
+                ctx.restoreGState()
+            }
+        }
+        // Grime settled at the bottom edge and in the corners.
+        let grime = [NSColor(srgbRed: 0.16, green: 0.13, blue: 0.09, alpha: 0.40 * a).cgColor, NSColor(srgbRed: 0.16, green: 0.13, blue: 0.09, alpha: 0).cgColor] as CFArray
+        if let g = CGGradient(colorsSpace: space, colors: grime, locations: [0, 1]) {
+            ctx.drawLinearGradient(g, start: CGPoint(x: 0, y: window.maxY), end: CGPoint(x: 0, y: window.maxY - 7 * a - 2), options: [])
+            for corner in [CGPoint(x: window.minX, y: window.maxY), CGPoint(x: window.maxX, y: window.maxY),
+                           CGPoint(x: window.minX, y: window.minY), CGPoint(x: window.maxX, y: window.minY)] {
+                ctx.drawRadialGradient(g, startCenter: corner, startRadius: 0, endCenter: corner, endRadius: 6 + 10 * a, options: [])
+            }
+        }
+        // Hairline scratches in the glass.
+        for _ in 0..<Int(6 * amount + rng.unit * 2 * amount) {
+            let p = CGPoint(x: window.minX + rng.unit * window.width, y: window.minY + rng.unit * window.height)
+            let ang = (rng.unit - 0.5) * 1.2 + (rng.unit < 0.5 ? 0 : .pi / 2), len = 8 + rng.unit * 34
+            ctx.setStrokeColor(NSColor(white: 1, alpha: 0.10 + 0.12 * a * rng.unit).cgColor); ctx.setLineWidth(0.35)
+            ctx.move(to: p)
+            ctx.addQuadCurve(to: CGPoint(x: p.x + cos(ang) * len, y: p.y + sin(ang) * len),
+                             control: CGPoint(x: p.x + cos(ang + 0.15) * len / 2, y: p.y + sin(ang + 0.15) * len / 2))
+            ctx.strokePath()
+        }
+        // Dust: pale specks, a few with a soft halo.
+        let specks = Int(Double(window.width * window.height) / 260 * amount)
+        for _ in 0..<specks {
+            let p = CGPoint(x: window.minX + rng.unit * window.width, y: window.minY + rng.unit * window.height)
+            let r = 0.25 + 0.65 * rng.unit * rng.unit
+            ctx.setFillColor(NSColor(srgbRed: 0.90, green: 0.88, blue: 0.82, alpha: 0.18 + 0.35 * rng.unit).cgColor)
+            ctx.fillEllipse(in: CGRect(x: p.x - r, y: p.y - r, width: 2 * r, height: 2 * r))
+        }
+        ctx.restoreGState()
+    }
+}
+
 // MARK: Signal analysis
 
 /// Power spectra of the tap's input and output (Hann window, 4096 points), averaged over time. From them come the
@@ -224,7 +311,7 @@ final class SpectrumAnalyzer {
 /// 300 ms to settle with roughly 1.5 % overshoot), a black bridge over the pivot, and curved glass.
 /// In gain-reduction mode the needle rests at 0 VU and falls left by the reduction, as on classic compressors.
 @MainActor
-final class MovingCoilMeter: NSView {
+final class MovingCoilMeter: FaceplateScreen {
     enum Mode { case gainReduction, output }
     let mode: Mode
     private var needle: Double, velocity: Double = 0, target: Double
@@ -232,6 +319,7 @@ final class MovingCoilMeter: NSView {
     private var makeup: Double = 0, makeupSeen = false
     private(set) var reductionDb: Double = 0
     private(set) var levelVu: Double = -20
+    override var drawsOwnOffState: Bool { true }
 
     override var isFlipped: Bool { true }
     init(mode: Mode) {
@@ -288,7 +376,7 @@ final class MovingCoilMeter: NSView {
         needsDisplay = true
     }
 
-    override func draw(_ dirtyRect: NSRect) {
+    override func drawScreen(_ dirtyRect: NSRect) {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
         let window = FaceplateDisplay.bezel(ctx, bounds, radius: 6)
         let faceR: CGFloat = 3
@@ -304,7 +392,7 @@ final class MovingCoilMeter: NSView {
                                    endCenter: CGPoint(x: window.midX, y: window.midY + window.height * 0.15), endRadius: window.width * 0.62, options: [])
         }
         let lamp = [NSColor(srgbRed: 1.0, green: 0.86, blue: 0.55, alpha: 0.38).cgColor, NSColor(srgbRed: 1.0, green: 0.86, blue: 0.55, alpha: 0).cgColor] as CFArray
-        if let g = CGGradient(colorsSpace: space, colors: lamp, locations: [0, 1]) {
+        if !poweredOff, let g = CGGradient(colorsSpace: space, colors: lamp, locations: [0, 1]) {
             for fx in [0.22, 0.78] {
                 let c = CGPoint(x: window.minX + window.width * fx, y: window.maxY + 2)
                 ctx.drawRadialGradient(g, startCenter: c, startRadius: 0, endCenter: c, endRadius: window.height * 0.75, options: [])
@@ -388,6 +476,8 @@ final class MovingCoilMeter: NSView {
         }
         ctx.restoreGState()
         Faceplate.screw(ctx, CGPoint(x: pivot.x, y: window.maxY - bridgeR * 0.45))
+        // Lamps out: the face falls into shadow (the glass still catches the room's light).
+        if poweredOff { ctx.setFillColor(NSColor(srgbRed: 0.04, green: 0.035, blue: 0.03, alpha: 0.66).cgColor); ctx.fill(window) }
         // Curved glass: a soft reflection across the upper face and an inner shadow from the bezel.
         let sheen = CGMutablePath()
         sheen.move(to: CGPoint(x: window.minX, y: window.minY + window.height * 0.30))
@@ -405,15 +495,167 @@ final class MovingCoilMeter: NSView {
     }
 }
 
+// MARK: EQ bands from parameter names
+
+/// One EQ band found among a plug-in's parameters: its frequency, and where they exist its gain, on/off and Q.
+struct EqBand: Equatable {
+    var label: String
+    var freq: UInt32?
+    /// Graphic EQs: a band at a fixed frequency (its slider is named after it, "1.25 kHz"); only its gain moves.
+    var fixedHz: Double?
+    var gain: UInt32?
+    var enable: UInt32?
+    var enableInverted = false // a "Bypass" switch rather than an "On" switch
+    var q: UInt32?
+}
+
+/// Finds EQ bands in any plug-in by its parameter names, without knowing the plug-in: a continuous parameter named
+/// like a frequency ("Band 2 Freq", "Peak 1 Frequency", "LF Cutoff", "freq3") is a band; parameters whose names differ
+/// from it only by "gain", "on"/"active"/"bypass" or "Q"/"width" belong to it. Crossovers, LFOs, dynamics and
+/// side-chain filters are left out.
+enum EqBands {
+    struct Param { let id: UInt32; let title: String; let steps: Int32; let readOnly: Bool }
+    static let freqWords: Set<String> = ["frequency", "freq", "frq", "cutoff", "hz", "fc", "f"]
+    static let gainWords: Set<String> = ["gain", "boost", "cut", "g"]
+    static let enableWords: Set<String> = ["on", "off", "onoff", "active", "enable", "enabled", "power", "bypass", "bypassed", "use", "in"]
+    static let qWords: Set<String> = ["q", "qfactor", "factor", "width", "bandwidth", "bw", "resonance", "res", "slope"]
+    static let excluded: Set<String> = ["lfo", "rate", "speed", "sync", "depth", "dyn", "dynamic", "threshold", "sidechain", "sc", "key",
+                                        "detector", "split", "crossover", "xover", "mod", "modulation", "env", "envelope", "attack", "release",
+                                        "ratio", "lookahead", "analyzer", "analyser", "display", "range", "smooth", "tilt", "drive", "mix"]
+
+    /// Lower-case words, split at spaces, punctuation, case changes and letter/digit boundaries ("bandFreq_2" → band freq 2).
+    static func words(_ title: String) -> [String] {
+        var out: [String] = [], cur = ""
+        var prev: Character?
+        for ch in title {
+            if !(ch.isLetter || ch.isNumber) { if !cur.isEmpty { out.append(cur) }; cur = ""; prev = nil; continue }
+            if let p = prev, (p.isLowercase && ch.isUppercase) || (p.isLetter && ch.isNumber) || (p.isNumber && ch.isLetter) {
+                out.append(cur); cur = ""
+            }
+            cur.append(ch); prev = ch
+        }
+        if !cur.isEmpty { out.append(cur) }
+        return out.map { $0.lowercased() }
+    }
+
+    static func find(_ params: [Param]) -> [EqBand] {
+        // Plug-ins that repeat the same names for every band ("Frequency", "Gain", "Frequency", …) are told apart
+        // by position: the n-th "Frequency" goes with the n-th "Gain".
+        var seen: [String: Int] = [:], total: [String: Int] = [:]
+        for p in params { total[p.title, default: 0] += 1 }
+        var wordsOf: [UInt32: [String]] = [:]
+        for p in params {
+            let n = seen[p.title, default: 0]
+            seen[p.title] = n + 1
+            wordsOf[p.id] = words(p.title) + (total[p.title, default: 0] > 1 ? ["#\(n)"] : [])
+        }
+        func key(_ w: [String], removing set: Set<String>) -> String? {
+            let rest = w.filter { !set.contains($0) }
+            return rest.count < w.count ? rest.joined(separator: " ") : nil
+        }
+        // Graphic EQ: sliders named by their frequency alone are fixed bands whose value is the gain.
+        let graphic = params.filter { p in
+            !p.readOnly && p.steps == 0 && hz(p.title) != nil && p.title.lowercased().allSatisfy { $0.isNumber || " .,khz".contains($0) }
+        }
+        if graphic.count >= 3 {
+            return graphic.enumerated().map { i, p in EqBand(label: String(i + 1), freq: nil, fixedHz: hz(p.title), gain: p.id) }
+        }
+        var bands: [(key: String, band: EqBand)] = []
+        for p in params where !p.readOnly && p.steps == 0 {
+            let w = wordsOf[p.id] ?? []
+            guard w.contains(where: freqWords.contains), !w.contains(where: excluded.contains),
+                  let k = key(w, removing: freqWords), !bands.contains(where: { $0.key == k }) else { continue }
+            // A lone "f" or "fc" only counts with a band number or name beside it.
+            if !w.contains(where: { ["frequency", "freq", "frq", "cutoff", "hz"].contains($0) }) && k.isEmpty { continue }
+            bands.append((k, EqBand(label: "", freq: p.id)))
+        }
+        guard !bands.isEmpty, bands.count <= 32 else { return [] }
+        // A single-band filter or EQ ("Center Frequency", "Gain", "Q") also takes the unqualified controls.
+        let single = bands.count == 1
+        func matches(_ k: String?, _ band: String) -> Bool { k == band || (single && k == "") }
+        for p in params where !p.readOnly {
+            let w = wordsOf[p.id] ?? []
+            guard !w.contains(where: excluded.contains) else { continue }
+            for i in bands.indices {
+                if bands[i].band.gain == nil, p.steps == 0, matches(key(w, removing: gainWords), bands[i].key),
+                   !w.contains(where: ["output", "input", "master", "makeup", "auto"].contains) {
+                    bands[i].band.gain = p.id
+                } else if bands[i].band.enable == nil, p.steps == 1, matches(key(w, removing: enableWords), bands[i].key) {
+                    bands[i].band.enable = p.id
+                    bands[i].band.enableInverted = w.contains("bypass") || w.contains("bypassed") || (w.contains("off") && !w.contains("on"))
+                } else if bands[i].band.q == nil, p.steps == 0, matches(key(w, removing: qWords), bands[i].key) {
+                    bands[i].band.q = p.id
+                }
+            }
+        }
+        return bands.enumerated().map { i, b in var band = b.band; band.label = String(i + 1); return band }
+    }
+
+    /// A frequency in Hz from a plug-in's value text ("80 Hz", "1.20 kHz", "2.5k", "12000"), or nil.
+    static func hz(_ text: String) -> Double? {
+        let t = text.lowercased()
+        guard let (v, rest) = number(t) else { return nil }
+        let unit = rest.trimmingCharacters(in: .whitespaces)
+        let hz = unit.hasPrefix("k") ? v * 1000 : unit.hasPrefix("m") && !unit.hasPrefix("ms") ? v * 1_000_000 : v
+        return hz > 0 ? hz : nil
+    }
+    /// A level in dB from value text ("+3.5 dB", "-12", "-inf").
+    static func db(_ text: String) -> Double? {
+        let t = text.lowercased()
+        if t.contains("-inf") || t.contains("−inf") { return -100 }
+        return number(t.replacingOccurrences(of: "−", with: "-"))?.0
+    }
+    /// The first number in `t` (a lone comma counts as the decimal point) and the text after it.
+    private static func number(_ t: String) -> (Double, Substring)? {
+        let chars = Array(t)
+        guard let start = chars.indices.first(where: { chars[$0].isNumber || ((chars[$0] == "-" || chars[$0] == "+" || chars[$0] == ".") && $0 + 1 < chars.count && chars[$0 + 1].isNumber) })
+        else { return nil }
+        var end = start + 1, sep = false
+        while end < chars.count, chars[end].isNumber || (!sep && (chars[end] == "." || chars[end] == ",") && end + 1 < chars.count && chars[end + 1].isNumber) {
+            if !chars[end].isNumber { sep = true }
+            end += 1
+        }
+        guard let v = Double(String(chars[start..<end]).replacingOccurrences(of: ",", with: ".")) else { return nil }
+        return (v, Substring(String(chars[end...])))
+    }
+}
+
 // MARK: Response screen
 
 /// An EQ screen: log-frequency grid, the live output spectrum, and the response curve with a soft glow.
 @MainActor
-final class ResponseScreen: NSView {
+final class ResponseScreen: FaceplateScreen {
     var curve: [Double]? { didSet { needsDisplay = true } }       // dB at `ResponseScreen.frequencies`
     var measured = false { didSet { needsDisplay = true } }
-    /// Band handles drawn on the curve (Dalnok's own EQs): frequency and number.
-    var markers: [(hz: Double, label: String)] = [] { didSet { needsDisplay = true } }
+    /// A band handle: where it sits (frequency, and gain when the band has one) and its number.
+    struct Marker: Equatable { var hz: Double; var db: Double?; var label: String; var on = true; var fixedFrequency = false }
+    /// Band handles on the screen (any EQ whose bands Dalnok can find). Drag one to move the band (left/right:
+    /// frequency, up/down: gain); scroll over it to change its Q; double-click to switch it on or off.
+    var markers: [Marker] = [] { didSet { if markers != oldValue { needsDisplay = true } } }
+    var onBandDrag: ((Int, Double, Double) -> Void)?
+    var onBandEnd: (() -> Void)?
+    var onBandScroll: ((Int, Double) -> Void)?
+    var onBandToggle: ((Int) -> Void)?
+    /// Index of the band being dragged (its handle is drawn lit).
+    private(set) var dragging: Int?
+    /// The plotting area inside the bezel (as drawn).
+    private var plotRect: CGRect { bounds.insetBy(dx: 4, dy: 4).insetBy(dx: 2, dy: 3) }
+    /// Where a band's handle sits: on its gain when it has one, else on the curve (cuts, shelves without gain), else 0 dB.
+    func center(of m: Marker) -> CGPoint {
+        let plot = plotRect
+        var level = m.db ?? 0
+        if m.db == nil, let c = curve, c.count == Self.frequencies.count {
+            let pos = max(0, min(Double(c.count - 1), log10(m.hz / 20) / 3 * Double(c.count - 1)))
+            let i = min(c.count - 2, Int(pos)), t = pos - Double(i)
+            level = c[i] + (c[i + 1] - c[i]) * t
+        }
+        let x = plot.minX + plot.width * CGFloat(log10(max(20, min(20_000, m.hz)) / 20) / 3)
+        let y = plot.midY - plot.height / 2 * CGFloat(max(-1.05, min(1.05, level / Self.range)))
+        return CGPoint(x: x, y: y)
+    }
+    private var centers: [(index: Int, point: CGPoint)] {
+        markers.enumerated().filter { $0.element.hz >= 20 && $0.element.hz <= 20_000 }.map { ($0.offset, center(of: $0.element)) }
+    }
     var spectrum: [Float]? { didSet { needsDisplay = true } }      // dB at the same frequencies (relative)
     var tint: NSColor = Theme.accent
     static let range: Double = 18 // ±dB
@@ -428,7 +670,42 @@ final class ResponseScreen: NSView {
     }
     required init?(coder: NSCoder) { fatalError() }
 
-    override func draw(_ dirtyRect: NSRect) {
+    // Band handles: press near one to grab it. Presses elsewhere on the screen do nothing (the unit doesn't move).
+    private func band(at p: CGPoint) -> Int? {
+        centers.min { hypot($0.point.x - p.x, $0.point.y - p.y) < hypot($1.point.x - p.x, $1.point.y - p.y) }
+            .flatMap { hypot($0.point.x - p.x, $0.point.y - p.y) <= 9 ? $0.index : nil }
+    }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    override func mouseDown(with event: NSEvent) {
+        let p = convert(event.locationInWindow, from: nil)
+        guard let i = band(at: p) else { return }
+        if event.clickCount == 2 { onBandToggle?(i); return }
+        dragging = i
+        needsDisplay = true
+    }
+    override func mouseDragged(with event: NSEvent) {
+        guard let i = dragging, plotRect.width > 0, markers.indices.contains(i) else { return }
+        let p = convert(event.locationInWindow, from: nil)
+        let fx = Double(max(0, min(1, (p.x - plotRect.minX) / plotRect.width)))
+        let hz = 20 * pow(1000, fx)
+        let db = Double(max(-1, min(1, (plotRect.midY - p.y) / (plotRect.height / 2)))) * Self.range
+        if !markers[i].fixedFrequency { markers[i].hz = hz }
+        if markers[i].db != nil { markers[i].db = db }
+        onBandDrag?(i, hz, db)
+    }
+    override func mouseUp(with event: NSEvent) {
+        guard dragging != nil else { return }
+        dragging = nil
+        needsDisplay = true
+        onBandEnd?()
+    }
+    override func scrollWheel(with event: NSEvent) {
+        guard let i = band(at: convert(event.locationInWindow, from: nil)), onBandScroll != nil else { return super.scrollWheel(with: event) }
+        let d = Double(event.hasPreciseScrollingDeltas ? event.scrollingDeltaY / 300 : event.scrollingDeltaY / 30)
+        if d != 0 { onBandScroll?(i, d) }
+    }
+
+    override func drawScreen(_ dirtyRect: NSRect) {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
         let window = FaceplateDisplay.bezel(ctx, bounds)
         let r: CGFloat = 3
@@ -506,20 +783,23 @@ final class ResponseScreen: NSView {
             ctx.strokePath()
             ctx.restoreGState()
         }
-        if let c = curve, c.count == Self.frequencies.count {
-            for m in markers where m.hz >= 20 && m.hz <= 20_000 {
-                let pos = log10(m.hz / 20) / 3 * Double(c.count - 1)
-                let i = min(c.count - 2, Int(pos)), t = pos - Double(i)
-                let center = CGPoint(x: x(m.hz), y: y(c[i] + (c[i + 1] - c[i]) * t))
-                let dot = CGRect(x: center.x - 5, y: center.y - 5, width: 10, height: 10)
-                ctx.saveGState()
-                ctx.setShadow(offset: .zero, blur: 4, color: tint.withAlphaComponent(0.8).cgColor)
-                ctx.setFillColor(NSColor(srgbRed: 0.05, green: 0.08, blue: 0.10, alpha: 0.95).cgColor); ctx.fillEllipse(in: dot)
-                ctx.restoreGState()
-                ctx.setStrokeColor(tint.cgColor); ctx.setLineWidth(1.2); ctx.strokeEllipse(in: dot)
-                FaceplateDisplay.text(m.label, at: CGRect(x: dot.minX, y: dot.minY + 1, width: dot.width, height: 9),
-                                      font: NSFont.systemFont(ofSize: 6.5, weight: .bold), color: tint)
-            }
+        for (index, m) in markers.enumerated() where m.hz >= 20 && m.hz <= 20_000 {
+            let center = center(of: m)
+            let lit = dragging == index
+            let r: CGFloat = lit ? 6 : 5
+            let dot = CGRect(x: center.x - r, y: center.y - r, width: 2 * r, height: 2 * r)
+            let color = m.on ? tint : NSColor(white: 0.55, alpha: 1)
+            ctx.saveGState()
+            if m.on { ctx.setShadow(offset: .zero, blur: lit ? 7 : 4, color: tint.withAlphaComponent(0.8).cgColor) }
+            ctx.setFillColor((lit ? tint.withAlphaComponent(0.35) : NSColor(srgbRed: 0.05, green: 0.08, blue: 0.10, alpha: 0.95)).cgColor)
+            ctx.fillEllipse(in: dot)
+            ctx.restoreGState()
+            ctx.setStrokeColor(color.withAlphaComponent(m.on ? 1 : 0.7).cgColor); ctx.setLineWidth(1.2)
+            if !m.on { ctx.setLineDash(phase: 0, lengths: [1.5, 1.5]) }
+            ctx.strokeEllipse(in: dot)
+            ctx.setLineDash(phase: 0, lengths: [])
+            FaceplateDisplay.text(m.label, at: CGRect(x: dot.minX - 2, y: center.y - 4.5, width: dot.width + 4, height: 9),
+                                  font: NSFont.systemFont(ofSize: 6.5, weight: .bold), color: lit ? .white : color)
         }
         if measured {
             FaceplateDisplay.text("MEASURED", at: CGRect(x: plot.maxX - 52, y: plot.minY + 1, width: 50, height: 9), font: small,
@@ -534,7 +814,7 @@ final class ResponseScreen: NSView {
 
 /// A phosphor oscilloscope: the plug-in's output, triggered on a rising zero crossing, with a little persistence.
 @MainActor
-final class ScopeScreen: NSView {
+final class ScopeScreen: FaceplateScreen {
     private var traces: [[Float]] = [] // newest last
     private(set) var gain: Float = 1    // automatic vertical scale (volts per division), so quiet signals still fill the screen
     override var isFlipped: Bool { true }
@@ -566,7 +846,7 @@ final class ScopeScreen: NSView {
     }
     func clear() { if !traces.isEmpty { traces = []; needsDisplay = true } }
 
-    override func draw(_ dirtyRect: NSRect) {
+    override func drawScreen(_ dirtyRect: NSRect) {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
         let window = FaceplateDisplay.bezel(ctx, bounds)
         let r: CGFloat = 3
@@ -639,7 +919,7 @@ enum Screen {
 /// The plug-in's transfer curve, measured: output plotted against input, sample by sample, on an amber phosphor
 /// screen. A clean gain is a straight diagonal; saturation bends it; time effects blur it into a cloud.
 @MainActor
-final class TransferScreen: NSView {
+final class TransferScreen: FaceplateScreen {
     private var frames: [[CGPoint]] = []
     override var isFlipped: Bool { true }
     init() { super.init(frame: .zero); setAccessibilityElement(true); setAccessibilityRole(.image); setAccessibilityLabel("Transfer curve") }
@@ -660,7 +940,7 @@ final class TransferScreen: NSView {
     }
     func clear() { if !frames.isEmpty { frames = []; needsDisplay = true } }
 
-    override func draw(_ dirtyRect: NSRect) {
+    override func drawScreen(_ dirtyRect: NSRect) {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
         let w = Screen.begin(ctx, bounds, top: NSColor(srgbRed: 0.06, green: 0.04, blue: 0.02, alpha: 1), bottom: NSColor(srgbRed: 0.03, green: 0.02, blue: 0.01, alpha: 1))
         let plot = w.insetBy(dx: 6, dy: 6)
@@ -697,7 +977,7 @@ final class TransferScreen: NSView {
 /// The output's level over the last few seconds, scrolling right to left, with the input as a thin line:
 /// reverb tails and echo repeats show as energy that carries on after the input stops.
 @MainActor
-final class HistoryScreen: NSView {
+final class HistoryScreen: FaceplateScreen {
     static let columns = 180
     private var output = [Float](repeating: -90, count: columns), input = [Float](repeating: -90, count: columns)
     var tint: NSColor = Theme.accent
@@ -714,7 +994,7 @@ final class HistoryScreen: NSView {
         needsDisplay = true
     }
 
-    override func draw(_ dirtyRect: NSRect) {
+    override func drawScreen(_ dirtyRect: NSRect) {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
         let w = Screen.begin(ctx, bounds, top: Screen.lcdTop, bottom: Screen.lcdBottom)
         let plot = w.insetBy(dx: 2, dy: 4)
@@ -764,7 +1044,7 @@ final class HistoryScreen: NSView {
 /// A stereo goniometer: mid up, side across (L and R on the diagonals), with a correlation bar beneath.
 /// Mono is a vertical line; wide stereo fills the screen; out-of-phase content leans horizontal.
 @MainActor
-final class GoniometerScreen: NSView {
+final class GoniometerScreen: FaceplateScreen {
     private var frames: [[CGPoint]] = []
     private var gain: CGFloat = 1
     private(set) var correlation: Double = 1
@@ -793,7 +1073,7 @@ final class GoniometerScreen: NSView {
     }
     func clear() { if !frames.isEmpty { frames = []; needsDisplay = true } }
 
-    override func draw(_ dirtyRect: NSRect) {
+    override func drawScreen(_ dirtyRect: NSRect) {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
         let w = Screen.begin(ctx, bounds, top: NSColor(srgbRed: 0.02, green: 0.04, blue: 0.07, alpha: 1), bottom: NSColor(srgbRed: 0.01, green: 0.02, blue: 0.04, alpha: 1))
         let barH: CGFloat = 12
@@ -839,7 +1119,7 @@ final class GoniometerScreen: NSView {
 
 /// A third-octave real-time analyzer built from LED columns, with peak-hold LEDs, like a hardware RTA.
 @MainActor
-final class LedAnalyzer: NSView {
+final class LedAnalyzer: FaceplateScreen {
     static let bands: [Double] = (0..<24).map { 50 * pow(2, Double($0) / 3) } // 50 Hz … 10 kHz
     static let rows = 14
     private(set) var levels = [Float](repeating: -90, count: bands.count)
@@ -862,7 +1142,7 @@ final class LedAnalyzer: NSView {
         needsDisplay = true
     }
 
-    override func draw(_ dirtyRect: NSRect) {
+    override func drawScreen(_ dirtyRect: NSRect) {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
         let w = Screen.begin(ctx, bounds, top: NSColor(white: 0.03, alpha: 1), bottom: NSColor(white: 0.05, alpha: 1))
         let plot = w.insetBy(dx: 5, dy: 5).offsetBy(dx: 0, dy: -3)

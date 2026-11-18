@@ -641,6 +641,16 @@ final class SelfTest {
             check(s.tracks.count > 0 && s.engine.undoName == fades0 && s.hiddenCount == 0, "⌃H and ⌥' reach the text field, not Hide Track or Add Marker")
             row.cancelRename()
             await wait(0.1)
+            // Clicking outside the name field commits the typed name (as Return does).
+            let oldName = s.track(row.trackId)?.name ?? ""
+            row.beginRename()
+            await wait(0.1)
+            (w.window?.firstResponder as? NSTextView)?.string = "Renamed By Click"
+            let outside = w.timeline.convert(CGPoint(x: w.timeline.bounds.midX, y: w.timeline.bounds.maxY - 4), to: nil)
+            w.window?.sendEvent(mouse(.leftMouseDown, outside)); w.window?.sendEvent(mouse(.leftMouseUp, outside))
+            await wait(0.1)
+            check(s.track(row.trackId)?.name == "Renamed By Click" && !MainWindowController.isTyping, "clicking outside a track name being edited keeps the new name")
+            s.renameTrack(row.trackId, oldName)
         }
         // A dialog owns Return and Escape: shortcuts stay out of its way (regression: Return ran Go to Start under an alert).
         let alert = NSAlert(); alert.messageText = "Shortcut test"; alert.addButton(withTitle: "OK")
@@ -1535,9 +1545,21 @@ final class SelfTest {
                 check(time.kind == .knob && time.legends == ["0", "2"], "the delay-time knob's scale is printed with the plug-in's own end values (\(time.legends))")
             } else { check(false, "AUDelay's faceplate has a Delay Time knob") }
             delay.toggleBypass()
-            check(faces.allSatisfy(\.dimmed), "bypassing dims the faceplate's controls")
+            let scale = delay.layer?.affineTransform().a ?? 1
+            check(faces.allSatisfy(\.dimmed) && delay.inMeter.poweredOff && (delay.display as? FaceplateScreen)?.poweredOff == true
+                  && abs(scale - DeviceView.recessedScale) < 1e-6, "bypassing turns the unit's lights and screen off and sets it back (scale \(scale))")
             delay.toggleBypass()
-            check(faces.allSatisfy { !$0.dimmed }, "turning it on lights them again")
+            check(faces.allSatisfy { !$0.dimmed } && !delay.inMeter.poweredOff && (delay.layer?.affineTransform().a ?? 0) == 1, "turning it on lights them again")
+            // Selection: pressing a unit selects it (white outline); the others are not selected.
+            delay.onSelect?()
+            check(panel.selectedSlot == delay.slot && delay.isSelected && (delay.layer?.borderWidth ?? 0) > 0
+                  && panel.devices.filter(\.isSelected).count == 1, "pressing a unit selects it with a white outline")
+            // Wear: a setting, remembered, drawn into the plate and glass.
+            let wearBefore = UserDefaults.standard.object(forKey: "faceplateWear")
+            Faceplate.wear = 0.9
+            check(abs(Faceplate.wear - 0.9) < 1e-9 && Faceplate.seed("AUDelay") == Faceplate.seed("AUDelay") && Faceplate.seed("A") != Faceplate.seed("B"),
+                  "plug-in wear is a remembered setting with a stable pattern per unit")
+            if let wearBefore { UserDefaults.standard.set(wearBefore, forKey: "faceplateWear") } else { UserDefaults.standard.removeObject(forKey: "faceplateWear") }
             let eqSections = Faceplate.sections([(0, "Low Cut On/Off"), (1, "Low Cut Frequency"), (2, "Low Cut Slope"), (3, "Feedback"), (4, "Mix")])
             check(eqSections.map(\.title) == ["Low Cut", ""] && eqSections[0].items.map(\.label) == ["On", "Frequency", "Slope"]
                   && eqSections[1].items.count == 2, "related parameters share an engraved section (\(eqSections.map(\.title)))")
@@ -1575,6 +1597,22 @@ final class SelfTest {
             check(paramWrong.isEmpty, "parameter names choose the display when nothing else says (wrong: \(paramWrong))")
             check(FaceplateDisplay.kind(name: "Couture", path: "", instrument: false, declared: ["Fx"], parameters: ["Attack", "Sustain", "Threshold", "Ratio"])
                   == .gainReduction, "a plug-in declaring only Fx is sorted by its parameters")
+            // EQ bands from parameter names alone (any plug-in), including repeated names and graphic EQs.
+            func P(_ id: UInt32, _ t: String, _ steps: Int32 = 0) -> EqBands.Param { EqBands.Param(id: id, title: t, steps: steps, readOnly: false) }
+            let nova = EqBands.find([P(1, "Band 1 selected", 1), P(2, "Band 1 Active", 1), P(3, "Band 1 Gain"), P(4, "Band 1 Q"), P(5, "Band 1 Frequency"),
+                                     P(6, "Band 1 Threshold"), P(7, "Band 2 Gain"), P(8, "Band 2 Frequency"), P(9, "HP Frequency"), P(10, "HP Active", 1)])
+            check(nova.count == 3 && nova[0] == EqBand(label: "1", freq: 5, gain: 3, enable: 2, q: 4) && nova[1].gain == 7 && nova[2].gain == nil && nova[2].enable == 10,
+                  "EQ bands are found by name: frequency with its gain, on switch and Q (\(nova))")
+            let nband = EqBands.find([P(1, "Global Gain"), P(2, "Bypass", 1), P(3, "Frequency"), P(4, "Gain"), P(5, "Bypass", 1), P(6, "Frequency"), P(7, "Gain")])
+            check(nband.count == 2 && nband[1].freq == 6 && nband[1].gain == 7 && nband[1].enable == 5 && nband[1].enableInverted,
+                  "bands with repeated names pair by position, and a Bypass switch counts inverted")
+            let graphic = EqBands.find((0..<10).map { P(UInt32($0), String(format: "%.1f Hz", 20 * pow(2, Double($0)))) })
+            check(graphic.count == 10 && graphic[3].freq == nil && graphic[3].fixedHz == 160 && graphic[3].gain == 3, "graphic EQ sliders are fixed-frequency gain bands")
+            check(EqBands.find([P(1, "LFO Rate"), P(2, "Crossover Freq"), P(3, "Mix")]).isEmpty, "crossovers and LFOs are not EQ bands")
+            check(EqBands.hz("1.20 kHz") == 1200 && EqBands.hz("80 Hz") == 80 && EqBands.hz("2,5k") == 2500 && EqBands.db("-4.5 dB") == -4.5 && EqBands.db("+3") == 3,
+                  "frequency and gain value texts parse")
+            check(FaceplateDisplay.kind(parameters: ["Band 1 Gain", "Band 1 Frequency", "Band 1 Threshold", "Band 1 Ratio", "Band 1 Split", "Band 2 Gain", "Band 2 Frequency",
+                                                     "Band 3 Gain", "Band 3 Frequency"]) == .response, "a dynamic EQ gets the EQ screen, not a compressor meter")
             FaceplateDisplay.setOverride("Mystery Box", .goniometer)
             check(FaceplateDisplay.kind(name: "Mystery Box", path: "", instrument: false) == .goniometer, "an owner's display choice wins and is remembered")
             FaceplateDisplay.setOverride("Mystery Box", nil)
@@ -1634,6 +1672,27 @@ final class SelfTest {
               "dropping a plug-in between two units inserts it there (\(afterDrop.map(\.name)))")
         _ = perform("Undo"); panel.rebuild()
         check(s.track(track)?.plugins.map(\.id) == order0, "undo removes the dropped plug-in")
+        // EQ screen: a band handle drags its band (Dalnok Channel EQ, with real mouse events on the screen).
+        if !Analog.on, let eqSlot = try? s.addPlugin(track, path: "dalnok:channel-eq") {
+            panel.rebuild(); panel.layoutSubtreeIfNeeded()
+            if let eq = panel.devices.first(where: { $0.slot == eqSlot }), let screen = eq.display as? ResponseScreen {
+                screen.display()
+                let freqBefore = eq.current(17).map(\.value) ?? -1 // Peak 3 Frequency
+                if let i = screen.markers.firstIndex(where: { $0.label == "5" }) {
+                    screen.display()
+                    let m = screen.markers[i]
+                    let plot = screen.bounds.insetBy(dx: 6, dy: 7)
+                    let at = CGPoint(x: plot.minX + plot.width * CGFloat(log10(m.hz / 20) / 3), y: plot.midY - plot.height / 2 * CGFloat((m.db ?? 0) / ResponseScreen.range))
+                    let to = CGPoint(x: at.x + 30, y: at.y - 20)
+                    screen.mouseDown(with: mouse(.leftMouseDown, screen.convert(at, to: nil)))
+                    screen.mouseDragged(with: mouse(.leftMouseDragged, screen.convert(to, to: nil)))
+                    screen.mouseUp(with: mouse(.leftMouseUp, screen.convert(to, to: nil)))
+                    let freqAfter = eq.current(17).map(\.value) ?? -1, gain = eq.current(18).flatMap { EqBands.db(fixedString($0.display)) } ?? 0
+                    check(freqAfter > freqBefore && gain > 0.5, "dragging an EQ handle on the screen moves its band (freq \(freqBefore) → \(freqAfter), gain \(gain) dB, screen \(screen.frame), at \(at))")
+                } else { check(false, "Channel EQ's screen shows its band handles (\(screen.markers.map(\.label)))") }
+            } else { check(false, "Channel EQ gets a response screen") }
+            s.removePlugin(track, eqSlot); panel.rebuild()
+        }
         check(perform("Device Panel") && w.devicePanel.isHidden, "View > Device Panel hides it")
         _ = perform("Device Panel")
         s.removePlugin(track, limiter)
@@ -2076,6 +2135,13 @@ final class SelfTest {
         w.transport.tempoField.stringValue = "1000"
         w.tempoEdited(nil)
         check(abs(s.bpm - 96) < 1e-9 && w.transport.tempoField.stringValue == "96", "invalid tempo is rejected and the field restored")
+        check(TempoFormatter.valid("128.5") && !TempoFormatter.valid("12a") && !TempoFormatter.valid("1.2.3") && !TempoFormatter.valid("-5"),
+              "the tempo field accepts only numbers")
+        // Dragging the tempo readout changes the tempo as one undo step.
+        w.tempoDragged(100); w.tempoDragged(104); w.tempoDragged(nil)
+        check(abs(s.bpm - 104) < 1e-9 && e.undoName == "Change Tempo", "dragging the tempo sets it as one undo step (\(s.bpm), \(e.undoName))")
+        _ = perform("Undo")
+        check(abs(s.bpm - 96) < 1e-9, "one undo restores the tempo from before the drag (\(s.bpm))")
         w.transport.meterPopup.selectItem(withTitle: "3/4")
         w.meterChosen(nil)
         check(s.meter == (3, 4), "meter popup sets 3/4")

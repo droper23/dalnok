@@ -7,6 +7,9 @@ final class SettingsController: NSWindowController {
     let themePicker = NSPopUpButton(frame: .zero, pullsDown: false)
     let copyAudio = NSButton(checkboxWithTitle: "Copy audio into the project folder when saving", target: nil, action: nil)
     let deviceMeters = NSButton(checkboxWithTitle: "Show input and output meters on plug-ins (Graphite)", target: nil, action: nil)
+    /// How worn the plug-in units look (Graphite): 0 new … 1 well used.
+    let wear = NSSlider(value: 0.25, minValue: 0, maxValue: 1, target: nil, action: nil)
+    private let wearValue = NSTextField(labelWithString: "")
     let appearanceNote = NSTextField(wrappingLabelWithString: "")
     let relaunch = NSButton(title: "Relaunch Now", target: nil, action: nil)
 
@@ -46,13 +49,24 @@ final class SettingsController: NSWindowController {
         deviceMeters.target = self; deviceMeters.action = #selector(metersChanged(_:))
         deviceMeters.toolTip = "Thin level meters on each plug-in's faceplate in the device panel"
         copyAudio.toolTip = "Keeps saved projects easier to move between computers."
+        wear.target = self; wear.action = #selector(wearChanged(_:))
+        wear.isContinuous = true
+        wear.toolTip = "Scratches and grime on the metal, dust and smudges on the displays' glass"
+        wear.setAccessibilityLabel("Plug-in wear")
+        let wearLabel = NSTextField(labelWithString: "Wear on plug-in units (Graphite)")
+        let newLabel = NSTextField(labelWithString: "New"), usedLabel = NSTextField(labelWithString: "Well used")
+        for l in [newLabel, usedLabel, wearValue] { l.font = Theme.ui(10); l.textColor = Theme.textDim }
+        wearValue.font = Theme.mono(10)
+        let wearRow = NSStackView(views: [wearLabel, newLabel, wear, usedLabel, wearValue])
+        wearRow.spacing = 6
+        wear.widthAnchor.constraint(equalToConstant: 140).isActive = true
         relaunch.bezelStyle = .rounded
         relaunch.controlSize = .small
         relaunch.target = self; relaunch.action = #selector(relaunchTapped(_:))
         relaunch.toolTip = "Quit and reopen Dalnok with the new appearance (you'll be asked to save changes first)"
         let note = NSStackView(views: [appearanceNote, relaunch])
         note.spacing = 8
-        let stack = NSStackView(views: [title, intro, appearance, themePicker, note, projects, copyAudio, plugins, deviceMeters])
+        let stack = NSStackView(views: [title, intro, appearance, themePicker, note, projects, copyAudio, plugins, deviceMeters, wearRow])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 8
@@ -81,6 +95,8 @@ final class SettingsController: NSWindowController {
         themePicker.selectItem(at: Theme.Style.allCases.firstIndex(of: Theme.preferredStyle) ?? 0)
         copyAudio.state = MainWindowController.copyAudioOnSave ? .on : .off
         deviceMeters.state = Faceplate.showMeters ? .on : .off
+        wear.doubleValue = Faceplate.wear
+        wearValue.stringValue = String(format: "%.0f%%", Faceplate.wear * 100)
         appearanceNote.stringValue = Theme.preferredStyle == Theme.activeStyle
             ? "Graphite is crisp and focused. Warm Analog brings a softer studio palette."
             : "The appearance changes when recording stops, or relaunch now."
@@ -100,6 +116,10 @@ final class SettingsController: NSWindowController {
     }
     @objc func metersChanged(_ sender: Any?) {
         Faceplate.showMeters = deviceMeters.state == .on
+    }
+    @objc func wearChanged(_ sender: Any?) {
+        Faceplate.wear = wear.doubleValue
+        wearValue.stringValue = String(format: "%.0f%%", Faceplate.wear * 100)
     }
     @objc func copyChanged(_ sender: Any?) {
         MainWindowController.copyAudioOnSave = copyAudio.state == .on

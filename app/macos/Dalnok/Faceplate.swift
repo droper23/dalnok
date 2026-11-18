@@ -17,6 +17,39 @@ enum Faceplate {
     }
     static let metersChanged = Notification.Name("DalnokDeviceMetersChanged")
 
+    /// How worn the units look (Settings ▸ Plug-ins): 0 factory new … 1 years on the road. Scratches and grime on the
+    /// metal, dust and smudges on the glass.
+    static var wear: Double {
+        get { max(0, min(1, UserDefaults.standard.object(forKey: "faceplateWear") as? Double ?? 0.25)) }
+        set {
+            UserDefaults.standard.set(max(0, min(1, newValue)), forKey: "faceplateWear")
+            NotificationCenter.default.post(name: wearChanged, object: nil)
+        }
+    }
+    static let wearChanged = Notification.Name("DalnokFaceplateWearChanged")
+
+    /// A stable seed from a unit's name (FNV-1a), so its scratches and dust stay put between launches.
+    static func seed(_ name: String) -> UInt64 {
+        var h: UInt64 = 0xcbf29ce484222325
+        for b in name.utf8 { h = (h ^ UInt64(b)) &* 0x100000001b3 }
+        return h == 0 ? 1 : h
+    }
+    /// Small deterministic generator for wear patterns.
+    struct Random {
+        var state: UInt64
+        init(seed: UInt64) { state = seed == 0 ? 0x9E3779B97F4A7C15 : seed }
+        mutating func next() -> UInt64 {
+            state = state &* 6364136223846793005 &+ 1442695040888963407
+            var z = state
+            z = (z ^ (z >> 30)) &* 0xBF58476D1CE4E5B9
+            z = (z ^ (z >> 27)) &* 0x94D049BB133111EB
+            return z ^ (z >> 31)
+        }
+        /// Uniform in 0..<1.
+        mutating func next01() -> Double { Double(next() >> 11) / Double(1 << 53) }
+        var unit: CGFloat { mutating get { CGFloat(next01()) } }
+    }
+
     // Palette: neutral graphite metal.
     static let plateTop = NSColor(srgbRed: 0.235, green: 0.243, blue: 0.259, alpha: 1)
     static let plateBottom = NSColor(srgbRed: 0.176, green: 0.184, blue: 0.196, alpha: 1)
@@ -73,7 +106,7 @@ enum Faceplate {
     // MARK: Drawing
 
     /// The unit's faceplate: brushed graphite with a bevel, an accent line in the track colour, and four screws.
-    static func plate(_ ctx: CGContext, _ rect: CGRect, accent: NSColor, dimmed: Bool) {
+    static func plate(_ ctx: CGContext, _ rect: CGRect, accent: NSColor, dimmed: Bool, seed: UInt64 = 1, wear: Double = 0) {
         let path = CGPath(roundedRect: rect.insetBy(dx: 0.5, dy: 0.5), cornerWidth: 5, cornerHeight: 5, transform: nil)
         ctx.saveGState()
         ctx.addPath(path); ctx.clip()
@@ -82,16 +115,17 @@ enum Faceplate {
             ctx.drawLinearGradient(g, start: CGPoint(x: 0, y: rect.maxY), end: CGPoint(x: 0, y: rect.minY), options: [])
         }
         // Brushing: fine horizontal grain, seeded so it is stable between redraws.
-        var seed: UInt64 = 0x9E3779B97F4A7C15
+        var grain: UInt64 = 0x9E3779B97F4A7C15
         var y = rect.minY
         while y < rect.maxY {
-            seed = seed &* 6364136223846793005 &+ 1442695040888963407
-            let a = 0.018 + Double(seed >> 59) / 31 * 0.035
-            ctx.setStrokeColor(NSColor(white: (seed >> 40) & 1 == 0 ? 1 : 0, alpha: a).cgColor)
+            grain = grain &* 6364136223846793005 &+ 1442695040888963407
+            let a = 0.018 + Double(grain >> 59) / 31 * 0.035
+            ctx.setStrokeColor(NSColor(white: (grain >> 40) & 1 == 0 ? 1 : 0, alpha: a).cgColor)
             ctx.setLineWidth(0.5)
             ctx.move(to: CGPoint(x: rect.minX, y: y)); ctx.addLine(to: CGPoint(x: rect.maxX, y: y)); ctx.strokePath()
-            y += 1 + CGFloat((seed >> 33) & 1)
+            y += 1 + CGFloat((grain >> 33) & 1)
         }
+        plateWear(ctx, rect, seed: seed, amount: wear)
         ctx.restoreGState()
         // Bevel: light top edge, dark outline.
         ctx.addPath(path); ctx.setStrokeColor(NSColor.black.withAlphaComponent(0.55).cgColor); ctx.setLineWidth(1); ctx.strokePath()
@@ -101,6 +135,63 @@ enum Faceplate {
                   CGPoint(x: rect.minX + 6, y: rect.maxY - 6), CGPoint(x: rect.maxX - 6, y: rect.maxY - 6)] {
             screw(ctx, p)
         }
+    }
+
+    /// Use marks on the metal (clipped to the plate by the caller): scuffs and fine scratches through the finish,
+    /// rubbed-bright edges, and grime gathered in the corners and around the screws.
+    static func plateWear(_ ctx: CGContext, _ rect: CGRect, seed: UInt64, amount: Double) {
+        guard amount > 0.001 else { return }
+        var rng = Random(seed: seed)
+        let a = CGFloat(amount), space = CGColorSpaceCreateDeviceRGB()
+        // Grime: darker, slightly warm, where fingers and dust collect.
+        let grime = [NSColor(srgbRed: 0.07, green: 0.06, blue: 0.05, alpha: 0.55 * a).cgColor, NSColor(srgbRed: 0.07, green: 0.06, blue: 0.05, alpha: 0).cgColor] as CFArray
+        if let g = CGGradient(colorsSpace: space, colors: grime, locations: [0, 1]) {
+            for corner in [CGPoint(x: rect.minX, y: rect.minY), CGPoint(x: rect.maxX, y: rect.minY),
+                           CGPoint(x: rect.minX, y: rect.maxY), CGPoint(x: rect.maxX, y: rect.maxY)] {
+                ctx.drawRadialGradient(g, startCenter: corner, startRadius: 0, endCenter: corner, endRadius: 16 + 26 * a, options: [])
+            }
+            for _ in 0..<Int(2 + 3 * amount) { // patches of handling grime
+                let c = CGPoint(x: rect.minX + rng.unit * rect.width, y: rect.minY + rng.unit * rect.height)
+                ctx.saveGState()
+                ctx.setAlpha(0.35 + 0.3 * rng.unit)
+                ctx.drawRadialGradient(g, startCenter: c, startRadius: 0, endCenter: c, endRadius: 14 + 30 * rng.unit, options: [])
+                ctx.restoreGState()
+            }
+        }
+        // Rubbed edges: the finish worn bright along parts of the rim.
+        for _ in 0..<Int(3 + 8 * amount) {
+            let horizontal = rng.unit < 0.6
+            let len = (0.05 + 0.18 * rng.unit) * (horizontal ? rect.width : rect.height)
+            let along = rng.unit * ((horizontal ? rect.width : rect.height) - len)
+            let edge = rng.unit < 0.5
+            ctx.setStrokeColor(NSColor(white: 0.85, alpha: (0.05 + 0.10 * rng.unit) * a).cgColor); ctx.setLineWidth(1.2 + rng.unit)
+            if horizontal {
+                let y = edge ? rect.minY + 1.4 : rect.maxY - 1.4
+                ctx.move(to: CGPoint(x: rect.minX + along, y: y)); ctx.addLine(to: CGPoint(x: rect.minX + along + len, y: y))
+            } else {
+                let x = edge ? rect.minX + 1.4 : rect.maxX - 1.4
+                ctx.move(to: CGPoint(x: x, y: rect.minY + along)); ctx.addLine(to: CGPoint(x: x, y: rect.minY + along + len))
+            }
+            ctx.strokePath()
+        }
+        // Scratches: bright cut through the finish with a dark shadow edge; mostly short, a few long.
+        let count = Int(Double(rect.width * rect.height) / 2600 * amount)
+        for _ in 0..<count {
+            let p = CGPoint(x: rect.minX + rng.unit * rect.width, y: rect.minY + rng.unit * rect.height)
+            let long = rng.unit < 0.15
+            let len = long ? 30 + rng.unit * 70 : 3 + rng.unit * 16
+            let ang = (rng.unit - 0.5) * 2.4
+            let bend = (rng.unit - 0.5) * len * 0.25
+            let end = CGPoint(x: p.x + cos(ang) * len, y: p.y + sin(ang) * len)
+            let mid = CGPoint(x: (p.x + end.x) / 2 - sin(ang) * bend, y: (p.y + end.y) / 2 + cos(ang) * bend)
+            let alpha = (0.10 + 0.22 * rng.unit) * (0.4 + 0.6 * a)
+            ctx.setLineCap(.round)
+            ctx.setStrokeColor(NSColor.black.withAlphaComponent(alpha * 0.8).cgColor); ctx.setLineWidth(0.6)
+            ctx.move(to: CGPoint(x: p.x, y: p.y - 0.5)); ctx.addQuadCurve(to: CGPoint(x: end.x, y: end.y - 0.5), control: CGPoint(x: mid.x, y: mid.y - 0.5)); ctx.strokePath()
+            ctx.setStrokeColor(NSColor(white: 0.92, alpha: alpha).cgColor); ctx.setLineWidth(0.45)
+            ctx.move(to: p); ctx.addQuadCurve(to: end, control: mid); ctx.strokePath()
+        }
+        ctx.setLineCap(.butt)
     }
 
     static func screw(_ ctx: CGContext, _ c: CGPoint) {
@@ -186,7 +277,7 @@ enum Faceplate {
     }
 
     /// A lit push switch: a raised key with an LED window.
-    static func pushSwitch(_ ctx: CGContext, _ rect: CGRect, on: Bool, color: NSColor) {
+    static func pushSwitch(_ ctx: CGContext, _ rect: CGRect, on: Bool, color: NSColor, lit: Bool = true) {
         let key = CGPath(roundedRect: rect, cornerWidth: 3, cornerHeight: 3, transform: nil)
         ctx.saveGState()
         ctx.setShadow(offset: CGSize(width: 0, height: on ? -0.5 : -1.5), blur: on ? 1.5 : 3, color: NSColor.black.withAlphaComponent(0.7).cgColor)
@@ -201,7 +292,7 @@ enum Faceplate {
         ctx.restoreGState()
         ctx.addPath(key); ctx.setStrokeColor(NSColor.black.withAlphaComponent(0.6).cgColor); ctx.setLineWidth(0.8); ctx.strokePath()
         let led = CGRect(x: rect.midX - rect.width * 0.3, y: rect.minY + 4, width: rect.width * 0.6, height: 3)
-        if on {
+        if on && lit {
             ctx.saveGState()
             ctx.setShadow(offset: .zero, blur: 5, color: color.cgColor)
             ctx.setFillColor(color.cgColor); ctx.fill(led)
@@ -352,18 +443,18 @@ final class FaceplateControl: NSControl, ParameterControl {
     // Drawing
     override func draw(_ dirtyRect: NSRect) {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
-        if dimmed { ctx.setAlpha(0.5) }
+        // Bypassed: the metal stays as it is; only the lights go out (LED ring, switch lamp, readout).
         let w = bounds.width
         Faceplate.engrave(name, in: CGRect(x: 0, y: 0, width: w, height: 12), font: Self.nameFont(name, width: w))
         let c = CGPoint(x: w / 2, y: 34)
         let legendFont = Theme.mono(7.5)
         switch kind {
         case .toggle:
-            Faceplate.pushSwitch(ctx, CGRect(x: c.x - 13, y: c.y - 9, width: 26, height: 19), on: value >= 0.5, color: tint)
+            Faceplate.pushSwitch(ctx, CGRect(x: c.x - 13, y: c.y - 9, width: 26, height: 19), on: value >= 0.5, color: tint, lit: !dimmed)
         case .knob, .selector:
             let r: CGFloat = kind == .knob ? 12.5 : 10.5
             Faceplate.scale(ctx, center: c, radius: r, ticks: kind == .selector ? Int(steps) + 1 : 11, value: value,
-                            bipolar: bipolar, color: tint)
+                            bipolar: bipolar, color: dimmed ? NSColor(white: 0.22, alpha: 1) : tint)
             Faceplate.knob(ctx, center: c, radius: r, angle: Faceplate.angle(value))
             if legends.count >= 2 {
                 // Printed at the ends of the scale, inside this control's own width.
@@ -374,7 +465,7 @@ final class FaceplateControl: NSControl, ParameterControl {
                                   font: legendFont, color: Faceplate.legend, align: .left)
             }
         }
-        Faceplate.readoutWindow(ctx, CGRect(x: 6, y: bounds.height - 14, width: w - 12, height: 13), text: format(value))
+        Faceplate.readoutWindow(ctx, CGRect(x: 6, y: bounds.height - 14, width: w - 12, height: 13), text: dimmed ? "" : format(value))
         if window?.firstResponder === self {
             ctx.setStrokeColor(NSColor.keyboardFocusIndicatorColor.cgColor); ctx.setLineWidth(1.5)
             ctx.strokeEllipse(in: CGRect(x: c.x - 22, y: c.y - 22, width: 44, height: 44))
@@ -435,6 +526,8 @@ final class FaceplateSection: NSView {
 @MainActor
 final class FaceplateMeter: NSView {
     let caption: String
+    /// Bypassed unit: every LED dark.
+    var poweredOff = false { didSet { if poweredOff != oldValue { needsDisplay = true } } }
     private var levelDb: (Float, Float) = (-120, -120)
     private var hold: (Float, Float) = (-120, -120)
     private var holdAt: (Double, Double) = (0, 0)
@@ -497,7 +590,7 @@ final class FaceplateMeter: NSView {
                 let color: NSColor = segDb >= -1.5 ? NSColor(srgbRed: 1.0, green: 0.27, blue: 0.20, alpha: 1)
                     : segDb >= -9 ? NSColor(srgbRed: 1.0, green: 0.72, blue: 0.22, alpha: 1) : NSColor(srgbRed: 0.42, green: 0.95, blue: 0.48, alpha: 1)
                 let led = CGRect(x: slot.minX + pad + CGFloat(ch) * (ledW + gap), y: ledY(i), width: ledW, height: ledH)
-                let on = i < lit || i == peak && peak >= lit
+                let on = !poweredOff && (i < lit || i == peak && peak >= lit)
                 let lens = CGPath(roundedRect: led, cornerWidth: 0.9, cornerHeight: 0.9, transform: nil)
                 if on {
                     ctx.saveGState()

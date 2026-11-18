@@ -13,6 +13,9 @@
 #include "pluginterfaces/vst/ivstevents.h"
 #include "pluginterfaces/vst/ivsteditcontroller.h"
 #include "pluginterfaces/vst/ivstparameterchanges.h"
+#include "pluginterfaces/vst/ivsthostapplication.h"
+#include "pluginterfaces/vst/ivstmessage.h"
+#include "pluginterfaces/vst/ivstattributes.h"
 #include <cmath>
 #include <cstdio>
 #include "pluginterfaces/vst/vstspeaker.h"
@@ -28,6 +31,9 @@ DEF_CLASS_IID(IComponent)
 DEF_CLASS_IID(IAudioProcessor)
 DEF_CLASS_IID(IEventList)
 DEF_CLASS_IID(IEditController)
+DEF_CLASS_IID(IHostApplication)
+DEF_CLASS_IID(IMessage)
+DEF_CLASS_IID(IAttributeList)
 DEF_CLASS_IID(IParameterChanges)
 DEF_CLASS_IID(IParamValueQueue)
 }
@@ -69,7 +75,30 @@ public:
         return r;
     }
     // IPluginBase
-    tresult PLUGIN_API initialize(FUnknown *) override { return kResultOk; }
+    // Like many real plug-ins: build a message through the host (as for IConnectionPoint traffic) and refuse a host
+    // that cannot make one, rather than crash on it.
+    tresult PLUGIN_API initialize(FUnknown *context) override {
+        IHostApplication *host = nullptr;
+        if (!context || context->queryInterface(IHostApplication::iid, reinterpret_cast<void **>(&host)) != kResultOk || !host) return kResultFalse;
+        TUID id;
+        std::memcpy(id, IMessage::iid, sizeof id);
+        IMessage *msg = nullptr;
+        bool ok = host->createInstance(id, id, reinterpret_cast<void **>(&msg)) == kResultOk && msg;
+        if (ok) {
+            msg->setMessageID("dalnok-test");
+            IAttributeList *a = msg->getAttributes();
+            int64 v = 0;
+            const char blob[3] = {1, 2, 3};
+            const void *data = nullptr;
+            uint32 size = 0;
+            ok = a && a->setInt("n", 42) == kResultOk && a->getInt("n", v) == kResultOk && v == 42
+                && a->setBinary("b", blob, 3) == kResultOk && a->getBinary("b", data, size) == kResultOk && size == 3
+                && std::strcmp(msg->getMessageID(), "dalnok-test") == 0;
+        }
+        if (msg) msg->release();
+        host->release();
+        return ok ? kResultOk : kResultFalse;
+    }
     tresult PLUGIN_API terminate() override { return kResultOk; }
     // IComponent
     tresult PLUGIN_API getControllerClassId(TUID) override { return kResultFalse; }

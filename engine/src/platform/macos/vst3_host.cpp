@@ -14,6 +14,7 @@
 #include "pluginterfaces/vst/ivstevents.h"
 #include "pluginterfaces/vst/ivsthostapplication.h"
 #include "pluginterfaces/vst/ivsteditcontroller.h"
+#include "pluginterfaces/vst/ivstattributes.h"
 #include "pluginterfaces/vst/ivstmessage.h"
 #include "pluginterfaces/vst/ivstparameterchanges.h"
 #include "pluginterfaces/vst/vstspeaker.h"
@@ -27,6 +28,8 @@
 #include <cstring>
 #include <map>
 #include <mutex>
+#include <string>
+#include <vector>
 #include <vector>
 
 namespace dalnok {
@@ -35,6 +38,85 @@ using namespace Steinberg::Vst;
 
 namespace {
 // ---- Small COM-style objects owned by the host ----------------------------------
+
+// Attribute list and message the host creates for plug-ins (IHostApplication::createInstance). Controllers and
+// processors use them to talk to each other over IConnectionPoint; many plug-ins crash if the host cannot make them.
+class HostAttributeList final : public IAttributeList {
+public:
+    tresult PLUGIN_API queryInterface(const TUID iid, void **obj) override {
+        if (FUnknownPrivate::iidEqual(iid, IAttributeList::iid) || FUnknownPrivate::iidEqual(iid, FUnknown::iid)) {
+            addRef(); *obj = this; return kResultOk;
+        }
+        *obj = nullptr;
+        return kNoInterface;
+    }
+    uint32 PLUGIN_API addRef() override { return ++refs_; }
+    uint32 PLUGIN_API release() override { const uint32 r = --refs_; if (!r) delete this; return r; }
+    tresult PLUGIN_API setInt(AttrID id, int64 v) override { if (!id) return kInvalidArgument; ints_[id] = v; return kResultOk; }
+    tresult PLUGIN_API getInt(AttrID id, int64 &v) override { return find(ints_, id, v); }
+    tresult PLUGIN_API setFloat(AttrID id, double v) override { if (!id) return kInvalidArgument; floats_[id] = v; return kResultOk; }
+    tresult PLUGIN_API getFloat(AttrID id, double &v) override { return find(floats_, id, v); }
+    tresult PLUGIN_API setString(AttrID id, const TChar *s) override {
+        if (!id || !s) return kInvalidArgument;
+        std::u16string v;
+        while (*s) v.push_back(static_cast<char16_t>(*s++));
+        strings_[id] = std::move(v);
+        return kResultOk;
+    }
+    tresult PLUGIN_API getString(AttrID id, TChar *out, uint32 bytes) override {
+        const auto it = id ? strings_.find(id) : strings_.end();
+        if (it == strings_.end() || !out || bytes < sizeof(TChar)) return kResultFalse;
+        const size_t n = std::min<size_t>(it->second.size(), bytes / sizeof(TChar) - 1);
+        for (size_t i = 0; i < n; ++i) out[i] = static_cast<TChar>(it->second[i]);
+        out[n] = 0;
+        return kResultOk;
+    }
+    tresult PLUGIN_API setBinary(AttrID id, const void *data, uint32 size) override {
+        if (!id || (!data && size)) return kInvalidArgument;
+        binary_[id].assign(static_cast<const char *>(data), static_cast<const char *>(data) + size);
+        return kResultOk;
+    }
+    tresult PLUGIN_API getBinary(AttrID id, const void *&data, uint32 &size) override {
+        const auto it = id ? binary_.find(id) : binary_.end();
+        if (it == binary_.end()) return kResultFalse;
+        data = it->second.data();
+        size = static_cast<uint32>(it->second.size());
+        return kResultOk;
+    }
+private:
+    template <class M, class V> static tresult find(const M &m, AttrID id, V &v) {
+        const auto it = id ? m.find(id) : m.end();
+        if (it == m.end()) return kResultFalse;
+        v = it->second;
+        return kResultOk;
+    }
+    std::atomic<uint32> refs_{1};
+    std::map<std::string, int64> ints_;
+    std::map<std::string, double> floats_;
+    std::map<std::string, std::u16string> strings_;
+    std::map<std::string, std::vector<char>> binary_;
+};
+
+class HostMessage final : public IMessage {
+public:
+    tresult PLUGIN_API queryInterface(const TUID iid, void **obj) override {
+        if (FUnknownPrivate::iidEqual(iid, IMessage::iid) || FUnknownPrivate::iidEqual(iid, FUnknown::iid)) {
+            addRef(); *obj = this; return kResultOk;
+        }
+        *obj = nullptr;
+        return kNoInterface;
+    }
+    uint32 PLUGIN_API addRef() override { return ++refs_; }
+    uint32 PLUGIN_API release() override { const uint32 r = --refs_; if (!r) delete this; return r; }
+    FIDString PLUGIN_API getMessageID() override { return id_.c_str(); }
+    void PLUGIN_API setMessageID(FIDString id) override { id_ = id ? id : ""; }
+    IAttributeList *PLUGIN_API getAttributes() override { return attributes_; }
+    ~HostMessage() { attributes_->release(); }
+private:
+    std::atomic<uint32> refs_{1};
+    std::string id_;
+    HostAttributeList *attributes_ = new HostAttributeList;
+};
 
 class HostApplication final : public IHostApplication {
 public:
@@ -53,7 +135,19 @@ public:
         for (int i = 0; i < 128; ++i) { name[i] = static_cast<char16>(n[i]); if (!n[i]) break; }
         return kResultOk;
     }
-    tresult PLUGIN_API createInstance(TUID, TUID, void **obj) override { *obj = nullptr; return kNotImplemented; }
+    tresult PLUGIN_API createInstance(TUID cid, TUID iid, void **obj) override {
+        if (!obj) return kInvalidArgument;
+        *obj = nullptr;
+        if (FUnknownPrivate::iidEqual(cid, IMessage::iid) && FUnknownPrivate::iidEqual(iid, IMessage::iid)) {
+            *obj = static_cast<IMessage *>(new HostMessage);
+            return kResultOk;
+        }
+        if (FUnknownPrivate::iidEqual(cid, IAttributeList::iid) && FUnknownPrivate::iidEqual(iid, IAttributeList::iid)) {
+            *obj = static_cast<IAttributeList *>(new HostAttributeList);
+            return kResultOk;
+        }
+        return kNotImplemented;
+    }
 };
 HostApplication gHost;
 

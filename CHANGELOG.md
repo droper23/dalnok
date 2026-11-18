@@ -1,6 +1,27 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.1.0] - 2026-11-18
+First preview release (pre-alpha): recording and editing, MIDI, mixing, VST3/CLAP/AU hosting, project import from
+Logic, Ableton, REAPER and Final Cut, the clip launcher, and the Graphite and Warm Analog appearances. The entries below
+cover the development up to this release.
+
+### Added (2026-11-18, release preparation)
+- EQ screens show every band of any EQ as a handle, not only Dalnok's own. Bands are found by parameter name with fixed rules (frequency, with the gain, on/off and Q that belong to it; repeated names pair by position; graphic-EQ sliders are fixed-frequency bands). Drag a handle to move the band (frequency and gain), scroll over it for Q, double-click to switch it on or off. Values are set by reading the plug-in's own value text, so any mapping works.
+- Settings ▸ Plug-ins ▸ "Wear on plug-in units": scratches, rubbed edges and grime on the metal, dust, smudges and hairline scratches on the displays' glass. Each unit's pattern is fixed by its name.
+- The selected plug-in unit has a white outline glow (click any unit to select it).
+- A bypassed Graphite unit sets back slightly and its lights go out (LED rings, switch lamps, readouts, meters, screens, the VU lamps) while the metal stays as it is.
+- The tempo readout can be dragged up or down to change the tempo (⇧ for 0.1 BPM steps, one undo step per drag). Typing accepts only numbers, in a clearly lit edit box.
+- `scripts/release.sh` packages `dist/Dalnok-<version>.zip`.
+### Fixed (2026-11-18, release preparation)
+- Some VST3 plug-ins crashed Dalnok when added (seen with iZotope Trash): the host could not create the message and attribute-list objects plug-ins use to talk between their parts. Dalnok now provides them.
+- Quitting with some plug-ins loaded crashed in the plug-ins' own teardown (seen with a Qt-based VST3); Dalnok now leaves without running library teardown once everything is saved and shut down.
+- Dragging on an EQ screen moved the whole unit; presses on a screen no longer start a unit drag.
+- Dynamic EQs (TDR Nova as an Audio Unit) got a compressor meter; many frequency-and-gain bands now mean an EQ screen.
+- Clicking outside a track name (or the tempo) being edited keeps the typed text instead of leaving the field in edit mode.
+- A track's gain-knob ring could stay lit with no signal when a mouse-exit was missed (the window lost focus or the rows scrolled under the pointer); the ring now checks the pointer each frame.
+
 ### Added (2026-11-18, Graphite faceplates)
 - Graphite draws each plug-in in the device panel as a hardware unit on a brushed graphite faceplate. Knobs carry printed scales with the plug-in's own end values. On/off parameters become lit push switches and short choices become stepped selectors. Related parameters share engraved sections, and every control has a value readout.
 - Faceplate displays: a moving-coil gain-reduction meter for dynamics, a response screen for EQs (the exact curve with band markers for Dalnok's EQs; a measured curve for hosted ones; both over a live spectrum), and a phosphor oscilloscope for everything else. The engine adds `dalnok_plugin_tap` and `dalnok_plugin_response`.

@@ -426,6 +426,13 @@ class RotaryKnob: NSControl {
 
     func updateMeter(_ db: Float, now: CFTimeInterval = CACurrentMediaTime()) {
         defer { lastInputDb = db }
+        // A missed mouse-exit (the window lost key status, or the rows scrolled under a still pointer) must not leave
+        // the ring lit: confirm the pointer is really over the knob.
+        if hovering, !tracking, !previewing, let w = window,
+           !w.isKeyWindow || !bounds.contains(convert(w.mouseLocationOutsideOfEventStream, from: nil)) {
+            hovering = false
+            updateReveal()
+        }
         if let r = release {
             let t = (now - r.start) / Self.meterReleaseSeconds
             // After the fall, a rising input is new signal (e.g. monitoring); a still-falling one is the old tail.
@@ -535,7 +542,8 @@ class RotaryKnob: NSControl {
     override func becomeFirstResponder() -> Bool { DispatchQueue.main.async { self.updateReveal() }; return true }
     override func resignFirstResponder() -> Bool { DispatchQueue.main.async { self.updateReveal() }; return true }
     /// For screenshots/tests: show the revealed state without a mouse.
-    func previewReveal(_ on: Bool) { hovering = on; updateReveal() }
+    func previewReveal(_ on: Bool) { hovering = on; previewing = on; updateReveal() }
+    private var previewing = false
 }
 
 /// A click on a knob or fader ends text editing but doesn't take keyboard focus, so Space, R, Delete…

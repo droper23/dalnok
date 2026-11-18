@@ -9,6 +9,21 @@ extension UTType {
 }
 
 @MainActor
+/// A click outside the text field being edited (a track name, the tempo) ends the edit and keeps the text, as
+/// Return does; the click then goes where it landed.
+final class CommittingWindow: NSWindow {
+    override func sendEvent(_ event: NSEvent) {
+        if event.type == .leftMouseDown || event.type == .rightMouseDown || event.type == .otherMouseDown,
+           let editor = firstResponder as? NSTextView, editor.isFieldEditor,
+           let field = editor.delegate as? NSView, let frame = contentView?.superview ?? contentView {
+            // The frame view covers the title bar too, where the control bar and its tempo field live.
+            let hit = frame.hitTest(frame.superview?.convert(event.locationInWindow, from: nil) ?? event.locationInWindow)
+            if hit.map({ !$0.isDescendant(of: field) }) ?? true { makeFirstResponder(nil) }
+        }
+        super.sendEvent(event)
+    }
+}
+
 final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuItemValidation, NSMenuDelegate, NSOpenSavePanelDelegate {
     let session: Session
     let palette = CommandPalette()
@@ -153,7 +168,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         mixer = MixerPanel(session: session)
         launcher = LauncherView(session: session)
 
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1280, height: 760),
+        let window = CommittingWindow(contentRect: NSRect(x: 0, y: 0, width: 1280, height: 760),
                               styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                               backing: .buffered, defer: false)
         window.titlebarAppearsTransparent = true
@@ -262,6 +277,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         session.onCycleChange = { [weak self] in self?.applyCycle() }
         transport.tempoField.target = self
         transport.tempoField.action = #selector(tempoEdited(_:))
+        transport.tempoField.onDrag = { [weak self] bpm in self?.tempoDragged(bpm) }
         transport.meterPopup.target = self
         transport.meterPopup.action = #selector(meterChosen(_:))
         headers.onInputMenu = { [weak self] row in self?.showInputMenu(for: row) }
@@ -1484,7 +1500,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         if transport.meterPopup.item(withTitle: title) == nil { transport.meterPopup.addItem(withTitle: title) }
         transport.meterPopup.selectItem(withTitle: title)
         let changes = tempo.count > 1 || meters.count > 1
-        transport.tempoField.toolTip = changes ? "Tempo at the playhead (this project has tempo or meter changes)" : "Tempo"
+        transport.tempoField.toolTip = (changes ? "Tempo at the playhead (this project has tempo or meter changes). " : "Tempo. ")
+            + "Drag up or down (⇧ fine), or click to type."
         transport.timeLabel.toolTip = TimelineView.barsAndBeats ? "Bar . beat . sixteenth . tick" : "Minutes : seconds"
         shownTempoSegment = (at.tempo, at.meter)
     }
@@ -1512,6 +1529,21 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     }
 
     @objc func editTempo(_ sender: Any?) { transport.tempoField.beginEditing() }
+
+    /// Dragging the tempo readout: one undo step for the whole drag.
+    private var tempoDragging = false
+    func tempoDragged(_ bpm: Double?) {
+        guard let bpm else {
+            if tempoDragging { session.engine.endGroup(); tempoDragging = false }
+            return updateTempoDisplay()
+        }
+        var tempo = session.tempoPoints
+        let at = tempoSegmentAtPlayhead()
+        guard tempo.indices.contains(at.tempo) else { return }
+        if !tempoDragging { session.engine.beginGroup("Change Tempo"); tempoDragging = true }
+        tempo[at.tempo].bpm = bpm
+        if session.setTempoMap(tempo, session.meterPoints) { timeline.needsDisplay = true }
+    }
 
     @objc func meterChosen(_ sender: Any?) {
         let parts = (transport.meterPopup.titleOfSelectedItem ?? "4/4").split(separator: "/").compactMap { Int32($0) }

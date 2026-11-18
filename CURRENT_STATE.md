@@ -1,11 +1,21 @@
 ---
-updated: 2026-11-16
+updated: 2026-11-18
 phase: Phases 1 and 3 complete; 2 and 4 in progress
 milestone: M11 VST3 hosting (ADR-0009 stage 3) done; editors, parameters and AU hosting next
 ---
 # Current State
 
-## Latest session (Channel EQ shelves and cuts; Graphite faceplates; 2026-11-18)
+## Latest session (0.1.0 release preparation; 2026-11-18)
+- **Version 0.1.0** (first preview). `scripts/release.sh` builds and zips `dist/Dalnok-0.1.0.zip`; the GitHub release is a draft until the owner publishes it. The app is ad-hoc signed, not notarized (the README explains the first-launch Open).
+- **EQ handles for any EQ**: `EqBands` (FaceplateDisplays.swift) finds bands by parameter name with fixed rules. Verified on TDR Nova (4 bands + HP/LP), AUNBandEQ (repeated names, Bypass inverted), AUParametricEQ, AUGraphicEQ (fixed-frequency sliders), MEqualizer, MAutoEqualizer, kHs Filter and Dalnok Channel EQ. Drag: frequency and gain (values set by bisecting the plug-in's own value text); scroll: Q; double-click: on/off. Presses on screens no longer drag the unit.
+- **Crash fixes**: VST3 hosts now create IMessage/IAttributeList (iZotope Trash crashed on add; the CI test plug-in now refuses hosts that can't). Quit skips library teardown after shutdown (Guitar Rig 7 VST3 crashed in its Qt teardown). A headless sweep loaded 401 installed effects (194 VST3 + 207 AU) one per process: no other crashes; Melodyne (2.6 s, PACE licensing) and Analog Lab V (1.8 s) block the UI while loading, which is likely the "hang after double-click" the owner saw. Loading plug-ins asynchronously needs thought: many plug-ins require the main thread.
+- **Nova "broke the plug-in area"**: not reproduced in snapshots (VST3 or AU). Found and fixed: the AU got a compressor meter (dynamic EQ), and drags on its screen moved the unit. Ask the owner what they saw if it recurs.
+- **Faceplates**: wear slider (Settings ▸ Plug-ins; plate scratches, grime, glass dust and smudges, seeded per unit name); selected unit has a white outline glow; bypassed units scale to 95.5 % with all lights off (LED rings, switch lamps, readouts, meters, screens, VU lamps) and the metal unchanged.
+- **Tempo**: drag the BPM readout (⇧ fine, one undo step), digits-only typing, lit edit box. Clicking outside an edited text field (track name, tempo) commits it (`CommittingWindow`).
+- **Gain-knob ring lit on silent tracks** (owner, oviii): the offline render of the import is silent between clips, so the likely cause is a missed mouse-exit leaving the knob in its hover state (tracking only in the key window). The ring now re-checks the pointer every frame. Ask the owner to confirm.
+- Verification: self-tests Graphite 497 / Warm Analog 481 pass (48 kHz); 186 engine tests; `scripts/ci/plugin-host.sh` passes (and fails with the old host).
+
+## Earlier session (Channel EQ shelves and cuts; Graphite faceplates; 2026-11-18)
 - **Channel EQ** now matches Logic for the shelves (−139 to −149 dB) and all cut slopes (6–48 dB/Oct). Steep slopes below Q 1 use cascades measured at every shown Q (199 renders, `tools/logic-parity/cut_table.py` generates `engine/src/fx/channel_eq_cuts.inc`). The low and high cuts had been swapped. Still to do: master gain and HQ (oversampling).
 - **Graphite device panel**: each plug-in is drawn on a brushed graphite faceplate (`app/macos/Dalnok/Faceplate.swift`). Parameters get knobs with printed scales, stepped selectors or lit push switches. Related parameters share engraved sections, and IN/OUT LED meters can be turned off in Settings ▸ Plug-ins. The owner asked for "more realistic, more than just knobs".
 - **Faceplate displays** (`FaceplateDisplays.swift`), chosen by plug-in category:

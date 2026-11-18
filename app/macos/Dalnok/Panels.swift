@@ -5,22 +5,80 @@ import DalnokEngine
 
 // MARK: - Control bar
 
-/// Editable only on purpose (click or Transport ▸ Edit Tempo). As an ordinary text field it became the
-/// window's first responder at launch, which made Space, R and Delete count as typing.
+/// Accepts only a tempo while typing: digits and one decimal point (a comma counts as one), up to 6 characters.
+final class TempoFormatter: Formatter {
+    override func string(for obj: Any?) -> String? { (obj as? String) ?? (obj as? NSNumber)?.stringValue }
+    override func getObjectValue(_ obj: AutoreleasingUnsafeMutablePointer<AnyObject?>?, for string: String,
+                                 errorDescription error: AutoreleasingUnsafeMutablePointer<NSString?>?) -> Bool {
+        obj?.pointee = string as NSString
+        return true
+    }
+    override func isPartialStringValid(_ partial: String, newEditingString: AutoreleasingUnsafeMutablePointer<NSString?>?,
+                                       errorDescription error: AutoreleasingUnsafeMutablePointer<NSString?>?) -> Bool {
+        Self.valid(partial)
+    }
+    static func valid(_ s: String) -> Bool {
+        s.count <= 6 && s.allSatisfy { $0.isASCII && ($0.isNumber || $0 == "." || $0 == ",") }
+            && s.filter { $0 == "." || $0 == "," }.count <= 1
+    }
+}
+
+/// The tempo readout. Drag up or down to change the tempo (⇧ for 0.1 BPM steps); click to type a value. It is
+/// editable only on purpose (click or Transport ▸ Edit Tempo): as an ordinary text field it became the window's first
+/// responder at launch, which made Space, R and Delete count as typing.
 final class TempoField: NSTextField {
     private var armed = false
+    /// Called with the new tempo while dragging, then once with nil when the drag ends.
+    var onDrag: ((Double?) -> Void)?
     override var acceptsFirstResponder: Bool { armed }
+    override init(frame: NSRect) { super.init(frame: frame); setUp() }
+    required init?(coder: NSCoder) { super.init(coder: coder); setUp() }
+    private func setUp() {
+        formatter = TempoFormatter()
+        wantsLayer = true
+        layer?.cornerRadius = 3
+        layer?.borderWidth = 0
+    }
+    override func resetCursorRects() { if !armed { addCursorRect(bounds, cursor: .resizeUpDown) } }
     func beginEditing() {
         armed = true
+        showEditing(true)
         window?.makeFirstResponder(self)
         currentEditor()?.selectAll(nil)
     }
+    /// While typing: a lit box with a bright frame, so it is obvious the tempo is being edited.
+    private func showEditing(_ on: Bool) {
+        drawsBackground = on
+        backgroundColor = on ? Theme.hex(0x0B0D10) : .clear
+        layer?.borderWidth = on ? 1.5 : 0
+        layer?.borderColor = Theme.accent.cgColor
+        layer?.backgroundColor = on ? Theme.hex(0x0B0D10).cgColor : nil
+        window?.invalidateCursorRects(for: self)
+    }
     override func mouseDown(with event: NSEvent) {
-        if !armed { beginEditing() } else { super.mouseDown(with: event) }
+        guard !armed else { return super.mouseDown(with: event) }
+        // Drag to change; a click without movement starts typing.
+        let start = event.locationInWindow, startBpm = Double(stringValue.replacingOccurrences(of: ",", with: ".")) ?? 120
+        var dragging = false, bpm = startBpm, last = start.y
+        while let e = window?.nextEvent(matching: [.leftMouseDragged, .leftMouseUp]) {
+            if e.type == .leftMouseUp { break }
+            let dy = e.locationInWindow.y - start.y
+            if !dragging && abs(dy) < 3 && abs(e.locationInWindow.x - start.x) < 3 { continue }
+            dragging = true
+            let fine = e.modifierFlags.contains(.shift)
+            bpm += Double(e.locationInWindow.y - last) * (fine ? 0.1 : 0.5)
+            last = e.locationInWindow.y
+            bpm = min(400, max(20, bpm))
+            let shown = fine ? (bpm * 10).rounded() / 10 : bpm.rounded()
+            stringValue = String(format: "%g", shown)
+            onDrag?(shown)
+        }
+        if dragging { onDrag?(nil) } else { beginEditing() }
     }
     override func textDidEndEditing(_ notification: Notification) {
         super.textDidEndEditing(notification)
         armed = false
+        showEditing(false)
     }
 }
 
@@ -124,7 +182,7 @@ final class TransportBar: NSView {
         tempoField.isBordered = false
         tempoField.drawsBackground = false
         tempoField.focusRingType = .none
-        tempoField.toolTip = "Tempo in BPM (type and press Return)"
+        tempoField.toolTip = "Tempo in BPM: drag up or down (⇧ fine), or click to type and press Return"
         tempoField.setAccessibilityLabel("Tempo, beats per minute")
         let bpmLabel = NSTextField(labelWithString: "BPM")
         bpmLabel.font = Theme.mono(9, .medium)
