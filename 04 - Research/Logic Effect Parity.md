@@ -10,10 +10,11 @@ Owner goal (2026-11-17): imported Logic projects should sound exactly like Logic
 ## Can Dalnok host Apple's effects directly?
 No. Logic Pro Creator Studio 12.2 ships its effects inside the private `MADSP.framework`. They are not Audio Units, the app bundle contains no Audio Unit extensions (only Quick Look and thumbnail extensions), and MainStage is not installed. Loading the private framework would break Logic's license, would stop working on any Logic update, and could not ship with a GPL project. **Parity has to come from clean-room re-implementation.**
 
-## Clean-room rules (proposed; owner and a lawyer should confirm)
-- Learn behavior **only from audio Logic renders** and from **project files the owner saves**. Do not disassemble, decompile or `strings`-mine Logic binaries or resources for DSP or parameter tables.
-- Use our own names (e.g. "Dalnok Channel EQ"). Say only that the plug-ins are "compatible with Logic projects"; do not use Apple's names or artwork.
-- Drum Kit Designer depends on Apple's sample content. Whether Dalnok may play the samples installed on the owner's Mac needs a separate licence decision; we will not copy or redistribute them.
+## Working rules (owner decisions, 2026-11-18)
+- **Disassembling Logic is allowed when renders alone can't settle a question.** We use it to learn formulas, curves and parameter layouts, then re-express them in our own code. Apple's code and data tables are never copied verbatim into this GPL repository; where Logic uses a lookup table, we derive or regenerate it. Logic's licence agreement prohibits disassembly; the owner accepts that risk.
+- **Apple sample content** (for example Drum Kit Designer) may be played at runtime from the owner's installed Logic library. It is never bundled or redistributed. Other systems, or Macs without the content, get a fallback kit.
+- **The bar**: match Logic exactly (a null test) wherever that is feasible. Otherwise the result must be truly indistinguishable, verified by blind A/B listening and by statistical measures. "Close" is not enough.
+- Use our own plug-in names. Say only that the plug-ins are "compatible with Logic projects"; never use Apple's names or artwork.
 
 ## Settings are readable
 Each Logic-native plug-in in an `AuCU` record (tag 0x1a8, manufacturer `GAME`, `CLEM` for Drum Kit) has a body that starts with a header followed by a flat float32 parameter array:
@@ -149,5 +150,4 @@ The order follows payoff per effort and how often each effect appears in the own
   4. Implement Dalnok Channel EQ in the engine with an offline-render test against generated fixtures.
 
 ## Open questions for the owner
-- Confirm the clean-room rules above, and decide whether Drum Kit may use the installed Apple samples.
-- Accept that "exact" is a measured target per plug-in (table above), not a promise for ChromaVerb and ChromaGlow.
+- Decided 2026-11-18; see Working rules.
