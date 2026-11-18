@@ -8,6 +8,8 @@ recording, editing, and mixing in a fast, focused native app.
 > **Status: 0.1.0, first preview release (pre-alpha).** Expect rough edges and save often.
 > What works and what doesn't is in [CURRENT_STATE.md](CURRENT_STATE.md); changes are in [CHANGELOG.md](CHANGELOG.md).
 
+![Dalnok in the Graphite appearance: arrangement, mixer and the device panel with plug-in faceplates](assets/screenshots/graphite.png)
+
 ## What's in 0.1.0
 - **Recording and editing:** multi-track audio recording with cycle, punch and count-in, take folders with swipe
   comping, crash-safe capture and recovery, clip fades and gain, time-stretch and pitch.
@@ -24,6 +26,20 @@ recording, editing, and mixing in a fast, focused native app.
   with a report of what came across.
 - **Clip launcher** with scenes on the same tracks as the arrangement.
 - Two appearances: **Graphite** and **Warm Analog**.
+
+## Screenshots
+Every plug-in becomes a hardware-style unit with a display that suits it. Drag an EQ's bands on its screen; bypassed
+units go dark.
+
+![Plug-in faceplates: Dalnok Channel EQ with its band handles, a VU gain-reduction meter and a delay's energy history](assets/screenshots/faceplates.png)
+
+The Warm Analog appearance turns plug-ins into pedals patched with cables, with a tape transport.
+
+![Dalnok in the Warm Analog appearance](assets/screenshots/warm-analog.png)
+
+<img src="assets/screenshots/piano-roll.png" alt="Piano roll with chords and a melody" width="700">
+
+All screenshots come from the real app with generated projects (`scripts/make-test-project.sh`).
 
 ## Install (preview build)
 Download `Dalnok-0.1.0.zip` from the [Releases](https://github.com/droper23/dalnok/releases) page, unzip it and move

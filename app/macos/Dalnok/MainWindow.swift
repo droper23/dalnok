@@ -511,7 +511,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         let uid = e.outputDeviceUid
         let devices = Engine.outputDevices()
         let dev = uid.isEmpty ? devices.first(where: \.isDefault) : devices.first(where: { $0.uid == uid })
-        var s = dev?.name ?? "No output"
+        // Captures (snapshots, documentation screenshots) never show the machine's device names, which can be personal.
+        let capturing = CommandLine.arguments.contains("--snapshot") || CommandLine.arguments.contains("--screenshots")
+        var s = capturing ? "Audio output" : dev?.name ?? "No output"
         let hw = e.hardwareSampleRate
         if hw > 0 && abs(hw - e.sampleRate) > 0.5 {
             s += String(format: ", %g kHz (converted from %g kHz)", hw / 1000, e.sampleRate / 1000)

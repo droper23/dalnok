@@ -14,6 +14,7 @@ cover the development up to this release.
 - A bypassed Graphite unit sets back slightly and its lights go out (LED rings, switch lamps, readouts, meters, screens, the VU lamps) while the metal stays as it is.
 - The tempo readout can be dragged up or down to change the tempo (⇧ for 0.1 BPM steps, one undo step per drag). Typing accepts only numbers, in a clearly lit edit box.
 - `scripts/release.sh` packages `dist/Dalnok-<version>.zip`.
+- README screenshots (`assets/screenshots/`), captured from generated projects. Snapshots and screenshots no longer show the audio device's name.
 ### Fixed (2026-11-18, release preparation)
 - Some VST3 plug-ins crashed Dalnok when added (seen with iZotope Trash): the host could not create the message and attribute-list objects plug-ins use to talk between their parts. Dalnok now provides them.
 - Quitting with some plug-ins loaded crashed in the plug-ins' own teardown (seen with a Qt-based VST3); Dalnok now leaves without running library teardown once everything is saved and shut down.
