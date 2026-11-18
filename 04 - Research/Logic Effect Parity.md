@@ -72,6 +72,49 @@ The order follows payoff per effort and how often each effect appears in the own
   - left-only and right-only impulses.
 - Logic exposes channel strips, slots and track headers through Accessibility. Their descriptions identify each control, so slot contents can be verified without screen capture.
 
+### Measurement loop working (2026-11-17, `tools/logic-parity/`)
+- **Template**: 10 stereo audio tracks at 44.1 kHz with the test signal. Effects inserted in Logic: Channel EQ on tracks 1 and 6–9, Limiter on 2, Chorus on 3, ChromaVerb on 4, ChromaGlow on 5. Track 10 has no plug-in and serves as the reference.
+- **Variant loop**: `batch.sh` closes the project, restores the base ProjectData, patches the floats, reopens the project, runs Export All Tracks (32-bit float), and checks through Accessibility that Bypass is off. One batch of 5 Channel EQ variants takes about 2.5 minutes, unattended.
+- **Gotchas**:
+  - Export applies a common "Overload Protection" gain when any track exceeds 0 dBFS; the Normalize menu can't be changed for float output. The plug-in-free reference track recovers that gain exactly: the residual is −148 dB.
+  - Exporting with Bypass Effect Plug-ins gives the exact per-track input, including region gain and offsets.
+  - Pressing menu-bar items through Accessibility left a menu stuck, and the open panels died with it; use keyboard shortcuts instead.
+  - The Audio Device alert appears off-screen when Logic is in the background and silently blocks all input.
+- **Logic renders are deterministic.** Repeated exports give the same Channel EQ fit; a full bit-compare is still to do.
+- **Default settings:**
+  - Channel EQ at its defaults is bit-transparent (−148.7 dB, float precision).
+  - Limiter at its defaults lowers a −3.3 dBFS-peak input by about 1 dB.
+  - ChromaGlow (Modern Tube, Clean, 0 % drive) is not transparent, and its output is 657 samples late in the export (no delay compensation in Export All Tracks).
+
+### Channel EQ: parametric band (bands 3–6), findings so far
+- **Parameter block layout**: 52 floats.
+
+  | Indices | Content |
+  |---|---|
+  | 0–3 | Low cut: on, Hz, slope code, Q |
+  | 4–7 | Low shelf: on, Hz, dB, Q |
+  | 8–11, 12–15, 16–19, 20–23 | Bands 3–6: on, Hz, dB, Q |
+  | 24–27 | High shelf |
+  | 28–31 | High cut: on, Hz, slope code, Q |
+  | 41 | Gain-Q coupling switch (0 = off; any non-zero value = on) |
+  | 32–51 | Remaining slots: other flags, not yet mapped |
+
+- **Each band is exactly one biquad.** A least-squares biquad fit leaves −140 dB residual for every variant, which is float precision. The centre frequency and peak gain are exact, with no frequency cramping of f0.
+- **In RBJ form** (b = [1 + αA, −2cos w, 1 − αA], a = [1 + α/A, −2cos w, 1 − α/A], A = 10^(dB/40)), the effective α corresponds to:
+
+  Q_rbj = Q_eff(Q) / A × c(w), where c(w) ≈ (w/2)/tan(w/2)
+
+  The c(w) approximation holds within 0.1 % up to 3 kHz, and within about 1 % at 6–20 kHz (not exact yet).
+- **The 1/A term**: boost and cut are symmetric. With coupling off it holds from +3 to +24 dB.
+- **Q_eff lies on a grid of exactly 1/300 decade**: log10(Q_eff) × 300 is an integer for all 21 Q values tested. Most stored Q values round to the nearest step. Q = 0.4, 0.5, 0.7, 0.8, 3.0 and 3.5 land 1–4 steps away from that, so the mapping from stored value to grid index is still unknown.
+- **Gain-Q coupling on** (Logic's default) adds a further Q factor that depends on gain and is asymmetric between boost and cut. At Q 1 and 1 kHz, Q_rbj is 1.103 at +6 dB, 1.266 at +12 dB and 2.792 at −12 dB. The coupling strength probably sits in another slot among 40–43.
+- **Next**:
+  1. Pin down the Q index mapping with a dense sweep. Four bands per instance would give four times the throughput.
+  2. Find the exact c(w).
+  3. Model the coupling law.
+  4. Measure the shelves, the low and high cuts (slope codes 0–?), HQ mode and the master gain.
+  5. Implement Dalnok Channel EQ and require a −120 dB null against these renders.
+
 ## Open questions for the owner
 - Confirm the clean-room rules above, and decide whether Drum Kit may use the installed Apple samples.
 - Accept that "exact" is a measured target per plug-in (table above), not a promise for ChromaVerb and ChromaGlow.
