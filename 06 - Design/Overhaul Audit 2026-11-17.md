@@ -39,7 +39,7 @@ This note is the durable inventory. Severity: **P0** data loss, crash, or corrup
 | 15 | Dead controls | No automated check | P2 | — | **Done.** Self-test fails on a menu command without a handler or an enabled button without an action (all windows currently pass) |
 
 ## Not done (honest list)
-- **Track features:** track height, hide/show, duplicate, markers and marker navigation, vertical zoom and zoom to selection are implemented and covered by tests or self-test. Track groups remain unbuilt. The ⌃⇧D Duplicate Track shortcut still needs a real-input re-check.
+- **Track features:** track height, hide/show, duplicate, markers and marker navigation, vertical zoom and zoom to selection are implemented and covered by tests or self-test. Track groups remain unbuilt. Real ⌃⇧D input duplicated the selected track on a generated project.
 - **Plug-in isolation:** hosting stays in-process (ADR-0009); scanning is out of process. A crashing hosted plug-in can
   still take Dalnok down.
 - **Tape coloration** (saturation, wow and flutter) as an opt-in effect: not built. The Tape Machine is visual only.
@@ -85,4 +85,4 @@ This note is the durable inventory. Severity: **P0** data loss, crash, or corrup
   dismissal, the shortcut editor (search, record, use), a browser drag onto the device panel, a device drag
   reorder, and the tape machine keys.
 
-- Later self-tests passed 447 checks in Graphite and 464 in Warm Analog, including the control-bar tape strip. The saved real-input crops do not establish PLAY, FF or RTZ behavior; repeat the check.
+- Later self-tests passed 447 checks in Graphite and 464 in Warm Analog, including the control-bar tape strip. A later real-input check on a generated project confirmed PLAY, FF and RTZ, with window captures showing the playhead and controls.

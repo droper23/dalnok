@@ -7,8 +7,8 @@ milestone: M11 VST3 hosting (ADR-0009 stage 3) done; editors, parameters and AU 
 
 ## Latest session (Logic import and tape strip; 2026-11-17)
 - Logic import handles continuation records, split-region pieces and MIDI notes; Drummer regions are reported as skipped. The owner's oviii project imports; 60 MIDI notes matched Logic's MIDI export. Audio placement has not been compared with a Logic export, and MIDI region lengths are rounded up from the last note to whole bars.
-- Markers, duplicate and hidden tracks, track height and vertical zoom, and zoom to selection are implemented. Duplicate Track uses ⌃⇧D; its real-input shortcut check remains open.
-- Warm Analog's control bar has the tape reels and seven transport keys; the bar and Tape Machine share winding and stop behavior. Engine tests passed (164); Warm Analog self-test passed 463 checks after fixing mixer accessibility names. The earlier Graphite self-test passed 447 checks. The saved real-input crops do not show the controls or playhead, so that check remains open.
+- Markers, duplicate and hidden tracks, track height and vertical zoom, and zoom to selection are implemented. Duplicate Track uses ⌃⇧D, verified with real keyboard input on a generated project.
+- Warm Analog's control bar has the tape reels and seven transport keys; the bar and Tape Machine share winding and stop behavior. Engine tests passed (164); Warm Analog self-test passed 463 checks after fixing mixer accessibility names. The earlier Graphite self-test passed 447 checks. Real-input checks on a generated project confirmed PLAY, FF and RTZ; window captures show playback, winding and return to bar 1.
 - Open: track groups, tape coloration, out-of-process hosting, a full VoiceOver and keyboard-only pass, and measuring on-screen Warm Analog cost. See [[Overhaul Audit 2026-11-17]].
 
 ## Latest session (overhaul parts 2–3; 2026-11-17)
