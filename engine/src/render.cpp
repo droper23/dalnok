@@ -150,10 +150,15 @@ void renderPluginNotes(PluginProcessor *plugin, const RenderNote *starts, const 
     clear(s.trackL, frames);
     clear(s.trackR, frames);
     plugin->process(s.trackL, s.trackR, frames, s.events, count);
+    raisePeaks(plugin->meterOut, s.trackL, s.trackR, frames);
 }
 
 void runInserts(const RenderTrack &t, int frames, Scratch &s) DALNOK_NONBLOCKING {
-    for (PluginProcessor *p : t.inserts) p->process(s.trackL, s.trackR, frames, nullptr, 0);
+    for (PluginProcessor *p : t.inserts) {
+        raisePeaks(p->meterIn, s.trackL, s.trackR, frames);
+        p->process(s.trackL, s.trackR, frames, nullptr, 0);
+        raisePeaks(p->meterOut, s.trackL, s.trackR, frames);
+    }
 }
 } // namespace
 

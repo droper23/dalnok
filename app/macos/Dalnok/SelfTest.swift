@@ -1528,6 +1528,31 @@ final class SelfTest {
             check(s.pluginBypassed(track, slot) && s.engine.undoName == "Bypass Plug-in", "the device power button bypasses AUDelay (undoable)")
             delay.toggleBypass()
             check(!s.pluginBypassed(track, slot), "pressing it again turns it back on")
+            // Graphite faceplate: controls suited to each parameter, printed scales, sections, meters.
+            let faces = delay.knobs.compactMap { $0.knob as? FaceplateControl }
+            check(faces.count == delay.knobs.count, "Graphite draws AUDelay's controls on a faceplate (\(faces.count) of \(delay.knobs.count))")
+            if let time = faces.first(where: { $0.name.caseInsensitiveCompare("Delay Time") == .orderedSame }) {
+                check(time.kind == .knob && time.legends == ["0", "2"], "the delay-time knob's scale is printed with the plug-in's own end values (\(time.legends))")
+            } else { check(false, "AUDelay's faceplate has a Delay Time knob") }
+            delay.toggleBypass()
+            check(faces.allSatisfy(\.dimmed), "bypassing dims the faceplate's controls")
+            delay.toggleBypass()
+            check(faces.allSatisfy { !$0.dimmed }, "turning it on lights them again")
+            let eqSections = Faceplate.sections([(0, "Low Cut On/Off"), (1, "Low Cut Frequency"), (2, "Low Cut Slope"), (3, "Feedback"), (4, "Mix")])
+            check(eqSections.map(\.title) == ["Low Cut", ""] && eqSections[0].items.map(\.label) == ["On", "Frequency", "Slope"]
+                  && eqSections[1].items.count == 2, "related parameters share an engraved section (\(eqSections.map(\.title)))")
+            let toggle = FaceplateControl(name: "On", steps: 1), selector = FaceplateControl(name: "Slope", steps: 8)
+            var pressed: Double?
+            toggle.onChange = { pressed = $0 }
+            _ = toggle.accessibilityPerformPress()
+            check(toggle.kind == .toggle && selector.kind == .selector && pressed == 1, "on/off parameters are push switches, short choices are selectors")
+            check(Faceplate.legend("20000 Hz") == "20k" && Faceplate.legend("0.10") == "0.1", "scale legends are short (20k, 0.1)")
+            check(!delay.inMeter.isHidden && !delay.outMeter.isHidden, "each unit shows input and output meters")
+            Faceplate.showMeters = false
+            check(delay.inMeter.isHidden && delay.outMeter.isHidden, "Settings can turn the device meters off")
+            Faceplate.showMeters = true
+            check(!delay.inMeter.isHidden, "and on again")
+            UserDefaults.standard.removeObject(forKey: "deviceMeters")
         }
         // Turning a knob changes the plug-in.
         guard let mix = delay.knobs.first else { return check(false, "AUDelay has a controller knob") }

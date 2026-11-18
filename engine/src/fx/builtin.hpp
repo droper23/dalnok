@@ -37,6 +37,7 @@ public:
     std::string stateError() const override { return stateError_; }
     int32_t parameterCount() override { return static_cast<int32_t>(params_.size()); }
     bool parameter(int32_t index, PluginParameter &out) override;
+    bool parameterText(uint32_t id, double normalized, std::string &out) override;
     bool setParameter(uint32_t id, double normalized) override;
     void touchedParameters(std::vector<std::pair<uint32_t, double>> &out) override;
     uint64_t editCount() const override { return 0; }
@@ -62,6 +63,7 @@ protected:
 private:
     const Param *find(uint32_t id) const;
     double toPlain(const Param &p, double normalized) const;
+    static std::string format(const Param &p, double plain);
     double toNormalized(const Param &p, double plain) const;
     void setPlain(uint32_t id, double plain);
 

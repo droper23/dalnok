@@ -472,6 +472,12 @@ public:
         if (controller_->getParamStringByValue(info.id, out.value, text) == kResultOk) out.display = utf8(text, 128);
         return true;
     }
+    bool parameterText(uint32_t id, double normalized, std::string &out) override {
+        String128 text{};
+        if (!controller_ || controller_->getParamStringByValue(id, std::clamp(normalized, 0.0, 1.0), text) != kResultOk) return false;
+        out = utf8(text, 128);
+        return true;
+    }
     bool setParameter(uint32_t id, double v) override {
         if (!(v >= 0 && v <= 1)) return false;
         if (controller_) controller_->setParamNormalized(id, v);

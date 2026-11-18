@@ -11,7 +11,9 @@
 #include "rt.hpp"
 #include "synth.hpp"
 #include "plugin_host.hpp"
+#include <algorithm>
 #include <array>
+#include <cmath>
 
 #include <atomic>
 #include <memory>
@@ -47,6 +49,14 @@ struct TrackRuntime {
 // by one stale value; harmless for metering.
 inline void raisePeak(std::atomic<float> &a, float v) DALNOK_NONBLOCKING {
     if (v > a.load(std::memory_order_relaxed)) a.store(v, std::memory_order_relaxed);
+}
+
+// Raises a stereo meter pair (a plug-in's input or output) to the block's peaks.
+inline void raisePeaks(std::atomic<float> (&m)[2], const float *l, const float *r, int frames) DALNOK_NONBLOCKING {
+    float pl = 0, pr = 0;
+    for (int i = 0; i < frames; ++i) { pl = std::max(pl, std::fabs(l[i])); pr = std::max(pr, std::fabs(r[i])); }
+    raisePeak(m[0], pl);
+    raisePeak(m[1], pr);
 }
 
 enum FadeCurve : int32_t { kFadeLinear = 0, kFadeEqualPower = 1 };

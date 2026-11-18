@@ -5,6 +5,15 @@ milestone: M11 VST3 hosting (ADR-0009 stage 3) done; editors, parameters and AU 
 ---
 # Current State
 
+## Latest session (Channel EQ shelves and cuts; Graphite faceplates; 2026-11-18)
+- **Channel EQ** now matches Logic for the shelves (−139 to −149 dB) and all cut slopes (6–48 dB/Oct). Steep slopes below Q 1 use cascades measured at every shown Q (199 renders, `tools/logic-parity/cut_table.py` generates `engine/src/fx/channel_eq_cuts.inc`). The low and high cuts had been swapped. Still to do: master gain and HQ (oversampling).
+- **Graphite device panel**: each plug-in is drawn on a brushed graphite faceplate (`app/macos/Dalnok/Faceplate.swift`). Parameters get knobs with printed scales, stepped selectors or lit push switches. Related parameters share engraved sections, and IN/OUT LED meters can be turned off in Settings ▸ Plug-ins. The owner asked for "more realistic, more than just knobs".
+- Engine: per-plug-in input and output peak meters (`dalnok_meter_plugin`) and value text for any parameter value (`dalnok_plugin_parameter_text`), implemented for VST3, CLAP, AU and built-ins. C API version 28.
+- Verification: 184 engine tests pass. Self-tests: 470 Graphite and 477 Warm Analog, all passing (REWIND passes with the screen unlocked). The real-time analysis is clean, and `rt-effects.sh` now finds Homebrew's versioned `llvm@N`.
+- Next:
+  1. Faceplate polish with the owner: Channel EQ's default controller, a bespoke layout for built-ins (an EQ curve display), and gain-reduction meters for dynamics plug-ins.
+  2. Channel EQ master gain and HQ (Logic time needed), then Limiter, Chorus, ChromaVerb, ChromaGlow and Drum Kit.
+
 ## Latest session (Dalnok Channel EQ; 2026-11-18)
 - Owner decisions: disassembling Logic is allowed (no verbatim copying), Apple samples may be used with a fallback, and the bar is exact or indistinguishable. See [[Logic Effect Parity]] (Working rules).
 - Q-Couple law read from MADSP; with it, every Channel EQ peak-band render nulls at −132 to −148 dB (75 variants).

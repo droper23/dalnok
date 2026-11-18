@@ -206,6 +206,18 @@ public:
         UInt32 size = sizeof out;
         return AudioUnitGetProperty(unit_, kAudioUnitProperty_ParameterInfo, kAudioUnitScope_Global, id, &out, &size) == noErr;
     }
+    static std::string format(const AudioUnitParameterInfo &pi, double v) {
+        char text[64];
+        snprintf(text, sizeof text, pi.maxValue - pi.minValue >= 100 || pi.unit == kAudioUnitParameterUnit_Indexed ? "%.0f" : "%.2f", v);
+        return text;
+    }
+    bool parameterText(uint32_t id, double normalized, std::string &out) override {
+        AudioUnitParameterInfo pi{};
+        if (!info(id, pi)) return false;
+        if ((pi.flags & kAudioUnitParameterFlag_CFNameRelease) && pi.cfNameString) CFRelease(pi.cfNameString);
+        out = format(pi, pi.minValue + std::clamp(normalized, 0.0, 1.0) * (pi.maxValue - pi.minValue));
+        return true;
+    }
     int32_t parameterCount() override { return static_cast<int32_t>(ids().size()); }
     bool parameter(int32_t index, PluginParameter &out) override {
         const auto list = ids();
@@ -224,9 +236,7 @@ public:
                         : pi.unit == kAudioUnitParameterUnit_Indexed ? static_cast<int32_t>(span) : 0;
         out.readOnly = !(pi.flags & kAudioUnitParameterFlag_IsWritable);
         out.automatable = !out.readOnly;
-        char text[64];
-        snprintf(text, sizeof text, span >= 100 || pi.unit == kAudioUnitParameterUnit_Indexed ? "%.0f" : "%.2f", v);
-        out.display = text;
+        out.display = format(pi, v);
         static const std::map<AudioUnitParameterUnit, const char *> units = {
             {kAudioUnitParameterUnit_Hertz, "Hz"}, {kAudioUnitParameterUnit_Decibels, "dB"}, {kAudioUnitParameterUnit_Seconds, "s"},
             {kAudioUnitParameterUnit_Milliseconds, "ms"}, {kAudioUnitParameterUnit_Percent, "%"}, {kAudioUnitParameterUnit_EqualPowerCrossfade, "%"},

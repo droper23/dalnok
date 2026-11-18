@@ -3,6 +3,7 @@
 // renders load their own instances). Format adapters live under platform/ (VST3 first).
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
+#include <atomic>
 #include "rt.hpp"
 #include <cstdint>
 #include <memory>
@@ -38,6 +39,8 @@ public:
     // Processes in place: effects read left/right, instruments overwrite them. frames <= kMaxBlock.
     // Calls into plugin code, which cannot be checked for real-time safety (ADR-0009).
     virtual void process(float *left, float *right, int frames, const PluginNote *notes, int noteCount) DALNOK_NONBLOCKING = 0;
+    // Peak levels entering and leaving process() since the UI last read them (the render raises, the UI resets).
+    std::atomic<float> meterIn[2]{}, meterOut[2]{};
     // Opaque plugin state (control thread).
     virtual bool getState(std::string &bytes) = 0;
     virtual bool setState(const std::string &bytes) = 0;
@@ -49,6 +52,8 @@ public:
     // applied at the start of the next block.
     virtual int32_t parameterCount() = 0;
     virtual bool parameter(int32_t index, PluginParameter &out) = 0;
+    // The plug-in's text for parameter `id` at any normalized value (printed knob scales). Main thread.
+    virtual bool parameterText(uint32_t id, double normalized, std::string &out) { (void)id; (void)normalized; (void)out; return false; }
     virtual bool setParameter(uint32_t id, double normalized) = 0;
     // Parameters changed since load or the last state capture (for offline instances).
     virtual void touchedParameters(std::vector<std::pair<uint32_t, double>> &out) = 0;

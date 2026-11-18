@@ -6,11 +6,12 @@ import AppKit
 final class SettingsController: NSWindowController {
     let themePicker = NSPopUpButton(frame: .zero, pullsDown: false)
     let copyAudio = NSButton(checkboxWithTitle: "Copy audio into the project folder when saving", target: nil, action: nil)
+    let deviceMeters = NSButton(checkboxWithTitle: "Show input and output meters on plug-ins (Graphite)", target: nil, action: nil)
     let appearanceNote = NSTextField(wrappingLabelWithString: "")
     let relaunch = NSButton(title: "Relaunch Now", target: nil, action: nil)
 
     init() {
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 520, height: 300),
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 520, height: 360),
                               styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.title = "Settings"
         window.appearance = NSAppearance(named: .darkAqua)
@@ -39,6 +40,11 @@ final class SettingsController: NSWindowController {
         projects.font = Theme.mono(10, .semibold)
         projects.textColor = Theme.textDim
         copyAudio.target = self; copyAudio.action = #selector(copyChanged(_:))
+        let plugins = NSTextField(labelWithString: "PLUG-INS")
+        plugins.font = Theme.mono(10, .semibold)
+        plugins.textColor = Theme.textDim
+        deviceMeters.target = self; deviceMeters.action = #selector(metersChanged(_:))
+        deviceMeters.toolTip = "Thin level meters on each plug-in's faceplate in the device panel"
         copyAudio.toolTip = "Keeps saved projects easier to move between computers."
         relaunch.bezelStyle = .rounded
         relaunch.controlSize = .small
@@ -46,12 +52,13 @@ final class SettingsController: NSWindowController {
         relaunch.toolTip = "Quit and reopen Dalnok with the new appearance (you'll be asked to save changes first)"
         let note = NSStackView(views: [appearanceNote, relaunch])
         note.spacing = 8
-        let stack = NSStackView(views: [title, intro, appearance, themePicker, note, projects, copyAudio])
+        let stack = NSStackView(views: [title, intro, appearance, themePicker, note, projects, copyAudio, plugins, deviceMeters])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 8
         stack.setCustomSpacing(18, after: intro)
         stack.setCustomSpacing(16, after: note)
+        stack.setCustomSpacing(16, after: copyAudio)
         stack.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(stack)
         NSLayoutConstraint.activate([
@@ -73,6 +80,7 @@ final class SettingsController: NSWindowController {
     private func refresh() {
         themePicker.selectItem(at: Theme.Style.allCases.firstIndex(of: Theme.preferredStyle) ?? 0)
         copyAudio.state = MainWindowController.copyAudioOnSave ? .on : .off
+        deviceMeters.state = Faceplate.showMeters ? .on : .off
         appearanceNote.stringValue = Theme.preferredStyle == Theme.activeStyle
             ? "Graphite is crisp and focused. Warm Analog brings a softer studio palette."
             : "The appearance changes when recording stops, or relaunch now."
@@ -89,6 +97,9 @@ final class SettingsController: NSWindowController {
         // Live: the windows rebuild in the new style (while recording, the change waits for a relaunch).
         _ = (NSApp.delegate as? AppDelegate)?.switchTheme(to: Theme.preferredStyle)
         refresh()
+    }
+    @objc func metersChanged(_ sender: Any?) {
+        Faceplate.showMeters = deviceMeters.state == .on
     }
     @objc func copyChanged(_ sender: Any?) {
         MainWindowController.copyAudioOnSave = copyAudio.state == .on

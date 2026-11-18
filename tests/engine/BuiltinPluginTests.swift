@@ -154,6 +154,19 @@ private func cascade(_ x: [Float], _ sections: [([Double], [Double])]) -> [Doubl
         #expect(worst < 2e-6, "shelf \(high ? "high" : "low") \(hz) Hz \(gain) dB Q \(q) differs by \(worst)")
     }
 
+    @Test func channelEqDescribesAnyValue() {
+        let (e, t) = audioSession(); defer { dalnok_engine_destroy(e) }
+        let slot = dalnok_plugin_add(e, t, "dalnok:channel-eq", nil, nil, 0)
+        var text = [CChar](repeating: 0, count: 64)
+        #expect(dalnok_plugin_parameter_text(e, slot, 1, 1, &text, 64) == DALNOK_OK && cstr(text) == "20000") // low cut Hz
+        #expect(dalnok_plugin_parameter_text(e, slot, 2, 0.5, &text, 64) == DALNOK_OK && cstr(text) == "24 dB/Oct")
+        #expect(dalnok_plugin_parameter_text(e, slot, 0, 0, &text, 64) == DALNOK_OK && cstr(text) == "Off")
+        #expect(dalnok_plugin_parameter_text(e, slot, 99, 0, &text, 64) == DALNOK_ERR_NOT_FOUND)
+        var p = DalnokPluginParameter()
+        dalnok_plugin_parameter(e, slot, 1, &p)
+        #expect(abs(p.value - p.default_value) < 1e-12, "describing a value leaves the parameter alone")
+    }
+
     @Test func channelEqStateSurvivesSaveAndReopen() throws {
         let (e, t) = audioSession(); defer { dalnok_engine_destroy(e) }
         let slot = dalnok_plugin_add(e, t, "dalnok:channel-eq", nil, nil, 0)

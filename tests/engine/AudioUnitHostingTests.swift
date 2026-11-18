@@ -25,6 +25,10 @@ import Testing
         guard let mix = parameter(e, slot, titled: "dry/wet"), let time = parameter(e, slot, titled: "delay time") else {
             Issue.record("AUDelay parameters not found"); return
         }
+        // Text at any value, without changing the parameter (printed knob scales): delay time is 0-2 s.
+        var text = [CChar](repeating: 0, count: 64)
+        #expect(dalnok_plugin_parameter_text(e, slot, time.id, 0.5, &text, 64) == DALNOK_OK && cstr(text) == "1.00", "\(cstr(text))")
+        #expect(dalnok_plugin_parameter_text(e, slot, time.id, 1.5, &text, 64) == DALNOK_ERR_INVALID_ARG)
         // All dry: the delay passes the signal through.
         #expect(dalnok_plugin_set_parameter(e, slot, mix.id, 0) == DALNOK_OK)
         let passthrough = renderStereo(e, 4_800)

@@ -75,13 +75,24 @@ bool BuiltinProcessor::parameter(int32_t index, PluginParameter &out) {
     out.defaultValue = toNormalized(p, p.def);
     out.stepCount = p.scale == Param::Toggle ? 1 : p.scale == Param::Choice ? static_cast<int32_t>(p.max - p.min) : 0;
     out.automatable = true;
+    out.display = format(p, v);
+    return true;
+}
+
+std::string BuiltinProcessor::format(const Param &p, double v) {
     char text[64];
     if (p.scale == Param::Toggle) snprintf(text, sizeof text, "%s", v >= 0.5 ? "On" : "Off");
     else if (p.scale == Param::Choice && p.choices) snprintf(text, sizeof text, "%s", p.choices[static_cast<int>(std::round(v - p.min))]);
     else if (std::fabs(v) >= 1000) snprintf(text, sizeof text, "%.0f", v);
     else if (std::fabs(v) >= 100) snprintf(text, sizeof text, "%.1f", v);
     else snprintf(text, sizeof text, "%.2f", v);
-    out.display = text;
+    return text;
+}
+
+bool BuiltinProcessor::parameterText(uint32_t id, double normalized, std::string &out) {
+    const Param *p = find(id);
+    if (!p) return false;
+    out = format(*p, toPlain(*p, normalized));
     return true;
 }
 

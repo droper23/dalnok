@@ -8,7 +8,7 @@ import DalnokEngine
 
 @MainActor
 final class DevicePanel: NSView {
-    static var height: CGFloat { Analog.on ? 268 : 196 } // Warm Analog: room for upright stomp boxes
+    static var height: CGFloat { Analog.on ? 268 : 218 } // Warm Analog: upright stomp boxes; Graphite: two rows of faceplate controls
     let session: Session
     var track: DalnokTrackId? { didSet { if oldValue != track { rebuild() } } }
     private(set) var devices: [DeviceView] = []
@@ -85,6 +85,10 @@ final class DevicePanel: NSView {
     init(session: Session) {
         self.session = session
         super.init(frame: .zero)
+        // Settings ▸ Plug-ins ▸ meters applies to the units on screen at once.
+        metersObserver = NotificationCenter.default.addObserver(forName: Faceplate.metersChanged, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.devices.forEach { $0.applyMeterSetting() } }
+        }
         wantsLayer = true
         layer?.backgroundColor = Theme.panel.cgColor
         registerForDraggedTypes([.dalnokPlugin, .dalnokSlot])
@@ -184,6 +188,9 @@ final class DevicePanel: NSView {
 
     /// Picks up parameter changes made elsewhere (the plug-in's own editor, undo of controls).
     func refreshValues() { devices.forEach { $0.refreshValues() } }
+    /// Graphite device meters (every frame).
+    func pollMeters() { devices.forEach { $0.pollMeters() } }
+    private var metersObserver: NSObjectProtocol?
 
     // MARK: Patch cables (Warm Analog)
 
@@ -292,16 +299,18 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
     private let title = NSTextField(labelWithString: "")
     private let openButton = NSButton(title: "Open", target: nil, action: nil)
     private let editButton = NSButton(title: "Edit Controls", target: nil, action: nil)
-    private let grid = NSGridView()
     private(set) var knobs: [(knob: any ParameterControl, label: NSTextField, value: NSTextField, id: UInt32)] = []
     /// Warm Analog: the plug-in drawn as a stomp box (nil in Graphite).
     private(set) var pedal: PedalBody?
+    /// Graphite: the faceplate's sections (between the input and output meters).
+    private let sectionsRow = NSStackView()
+    let inMeter = FaceplateMeter(caption: "IN"), outMeter = FaceplateMeter(caption: "OUT")
     private let power = NSButton(title: "", target: nil, action: nil)
     var bypassed: Bool { session.pluginBypassed(trackId, slot) }
     private(set) var allParameters: [DalnokPluginParameter] = []
     private var indexOf: [UInt32: Int32] = [:]
     var onOpen: (() -> Void)?
-    static let columns = 4, defaultCount = 8
+    static let defaultCount = 8
     static var ear: CGFloat { Analog.on ? 12 : 0 } // rack ear width
 
     init(session: Session, track: DalnokTrackId, slot: Int32, name: String, loaded: Bool, color: NSColor, vendor: String = "", instrument: Bool = false, error: String = "") {
@@ -314,14 +323,15 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         self.color = color
         super.init(frame: .zero)
         wantsLayer = true
-        layer?.backgroundColor = Analog.on ? nil : Theme.panelRaised.cgColor
-        layer?.cornerRadius = Analog.on ? 2 : 6
-        layer?.borderWidth = Analog.on ? 0 : 1
-        layer?.borderColor = Theme.hairline.cgColor
+        layer?.cornerRadius = Analog.on ? 2 : 5
         title.stringValue = name
         if !loaded { title.toolTip = unavailableMessage; setAccessibilityHelp(unavailableMessage) }
         title.font = Theme.ui(12, .semibold)
         title.textColor = loaded ? Theme.text : Theme.textFaint
+        if !Analog.on { // engraved into the faceplate
+            let s = NSShadow(); s.shadowColor = NSColor.black.withAlphaComponent(0.7); s.shadowOffset = NSSize(width: 0, height: -1); s.shadowBlurRadius = 0
+            title.shadow = s
+        }
         title.lineBreakMode = .byTruncatingTail
         for b in [openButton, editButton] {
             b.bezelStyle = .inline
@@ -335,8 +345,6 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         editButton.toolTip = "Choose which parameters this controller shows"
         openButton.isEnabled = loaded
         editButton.isEnabled = loaded
-        grid.rowSpacing = 4
-        grid.columnSpacing = 12
         // Sidechain source (plug-ins with an auxiliary input only).
         sidechain.controlSize = .small
         sidechain.font = Theme.ui(10, .medium)
@@ -368,13 +376,25 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
             p.menuProvider = { [weak self] in self?.deviceMenu() }
             pedal = p
         }
-        // Knobs sit in the middle of the unit, so a one-row controller doesn't leave the bottom half empty.
+        // Graphite: input meter, the faceplate's sections, output meter; the controls sit mid-height.
         let above = NSView(), below = NSView()
-        let body = NSStackView(views: pedal.map { [header, $0] } ?? [header, above, grid, below])
+        sectionsRow.orientation = .horizontal
+        sectionsRow.alignment = .top
+        sectionsRow.spacing = 6
+        let faceRow = NSStackView(views: [inMeter, sectionsRow, NSView(), outMeter])
+        faceRow.alignment = .centerY
+        faceRow.spacing = 8
+        for m in [inMeter, outMeter] {
+            m.translatesAutoresizingMaskIntoConstraints = false
+            m.widthAnchor.constraint(equalToConstant: 9).isActive = true
+            m.heightAnchor.constraint(equalToConstant: 118).isActive = true
+            m.isHidden = !(loaded && Faceplate.showMeters)
+        }
+        let body = NSStackView(views: pedal.map { [header, $0] } ?? [header, above, faceRow, below])
         body.orientation = .vertical
         body.alignment = pedal == nil ? .leading : .centerX
         body.spacing = 4
-        body.edgeInsets = pedal == nil ? NSEdgeInsets(top: 8, left: 12 + Self.ear, bottom: 8, right: 10 + Self.ear)
+        body.edgeInsets = pedal == nil ? NSEdgeInsets(top: 7, left: 14 + Self.ear, bottom: 10, right: 14 + Self.ear)
                                        : NSEdgeInsets(top: 0, left: Self.ear, bottom: 2, right: Self.ear)
         body.translatesAutoresizingMaskIntoConstraints = false
         addSubview(body)
@@ -392,8 +412,9 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         } else {
             NSLayoutConstraint.activate([
                 above.heightAnchor.constraint(equalTo: below.heightAnchor),
-                header.widthAnchor.constraint(equalTo: body.widthAnchor, constant: -22 - 2 * Self.ear),
-                widthAnchor.constraint(greaterThanOrEqualToConstant: 300),
+                header.widthAnchor.constraint(equalTo: body.widthAnchor, constant: -28 - 2 * Self.ear),
+                faceRow.widthAnchor.constraint(equalTo: header.widthAnchor),
+                widthAnchor.constraint(greaterThanOrEqualToConstant: 220),
             ])
         }
         loadParameters()
@@ -405,9 +426,9 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
 
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
-        guard Analog.on, let ctx = NSGraphicsContext.current?.cgContext else {
-            (loaded ? color : Theme.textFaint).setFill()
-            NSRect(x: 0, y: 0, width: 3, height: bounds.height).fill()
+        guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+        guard Analog.on else {
+            Faceplate.plate(ctx, bounds, accent: color, dimmed: !loaded || bypassed)
             return
         }
         // A pedal: the enclosure is the PedalBody; here only the input and output jacks on its sides.
@@ -470,51 +491,77 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         let ids = controlIds
         if knobs.map(\.id) == ids { return refreshValues() }
         if let pedal { return buildPedal(pedal, ids) }
-        while grid.numberOfRows > 0 { grid.removeRow(at: 0) }
+        return buildFaceplate(ids)
+    }
+
+    /// Graphite: the controller as a hardware faceplate. Each parameter gets the control that suits it, related
+    /// parameters share an engraved section, and knob scales print the plug-in's own values at their ends.
+    private func buildFaceplate(_ ids: [UInt32]) {
+        sectionsRow.arrangedSubviews.forEach { $0.removeFromSuperview() }
         knobs = []
-        if !loaded {
-            let message = label(unavailableMessage, dim: true)
-            message.toolTip = unavailableMessage
-            grid.addRow(with: [message])
-            return
+        func note(_ text: String) {
+            let l = label(text, dim: true)
+            l.toolTip = text
+            l.maximumNumberOfLines = 3
+            l.lineBreakMode = .byWordWrapping
+            l.preferredMaxLayoutWidth = 220
+            sectionsRow.addArrangedSubview(l)
         }
-        if ids.isEmpty {
-            grid.addRow(with: [label("No automatable parameters. Use Open for the plug-in's own window.", dim: true)])
-            return
+        if !loaded { return note(unavailableMessage) }
+        if ids.isEmpty { return note("No automatable parameters. Use Open for the plug-in's own window.") }
+        let params = ids.compactMap { id in current(id).map { (id: id, p: $0) } }
+        let rows = params.count > 6 ? 2 : 1
+        let groups = Faceplate.sections(params.map { (id: $0.id, title: fixedString($0.p.title)) })
+        var views: [FaceplateSection] = []
+        for g in groups {
+            var controls: [FaceplateControl] = []
+            for item in g.items {
+                guard let p = current(item.id) else { continue }
+                let id = item.id
+                let c = FaceplateControl(name: item.label, steps: p.step_count)
+                c.value = p.value
+                c.defaultValue = p.default_value
+                c.tint = color
+                c.legends = legends(id, p)
+                c.bipolar = c.kind == .knob && abs(p.default_value - 0.5) < 1e-6 && (c.legends.first?.hasPrefix("-") ?? false)
+                c.format = { [weak self] _ in self?.current(id).map { self?.display($0) ?? "" } ?? "" }
+                c.onChange = { [weak self] v in self?.set(id, v) }
+                c.toolTip = "\(fixedString(p.title)): drag up or down (⇧ fine), scroll or use the arrow keys; double-click for the default."
+                c.setAccessibilityLabel(fixedString(p.title))
+                controls.append(c)
+                knobs.append((c, label(fixedString(p.title), dim: false), label(display(p), dim: true), id))
+            }
+            let section = FaceplateSection(title: g.title, controls: controls, rows: g.items.count > 1 ? rows : 1)
+            views.append(section)
         }
-        var cells: [NSView] = []
-        for id in ids {
-            guard let p = current(id) else { continue }
-            let knob = RotaryKnob()
-            knob.bipolar = false
-            knob.value = p.value
-            knob.tint = color
-            knob.format = { [weak self] _ in self?.current(id).map { fixedString($0.display) } ?? "" }
-            knob.onChange = { [weak self] v in self?.set(id, v) }
-            knob.setAccessibilityLabel(fixedString(p.title))
-            knob.translatesAutoresizingMaskIntoConstraints = false
-            knob.widthAnchor.constraint(equalToConstant: 30).isActive = true
-            knob.heightAnchor.constraint(equalToConstant: 30).isActive = true
-            let name = label(fixedString(p.title), dim: false)
-            name.maximumNumberOfLines = 2 // "Lowpass Cutoff Frequency" wraps instead of losing its meaning
-            name.lineBreakMode = .byWordWrapping
-            name.cell?.truncatesLastVisibleLine = true
-            name.preferredMaxLayoutWidth = 70
-            name.toolTip = fixedString(p.title)
-            let value = label(display(p), dim: true)
-            let cell = NSStackView(views: [knob, name, value])
-            cell.orientation = .vertical
-            cell.spacing = 2
-            cell.widthAnchor.constraint(equalToConstant: 70).isActive = true
-            cells.append(cell)
-            knobs.append((knob, name, value, id))
+        views.last?.groove = false
+        views.forEach { sectionsRow.addArrangedSubview($0) }
+        refreshBypass()
+    }
+
+    /// Printed scale legends: the plug-in's own text at the ends of the travel (every position for short selectors).
+    private func legends(_ id: UInt32, _ p: DalnokPluginParameter) -> [String] {
+        guard p.step_count != 1 else { return [] }
+        func text(_ v: Double) -> String? {
+            var buf = [CChar](repeating: 0, count: 64)
+            guard dalnok_plugin_parameter_text(session.engine.handle, slot, id, v, &buf, 64) == DALNOK_OK else { return nil }
+            return Faceplate.legend(String(decoding: buf.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self))
         }
-        for row in stride(from: 0, to: cells.count, by: Self.columns) {
-            var r = Array(cells[row..<min(row + Self.columns, cells.count)])
-            while r.count < Self.columns { r.append(NSGridCell.emptyContentView) }
-            grid.addRow(with: r)
-        }
-        for c in 0..<grid.numberOfColumns { grid.column(at: c).width = 70; grid.column(at: c).xPlacement = .center }
+        guard let lo = text(0), let hi = text(1), !lo.isEmpty, !hi.isEmpty else { return [] }
+        return [lo, hi]
+    }
+
+    func applyMeterSetting() {
+        for m in [inMeter, outMeter] { m.isHidden = !(loaded && Faceplate.showMeters) }
+    }
+
+    /// Graphite: reads this unit's input and output levels (called every frame while the panel shows).
+    func pollMeters() {
+        guard pedal == nil, loaded, !inMeter.isHidden else { return }
+        var il: Float = 0, ir: Float = 0, ol: Float = 0, orr: Float = 0
+        guard dalnok_meter_plugin(session.engine.handle, slot, &il, &ir, &ol, &orr) == DALNOK_OK else { return }
+        inMeter.push(il, ir)
+        outMeter.push(ol, orr)
     }
 
     private func display(_ p: DalnokPluginParameter) -> String {
@@ -560,8 +607,12 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         let off = bypassed
         power.state = off ? .off : .on
         power.contentTintColor = off ? Theme.textFaint : Theme.accent
-        title.textColor = !loaded || off ? Theme.textFaint : Theme.text
+        title.textColor = !loaded || off ? Theme.textFaint : (Analog.on ? Theme.text : Faceplate.engraving)
         pedal?.engaged = loaded && !off
+        if pedal == nil {
+            for k in knobs { (k.knob as? FaceplateControl)?.dimmed = off }
+            needsDisplay = true
+        }
     }
 
     private func buildPedal(_ pedal: PedalBody, _ ids: [UInt32]) {
@@ -623,7 +674,7 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
     /// a drag (and is accepted as a first click); real controls keep their clicks.
     override func hitTest(_ point: NSPoint) -> NSView? {
         let v = super.hitTest(point)
-        if v is NSStackView || v is NSGridView || v is PedalBody || (v as? NSTextField).map({ !$0.isEditable && !$0.isSelectable }) == true { return self }
+        if v is NSStackView || v is NSGridView || v is PedalBody || v is FaceplateSection || (v as? NSTextField).map({ !$0.isEditable && !$0.isSelectable }) == true { return self }
         return v
     }
     override func mouseDragged(with event: NSEvent) {

@@ -28,7 +28,7 @@
 extern "C" {
 #endif
 
-#define DALNOK_API_VERSION 27
+#define DALNOK_API_VERSION 28
 
 typedef enum {
     DALNOK_OK = 0,
@@ -201,6 +201,10 @@ DalnokStatus dalnok_engine_pump(DalnokEngine *engine, float *left, float *right,
  * Only the live path (device or pump) feeds meters. */
 DalnokStatus dalnok_meter_track(DalnokEngine *engine, DalnokTrackId track, float *left, float *right);
 void dalnok_meter_master(DalnokEngine *engine, float *left, float *right);
+/* A plug-in slot's peak input and output (linear) since the last read; the read resets them.
+ * Instruments report output only. Any pointer may be NULL. */
+DalnokStatus dalnok_meter_plugin(DalnokEngine *engine, int32_t slot, float *in_left, float *in_right,
+                                 float *out_left, float *out_right);
 /* The master fader (dB, <= +12; <= -96 is silence). Undoable; the master meter reads after it. */
 DalnokStatus dalnok_master_set_gain_db(DalnokEngine *engine, float gain_db);
 float dalnok_master_gain_db(const DalnokEngine *engine);
@@ -552,6 +556,10 @@ typedef struct {
 int32_t dalnok_plugin_parameter_count(const DalnokEngine *engine, int32_t slot);
 DalnokStatus dalnok_plugin_parameter(const DalnokEngine *engine, int32_t slot, int32_t index, DalnokPluginParameter *out);
 DalnokStatus dalnok_plugin_set_parameter(DalnokEngine *engine, int32_t slot, uint32_t id, double normalized);
+/* The plug-in's text for a parameter at any normalized value, without changing it (printed knob scales).
+ * NUL-terminated, truncated to `len`. DALNOK_ERR_NOT_FOUND if the plug-in can't say. */
+DalnokStatus dalnok_plugin_parameter_text(const DalnokEngine *engine, int32_t slot, uint32_t id, double normalized,
+                                          char *text, size_t len);
 /* The device panel's controller: which parameters it shows (saved; one undo step to change).
  * Returns the count (0 = not customized: the panel shows the first automatable parameters). */
 int32_t dalnok_plugin_controls(const DalnokEngine *engine, DalnokTrackId track, int32_t slot, uint32_t *ids, int32_t capacity);

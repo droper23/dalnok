@@ -225,6 +225,15 @@ public:
         if (params_->value_to_text(plugin_, info.id, value, text, sizeof text)) out.display = text;
         return true;
     }
+    bool parameterText(uint32_t id, double normalized, std::string &out) override {
+        auto it = ranges_.find(id);
+        if (!params_ || it == ranges_.end()) return false;
+        const double plain = it->second.first + std::clamp(normalized, 0.0, 1.0) * (it->second.second - it->second.first);
+        char text[128] = {};
+        if (!params_->value_to_text(plugin_, id, plain, text, sizeof text)) return false;
+        out = text;
+        return true;
+    }
     bool setParameter(uint32_t id, double normalized) override {
         auto it = ranges_.find(id);
         if (it == ranges_.end() || !(normalized >= 0 && normalized <= 1)) return false;

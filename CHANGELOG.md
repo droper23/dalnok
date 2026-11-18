@@ -1,8 +1,14 @@
 # Changelog
 
 ## [Unreleased]
+### Added (2026-11-18, Graphite faceplates)
+- Graphite draws each plug-in in the device panel as a hardware unit on a brushed graphite faceplate. Knobs carry printed scales with the plug-in's own end values. On/off parameters become lit push switches and short choices become stepped selectors. Related parameters share engraved sections, and every control has a value readout.
+- Input/output LED meters on each unit. Settings ▸ Plug-ins can hide them. The engine adds `dalnok_meter_plugin` and `dalnok_plugin_parameter_text` (C API 28).
+### Fixed (2026-11-18, Channel EQ parity)
+- Dalnok Channel EQ's low and high cuts were swapped. Shelves and all cut slopes now match Logic (measured cascades for every shown Q below 1).
+- `rt-effects.sh` finds Homebrew's versioned LLVM.
 ### Added (2026-11-18, Logic effect parity)
-- Built-in plug-in format (`dalnok:`; ADR-0011) and **Dalnok Channel EQ**. Its peak bands and Gain-Q coupling match Logic's Channel EQ to float precision. Shelves, low/high cuts and oversampling are implemented but not yet verified against Logic. Logic Channel EQ settings import directly (parameter ids equal Logic's slots). Project format 13.
+- Built-in plug-in format (`dalnok:`; ADR-0011) and **Dalnok Channel EQ**. Its peak bands and Gain-Q coupling match Logic's Channel EQ to float precision. Oversampling (HQ) is not modelled yet. Logic Channel EQ settings import directly (parameter ids equal Logic's slots). Project format 13.
 - Logic import maps channel volume, pan and mute, imports MIDI region mute as clip mute (Clip ▸ Mute Clip), and imports Drummer regions' notes.
 - `tools/logic-parity/`: clean-room measurement loop (patch a Logic project, export from Logic, fit and null).
 ### Fixed (2026-11-18)

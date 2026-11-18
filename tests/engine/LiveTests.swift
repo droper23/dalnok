@@ -105,6 +105,23 @@ func liveEngine(_ samples: [Float]) -> (OpaquePointer, DalnokTrackId, OpaquePoin
         #expect(dalnok_meter_track(e, 999, &l, &r) == DALNOK_ERR_NOT_FOUND)
     }
 
+    @Test func pluginMetersReportInputAndOutputPeaks() {
+        let (e, t, m) = liveEngine([Float](repeating: 0.25, count: 48_000))
+        defer { dalnok_media_release(m); dalnok_engine_destroy(e) }
+        let slot = dalnok_plugin_add(e, t, "dalnok:channel-eq", nil, nil, 0)
+        #expect(slot != 0)
+        dalnok_plugin_set_parameter(e, slot, 32, (6.0206 + 24) / 48) // Channel EQ master gain +6 dB (x2)
+        dalnok_transport_play(e)
+        _ = pump(e, 4_096)
+        var il: Float = 0, ir: Float = 0, ol: Float = 0, orr: Float = 0
+        #expect(dalnok_meter_plugin(e, slot, &il, &ir, &ol, &orr) == DALNOK_OK)
+        #expect(abs(il - 0.25) < 1e-3 && abs(ir - 0.25) < 1e-3, "plug-in input peak \(il), \(ir)")
+        #expect(abs(ol - 0.5) < 1e-3 && abs(orr - 0.5) < 1e-3, "plug-in output peak \(ol), \(orr)")
+        dalnok_meter_plugin(e, slot, &il, nil, &ol, nil)
+        #expect(il == 0 && ol == 0, "reading resets")
+        #expect(dalnok_meter_plugin(e, 999_999, nil, nil, nil, nil) == DALNOK_ERR_NOT_FOUND)
+    }
+
     @Test func structuralEditsWhilePlayingAreAdopted() {
         let (e, t, m) = liveEngine([Float](repeating: 0.5, count: 48_000))
         defer { dalnok_media_release(m); dalnok_engine_destroy(e) }

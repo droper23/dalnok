@@ -303,6 +303,14 @@ DalnokStatus dalnok_plugin_set_state(DalnokEngine *e, int32_t slot, const char *
     return statusFor(e->impl.setPluginState(slot, bytes, err), err);
 }
 
+DalnokStatus dalnok_plugin_parameter_text(const DalnokEngine *e, int32_t slot, uint32_t id, double normalized, char *text, size_t len) {
+    PluginProcessor *p = e ? e->impl.pluginInstance(slot) : nullptr;
+    if (!p || !text || len == 0 || !(normalized >= 0 && normalized <= 1)) return DALNOK_ERR_INVALID_ARG;
+    std::string s;
+    if (!p->parameterText(id, normalized, s)) return DALNOK_ERR_NOT_FOUND;
+    snprintf(text, len, "%s", s.c_str());
+    return DALNOK_OK;
+}
 int32_t dalnok_plugin_parameter_count(const DalnokEngine *e, int32_t slot) {
     PluginProcessor *p = e ? e->impl.pluginInstance(slot) : nullptr;
     return p ? p->parameterCount() : 0;
@@ -722,6 +730,17 @@ DalnokStatus dalnok_meter_track(DalnokEngine *e, DalnokTrackId t, float *l, floa
     if (!e || !e->impl.readTrackMeter(t, a, b)) return DALNOK_ERR_NOT_FOUND;
     if (l) *l = a;
     if (r) *r = b;
+    return DALNOK_OK;
+}
+DalnokStatus dalnok_meter_plugin(DalnokEngine *e, int32_t slot, float *il, float *ir, float *ol, float *orr) {
+    PluginProcessor *p = e ? e->impl.pluginInstance(slot) : nullptr;
+    if (!p) return DALNOK_ERR_NOT_FOUND;
+    float *dst[4] = {il, ir, ol, orr};
+    std::atomic<float> *src[4] = {&p->meterIn[0], &p->meterIn[1], &p->meterOut[0], &p->meterOut[1]};
+    for (int i = 0; i < 4; ++i) {
+        const float v = src[i]->exchange(0.0f, std::memory_order_relaxed);
+        if (dst[i]) *dst[i] = v;
+    }
     return DALNOK_OK;
 }
 void dalnok_meter_master(DalnokEngine *e, float *l, float *r) {
