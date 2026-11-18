@@ -264,9 +264,25 @@
         [
           ".logicx: Logic-native processors, mixer settings, routing, take folders and automation",
           "todo"
+        ],
+        [
+          "Mixer volume, pan, mute; muted regions; Drummer notes",
+          "verified"
+        ],
+        [
+          "Logic Channel EQ becomes Dalnok Channel EQ (peak bands and Q-Couple null against Logic)",
+          "verified"
+        ],
+        [
+          "Channel EQ shelves, cuts and HQ verified against Logic",
+          "implemented"
+        ],
+        [
+          "Other Logic effects (Limiter, Chorus, ChromaVerb, ChromaGlow, Drum Kit) as Dalnok plug-ins",
+          "todo"
         ]
       ],
-      "evidence": "LogicImport generated fixtures cover placements, MIDI notes and region boundaries. LogicPluginImport generated fixtures verify Audio Unit track assignment, ordering, saved parameter state and instrument playback. Plug-in hosting fixtures verify rejected state preservation and short MIDI notes. Logic-native processors, mixer settings, routing, take folders and automation are not yet imported. FcpxmlImport tests cover XML."
+      "evidence": "LogicImport generated fixtures cover placements, MIDI notes and region boundaries. LogicPluginImport generated fixtures verify Audio Unit track assignment, ordering, saved parameter state and instrument playback. Plug-in hosting fixtures verify rejected state preservation and short MIDI notes. Logic-native processors, mixer settings, routing, take folders and automation are not yet imported. FcpxmlImport tests cover XML. Channel EQ: tools/logic-parity null tests (-132 to -148 dB, 75 renders) and BuiltinPlugins engine tests."
     },
     {
       "id": "imp-stems",
