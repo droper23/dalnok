@@ -552,6 +552,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
                 transport.reels.length = max(60, Double(end) / e.sampleRate * 1.1)
             }
             transport.reels.update(seconds: Double(e.position) / e.sampleRate)
+            if transport.tapeStrip.transport == nil { transport.tapeStrip.transport = tapeTransport }
+            tapeTransport.advance()
+            transport.tapeStrip.refresh(playing: e.isPlaying, recording: e.isRecording, cycle: session.cycle.on, winding: tapeTransport.winding)
         }
         if Analog.on { transport.ghost.stringValue = String(position.map { $0.isNumber ? "8" : $0 }) } // unlit segments
         timeline.followPlayhead()
@@ -1340,6 +1343,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     // MARK: Tape machine (Analog Mode transport)
 
     private(set) var tapeDeck: TapeDeckController?
+    /// The tape keys' behaviour, shared by the control bar's tape strip and the Tape Machine window.
+    lazy var tapeTransport = TapeTransport(main: self)
     @objc func showTapeDeck(_ sender: Any?) {
         if tapeDeck == nil { tapeDeck = TapeDeckController(main: self) }
         tapeDeck?.showWindow(nil)

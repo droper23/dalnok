@@ -42,3 +42,24 @@ channel volume and pan, track stacks, routing, plug-ins and automation remain un
 
 ## Controlled Logic export (2026-11-16)
 A disposable Logic 12.2 project using the macOS Submarine sample and its FCPXML export both imported as one track and one clip with no missing media. Logic rendered a separate 65,536-frame audio file in the XML export, shorter than the original region, so this comparison does not establish sample-accurate placement or boundaries. The audio-only project also contains type 0x20 events: counting every such event as a MIDI region is not supported by this evidence. More controlled projects with known nonzero offsets, trims and tracks are needed.
+
+## Record framing, split pieces and MIDI regions (2026-11-17)
+Found on a Logic 12.2 project from the owner's library that imported 1 of 24 audio placements and no MIDI.
+Nothing from that project is stored in this repo; the regression test uses a generated fixture.
+- **Framing.** Records are 16-byte lines. A record can run past its base size (80 bytes for 0x20–0x28,
+  32 for 0x60/0x90) with extra lines: fades, flex and other per-placement data. One placement ran to 40,880 bytes.
+  A continuation line has the top bit of its second word set; a new record's second word is a position and doesn't.
+  Assuming fixed sizes made the parser read the middle of records as types and lose every later placement.
+- **Split pieces.** A placement's +0x28 (u32) is the piece of the region it plays. Pieces of a split region share
+  the AuRg header id and differ in the header sub-index (+14). The pieces observed were consecutive source ranges.
+  Earlier projects only used piece 0, so "use sub-index zero" was a coincidence.
+- **MIDI regions.** Event 0x20 at +0x20 names an event sequence by header id. In the main arrangement sequence those are
+  MIDI regions; one 0x20 per row at bar 1 in another sequence points at empty sequences (track folders), so a 0x20 is
+  a MIDI region only if its sequence holds notes.
+- **Notes** (record 0x90, 32 bytes): +4 position (960 PPQ, bar 1 of the region = 34,560), +11 velocity, +12 pitch,
+  +28 length in ticks. Verified against Logic's own File ▸ Export ▸ All MIDI Tracks as MIDI File: 60 of 60 notes
+  matched in position, pitch, velocity and length. +10 was a constant 65 and +15 varied (0x01, 0x81, 0x80), meaning
+  unknown.
+- **Drummer regions** hold 48-byte 0x4090 records. Logic's MIDI export leaves them out, so they're not decoded: the
+  importer skips and reports them.
+- The region length of a MIDI region wasn't found; clips run to the last note's end, rounded up to whole bars.

@@ -39,16 +39,13 @@ This note is the durable inventory. Severity: **P0** data loss, crash, or corrup
 | 15 | Dead controls | No automated check | P2 | — | **Done.** Self-test fails on a menu command without a handler or an enabled button without an action (all windows currently pass) |
 
 ## Not done (honest list)
-- **Track features from the brief that don't exist yet:** track height resize, hide track, duplicate track, groups,
-  markers and jump-between-markers, vertical zoom, zoom to selection. They aren't shown in the UI, so nothing looks
-  available that isn't; they are in the Backlog.
+- **Track features:** track height, hide/show, duplicate, markers and marker navigation, vertical zoom and zoom to selection are implemented and covered by tests or self-test. Track groups remain unbuilt. The ⌃⇧D Duplicate Track shortcut still needs a real-input re-check.
 - **Plug-in isolation:** hosting stays in-process (ADR-0009); scanning is out of process. A crashing hosted plug-in can
   still take Dalnok down.
 - **Tape coloration** (saturation, wow and flutter) as an opt-in effect: not built. The Tape Machine is visual only.
 - **Accessibility:** labels and keyboard operation exist for the new controls, but a full VoiceOver pass and a
   keyboard-only walkthrough of every window have not been done.
-- **Warm Analog open time:** opening and rendering the 64-track generated project takes about 5.5 s in Warm Analog vs
-  2.6 s in Graphite (no audio overloads in either). Not profiled yet.
+- **Warm Analog capture time:** the 64-track generated project capture takes about 5.5 s in Warm Analog vs 2.6 s in Graphite; layer shadows render on the CPU. On-screen cost is not measured.
 - **Plug-in categories on your real library** (453 plug-ins, metadata only, not scanned) were not reviewed one by one.
   A scan (Scan Plug-ins) gives VST3 and CLAP their declared categories.
 - **Not exhaustively audited:** every menu item by hand, the piano roll, the Takes window and the import flows.
@@ -87,3 +84,5 @@ This note is the durable inventory. Severity: **P0** data loss, crash, or corrup
 - Real OS input (owner's request): header scrolling, footswitch, knob drag, ⌘S/⌘Z/⌘W, palette and popover
   dismissal, the shortcut editor (search, record, use), a browser drag onto the device panel, a device drag
   reorder, and the tape machine keys.
+
+- Later self-tests passed 447 checks in Graphite and 464 in Warm Analog, including the control-bar tape strip. The saved real-input crops do not establish PLAY, FF or RTZ behavior; repeat the check.

@@ -342,7 +342,7 @@ final class TapeReels: NSView {
     var length: Double { get { model.length } set { model.length = newValue; needsDisplay = true } }
 
     override var isFlipped: Bool { true }
-    override var intrinsicContentSize: NSSize { NSSize(width: 84, height: 34) }
+    override var intrinsicContentSize: NSSize { NSSize(width: 104, height: 42) }
 
     var tapeFraction: CGFloat { model.fraction } // for tests
     var reelAngles: (CGFloat, CGFloat) { model.angles } // for tests
@@ -359,43 +359,18 @@ final class TapeReels: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+        // The same NAB reels as the Tape Machine, scaled to the bar: the tape runs from the bottom of one pack, over
+        // a head, to the other.
+        let R = min(bounds.height / 2 - 1, bounds.width / 4 - 2), k = R / ReelModel.full
         let (rl, rr) = radii
-        let cy = bounds.midY, left = CGPoint(x: 17, y: cy), right = CGPoint(x: bounds.width - 17, y: cy)
-        // The tape path: from the bottom of one pack, over a head between them, to the other.
-        ctx.setStrokeColor(Theme.hex(0x7A5A40).cgColor); ctx.setLineWidth(1)
-        ctx.move(to: CGPoint(x: left.x, y: cy + rl)); ctx.addLine(to: CGPoint(x: bounds.midX, y: bounds.height - 2))
-        ctx.addLine(to: CGPoint(x: right.x, y: cy + rr)); ctx.strokePath()
-        ctx.setFillColor(Theme.hex(0x8A7A6A).cgColor)
-        ctx.fill(CGRect(x: bounds.midX - 4, y: bounds.height - 4, width: 8, height: 3)) // the head
-        for (c, r, a) in [(left, rl, angles.0), (right, rr, angles.1)] { reel(ctx, at: c, pack: r, angle: a) }
-    }
-
-    private func reel(_ ctx: CGContext, at c: CGPoint, pack: CGFloat, angle: CGFloat) {
-        let flange: CGFloat = 16
-        // Tape pack: dark oxide with faint winding rings.
-        ctx.setFillColor(Theme.hex(0x5A3D2A).cgColor)
-        ctx.fillEllipse(in: CGRect(x: c.x - pack, y: c.y - pack, width: pack * 2, height: pack * 2))
-        ctx.setStrokeColor(Theme.hex(0x7E5A40, 0.7).cgColor); ctx.setLineWidth(0.5)
-        var r: CGFloat = 6.5
-        while r < pack - 0.5 { ctx.strokeEllipse(in: CGRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2)); r += 2.5 }
-        // Clear flange with three windows, turning with the reel.
-        ctx.setStrokeColor(NSColor(white: 0.75, alpha: 0.55).cgColor); ctx.setLineWidth(1)
-        ctx.strokeEllipse(in: CGRect(x: c.x - flange, y: c.y - flange, width: flange * 2, height: flange * 2))
-        ctx.setStrokeColor(NSColor(white: 0.8, alpha: 0.35).cgColor); ctx.setLineWidth(0.8)
-        for k in 0..<3 {
-            let a = angle + CGFloat(k) * 2 * .pi / 3
-            ctx.move(to: CGPoint(x: c.x + cos(a) * 5, y: c.y + sin(a) * 5))
-            ctx.addLine(to: CGPoint(x: c.x + cos(a) * (flange - 1), y: c.y + sin(a) * (flange - 1)))
-        }
-        ctx.strokePath()
-        // Hub with three drive teeth.
-        ctx.setFillColor(NSColor(white: 0.7, alpha: 1).cgColor)
-        ctx.fillEllipse(in: CGRect(x: c.x - 4.5, y: c.y - 4.5, width: 9, height: 9))
-        ctx.setFillColor(Theme.hex(0x15100C).cgColor)
-        ctx.fillEllipse(in: CGRect(x: c.x - 2, y: c.y - 2, width: 4, height: 4))
-        for k in 0..<3 {
-            let a = angle + .pi / 3 + CGFloat(k) * 2 * .pi / 3
-            ctx.fill(CGRect(x: c.x + cos(a) * 3.2 - 0.8, y: c.y + sin(a) * 3.2 - 0.8, width: 1.6, height: 1.6))
-        }
+        let cy = bounds.midY, left = CGPoint(x: R + 1, y: cy), right = CGPoint(x: bounds.width - R - 1, y: cy)
+        ctx.setStrokeColor(Theme.hex(0x7A5236).cgColor); ctx.setLineWidth(1.4)
+        let head = CGPoint(x: bounds.midX, y: bounds.height - 3)
+        ctx.move(to: CGPoint(x: left.x + rl * k * 0.2, y: cy + rl * k)); ctx.addLine(to: head)
+        ctx.addLine(to: CGPoint(x: right.x - rr * k * 0.2, y: cy + rr * k)); ctx.strokePath()
+        ctx.setFillColor(NSColor(white: 0.62, alpha: 1).cgColor)
+        ctx.fill(CGRect(x: head.x - 5, y: head.y - 2, width: 10, height: 3))
+        TapeArt.reel(ctx, at: left, radius: R, hub: ReelModel.hub * k, pack: rl * k, angle: angles.0)
+        TapeArt.reel(ctx, at: right, radius: R, hub: ReelModel.hub * k, pack: rr * k, angle: angles.1)
     }
 }

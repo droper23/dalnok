@@ -35,6 +35,8 @@ final class TransportBar: NSView {
     let ghost = NSTextField(labelWithString: "")
     let masterMeter = MeterView()
     let reels = TapeReels() // Warm Analog only
+    /// Warm Analog: the tape transport (reels, keys, lamps) in place of the round transport buttons.
+    private(set) lazy var tapeStrip = TapeStrip(reels: reels)
     let playButton = IconButton("play.fill", help: "Play / Pause (Space)")
     let recordButton = IconButton("circle.fill", help: "Record (R)")
     let metronomeButton = IconButton("metronome.fill", help: "Metronome (K)")
@@ -137,7 +139,7 @@ final class TransportBar: NSView {
         tempo.edgeInsets = NSEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
         tempoField.widthAnchor.constraint(equalToConstant: 44).isActive = true
         reels.setAccessibilityElement(false)
-        let transport = NSStackView(views: Analog.on ? [rewind, playButton, recordButton, cycleButton, reels, lcd, tempo]
+        let transport = NSStackView(views: Analog.on ? [tapeStrip, lcd, tempo]
                                                      : [rewind, playButton, recordButton, cycleButton, lcd, tempo])
         transport.spacing = 6
 

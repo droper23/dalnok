@@ -732,7 +732,7 @@ final class SelfTest {
         check(perform("Delete Marker", exact: true) && s.markers.count == 1, "Delete Marker removes the marker at the playhead")
         _ = perform("Undo"); _ = perform("Undo")
         s.markers.forEach { s.removeMarker($0.id) }
-        // Duplicate Track (⌃⌘D): below the original, with its clips; one undo step.
+        // Duplicate Track (⌃⇧D): below the original, with its clips; one undo step.
         if let t = s.tracks.first(where: { !$0.isBus && !$0.isStack && !$0.clips.isEmpty }) {
             w.headers.select(t.id)
             let n = s.tracks.count
@@ -857,6 +857,22 @@ final class SelfTest {
         }
         w.tapeDeck?.window?.close()
         e.seek(0); await wait(0.1)
+        // Warm Analog: the same keys live in the control bar, so the window is optional.
+        if Analog.on {
+            let strip = w.transport.tapeStrip
+            check(strip.superview != nil && strip.reels.superview != nil && strip.transport != nil, "the control bar carries the tape strip (reels and keys)")
+            strip.play.onPress?(); await wait(0.4)
+            check(e.isPlaying, "the bar's PLAY key starts the transport")
+            await wait(0.1)
+            check(strip.play.lit, "and its lamp lights")
+            strip.play.onPress?(); await wait(0.2)
+            check(!e.isPlaying, "pressing PLAY again pauses")
+            let p0 = e.position
+            w.tapeTransport.wind(1, seconds: 0.5); await wait(0.15)
+            check(Double(e.position - p0) / e.sampleRate > 5, "the bar's FF winds the playhead (shared with the window)")
+            strip.rtz.onPress?(); await wait(0.15)
+            check(e.position == 0, "RTZ in the bar returns to zero")
+        }
     }
 
     // MARK: Cut / copy / paste / duplicate / select all

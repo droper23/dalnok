@@ -7,6 +7,120 @@
 import AppKit
 import DalnokEngine
 
+/// What the tape keys do, shared by the Tape Machine window and the tape strip in the control bar, so both behave
+/// the same: every key runs the main window's commands; winding moves the real playhead; Stop returns to where
+/// playback started.
+@MainActor
+final class TapeTransport {
+    weak var main: MainWindowController?
+    private(set) var winding = 0
+    private(set) var playStart: Int64 = 0
+    private var wasPlaying = false
+    private var last = CACurrentMediaTime()
+    static let windSpeed = 12.0 // × real time
+    init(main: MainWindowController) { self.main = main }
+    private var engine: Engine? { main?.session.engine }
+    private func command(_ sel: Selector) { if let main { NSApp.sendAction(sel, to: main, from: nil) } }
+    func play() { if engine?.isPlaying == false { command(#selector(MainWindowController.togglePlay)) } }
+    func pause() { if engine?.isPlaying == true { command(#selector(MainWindowController.togglePlay)) } }
+    func stop() {
+        guard let e = engine else { return }
+        winding = 0
+        if e.isRecording { command(#selector(MainWindowController.toggleRecord(_:))) }
+        if e.isPlaying { command(#selector(MainWindowController.togglePlay)) }
+        e.seek(playStart)
+    }
+    func returnToZero() { command(#selector(MainWindowController.goToStart)) }
+    func record() { command(#selector(MainWindowController.toggleRecord(_:))) }
+    func loop() { command(#selector(MainWindowController.toggleCycle(_:))) }
+    func beginWind(_ d: Int) {
+        if engine?.isRecording == true { return NSSound.beep() }
+        pause()
+        winding = d
+    }
+    func endWind() { winding = 0 }
+    /// Winds while a key is held and notes where playback started. Safe to call from several views each frame:
+    /// it measures its own time step.
+    func advance(dt explicit: Double? = nil) {
+        let now = CACurrentMediaTime(), dt = explicit ?? min(0.1, now - last)
+        last = now
+        guard let e = engine else { return }
+        if winding != 0 {
+            let next = max(0, Double(e.position) + Double(winding) * Self.windSpeed * dt * e.sampleRate)
+            e.seek(Int64(next))
+            if next == 0 { winding = 0 }
+        }
+        if e.isPlaying && !wasPlaying { playStart = e.position }
+        wasPlaying = e.isPlaying
+    }
+    /// For tests: wind as if a key were held for `seconds`.
+    func wind(_ d: Int, seconds: Double) { winding = d; advance(dt: seconds); winding = 0 }
+}
+
+/// Warm Analog: the tape transport in the control bar (reels, keys and lamps at the bar's height), so the
+/// Tape Machine window is optional.
+@MainActor
+final class TapeStrip: NSView {
+    let reels: TapeReels
+    let rtz = DeckKey("RTZ", symbol: "⏮", help: "Return to zero (Return)")
+    let rew = DeckKey("REW", symbol: "◀◀", help: "Hold to rewind")
+    let ffwd = DeckKey("FF", symbol: "▶▶", help: "Hold to fast-forward")
+    let stop = DeckKey("STOP", symbol: "■", help: "Stop and return to where playback started")
+    let play = DeckKey("PLAY", symbol: "▶", help: "Play / Pause (Space)")
+    let rec = DeckKey("REC", symbol: "●", help: "Record (R)")
+    let loop = DeckKey("LOOP", symbol: "↻", help: "Cycle (C)")
+    var keys: [DeckKey] { [rtz, rew, ffwd, stop, play, rec, loop] }
+    weak var transport: TapeTransport? { didSet { wire() } }
+
+    init(reels: TapeReels) {
+        self.reels = reels
+        super.init(frame: .zero)
+        rec.lampColor = Theme.recordOn
+        loop.lampColor = Theme.hex(0xF0B43C)
+        rew.momentary = true; ffwd.momentary = true
+        let row = NSStackView(views: [reels] + keys)
+        row.spacing = 3
+        row.setCustomSpacing(10, after: reels)
+        row.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(row)
+        NSLayoutConstraint.activate([
+            row.leadingAnchor.constraint(equalTo: leadingAnchor), row.trailingAnchor.constraint(equalTo: trailingAnchor),
+            row.topAnchor.constraint(equalTo: topAnchor), row.bottomAnchor.constraint(equalTo: bottomAnchor),
+            reels.widthAnchor.constraint(equalToConstant: 104), reels.heightAnchor.constraint(equalToConstant: 42),
+        ])
+        for k in keys {
+            k.translatesAutoresizingMaskIntoConstraints = false
+            k.widthAnchor.constraint(equalToConstant: 30).isActive = true
+            k.heightAnchor.constraint(equalToConstant: 38).isActive = true
+        }
+        setAccessibilityElement(true)
+        setAccessibilityRole(.group)
+        setAccessibilityLabel("Tape transport")
+    }
+    required init?(coder: NSCoder) { fatalError() }
+    private func wire() {
+        rtz.onPress = { [weak self] in self?.transport?.returnToZero() }
+        play.onPress = { [weak self] in
+            guard let t = self?.transport, let e = t.main?.session.engine else { return }
+            e.isPlaying ? t.pause() : t.play()
+        }
+        stop.onPress = { [weak self] in self?.transport?.stop() }
+        rec.onPress = { [weak self] in self?.transport?.record() }
+        loop.onPress = { [weak self] in self?.transport?.loop() }
+        rew.onPress = { [weak self] in self?.transport?.beginWind(-1) }
+        ffwd.onPress = { [weak self] in self?.transport?.beginWind(1) }
+        rew.onRelease = { [weak self] in self?.transport?.endWind() }
+        ffwd.onRelease = { [weak self] in self?.transport?.endWind() }
+    }
+    /// Lamps follow the real state (called every UI tick).
+    func refresh(playing: Bool, recording: Bool, cycle: Bool, winding: Int) {
+        play.lit = playing
+        rec.lit = recording
+        loop.lit = cycle
+        rew.lit = winding < 0; ffwd.lit = winding > 0
+    }
+}
+
 /// A transport key: a lit-cap piano key (momentary for wind keys).
 @MainActor
 final class DeckKey: NSControl {
@@ -56,7 +170,7 @@ final class DeckKey: NSControl {
         ctx.setStrokeColor(NSColor(white: 0, alpha: 0.55).cgColor); ctx.setLineWidth(0.8)
         ctx.addPath(CGPath(roundedRect: r, cornerWidth: 3, cornerHeight: 3, transform: nil)); ctx.strokePath()
         // Lamp window at the top of the key.
-        let lamp = CGRect(x: r.midX - 9, y: r.minY + 6, width: 18, height: 5)
+        let lamp = r.height < 50 ? CGRect(x: r.midX - 7, y: r.minY + 4, width: 14, height: 4) : CGRect(x: r.midX - 9, y: r.minY + 6, width: 18, height: 5)
         ctx.setFillColor((lit ? lampColor : lampColor.blended(withFraction: 0.82, of: .black) ?? .black).cgColor)
         ctx.fill(lamp)
         if lit {
@@ -66,11 +180,16 @@ final class DeckKey: NSControl {
         }
         let ink = Theme.hex(0x2A2620)
         let sym = symbol as NSString, lab = label as NSString
-        let sa: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 13, weight: .bold), .foregroundColor: ink]
+        let compact = r.height < 50 // the control-bar strip: symbol and lamp only (the name is in the tooltip)
+        let sa: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: compact ? 10 : 13, weight: .bold), .foregroundColor: ink]
         let la: [NSAttributedString.Key: Any] = [.font: Theme.ui(7.5, .bold), .foregroundColor: ink.withAlphaComponent(0.8), .kern: 0.8]
         let ss = sym.size(withAttributes: sa), ls = lab.size(withAttributes: la)
-        sym.draw(at: CGPoint(x: r.midX - ss.width / 2, y: r.minY + 15), withAttributes: sa)
-        lab.draw(at: CGPoint(x: r.midX - ls.width / 2, y: r.maxY - ls.height - 4), withAttributes: la)
+        if compact {
+            sym.draw(at: CGPoint(x: r.midX - ss.width / 2, y: r.minY + 13), withAttributes: sa)
+        } else {
+            sym.draw(at: CGPoint(x: r.midX - ss.width / 2, y: r.minY + 15), withAttributes: sa)
+            lab.draw(at: CGPoint(x: r.midX - ls.width / 2, y: r.maxY - ls.height - 4), withAttributes: la)
+        }
         if window?.firstResponder === self {
             ctx.setStrokeColor(NSColor.keyboardFocusIndicatorColor.cgColor); ctx.setLineWidth(2)
             ctx.addPath(CGPath(roundedRect: r.insetBy(dx: -1, dy: -1), cornerWidth: 4, cornerHeight: 4, transform: nil)); ctx.strokePath()
@@ -101,14 +220,14 @@ final class TapeDeckView: NSView {
     let rec = DeckKey("REC", symbol: "●", help: "Record on the armed tracks (R)")
     let loop = DeckKey("LOOP", symbol: "↻", help: "Cycle on or off (C)")
     let speedSwitch = NSSegmentedControl(labels: ["7½", "15", "30"], trackingMode: .selectOne, target: nil, action: nil)
+    /// The shared key behaviour (also used by the control bar's tape strip).
+    var transport: TapeTransport? { main?.tapeTransport }
     /// While a wind key is held: −1 rewind, +1 fast forward.
-    private(set) var winding = 0
-    private var playStart: Int64 = 0
-    var playStartForTests: Int64 { playStart }
-    private var wasPlaying = false
+    var winding: Int { transport?.winding ?? 0 }
+    var playStartForTests: Int64 { transport?.playStart ?? 0 }
     private var last = CACurrentMediaTime()
     private var link: CADisplayLink?
-    static let windSpeed = 12.0 // × real time
+    static let windSpeed = TapeTransport.windSpeed
     var counterText = "00:00.0"
 
     override init(frame: NSRect) {
@@ -119,27 +238,16 @@ final class TapeDeckView: NSView {
         loop.lampColor = Theme.hex(0xF0B43C)
         for k in keys { addSubview(k) }
         rew.momentary = true; ffwd.momentary = true
-        rtz.onPress = { [weak self] in self?.command(#selector(MainWindowController.goToStart)) }
-        play.onPress = { [weak self] in
-            guard let e = self?.session?.engine, !e.isPlaying else { return }
-            self?.command(#selector(MainWindowController.togglePlay))
-        }
-        pause.onPress = { [weak self] in
-            guard let e = self?.session?.engine, e.isPlaying else { return }
-            self?.command(#selector(MainWindowController.togglePlay))
-        }
-        stop.onPress = { [weak self] in
-            guard let self, let e = self.session?.engine else { return }
-            if e.isRecording { self.command(#selector(MainWindowController.toggleRecord(_:))) }
-            if e.isPlaying { self.command(#selector(MainWindowController.togglePlay)) }
-            e.seek(self.playStart)
-        }
-        rec.onPress = { [weak self] in self?.command(#selector(MainWindowController.toggleRecord(_:))) }
-        loop.onPress = { [weak self] in self?.command(#selector(MainWindowController.toggleCycle(_:))) }
-        rew.onPress = { [weak self] in self?.beginWind(-1) }
-        ffwd.onPress = { [weak self] in self?.beginWind(1) }
-        rew.onRelease = { [weak self] in self?.winding = 0 }
-        ffwd.onRelease = { [weak self] in self?.winding = 0 }
+        rtz.onPress = { [weak self] in self?.transport?.returnToZero() }
+        play.onPress = { [weak self] in self?.transport?.play() }
+        pause.onPress = { [weak self] in self?.transport?.pause() }
+        stop.onPress = { [weak self] in self?.transport?.stop() }
+        rec.onPress = { [weak self] in self?.transport?.record() }
+        loop.onPress = { [weak self] in self?.transport?.loop() }
+        rew.onPress = { [weak self] in self?.transport?.beginWind(-1) }
+        ffwd.onPress = { [weak self] in self?.transport?.beginWind(1) }
+        rew.onRelease = { [weak self] in self?.transport?.endWind() }
+        ffwd.onRelease = { [weak self] in self?.transport?.endWind() }
         for m in [leftVU, rightVU] { addSubview(m) }
         speedSwitch.selectedSegment = [0.5, 1, 2].firstIndex(of: Double(UserDefaults.standard.object(forKey: "tapeSpeed") as? Double ?? 1)) ?? 1
         speedSwitch.target = self; speedSwitch.action = #selector(speedChanged)
@@ -154,15 +262,8 @@ final class TapeDeckView: NSView {
     required init?(coder: NSCoder) { fatalError() }
     override var isFlipped: Bool { true }
 
-    /// Runs a main-window command (the same code as its menu item and shortcut).
-    private func command(_ sel: Selector) { if let main { NSApp.sendAction(sel, to: main, from: self) } }
-    private func beginWind(_ d: Int) {
-        if session?.engine.isRecording == true { return NSSound.beep() }
-        if session?.engine.isPlaying == true { command(#selector(MainWindowController.togglePlay)) }
-        winding = d
-    }
     /// For tests: wind as if a key were held for `seconds`.
-    func wind(_ d: Int, seconds: Double) { winding = d; step(dt: seconds); winding = 0 }
+    func wind(_ d: Int, seconds: Double) { transport?.wind(d, seconds: seconds); step(dt: seconds) }
     @objc private func speedChanged() {
         model.speedFactor = [0.5, 1, 2][max(0, speedSwitch.selectedSegment)]
         UserDefaults.standard.set(Double(model.speedFactor), forKey: "tapeSpeed")
@@ -185,13 +286,7 @@ final class TapeDeckView: NSView {
     func step(dt: Double) {
         guard let s = session else { return }
         let e = s.engine, sr = e.sampleRate
-        if winding != 0 {
-            let next = max(0, Double(e.position) + Double(winding) * Self.windSpeed * dt * sr)
-            e.seek(Int64(next))
-            if next == 0 { winding = 0 }
-        }
-        if e.isPlaying && !wasPlaying { playStart = e.position }
-        wasPlaying = e.isPlaying
+        transport?.advance()
         let end = s.tracks.flatMap(\.clips).map(\.end).max() ?? 0
         model.length = max(60, Double(end) / sr * 1.1)
         // A wind moves the tape directly (no easing): the reels spin at winding speed.
@@ -349,15 +444,22 @@ final class TapeDeckView: NSView {
         ctx.setFillColor(NSColor(white: 0.45, alpha: 1).cgColor); ctx.fillEllipse(in: CGRect(x: c.x - r * 0.35, y: c.y - r * 0.35, width: r * 0.7, height: r * 0.7))
     }
 
-    /// A metal (NAB-style) reel: oxide tape pack seen through three windows in a brushed aluminium flange.
     private func reel(_ ctx: CGContext, at c: CGPoint, pack: CGFloat, angle: CGFloat) {
-        let R = reelRadius
+        TapeArt.reel(ctx, at: c, radius: reelRadius, hub: ReelModel.hub * scale, pack: pack, angle: angle)
+    }
+}
+
+/// Drawing shared by the tape machine window and the tape strip in the control bar.
+@MainActor
+enum TapeArt {
+    /// A metal (NAB-style) reel: oxide tape pack seen through three windows in a brushed aluminium flange.
+    static func reel(_ ctx: CGContext, at c: CGPoint, radius R: CGFloat, hub hubR: CGFloat, pack: CGFloat, angle: CGFloat) {
         // Pack: dark oxide with faint winding rings and a satin edge.
         ctx.setFillColor(Theme.hex(0x3B2618).cgColor)
         ctx.fillEllipse(in: CGRect(x: c.x - pack, y: c.y - pack, width: pack * 2, height: pack * 2))
         ctx.setStrokeColor(Theme.hex(0x6E4A30, 0.45).cgColor); ctx.setLineWidth(0.5)
-        var r = ReelModel.hub * scale + 2
-        while r < pack - 1 { ctx.strokeEllipse(in: CGRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2)); r += 3.2 }
+        var r = hubR + 2
+        while r < pack - 1 { ctx.strokeEllipse(in: CGRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2)); r += max(1.2, R / 50) }
         ctx.setStrokeColor(Theme.hex(0x8A6448, 0.8).cgColor); ctx.setLineWidth(1)
         ctx.strokeEllipse(in: CGRect(x: c.x - pack, y: c.y - pack, width: pack * 2, height: pack * 2))
         // Flange with three windows, turning with the reel.
@@ -373,7 +475,7 @@ final class TapeDeckView: NSView {
             flange.addPath(w)
         }
         ctx.saveGState()
-        ctx.setShadow(offset: CGSize(width: 0, height: 4), blur: 8, color: NSColor(white: 0, alpha: 0.7).cgColor)
+        ctx.setShadow(offset: CGSize(width: 0, height: max(1, R / 40)), blur: max(2, R / 20), color: NSColor(white: 0, alpha: 0.7).cgColor)
         ctx.addPath(flange); ctx.setFillColor(NSColor(white: 0.62, alpha: 1).cgColor); ctx.fillPath(using: .evenOdd)
         ctx.restoreGState()
         ctx.saveGState()
@@ -386,20 +488,20 @@ final class TapeDeckView: NSView {
         }
         ctx.setStrokeColor(NSColor(white: 1, alpha: 0.06).cgColor); ctx.setLineWidth(0.5)
         var rr = R * 0.2
-        while rr < R { ctx.strokeEllipse(in: CGRect(x: c.x - rr, y: c.y - rr, width: rr * 2, height: rr * 2)); rr += 1.6 }
+        while rr < R { ctx.strokeEllipse(in: CGRect(x: c.x - rr, y: c.y - rr, width: rr * 2, height: rr * 2)); rr += max(1, R / 100) }
         ctx.restoreGState()
         ctx.addPath(flange); ctx.setStrokeColor(NSColor(white: 0.2, alpha: 0.8).cgColor); ctx.setLineWidth(1); ctx.strokePath()
         // Hub: three drive slots and a centre cap.
-        let hub = ReelModel.hub * scale * 0.8
+        let hub = hubR * 0.8
         ctx.setFillColor(NSColor(white: 0.32, alpha: 1).cgColor); ctx.fillEllipse(in: CGRect(x: c.x - hub, y: c.y - hub, width: hub * 2, height: hub * 2))
         ctx.setFillColor(NSColor(white: 0.08, alpha: 1).cgColor)
         for k in 0..<3 {
             let a = angle + CGFloat(k) * 2 * .pi / 3
-            ctx.fillEllipse(in: CGRect(x: c.x + cos(a) * hub * 0.62 - 4, y: c.y + sin(a) * hub * 0.62 - 4, width: 8, height: 8))
+            let s = max(2, hub * 0.28); ctx.fillEllipse(in: CGRect(x: c.x + cos(a) * hub * 0.62 - s / 2, y: c.y + sin(a) * hub * 0.62 - s / 2, width: s, height: s))
         }
-        ctx.setFillColor(NSColor(white: 0.78, alpha: 1).cgColor); ctx.fillEllipse(in: CGRect(x: c.x - 8, y: c.y - 8, width: 16, height: 16))
+        let cap = max(2.5, hub * 0.35); ctx.setFillColor(NSColor(white: 0.78, alpha: 1).cgColor); ctx.fillEllipse(in: CGRect(x: c.x - cap, y: c.y - cap, width: cap * 2, height: cap * 2))
         ctx.setStrokeColor(NSColor(white: 0.3, alpha: 1).cgColor); ctx.setLineWidth(1.4)
-        ctx.move(to: CGPoint(x: c.x + cos(angle) * 6, y: c.y + sin(angle) * 6)); ctx.addLine(to: CGPoint(x: c.x - cos(angle) * 6, y: c.y - sin(angle) * 6)); ctx.strokePath()
+        ctx.move(to: CGPoint(x: c.x + cos(angle) * cap * 0.75, y: c.y + sin(angle) * cap * 0.75)); ctx.addLine(to: CGPoint(x: c.x - cos(angle) * cap * 0.75, y: c.y - sin(angle) * cap * 0.75)); ctx.strokePath()
     }
 }
 

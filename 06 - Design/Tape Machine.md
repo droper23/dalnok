@@ -12,6 +12,11 @@ a brushed top plate, two NAB-style metal reels with window cut-outs, tension-arm
 erase/record/play head block, capstan and pinch roller, a counter, two VU meters and lit piano-key transport keys.
 It never processes audio. Tape coloration would be a separate, opt-in effect (not built).
 
+## In the control bar (Warm Analog)
+The bar's transport is a tape strip: the same NAB reels and physics, and RTZ, REW, FF, STOP, PLAY, REC and LOOP keys
+with lamps, at the bar's normal height. The window is optional; both use one `TapeTransport` (the shared key
+behaviour), so they always agree. Graphite keeps the round buttons.
+
 ## Keys (all run the main window's commands)
 RTZ (Go to Start) · REWIND / F.FWD (hold: winds the playhead at 12×; stops playback first; refused while
 recording) · STOP (stops and returns to where playback started) · PAUSE (stops in place) · PLAY · REC (Record) ·
