@@ -26,7 +26,7 @@ Biquad normalize(double b0, double b1, double b2, double a0, double a1, double a
 }
 
 const char *const kOnOff[] = {"Off", "On"};
-// Logic stores slope codes; 2 (12 dB/Oct) and 4 (24 dB/Oct) are confirmed, the rest follow 6 dB per code.
+// Logic stores slope codes in 6 dB/Oct steps; its menu offers 1, 2, 3, 4, 6 and 8 (5 and 7 behave as 6 and 8 here).
 const char *const kSlopes[] = {"0", "6 dB/Oct", "12 dB/Oct", "18 dB/Oct", "24 dB/Oct", "30 dB/Oct", "36 dB/Oct", "42 dB/Oct", "48 dB/Oct"};
 const char *const kCoupleModes[] = {"Asymmetric Light", "Asymmetric Strong", "Asymmetric Medium", "Light", "Medium", "Strong"};
 
@@ -115,10 +115,10 @@ Biquad channelEqPeak(double hz, double gainDb, double q, double sampleRate, bool
 }
 
 Biquad channelEqShelf(bool high, double hz, double gainDb, double q, double sampleRate) DALNOK_NONBLOCKING {
-    // RBJ shelf; the slope uses Q limited by a gain-dependent ceiling. Not yet verified against Logic renders.
+    // RBJ shelf whose slope is the shown Q, capped at 2 and lowered further above 21 dB of gain.
+    // Nulls against Logic at about -140 dB (04 - Research/Logic Effect Parity.md).
     const double A = std::pow(10.0, gainDb / 40.0), g = std::fabs(gainDb);
-    const double limit = g < 21 ? 6.2 - 0.2 * g : 4.56 - 0.12 * g;
-    const double S = std::min(q, limit);
+    const double S = std::min({q, 2.0, 4.56 - 0.12 * g});
     const double w = 2 * halfAngle(hz, sampleRate), cs = std::cos(w), sn = std::sin(w);
     const double r = std::max(0.0, (A * A + 1) / S - (A - 1) * (A - 1));
     const double t = std::sqrt(r) * sn; // 2·sqrt(A)·alpha
@@ -129,23 +129,57 @@ Biquad channelEqShelf(bool high, double hz, double gainDb, double q, double samp
                      (A + 1) - (A - 1) * cs + t, 2 * ((A - 1) - (A + 1) * cs), (A + 1) - (A - 1) * cs - t);
 }
 
+namespace {
+// Logic's cut filters morph with Q: each slope is a cascade whose sections move with the shown Q. The table holds
+// measured cascades for every shown Q below 1 (below 0.71 for 12 dB/Oct), fitted from Logic renders by
+// tools/logic-parity/cut_table.py. Above that, the most resonant section's Q scales with the band Q and the others
+// stay put; 12 dB/Oct is a single biquad with the band's Q, and 6 dB/Oct ignores Q.
+struct CutSection { double ratio, q; };
+struct CutRow { double q, first; CutSection s[4]; };
+#include "fx/channel_eq_cuts.inc"
+constexpr double kFirstOrderRatio = 0.999931; // 6 dB/Oct corner relative to the set frequency
+// Main-section Q per unit band Q above 1 (measured; close to 2^(1/4) and 2^(3/4) but rounded as Logic has them).
+constexpr double kResonantScale3 = 1.1892, kResonantScale4 = 1.6818;
+
+template <size_t N> const CutRow &nearestRow(const CutRow (&rows)[N], double q) DALNOK_NONBLOCKING {
+    const CutRow *best = &rows[0];
+    for (const CutRow &r : rows) if (std::fabs(r.q - q) < std::fabs(best->q - q)) best = &r;
+    return *best;
+}
+} // namespace
+
 int channelEqCut(bool high, double hz, int slopeCode, double q, double sampleRate, std::array<Biquad, 4> &out) DALNOK_NONBLOCKING {
-    // Placeholder until measured: a Butterworth cascade of order = slope code, with the band's Q scaling the
-    // most resonant section. Logic uses its own variable-Q tables here.
-    const int order = std::clamp(slopeCode, 1, 8);
-    const double w = 2 * halfAngle(hz, sampleRate), cs = std::cos(w), sn = std::sin(w);
+    // Low cut = high-pass, high cut = low-pass. Section corners scale the set frequency: first-order sections in Hz,
+    // second-order sections in the prewarped domain (tan of the half angle).
+    const int order = slopeCode <= 1 ? 1 : slopeCode == 5 ? 6 : slopeCode >= 7 ? 8 : slopeCode;
+    const auto first = [&](double ratio) {
+        const double K = std::tan(halfAngle(high ? hz / ratio : hz * ratio, sampleRate));
+        return high ? normalize(K, K, 0, 1 + K, K - 1, 0) : normalize(1, -1, 0, 1 + K, K - 1, 0);
+    };
+    const double K0 = std::tan(halfAngle(hz, sampleRate));
+    const auto second = [&](CutSection sec) {
+        const double K = high ? K0 / sec.ratio : K0 * sec.ratio, K2 = K * K, d = 1 + K / sec.q + K2;
+        return high ? normalize(K2, 2 * K2, K2, d, 2 * (K2 - 1), 1 - K / sec.q + K2)
+                    : normalize(1, -2, 1, d, 2 * (K2 - 1), 1 - K / sec.q + K2);
+    };
+    if (order == 1) { out[0] = first(kFirstOrderRatio); return 1; }
+    if (order == 2 && q >= 0.71) { out[0] = second({1.0, q}); return 1; }
+    CutRow row{};
+    switch (order) {
+    case 2: row = nearestRow(kCut2, q); break;
+    case 3: row = nearestRow(kCut3, std::min(q, 1.0)); break;
+    case 4: row = nearestRow(kCut4, std::min(q, 1.0)); break;
+    case 6: row = nearestRow(kCut6, std::min(q, 1.0)); break;
+    default: row = nearestRow(kCut8, std::min(q, 1.0)); break;
+    }
+    if (order > 2 && q > 1) {
+        const double scale = order == 3 ? kResonantScale3 : order == 4 ? kResonantScale4 : 2.0;
+        row.s[0].q = scale * q;
+    }
     int n = 0;
-    if (order % 2) {
-        const double K = std::tan(w / 2);
-        out[static_cast<size_t>(n++)] = high ? normalize(1, -1, 0, 1 + K, K - 1, 0) : normalize(K, K, 0, 1 + K, K - 1, 0);
-    }
-    for (int k = 1; k <= order / 2 && n < 4; ++k) {
-        double sq = 1 / (2 * std::cos((2 * k - 1) * kPi / (2 * order)));
-        if (k == 1) sq *= q / 0.70710678118654752;
-        const double alpha = sn / (2 * sq);
-        out[static_cast<size_t>(n++)] = high ? normalize((1 + cs) / 2, -(1 + cs), (1 + cs) / 2, 1 + alpha, -2 * cs, 1 - alpha)
-                                             : normalize((1 - cs) / 2, 1 - cs, (1 - cs) / 2, 1 + alpha, -2 * cs, 1 - alpha);
-    }
+    if (order % 2) out[static_cast<size_t>(n++)] = first(row.first);
+    for (const CutSection &sec : row.s)
+        if (sec.q > 0 && n < 4) out[static_cast<size_t>(n++)] = second(sec);
     return n;
 }
 

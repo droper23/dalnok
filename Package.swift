@@ -31,7 +31,7 @@ let package = Package(
             name: "DalnokEngine",
             dependencies: ["DalnokDSP"],
             path: "engine",
-            exclude: ["dsp", "third_party/signalsmith", "third_party/vst3", "third_party/clap"],
+            exclude: ["dsp", "third_party/signalsmith", "third_party/vst3", "third_party/clap", "src/fx/channel_eq_cuts.inc"],
             sources: ["src", "third_party/pugixml/pugixml.cpp"],
             publicHeadersPath: "include",
             cxxSettings: [

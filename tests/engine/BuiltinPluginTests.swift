@@ -32,6 +32,45 @@ private func filter(_ x: [Float], _ b: [Double], _ a: [Double]) -> [Double] {
     return y
 }
 
+/// Cut-filter reference: sections as measured from Logic renders (04 - Research/Logic Effect Parity.md), built with
+/// the bilinear transform (low cut = high-pass, high cut = low-pass). First-order corners scale in Hz, second-order corners in tan(pi f / fs).
+private func referenceCut(high: Bool, hz: Double, rate: Double, first: Double?, sections: [(Double, Double)]) -> [([Double], [Double])] {
+    var out: [([Double], [Double])] = []
+    if let r = first {
+        let k = tan(Double.pi * (high ? hz / r : hz * r) / rate)
+        out.append(high ? ([k, k, 0].map { $0 / (1 + k) }, [1, (k - 1) / (1 + k), 0]) : ([1, -1, 0].map { $0 / (1 + k) }, [1, (k - 1) / (1 + k), 0]))
+    }
+    let k0 = tan(Double.pi * hz / rate)
+    for (r, q) in sections {
+        let k = high ? k0 / r : k0 * r, k2 = k * k, d = 1 + k / q + k2
+        let b = high ? [k2, 2 * k2, k2] : [1.0, -2, 1]
+        out.append((b.map { $0 / d }, [1, 2 * (k2 - 1) / d, (1 - k / q + k2) / d]))
+    }
+    return out
+}
+
+/// RBJ shelf with the slope capped as Logic does: min(Q, 2, 4.56 - 0.12 |gain|).
+private func referenceShelf(high: Bool, hz: Double, gainDb: Double, q: Double, rate: Double) -> ([Double], [Double]) {
+    let A = pow(10, gainDb / 40), s = min(q, 2, 4.56 - 0.12 * abs(gainDb)), w = 2 * Double.pi * hz / rate
+    let cs = cos(w), t = sqrt(max(0, (A * A + 1) / s - (A - 1) * (A - 1))) * sin(w)
+    let sg = high ? -1.0 : 1
+    let b = [A * ((A + 1) - sg * (A - 1) * cs + t), sg * 2 * A * ((A - 1) - sg * (A + 1) * cs), A * ((A + 1) - sg * (A - 1) * cs - t)]
+    let a = [(A + 1) + sg * (A - 1) * cs + t, -sg * 2 * ((A - 1) + sg * (A + 1) * cs), (A + 1) + sg * (A - 1) * cs - t]
+    return (b.map { $0 / a[0] }, a.map { $0 / a[0] })
+}
+
+private func cascade(_ x: [Float], _ sections: [([Double], [Double])]) -> [Double] {
+    var y = x.map(Double.init)
+    for (b, a) in sections {
+        var x1 = 0.0, x2 = 0.0, y1 = 0.0, y2 = 0.0
+        for i in y.indices {
+            let v = y[i], o = b[0] * v + b[1] * x1 + b[2] * x2 - a[1] * y1 - a[2] * y2
+            x2 = x1; x1 = v; y2 = y1; y1 = o; y[i] = o
+        }
+    }
+    return y
+}
+
 @Suite struct BuiltinPlugins {
     func logNorm(_ v: Double, _ lo: Double, _ hi: Double) -> Double { log(v / lo) / log(hi / lo) }
 
@@ -71,6 +110,48 @@ private func filter(_ x: [Float], _ b: [Double], _ a: [Double]) -> [Double] {
         let worst = zip(wet.0, expected).map { abs(Double($0) - $1) }.max() ?? 1
         #expect(worst < 2e-6, "peak \(hz) Hz \(gain) dB Q \(q) couple \(couple) differs by \(worst)")
         #expect(wet.0 == wet.1, "stereo channels are processed identically")
+    }
+
+    // Measured Logic cascades: (band, Hz, slope code, Q, first-order ratio, [(corner ratio, Q)]).
+    static let cutCases: [(Bool, Double, Double, Double, Double?, [(Double, Double)])] = [
+        (false, 200, 4, 0.71, nil, [(1, 1.31367135), (0.999560393, 0.541650157)]),     // 24 dB/Oct at the default Q
+        (true, 5000, 3, 1, 0.642290879, [(1, 1.1892)]),                               // 18 dB/Oct high cut
+        (false, 1000, 6, 2, nil, [(1, 4), (0.999959259, 0.707113858), (0.999974542, 0.707101702)]), // Q above 1 scales
+        (false, 200, 2, 0.3, nil, [(0.32931717, 0.299999989)]),                       // 12 dB/Oct below Q 0.71
+        (false, 300, 1, 5, 0.999931, []),                                             // 6 dB/Oct ignores Q
+    ]
+
+    @Test(arguments: 0..<5)
+    func channelEqCutsMatchTheMeasuredCascades(index: Int) {
+        let (high, hz, code, q, first, sections) = Self.cutCases[index]
+        let (e, t) = audioSession(); defer { dalnok_engine_destroy(e) }
+        let dry = renderStereo(e, 4_800)
+        let slot = dalnok_plugin_add(e, t, "dalnok:channel-eq", nil, nil, 0)
+        let base: UInt32 = high ? 28 : 0
+        #expect(dalnok_plugin_set_parameter(e, slot, base, 1) == DALNOK_OK)
+        #expect(dalnok_plugin_set_parameter(e, slot, base + 1, logNorm(hz, 20, 20_000)) == DALNOK_OK)
+        #expect(dalnok_plugin_set_parameter(e, slot, base + 2, code / 8) == DALNOK_OK)
+        #expect(dalnok_plugin_set_parameter(e, slot, base + 3, logNorm(q, 0.1, 100)) == DALNOK_OK)
+        let wet = renderStereo(e, 4_800)
+        let expected = cascade(dry.0, referenceCut(high: high, hz: hz, rate: 48_000, first: first, sections: sections))
+        let worst = zip(wet.0, expected).map { abs(Double($0) - $1) }.max() ?? 1
+        #expect(worst < 1e-5, "cut \(high ? "high" : "low") \(hz) Hz code \(code) Q \(q) differs by \(worst)")
+    }
+
+    @Test(arguments: [(false, 200.0, 12.0, 10.0), (true, 5000.0, -24.0, 4.0), (false, 1000.0, 6.0, 0.71)])
+    func channelEqShelvesMatchTheReference(high: Bool, hz: Double, gain: Double, q: Double) {
+        let (e, t) = audioSession(); defer { dalnok_engine_destroy(e) }
+        let dry = renderStereo(e, 4_800)
+        let slot = dalnok_plugin_add(e, t, "dalnok:channel-eq", nil, nil, 0)
+        let base: UInt32 = high ? 24 : 4
+        #expect(dalnok_plugin_set_parameter(e, slot, base, 1) == DALNOK_OK)
+        #expect(dalnok_plugin_set_parameter(e, slot, base + 1, logNorm(hz, 20, 20_000)) == DALNOK_OK)
+        #expect(dalnok_plugin_set_parameter(e, slot, base + 2, (gain + 24) / 48) == DALNOK_OK)
+        #expect(dalnok_plugin_set_parameter(e, slot, base + 3, logNorm(q, 0.1, 100)) == DALNOK_OK)
+        let wet = renderStereo(e, 4_800)
+        let (b, a) = referenceShelf(high: high, hz: hz, gainDb: gain, q: q, rate: 48_000)
+        let worst = zip(wet.0, filter(dry.0, b, a)).map { abs(Double($0) - $1) }.max() ?? 1
+        #expect(worst < 2e-6, "shelf \(high ? "high" : "low") \(hz) Hz \(gain) dB Q \(q) differs by \(worst)")
     }
 
     @Test func channelEqStateSurvivesSaveAndReopen() throws {

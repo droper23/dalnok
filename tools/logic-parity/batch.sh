@@ -3,7 +3,7 @@
 # Clean-room measurement loop (see 04 - Research/Logic Effect Parity.md). PARITY_DIR must contain:
 #   meas.logicx (a Logic project laid out in Logic), ProjectData.base (its ProjectData with defaults),
 #   compiled tools from ax/*.swift and scripts/dev/drive.swift (swiftc -O x.swift -o $PARITY_DIR/x).
-# Export dialog click positions assume a 1920x1080 main display; check with screenshots before relying on them.
+# The export dialog is driven through Accessibility (axpress), so it works on any display layout.
 # Logic's Export All Tracks applies a common "overload protection" scale; bqfit.py removes it using a
 # plug-in-free reference track (Audio 10) and renders/bypass (the same export with plug-ins bypassed).
 S=${PARITY_DIR:?set PARITY_DIR to the measurement folder}
@@ -11,6 +11,8 @@ PD="$S/meas.logicx/Alternatives/000/ProjectData"; run=$1; shift
 locked() { python3 -c 'import Quartz,sys; d=Quartz.CGSessionCopyCurrentDictionary() or {}; sys.exit(0 if d.get("CGSSessionScreenIsLocked",0) or not d.get("kCGSSessionOnConsoleKey",1) else 1)'; }
 front() { ! locked && [ "$(osascript -e 'tell application "System Events" to get name of first process whose frontmost is true')" = "Logic Pro Creator Studio" ]; }
 locked && { echo "screen locked: refusing to post input"; exit 2; }
+# 0. clear audio-device alerts ("The last selected audio interface is not available"), which block closing
+for i in 1 2 3 4; do $S/axapp | grep -q 'AXWindow  alert' || break; $S/axapp | grep -q 'audio interface' || break; $S/axpress alert OK >/dev/null; sleep 1; done
 # 1. close the project if open
 if $S/axapp | grep -q 'AXWindow meas.logicx'; then
   osascript -e 'tell application "Logic Pro Creator Studio" to activate'; sleep 1; front || { echo "not front"; exit 1; }
@@ -31,11 +33,11 @@ mkdir -p "$S/renders/$run"; rm -f "$S/renders/$run"/*.wav
 front || { echo "not front or locked"; exit 1; }
 $S/drive key 14 cmd,shift; sleep 2.5
 $S/drive key 5 cmd,shift; sleep 1.5; $S/drive type "$S/renders/$run/"; sleep 1; $S/drive key 36; sleep 2
-if $S/axdump "Bypass Effect" 60 | grep -q '| 1$'; then $S/drive click 1016 440; sleep 0.8; fi
+if $S/axdump "Bypass Effect" 60 | grep -q '| 1$'; then $S/axpress "Open" "Bypass Effect Plug-ins" >/dev/null; sleep 0.8; fi
 $S/axdump "Bypass Effect" 60 | grep -q '| 0$' || { echo "bypass state unknown"; exit 1; }
-$S/drive click 1476 805
+$S/axpress "Open" "Export" >/dev/null
 for i in $(seq 1 60); do sleep 3; [ $(/bin/ls "$S/renders/$run" | wc -l) -ge 10 ] && break; done
 # wait until sizes stop changing
-prev=""; for i in $(seq 1 20); do sleep 3; cur=$(/bin/ls -l "$S/renders/$run" | md5); [ "$cur" = "$prev" ] && break; prev=$cur; done
+prev=""; sleep 10; for i in $(seq 1 40); do sleep 4; cur=$(/bin/ls -l "$S/renders/$run" | md5); [ "$cur" = "$prev" ] && break; prev=$cur; done
 cd "$S/renders/$run" && for f in *.wav; do case "$f" in *_1.wav) ;; *) mv "$f" "${f%.wav}_1.wav";; esac; done
 echo "$run: $(/bin/ls | wc -l) files"

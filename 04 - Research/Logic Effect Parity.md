@@ -151,10 +151,22 @@ The order follows payoff per effort and how often each effect appears in the own
     - Strength 10 is a special case: k = 10^(|g|/20).
     - The product Q_display·k is then rounded to the 1/300-decade grid.
     - `cheq_model.peak(..., couple=True, mode=...)` nulls at −132 to −147 dB on all 45 coupled renders, covering every mode, boost and cut, Q 1 and 4, and 100 Hz to 20 kHz.
-- **Next**:
-  2. Map how stored frequency and gain values snap to the knobs.
-  3. Measure the shelves, the low and high cuts (slope codes), HQ mode, the master gain and the processing modes.
-  4. Implement Dalnok Channel EQ in the engine with an offline-render test against generated fixtures.
+
+### Channel EQ: shelves and cuts (2026-11-18)
+- **Shelves** are one RBJ shelf biquad each. The slope parameter is S = min(Q_shown, 2, 4.56 − 0.12·|gain dB|).
+  - It nulls at −139 to −149 dB on 20 renders: low and high shelves, ±3 to ±24 dB, Q 0.1–100, and 20 Hz to 20 kHz.
+  - The earlier disassembly reading (a 6.2 − 0.2|g| ceiling below 21 dB) was wrong. Below 21 dB the cap is simply 2.
+- **Cuts**: the low cut is a high-pass and the high cut a low-pass. Slope code k gives 6·k dB/Oct, and Logic's menu offers codes 1, 2, 3, 4, 6 and 8.
+  - Q snaps to the shown values like the other bands.
+  - **6 dB/Oct**: one first-order bilinear section at 0.999931 × the set frequency. Q has no effect.
+  - **12 dB/Oct**: for Q ≥ 0.71, one bilinear biquad at the set frequency with the shown Q. Below 0.71 the corner and Q both move.
+  - **18–48 dB/Oct**: a cascade whose sections morph with Q. MADSP's `SetQ_VariButtN` interpolates per-section values piecewise-linearly in Q (breakpoints near 0.1, 0.5, 0.71, 1 and 100), then maps them through 10^(v/10).
+    - The interpolated domain didn't reproduce in-between renders exactly; held-out nulls were −13 to −43 dB.
+    - So Dalnok stores a **measured cascade for every shown Q below 1**: 167 renders, each fitted to −137 to −148 dB by `tools/logic-parity/cut_table.py`.
+    - Measured, not transcribed: the table holds our fitted section corners and Qs, not Logic's internal values.
+  - **Q above 1**: the most resonant section's Q is c·Q (c = 1.1892, 1.6818, 2 and 2 for 18, 24, 36 and 48 dB/Oct). The other sections keep their Q = 1 values. Q 2 renders null at −144 to −146 dB.
+  - **Corner scaling**: first-order corners scale in Hz; second-order corners scale tan(πf/fs). Low cut multiplies, high cut divides. This held from 200 Hz to 5 kHz on high and low cuts: −138 to −148 dB.
+- **Next**: HQ (oversampling) and the master gain; the processing modes (stereo/mid/side) if Logic stores any; then the other effects.
 
 ## Open questions for the owner
 - Decided 2026-11-18; see Working rules.

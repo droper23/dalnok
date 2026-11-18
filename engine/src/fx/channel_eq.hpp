@@ -1,7 +1,7 @@
 // Dalnok Channel EQ: an eight-band channel EQ compatible with Logic Pro's Channel EQ settings.
 // Parameter ids are the slot numbers of Logic's saved parameter block, so imported settings copy across.
 // Peak bands and Gain-Q coupling null against Logic at float precision (04 - Research/Logic Effect Parity.md);
-// shelves, cuts and oversampling follow Logic's structure but are not yet verified by render.
+// shelves and cut filters are verified against Logic renders; oversampling is not yet modelled.
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 #include "fx/builtin.hpp"
@@ -18,7 +18,7 @@ double channelEqQDisplay(double q);                         // snap a stored Q t
 double channelEqCoupleScale(double gainDb, int mode);       // Gain-Q coupling factor
 Biquad channelEqPeak(double hz, double gainDb, double q, double sampleRate, bool couple, int mode) DALNOK_NONBLOCKING;
 Biquad channelEqShelf(bool high, double hz, double gainDb, double q, double sampleRate) DALNOK_NONBLOCKING;
-// Cut filters: `slopeCode` is Logic's code (12 dB/oct = 2, 24 dB/oct = 4). Returns the number of sections written.
+// Cut filters: `slopeCode` is Logic's code (6 dB/Oct per step), `q` a shown Q. Returns the number of sections written.
 int channelEqCut(bool high, double hz, int slopeCode, double q, double sampleRate, std::array<Biquad, 4> &out) DALNOK_NONBLOCKING;
 
 class ChannelEq final : public BuiltinProcessor {

@@ -159,8 +159,8 @@ void importLogicPlugins(const std::string &data, const std::vector<LogicTrackBin
     }
     if (imported) report.notes.push_back(std::to_string(imported) + " Audio Unit plug-in(s) retained with Logic's class-info state. Availability and state acceptance must be checked in the device panel; Logic-specific processors are not converted.");
     if (converted)
-        report.notes.push_back(std::to_string(converted) + " Logic Channel EQ(s) converted to Dalnok Channel EQ. Peak bands and Gain-Q coupling "
-                               "match Logic exactly; shelves, low/high cuts and oversampling are not yet verified against Logic.");
+        report.notes.push_back(std::to_string(converted) + " Logic Channel EQ(s) converted to Dalnok Channel EQ. Peak bands, Gain-Q coupling, "
+                               "shelves and low/high cuts match Logic exactly; oversampling (HQ) is not yet modelled.");
     report.skip("unsupportedLogicPlugins", unsupported);
     report.skip("ambiguousLogicPluginChannels", ambiguous);
     if (unsupported) {
