@@ -301,7 +301,11 @@ private:
                 input.buffers[c].mData = self->inputData_ + static_cast<size_t>(c) * self->maxFrames_;
             }
             AudioUnitRenderActionFlags inputFlags = 0;
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wfunction-effects"
+            // Core Audio's own render-thread call (real-time safe by contract; older SDKs don't annotate it).
             const OSStatus s = AudioUnitRender(self->unit_, &inputFlags, time, 1, frames, reinterpret_cast<AudioBufferList *>(&input));
+#pragma clang diagnostic pop
             if (s == noErr && input.count > static_cast<UInt32>(self->selected_)) {
                 channelCount = static_cast<int>(std::min<UInt32>(input.count, 64));
                 for (int c = 0; c < channelCount; ++c) {
