@@ -1,7 +1,9 @@
-// Test CLAP plug-in for hosting tests: a stereo gain (parameter 7 "Gain", 0-1, default 0.5) with state.
+// Test CLAP plug-in: stereo gain with state and a sidechain input that ducks the main input.
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include <clap/clap.h>
 #include <cstring>
+#include <cmath>
+#include <algorithm>
 #include <cstdio>
 
 namespace {
@@ -16,12 +18,12 @@ const clap_plugin_descriptor_t kDesc = {CLAP_VERSION, "org.dalnok.test-gain", "D
 
 Gain *self(const clap_plugin_t *p) { return static_cast<Gain *>(p->plugin_data); }
 
-uint32_t portsCount(const clap_plugin_t *, bool) { return 1; }
+uint32_t portsCount(const clap_plugin_t *, bool isInput) { return isInput ? 2 : 1; }
 bool portsGet(const clap_plugin_t *, uint32_t index, bool isInput, clap_audio_port_info_t *info) {
-    if (index != 0) return false;
-    info->id = isInput ? 0 : 1;
-    std::snprintf(info->name, sizeof info->name, "%s", isInput ? "In" : "Out");
-    info->flags = CLAP_AUDIO_PORT_IS_MAIN;
+    if (index >= (isInput ? 2u : 1u)) return false;
+    info->id = isInput ? index : 2;
+    std::snprintf(info->name, sizeof info->name, "%s", index == 1 ? "Sidechain" : (isInput ? "In" : "Out"));
+    info->flags = index == 0 ? CLAP_AUDIO_PORT_IS_MAIN : 0;
     info->channel_count = 2;
     info->port_type = CLAP_PORT_STEREO;
     info->in_place_pair = CLAP_INVALID_ID;
@@ -60,7 +62,10 @@ clap_process_status process(const clap_plugin_t *p, const clap_process_t *pr) {
     paramsFlush(p, pr->in_events, nullptr);
     const float g = static_cast<float>(self(p)->gain);
     for (uint32_t c = 0; c < 2; ++c)
-        for (uint32_t i = 0; i < pr->frames_count; ++i) pr->audio_outputs[0].data32[c][i] = pr->audio_inputs[0].data32[c][i] * g;
+        for (uint32_t i = 0; i < pr->frames_count; ++i) {
+            const float side = pr->audio_inputs_count > 1 ? std::abs(pr->audio_inputs[1].data32[c][i]) : 0.0f;
+            pr->audio_outputs[0].data32[c][i] = pr->audio_inputs[0].data32[c][i] * g * (1.0f - std::min(1.0f, side));
+        }
     return CLAP_PROCESS_CONTINUE;
 }
 

@@ -1801,6 +1801,42 @@ final class SelfTest {
             w.headers.select(src)
             check(perform("Clear Automation") && s.track(src)?.volumeAuto.isEmpty == true, "Track > Clear Automation removes the lane")
         }
+        // A backward seek (including a cycle wrap) starts a new pass without releasing the live override.
+        do {
+            let previousWriter = AutomationWriter.shared, previousMode = AutomationWriter.mode
+            let engine = Engine(), session = Session(engine: engine), writer = AutomationWriter(session: session)
+            defer { writer.commitAll(); AutomationWriter.shared = previousWriter; AutomationWriter.mode = previousMode; engine.shutdown() }
+            let track = dalnok_track_add(engine.handle, "Automation loop test")
+            let samples = [Float](repeating: 0.5, count: 100_000)
+            let media = samples.withUnsafeBufferPointer { buffer in
+                var channels: [UnsafePointer<Float>?] = [buffer.baseAddress]
+                return dalnok_media_from_samples(&channels, 1, Int64(samples.count), engine.sampleRate)
+            }
+            if let media {
+                let pool = dalnok_pool_add(engine.handle, media, nil)
+                _ = dalnok_clip_add(engine.handle, track, pool, 0, 0, 0)
+                dalnok_media_release(media)
+                session.refresh()
+                _ = session.setAutomation(track, 0, [DalnokAutoPoint(frame: 0, value: -200), DalnokAutoPoint(frame: 90_000, value: -200)])
+                AutomationWriter.mode = .touch
+                var l = [Float](repeating: 0, count: 512), r = l
+                func pump(_ count: Int) { for _ in 0..<count { _ = dalnok_engine_pump(engine.handle, &l, &r, 512) } }
+                engine.play(); pump(12)
+                writer.touch(track, 0, true); pump(4); writer.tick()
+                engine.seek(0); pump(3); writer.tick()
+                pump(4)
+                check(abs(l[400] - 0.5) < 0.001, "automation override remains active after a backward transport jump (\(l[400]))")
+                writer.touch(track, 0, false)
+                check(!writer.isWriting, "releasing Touch after the jump finishes the new pass")
+                _ = session.setAutomation(track, 0, [DalnokAutoPoint(frame: 0, value: -200), DalnokAutoPoint(frame: 90_000, value: -200)])
+                AutomationWriter.mode = .latch
+                engine.seek(10_000); pump(3)
+                writer.touch(track, 0, true); pump(4); writer.touch(track, 0, false); writer.tick()
+                engine.seek(0); pump(3); writer.tick(); pump(4)
+                check(writer.isWriting && abs(l[400] - 0.5) < 0.001, "Latch remains active across a backward transport jump (\(l[400]))")
+                writer.commitAll()
+            } else { check(false, "create generated audio for automation loop test") }
+        }
         // Touch writing: hold the header gain knob while playing; the moves become the lane.
         if let row = w.headers.row(src) {
             check(perform("Automation: Touch") && AutomationWriter.mode == .touch, "Track > Automation: Touch")

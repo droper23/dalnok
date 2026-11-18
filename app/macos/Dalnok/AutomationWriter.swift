@@ -56,7 +56,7 @@ final class AutomationWriter {
         let value = target == 1 ? t.pan : max(-200, t.gainDb.isFinite ? t.gainDb : -200)
         guard var p = passes[k] else { return }
         if let last = p.points.last {
-            if frame < last.frame { commit(k); passes[k] = Pass(); p = Pass() } // the playhead jumped back (cycle): start a new pass
+            if frame < last.frame { commit(k, releaseHold: false); passes[k] = Pass(); p = Pass() } // the playhead jumped back (cycle): start a new pass
             else if abs(last.value - value) < 0.01 && frame - last.frame < Int64(session.engine.sampleRate / 10) { return } // thin
         }
         p.points.append(DalnokAutoPoint(frame: frame, value: value))
@@ -65,12 +65,12 @@ final class AutomationWriter {
 
     func commitAll() { for k in Array(passes.keys) { commit(k) } }
 
-    private func commit(_ k: String) {
+    private func commit(_ k: String, releaseHold: Bool = true) {
         guard let pass = passes.removeValue(forKey: k) else { return }
         let parts = k.split(separator: ":").compactMap { Int32($0) }
         guard parts.count == 2, let t = session.track(DalnokTrackId(parts[0])) else { return }
         let target = parts[1]
-        dalnok_track_automation_hold(session.engine.handle, t.id, target, false)
+        if releaseHold { dalnok_track_automation_hold(session.engine.handle, t.id, target, false) }
         guard let first = pass.points.first, let last = pass.points.last else { return }
         // Replace the lane inside the written range; keep it elsewhere.
         var merged = t.automation(target).filter { $0.frame < first.frame || $0.frame > last.frame }

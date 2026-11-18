@@ -1,6 +1,9 @@
 # Changelog
 
 ## [Unreleased]
+### Fixed and tested (2026-11-17, Phase 4)
+- Touch and Latch automation retain the live control override across a backward transport jump or cycle wrap.
+- Added generated CLAP sidechain coverage for an unconnected input, a muted pre-fader key, and disconnection.
 ### Fixed (2026-11-17, tape keyboard access)
 - Focused tape keys receive Space and Return; keyboard wind keys run until release and stop if focus leaves.
 ### Added and fixed (2026-11-17, Logic import and tape strip)

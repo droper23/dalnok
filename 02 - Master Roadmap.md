@@ -31,7 +31,7 @@ recovery, basic routing, disk streaming.
 ## Phase 3: MIDI and instruments ✅ (MIDI clips, live input, recording, quantize, Dalnok Poly, piano roll, velocity, tempo and meter maps, metronome; open: real-keyboard test, sample-accurate input timing)
 MIDI tracks, recording and playback, piano roll, quantize, velocity, tempo and meter map, first stock instrument.
 
-## Phase 4: Professional production 🔶 (VST3/AU hosting, parameter panel, buses, sends, mixer with master and inserts, volume/pan/plug-in automation, delay compensation, comping, stacks done; sidechains, CLAP, write modes open)
+## Phase 4: Professional production 🔶 (VST3/AU hosting, parameter panel, buses, sends, mixer with master and inserts, volume/pan/plug-in automation, delay compensation, comping, stacks done; VST3/CLAP sidechains, CLAP hosting and Touch/Latch done; Audio Unit sidechain verification open)
 **VST3 hosting (first format)** with generic parameter panels, then AU and CLAP. Mixer, buses, sends,
 sidechains, automation, delay compensation, **comping and take folders**, track stacks.
 

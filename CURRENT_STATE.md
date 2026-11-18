@@ -5,6 +5,11 @@ milestone: M11 VST3 hosting (ADR-0009 stage 3) done; editors, parameters and AU 
 ---
 # Current State
 
+## Latest session (Phase 4 verification; 2026-11-17)
+- Fixed Touch/Latch automation after a backward transport jump: committing the previous pass keeps the live control override active for the next pass. The Warm Analog self-test passed 471 checks, including generated-audio checks for both modes (0.5 output within 0.001).
+- CLAP sidechain processing is verified with a generated ducking plug-in: silent and active key signals, a muted pre-fader source, and disconnection (1e-4 tolerance). `scripts/ci/plugin-host.sh` passed 14 tests. An Audio Unit sidechain fixture is still needed; the built-in dynamics units probed here did not expose one through the host.
+- Phase 4 still needs Audio Unit sidechain verification and folder groups; other overhaul and hardware-dependent items are tracked below and in the audit.
+
 ## Latest session (tape keyboard access; 2026-11-17)
 - Focused tape keys receive Space and Return instead of the global transport shortcut; wind keys run only while held and stop if focus leaves. Warm Analog self-test passed 468 checks, including the shortcut handoff and wind press/release. Real Space and Return input toggled the focused LOOP key after accessibility focus was set; Tab navigation to the key was not established and remains part of the keyboard-only pass.
 

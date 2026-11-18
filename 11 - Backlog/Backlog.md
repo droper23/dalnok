@@ -1,7 +1,8 @@
 # Backlog (ordered)
 
 Overhaul follow-ups (2026-11-17, from [[Overhaul Audit 2026-11-17]]):
-- Track height resize, hide/show, duplicate track, track groups; markers and jump between markers; vertical zoom and zoom to selection
+- Track groups (height, hide/show, duplicate, markers and zoom controls are implemented)
+- Verify Audio Unit sidechain processing with a generated fixture
 - VoiceOver pass and keyboard-only walkthrough of every window
 - Warm Analog open time (5.5 s vs 2.6 s on the 64-track project): profile
 - Opt-in tape coloration effect (separate from the Tape Machine view)

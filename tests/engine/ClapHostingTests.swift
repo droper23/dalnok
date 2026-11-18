@@ -37,4 +37,25 @@ struct ClapHosting {
         #expect(dalnok_plugin_set_automation(e, t, slot, 7, pts, 1) == DALNOK_OK)
         #expect(zip(renderStereo(e, 4_800).0, dry.0).allSatisfy { abs($0 - $1 * 0.25) < 1e-6 }, "automated gain 0.25")
     }
+    @Test func sidechainUsesAnotherTracksPreFaderSignal() {
+        let e = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(e) }
+        let bedMedia = makeMedia([[Float](repeating: 0.5, count: 48_000)])
+        var key = [Float](repeating: 0, count: 48_000)
+        for i in 24_000..<48_000 { key[i] = 0.75 }
+        let keyMedia = makeMedia([key]); defer { dalnok_media_release(bedMedia); dalnok_media_release(keyMedia) }
+        let bed = dalnok_track_add(e, "Bed"), source = dalnok_track_add(e, "Key")
+        DalnokEngine.dalnok_clip_add(e, bed, dalnok_pool_add(e, bedMedia, ""), 0, 0, 0)
+        DalnokEngine.dalnok_clip_add(e, source, dalnok_pool_add(e, keyMedia, ""), 0, 0, 0)
+        #expect(dalnok_track_set_mute(e, source, true) == DALNOK_OK)
+        let slot = dalnok_plugin_add(e, bed, testClap, nil, nil, 0)
+        #expect(slot != 0 && dalnok_plugin_has_sidechain(e, slot))
+        #expect(abs(render(e, 30_000, 10)[5] - 0.25) < 1e-4, "unconnected sidechain receives silence")
+        #expect(dalnok_plugin_set_sidechain(e, bed, slot, source) == DALNOK_OK)
+        let out = render(e, 0, 48_000)
+        #expect(abs(out[10_000] - 0.25) < 1e-4, "silent key keeps full gain")
+        #expect(abs(out[30_000] - 0.0625) < 1e-4, "0.75 key ducks 0.25 output to 0.0625")
+        #expect(dalnok_plugin_set_sidechain(e, bed, slot, 0) == DALNOK_OK)
+        #expect(abs(render(e, 30_000, 10)[5] - 0.25) < 1e-4, "disconnect returns sidechain to silence")
+    }
+
 }
