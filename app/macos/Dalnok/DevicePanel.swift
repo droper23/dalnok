@@ -298,8 +298,9 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
     private let unavailableMessage: String
     private let color: NSColor
     private let title = NSTextField(labelWithString: "")
-    private let openButton = NSButton(title: "Open", target: nil, action: nil)
-    private let editButton = NSButton(title: "Edit Controls", target: nil, action: nil)
+    private let openButton = PlateButton(title: "Open", label: "EDITOR")
+    private let editButton = PlateButton(title: "Edit Controls", label: "CONTROLS")
+    private let etchedTitle = EtchedLabel("")
     private(set) var knobs: [(knob: any ParameterControl, label: NSTextField, value: NSTextField, id: UInt32)] = []
     /// Warm Analog: the plug-in drawn as a stomp box (nil in Graphite).
     private(set) var pedal: PedalBody?
@@ -313,7 +314,7 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
     private var analyzer: SpectrumAnalyzer?
     private var tick = 0
     private let path: String
-    private let power = NSButton(title: "", target: nil, action: nil)
+    private let power = PlateButton(title: "", label: "")
     var bypassed: Bool { session.pluginBypassed(trackId, slot) }
     private(set) var allParameters: [DalnokPluginParameter] = []
     private var indexOf: [UInt32: Int32] = [:]
@@ -372,7 +373,14 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         power.setAccessibilityLabel("Bypass \(name)")
         power.isEnabled = loaded
         power.isHidden = Analog.on
-        let header = NSStackView(views: [power, title, NSView(), sidechain, editButton, openButton])
+        if !Analog.on { // Graphite: hardware keys and an etched name
+            etchedTitle.text = name
+            title.isHidden = true
+            for b in [editButton, openButton] { b.style = .key }
+            power.style = .power
+            power.lit = color.blended(withFraction: 0.25, of: .white) ?? color
+        } else { etchedTitle.isHidden = true }
+        let header = NSStackView(views: [power, title, etchedTitle, NSView(), sidechain, editButton, openButton])
         header.spacing = 6
         header.setContentHuggingPriority(.required, for: .vertical) // stays at the top whatever the controls' height
         if Analog.on {
@@ -407,7 +415,7 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         faceRow.spacing = 8
         for m in [inMeter, outMeter] {
             m.translatesAutoresizingMaskIntoConstraints = false
-            m.widthAnchor.constraint(equalToConstant: 9).isActive = true
+            m.widthAnchor.constraint(equalToConstant: FaceplateMeter.width).isActive = true
             m.heightAnchor.constraint(equalToConstant: 118).isActive = true
             m.isHidden = !(loaded && Faceplate.showMeters)
         }
@@ -714,6 +722,7 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         power.state = off ? .off : .on
         power.contentTintColor = off ? Theme.textFaint : Theme.accent
         title.textColor = !loaded || off ? Theme.textFaint : (Analog.on ? Theme.text : Faceplate.engraving)
+        etchedTitle.dimmed = !loaded || off
         pedal?.engaged = loaded && !off
         if pedal == nil {
             for k in knobs { (k.knob as? FaceplateControl)?.dimmed = off }

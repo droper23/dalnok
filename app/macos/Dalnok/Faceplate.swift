@@ -424,13 +424,16 @@ final class FaceplateSection: NSView {
     }
 }
 
-/// A unit's input or output meter: two thin LED ladders (left, right) with peak ballistics.
+/// A unit's input or output meter: a recessed slot of LEDs (left and right), a peak-hold LED, and a printed dB scale.
 @MainActor
 final class FaceplateMeter: NSView {
     let caption: String
     private var levelDb: (Float, Float) = (-120, -120)
+    private var hold: (Float, Float) = (-120, -120)
+    private var holdAt: (Double, Double) = (0, 0)
     private var last = CACurrentMediaTime()
     static let floorDb: Float = -48, segments = 16
+    static let width: CGFloat = 24
 
     init(caption: String) {
         self.caption = caption
@@ -442,37 +445,243 @@ final class FaceplateMeter: NSView {
     required init?(coder: NSCoder) { fatalError() }
     override var isFlipped: Bool { true }
 
-    /// Linear peaks since the last frame. Instant attack, 24 dB/s fall.
+    /// Linear peaks since the last frame. Instant attack, 24 dB/s fall, 1.5 s peak hold.
     func push(_ l: Float, _ r: Float) {
         let now = CACurrentMediaTime(), dt = Float(now - last)
         last = now
         func db(_ x: Float) -> Float { x > 0 ? 20 * log10(x) : -120 }
         let next = (max(db(l), levelDb.0 - 24 * dt), max(db(r), levelDb.1 - 24 * dt))
+        if next.0 >= hold.0 || now - holdAt.0 > 1.5 { hold.0 = next.0; holdAt.0 = now }
+        if next.1 >= hold.1 || now - holdAt.1 > 1.5 { hold.1 = next.1; holdAt.1 = now }
         if Int(next.0 * 4) != Int(levelDb.0 * 4) || Int(next.1 * 4) != Int(levelDb.1 * 4) { needsDisplay = true }
         levelDb = next
         setAccessibilityValue(String(format: "%.0f dB", max(levelDb.0, levelDb.1)))
     }
     var level: (Float, Float) { levelDb }
 
+    private func segments(_ db: Float) -> Int { Int(((db - Self.floorDb) / -Self.floorDb * Float(Self.segments)).rounded(.down)) }
+
     override func draw(_ dirtyRect: NSRect) {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
-        let ladder = CGRect(x: 0, y: 0, width: bounds.width, height: bounds.height - 11)
-        let slot = CGPath(roundedRect: ladder, cornerWidth: 1.5, cornerHeight: 1.5, transform: nil)
-        ctx.addPath(slot); ctx.setFillColor(NSColor(white: 0.05, alpha: 0.9).cgColor); ctx.fillPath()
-        let n = Self.segments, gap: CGFloat = 1
-        let segH = (ladder.height - 2 - gap * CGFloat(n - 1)) / CGFloat(n)
-        let colW = (ladder.width - 3) / 2
-        for (ch, db) in [levelDb.0, levelDb.1].enumerated() {
-            let lit = Int(((db - Self.floorDb) / -Self.floorDb * Float(n)).rounded(.down))
+        let scaleOnRight = caption == "IN" // the printed scale faces the controls
+        let slotW: CGFloat = 12
+        let slot = CGRect(x: scaleOnRight ? 0 : bounds.width - slotW, y: 0, width: slotW, height: bounds.height - 12)
+        // Recessed slot: dark well, shadowed top, light lip at the bottom edge.
+        let well = CGPath(roundedRect: slot, cornerWidth: 2, cornerHeight: 2, transform: nil)
+        ctx.addPath(well); ctx.setFillColor(NSColor(white: 0.035, alpha: 1).cgColor); ctx.fillPath()
+        ctx.saveGState()
+        ctx.addPath(well); ctx.clip()
+        let inner = [NSColor.black.withAlphaComponent(0.8).cgColor, NSColor.black.withAlphaComponent(0).cgColor] as CFArray
+        if let g = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: inner, locations: [0, 1]) {
+            ctx.drawLinearGradient(g, start: CGPoint(x: 0, y: slot.minY), end: CGPoint(x: 0, y: slot.minY + 5), options: [])
+        }
+        ctx.restoreGState()
+        ctx.setStrokeColor(NSColor.white.withAlphaComponent(0.10).cgColor); ctx.setLineWidth(0.8)
+        ctx.move(to: CGPoint(x: slot.minX + 1.5, y: slot.maxY + 0.4)); ctx.addLine(to: CGPoint(x: slot.maxX - 1.5, y: slot.maxY + 0.4)); ctx.strokePath()
+        // LEDs.
+        let n = Self.segments, gap: CGFloat = 1.3, pad: CGFloat = 1.8
+        let ledH = (slot.height - 2 * pad - gap * CGFloat(n - 1)) / CGFloat(n)
+        let ledW = (slot.width - 2 * pad - gap) / 2
+        func ledY(_ i: Int) -> CGFloat { slot.maxY - pad - CGFloat(i + 1) * ledH - CGFloat(i) * gap }
+        for (ch, (db, held)) in [(levelDb.0, hold.0), (levelDb.1, hold.1)].enumerated() {
+            let lit = segments(db), peak = segments(held) - 1
             for i in 0..<n {
                 let segDb = Self.floorDb * (1 - Float(i + 1) / Float(n))
-                let base: NSColor = segDb >= -1.5 ? Theme.hex(0xE0574F) : segDb >= -9 ? Theme.hex(0xE3A857) : Theme.hex(0x6FC08E)
-                let y = ladder.maxY - 1 - CGFloat(i + 1) * segH - CGFloat(i) * gap
-                ctx.setFillColor((i < lit ? base : base.withAlphaComponent(0.13)).cgColor)
-                ctx.fill(CGRect(x: 1 + CGFloat(ch) * (colW + 1), y: y, width: colW, height: segH))
+                let color: NSColor = segDb >= -1.5 ? NSColor(srgbRed: 1.0, green: 0.27, blue: 0.20, alpha: 1)
+                    : segDb >= -9 ? NSColor(srgbRed: 1.0, green: 0.72, blue: 0.22, alpha: 1) : NSColor(srgbRed: 0.42, green: 0.95, blue: 0.48, alpha: 1)
+                let led = CGRect(x: slot.minX + pad + CGFloat(ch) * (ledW + gap), y: ledY(i), width: ledW, height: ledH)
+                let on = i < lit || i == peak && peak >= lit
+                let lens = CGPath(roundedRect: led, cornerWidth: 0.9, cornerHeight: 0.9, transform: nil)
+                if on {
+                    ctx.saveGState()
+                    ctx.setShadow(offset: .zero, blur: 3.5, color: color.withAlphaComponent(0.85).cgColor)
+                    ctx.addPath(lens); ctx.setFillColor(color.cgColor); ctx.fillPath()
+                    ctx.restoreGState()
+                } else {
+                    ctx.addPath(lens); ctx.setFillColor((color.blended(withFraction: 0.84, of: .black) ?? color).cgColor); ctx.fillPath()
+                }
+                // Domed lens: a highlight across the top of each LED.
+                ctx.saveGState()
+                ctx.addPath(lens); ctx.clip()
+                let shine = [NSColor.white.withAlphaComponent(on ? 0.55 : 0.10).cgColor, NSColor.white.withAlphaComponent(0).cgColor] as CFArray
+                if let g = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: shine, locations: [0, 1]) {
+                    ctx.drawLinearGradient(g, start: CGPoint(x: 0, y: led.minY), end: CGPoint(x: 0, y: led.midY + 0.5), options: [])
+                }
+                ctx.restoreGState()
             }
         }
-        Faceplate.engrave(caption, in: CGRect(x: -6, y: bounds.height - 10, width: bounds.width + 12, height: 10),
-                          font: Theme.ui(6.5, .bold), color: Faceplate.legend)
+        // Printed scale beside the slot.
+        let font = Theme.mono(5.8)
+        for db: Float in [0, -6, -12, -24, -48] {
+            let i = Int((db - Self.floorDb) / -Self.floorDb * Float(n)) - 1
+            let y = i < 0 ? slot.maxY - pad - 3 : ledY(i) + ledH / 2 - 3.5
+            let rect = scaleOnRight ? CGRect(x: slot.maxX + 1.5, y: y, width: bounds.width - slot.maxX - 1, height: 8)
+                                    : CGRect(x: 0, y: y, width: slot.minX - 1.5, height: 8)
+            Faceplate.engrave(String(format: "%.0f", abs(db)), in: rect, font: font, color: Faceplate.legend, align: scaleOnRight ? .left : .right)
+        }
+        Faceplate.engrave(caption, in: CGRect(x: slot.minX - 6, y: bounds.height - 10, width: slot.width + 12, height: 10),
+                          font: Theme.ui(6.5, .heavy), color: Faceplate.legend)
+    }
+}
+
+// MARK: Etched lettering and hardware keys
+
+extension Faceplate {
+    /// Outlines of `text` in `font` (y up, baseline at 0) and its typographic width.
+    static func glyphs(_ text: String, font: NSFont, kern: CGFloat = 0) -> (path: CGPath, width: CGFloat) {
+        let line = CTLineCreateWithAttributedString(NSAttributedString(string: text, attributes: [.font: font, .kern: kern]))
+        let path = CGMutablePath()
+        for run in (CTLineGetGlyphRuns(line) as? [CTRun]) ?? [] {
+            let attrs = CTRunGetAttributes(run) as NSDictionary
+            guard let value = attrs[kCTFontAttributeName as String] else { continue }
+            let runFont = value as! CTFont // swiftlint:disable:this force_cast
+            let count = CTRunGetGlyphCount(run)
+            var g = [CGGlyph](repeating: 0, count: count), pos = [CGPoint](repeating: .zero, count: count)
+            CTRunGetGlyphs(run, CFRange(location: 0, length: count), &g)
+            CTRunGetPositions(run, CFRange(location: 0, length: count), &pos)
+            for i in 0..<count {
+                if let outline = CTFontCreatePathForGlyph(runFont, g[i], nil) {
+                    path.addPath(outline, transform: CGAffineTransform(translationX: pos[i].x, y: pos[i].y))
+                }
+            }
+        }
+        return (path, CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil)))
+    }
+
+    /// Lettering laser-etched into anodized metal: a frosted, slightly rough fill, a shadow inside the top edge of the
+    /// cut and a faint light lip below it. Draws in a y-up context with the baseline at `origin`.
+    static func etch(_ ctx: CGContext, _ text: String, font: NSFont, at origin: CGPoint, tone: CGFloat = 0.80, kern: CGFloat = 0) {
+        var t = CGAffineTransform(translationX: origin.x, y: origin.y)
+        guard let path = glyphs(text, font: font, kern: kern).path.copy(using: &t) else { return }
+        let box = path.boundingBoxOfPath.insetBy(dx: -2, dy: -2)
+        ctx.saveGState()
+        ctx.translateBy(x: 0, y: -0.75)
+        ctx.addPath(path); ctx.setFillColor(NSColor.white.withAlphaComponent(0.09).cgColor); ctx.fillPath()
+        ctx.restoreGState()
+        ctx.saveGState()
+        ctx.addPath(path); ctx.clip()
+        let frost = [NSColor(white: tone * 0.90, alpha: 1).cgColor, NSColor(white: tone, alpha: 1).cgColor] as CFArray
+        if let g = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: frost, locations: [0, 1]) {
+            ctx.drawLinearGradient(g, start: CGPoint(x: 0, y: box.maxY), end: CGPoint(x: 0, y: box.minY), options: [])
+        }
+        // Laser grain: fine speckle, seeded so it doesn't shimmer between redraws.
+        var seed: UInt64 = 0xD1B54A32D192ED03 &+ UInt64(text.utf8.count)
+        var y = box.minY
+        while y < box.maxY {
+            var x = box.minX
+            while x < box.maxX {
+                seed = seed &* 6364136223846793005 &+ 1442695040888963407
+                if (seed >> 61) == 0 {
+                    ctx.setFillColor(NSColor(white: (seed >> 40) & 1 == 0 ? 0 : 1, alpha: 0.06).cgColor)
+                    ctx.fill(CGRect(x: x, y: y, width: 0.5, height: 0.5))
+                }
+                x += 0.5
+            }
+            y += 0.5
+        }
+        ctx.translateBy(x: 0, y: -0.55)
+        ctx.addPath(path); ctx.setStrokeColor(NSColor.black.withAlphaComponent(0.32).cgColor); ctx.setLineWidth(0.7); ctx.strokePath()
+        ctx.restoreGState()
+    }
+}
+
+/// A unit's name, laser-etched into the faceplate.
+@MainActor
+final class EtchedLabel: NSView {
+    var text: String { didSet { invalidateIntrinsicContentSize(); needsDisplay = true; setAccessibilityLabel(text) } }
+    var dimmed = false { didSet { needsDisplay = true } }
+    let font = NSFont.systemFont(ofSize: 12.5, weight: .bold)
+    init(_ text: String) {
+        self.text = text
+        super.init(frame: .zero)
+        setAccessibilityElement(true)
+        setAccessibilityRole(.staticText)
+        setAccessibilityLabel(text)
+        setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+    override var intrinsicContentSize: NSSize { NSSize(width: ceil(Faceplate.glyphs(text, font: font, kern: 0.3).width) + 2, height: 17) }
+    override func draw(_ dirtyRect: NSRect) {
+        guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+        ctx.clip(to: bounds)
+        Faceplate.etch(ctx, text, font: font, at: CGPoint(x: 1, y: 4), tone: dimmed ? 0.50 : 0.92, kern: 0.3)
+    }
+}
+
+/// A small machined key on the faceplate with an etched label, or (power) a round key with a lit ring.
+/// Outside Graphite it draws as a plain button.
+@MainActor
+final class PlateButton: NSButton {
+    enum Style { case system, key, power }
+    var style: Style = .system { didSet { if style != .system { isBordered = false; title = "" }; invalidateIntrinsicContentSize(); needsDisplay = true } }
+    var label = "" { didSet { invalidateIntrinsicContentSize(); needsDisplay = true } }
+    var lit: NSColor = Theme.accent
+    private let labelFont = NSFont.systemFont(ofSize: 7.5, weight: .heavy)
+
+    init(title: String, label: String) {
+        self.label = label
+        super.init(frame: .zero)
+        self.title = title
+        setAccessibilityLabel(title)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+    override var intrinsicContentSize: NSSize {
+        switch style {
+        case .system: super.intrinsicContentSize
+        case .key: NSSize(width: ceil(Faceplate.glyphs(label, font: labelFont, kern: 0.9).width) + 18, height: 17)
+        case .power: NSSize(width: 20, height: 20)
+        }
+    }
+    override func draw(_ dirtyRect: NSRect) {
+        guard style != .system, let ctx = NSGraphicsContext.current?.cgContext else { return super.draw(dirtyRect) }
+        let pressed = isHighlighted
+        let enabled = isEnabled
+        if isFlipped { ctx.translateBy(x: 0, y: bounds.height); ctx.scaleBy(x: 1, y: -1) } // draw y-up
+        if style == .power {
+            let c = CGPoint(x: bounds.midX, y: bounds.midY), r: CGFloat = 8.5
+            let on = state == .on && enabled
+            // LED ring around the key.
+            ctx.saveGState()
+            if on { ctx.setShadow(offset: .zero, blur: 4, color: lit.withAlphaComponent(0.9).cgColor) }
+            ctx.setStrokeColor((on ? lit : NSColor(white: 0.12, alpha: 1)).cgColor); ctx.setLineWidth(1.6)
+            ctx.strokeEllipse(in: CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r))
+            ctx.restoreGState()
+            key(ctx, CGPath(ellipseIn: CGRect(x: c.x - r + 2, y: c.y - r + 2, width: 2 * r - 4, height: 2 * r - 4), transform: nil),
+                CGRect(x: c.x - r + 2, y: c.y - r + 2, width: 2 * r - 4, height: 2 * r - 4), pressed: pressed)
+            // Power glyph, etched.
+            ctx.setStrokeColor(NSColor(white: enabled ? 0.78 : 0.4, alpha: 1).cgColor); ctx.setLineWidth(1.1); ctx.setLineCap(.round)
+            ctx.addArc(center: CGPoint(x: c.x, y: c.y - 0.4), radius: 3.1, startAngle: .pi / 2 + 0.7, endAngle: .pi / 2 - 0.7, clockwise: false)
+            ctx.strokePath()
+            ctx.move(to: CGPoint(x: c.x, y: c.y - 0.2)); ctx.addLine(to: CGPoint(x: c.x, y: c.y + 3.9)); ctx.strokePath()
+            ctx.setLineCap(.butt)
+            return
+        }
+        let rect = bounds.insetBy(dx: 1, dy: 1.5)
+        key(ctx, CGPath(roundedRect: rect, cornerWidth: 2.5, cornerHeight: 2.5, transform: nil), rect, pressed: pressed)
+        let w = Faceplate.glyphs(label, font: labelFont, kern: 0.9).width
+        Faceplate.etch(ctx, label, font: labelFont, at: CGPoint(x: rect.midX - w / 2, y: rect.midY - 2.6 - (pressed ? 0.4 : 0)),
+                       tone: enabled ? 0.90 : 0.45, kern: 0.9)
+    }
+    /// A raised metal key: drop shadow, brushed gradient, light top edge; pressed keys sit lower and darker.
+    private func key(_ ctx: CGContext, _ path: CGPath, _ rect: CGRect, pressed: Bool) {
+        ctx.saveGState()
+        ctx.setShadow(offset: CGSize(width: 0, height: pressed ? -0.5 : -1.2), blur: pressed ? 1 : 2.2, color: NSColor.black.withAlphaComponent(0.75).cgColor)
+        ctx.addPath(path); ctx.setFillColor(NSColor(white: 0.15, alpha: 1).cgColor); ctx.fillPath()
+        ctx.restoreGState()
+        ctx.saveGState()
+        ctx.addPath(path); ctx.clip()
+        let top = rect.maxY, bottom = rect.minY
+        let colors = [NSColor(white: pressed ? 0.24 : 0.36, alpha: 1).cgColor, NSColor(white: pressed ? 0.17 : 0.23, alpha: 1).cgColor] as CFArray
+        if let g = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors, locations: [0, 1]) {
+            ctx.drawLinearGradient(g, start: CGPoint(x: 0, y: top), end: CGPoint(x: 0, y: bottom), options: [])
+        }
+        ctx.restoreGState()
+        ctx.addPath(path); ctx.setStrokeColor(NSColor.black.withAlphaComponent(0.7).cgColor); ctx.setLineWidth(0.8); ctx.strokePath()
+        if !pressed {
+            ctx.saveGState(); ctx.addPath(path); ctx.clip()
+            ctx.setStrokeColor(NSColor.white.withAlphaComponent(0.16).cgColor); ctx.setLineWidth(1)
+            ctx.move(to: CGPoint(x: rect.minX, y: top - 0.8)); ctx.addLine(to: CGPoint(x: rect.maxX, y: top - 0.8))
+            ctx.strokePath(); ctx.restoreGState()
+        }
     }
 }
