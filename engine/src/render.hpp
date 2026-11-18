@@ -30,6 +30,7 @@ struct TrackRuntime {
     std::atomic<bool> solo{false};
     // Post-fader peak since the meter was last read (audio thread raises, UI resets).
     std::atomic<float> peakL{0.0f}, peakR{0.0f};
+    float meterDcL = 0, meterDcR = 0; // DC tracked out of the meter (audio thread; see meterLevel)
     float curL = 0, curR = 0;
     bool primed = false;
     // Instrument voices (audio thread): timeline playback and live MIDI input.
@@ -49,6 +50,15 @@ struct TrackRuntime {
 // by one stale value; harmless for metering.
 inline void raisePeak(std::atomic<float> &a, float v) DALNOK_NONBLOCKING {
     if (v > a.load(std::memory_order_relaxed)) a.store(v, std::memory_order_relaxed);
+}
+
+// One sample's meter level with its DC offset removed, updating the tracked offset `dc` (one pole, about 40 ms at
+// 48 kHz, so a cutoff near 4 Hz). A constant offset in a recording is inaudible and must not light the track and
+// master meters (or the gain-knob rings that follow them); every audible frequency passes unchanged in level.
+inline float meterLevel(float v, float &dc) DALNOK_NONBLOCKING {
+    constexpr float k = 5e-4f;
+    dc += k * (v - dc);
+    return std::fabs(v - dc);
 }
 
 // Raises a stereo meter pair (a plug-in's input or output) to the block's peaks.

@@ -25,21 +25,41 @@ recording, editing, and mixing in a fast, focused native app.
 - **Moving from another DAW:** imports Logic Pro, Ableton Live, REAPER and Final Cut XML projects, or a folder of stems,
   with a report of what came across.
 - **Clip launcher** with scenes on the same tracks as the arrangement.
-- Two appearances: **Graphite** and **Warm Analog**.
+- Two appearances: **Graphite** and **Warm Analog**, resizable tracks, and one Settings window for every preference
+  (keyboard shortcuts included).
 
 ## Screenshots
-Every plug-in becomes a hardware-style unit with a display that suits it. Drag an EQ's bands on its screen; bypassed
-units go dark.
+Two appearances, the same app. **Graphite** draws every plug-in as a hardware unit with a display that suits it;
+**Warm Analog** turns them into pedals patched with cables, beside a tape transport.
+
+<table>
+<tr><td align="center"><img src="assets/screenshots/tour-graphite.gif" alt="Graphite: playing a project with plug-ins, showing and hiding the mixer, bypassing a unit and switching tracks" width="100%"><br><sub>Graphite</sub></td>
+<td align="center"><img src="assets/screenshots/tour-warm-analog.gif" alt="Warm Analog: the same project as pedals, with the mixer shown and hidden" width="100%"><br><sub>Warm Analog</sub></td></tr>
+</table>
+
+### Plug-in faceplates (Graphite)
+Drag an EQ's bands on its screen; dynamics get a VU gain-reduction meter, distortion a transfer curve, delays an
+energy history. Bypassed units sit back with their lights off, and Settings can age them with scratches and dust.
 
 ![Plug-in faceplates: Dalnok Channel EQ with its band handles, a VU gain-reduction meter and a delay's energy history](assets/screenshots/faceplates.png)
 
-The Warm Analog appearance turns plug-ins into pedals patched with cables, with a tape transport.
-
+### Warm Analog
 ![Dalnok in the Warm Analog appearance](assets/screenshots/warm-analog.png)
 
-<img src="assets/screenshots/piano-roll.png" alt="Piano roll with chords and a melody" width="700">
+<table>
+<tr><td width="58%"><img src="assets/screenshots/analog-pedals.png" alt="Warm Analog plug-ins as patched pedals" width="100%"></td>
+<td width="42%"><img src="assets/screenshots/analog-transport.png" alt="Warm Analog tape transport and VFD position display with the second clock" width="100%"></td></tr>
+</table>
 
-All screenshots come from the real app with generated projects (`scripts/make-test-project.sh`).
+### MIDI and settings
+<table>
+<tr><td align="center"><img src="assets/screenshots/piano-roll.png" alt="Piano roll (Graphite)" width="100%"><br><sub>Piano roll, Graphite</sub></td>
+<td align="center"><img src="assets/screenshots/piano-roll-analog.png" alt="Piano roll (Warm Analog)" width="100%"><br><sub>Piano roll, Warm Analog</sub></td></tr>
+<tr><td colspan="2" align="center"><img src="assets/screenshots/settings.png" alt="Settings: every preference in one window, keyboard shortcuts included" width="70%"><br><sub>Settings</sub></td></tr>
+</table>
+
+All screenshots and animations come from the real app with generated projects (`scripts/make-test-project.sh`,
+`Dalnok <project> --tour <dir>`), using Dalnok's own and Apple's built-in plug-ins.
 
 ## Install (preview build)
 Download `Dalnok-0.1.0.zip` from the [Releases](https://github.com/droper23/dalnok/releases) page, unzip it and move

@@ -132,7 +132,7 @@ private func close(_ a: (Float, Float), _ b: Float) -> Bool { abs(a.0 - b) < 1e-
 @Suite struct MasterFader {
     @Test func masterGainScalesTheMixLiveAndOfflineAndSaves() throws {
         let e = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(e) }
-        let m = makeMedia([[Float](repeating: 0.5, count: 48_000)]); defer { dalnok_media_release(m) }
+        let m = makeMedia([(0..<48_000).map { $0 % 2 == 0 ? Float(0.5) : -0.5 }]); defer { dalnok_media_release(m) } // no DC (meters ignore it)
         DalnokEngine.dalnok_clip_add(e, dalnok_track_add(e, "A"), dalnok_pool_add(e, m, ""), 0, 0, 0)
         #expect(dalnok_master_set_gain_db(e, -6.020_6) == DALNOK_OK && undoName(e) == "Master Volume")
         #expect(abs(render(e, 0, 2_000)[1_000] - 0.25) < 1e-4)
@@ -220,5 +220,30 @@ private func close(_ a: (Float, Float), _ b: Float) -> Bool { abs(a.0 - b) < 1e-
         #expect(dalnok_project_load(e2, project.path, nil, &err, err.count) == DALNOK_OK, "\(cstr(err))")
         _ = dalnok_track_info(e2, inner, &info)
         #expect(info.stack == outer && info.is_stack)
+    }
+}
+
+@Suite struct TrackHeights {
+    @Test func heightsAreViewStateThatSavesAndUndoes() throws {
+        let e = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(e) }
+        let a = dalnok_track_add(e, "A"), b = dalnok_track_add(e, "B")
+        func h(_ t: DalnokTrackId) -> Float { var i = DalnokTrackInfo(); dalnok_track_info(e, t, &i); return i.height }
+        #expect(h(a) == 0, "new tracks use the default height")
+        #expect(dalnok_track_set_height(e, a, 150) == DALNOK_OK && h(a) == 150 && h(b) == 0 && undoName(e) == "Track Height")
+        #expect(dalnok_track_set_height(e, 0, 1_000) == DALNOK_OK && h(a) == 400 && h(b) == 400, "track 0 sets all, clamped to 400")
+        #expect(dalnok_track_set_height(e, a, -1) != DALNOK_OK && dalnok_track_set_height(e, 999, 100) != DALNOK_OK)
+        #expect(dalnok_undo(e) && h(a) == 150 && h(b) == 0, "one undo per change")
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let project = dir.appendingPathComponent("heights.dalnok")
+        var err = [CChar](repeating: 0, count: 256)
+        #expect(dalnok_project_save(e, project.path, &err, err.count) == DALNOK_OK)
+        let e2 = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(e2) }
+        #expect(dalnok_project_load(e2, project.path, nil, &err, err.count) == DALNOK_OK)
+        var i = DalnokTrackInfo()
+        dalnok_track_info(e2, dalnok_track_at(e2, 0), &i)
+        #expect(i.height == 150, "the height is saved with the project (\(i.height))")
+        #expect(runCommand(e, "track.setHeight", #"{"track":0,"height":0}"#).0 == DALNOK_OK && h(a) == 0)
     }
 }

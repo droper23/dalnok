@@ -54,6 +54,8 @@ struct TrackView {
     var isStack = false
     var collapsed = false
     var hidden = false // Track ▸ Hide Track (still plays)
+    /// Lane height in points set on this track (0: the arrangement's default, Theme.trackHeight).
+    var height: CGFloat = 0
     var sends: [DalnokSend] = []
     var volumeAuto: [DalnokAutoPoint] = [], panAuto: [DalnokAutoPoint] = []
     func automation(_ target: Int32) -> [DalnokAutoPoint] { target == 1 ? panAuto : volumeAuto }
@@ -144,6 +146,7 @@ final class Session {
                                  volumeAuto: automationPoints(tid, 0), panAuto: automationPoints(tid, 1)))
         }
         for k in out.indices { out[k].hidden = dalnok_track_hidden(h, out[k].id) }
+        for k in out.indices { var ti = DalnokTrackInfo(); dalnok_track_info(h, out[k].id, &ti); out[k].height = CGFloat(ti.height) }
         allTracks = out
         // Tracks inside a closed stack (at any depth) are hidden from the arrangement, headers and mixer.
         let byId = Dictionary(uniqueKeysWithValues: out.map { ($0.id, $0) })
@@ -158,6 +161,41 @@ final class Session {
     }
 
     func track(_ id: DalnokTrackId) -> TrackView? { allTracks.first { $0.id == id } }
+
+    // MARK: Lane layout (shared by the arrangement, the track headers and the launcher)
+
+    /// A shown track's lane height: its own, else the arrangement's default (View ▸ Taller/Shorter Tracks).
+    func laneHeight(_ index: Int) -> CGFloat {
+        guard tracks.indices.contains(index) else { return Theme.trackHeight }
+        let h = tracks[index].height
+        return h > 0 ? h : Theme.trackHeight
+    }
+    /// Top of lane `index` below the ruler, before scrolling (index == count: the bottom of the last lane).
+    func laneTop(_ index: Int) -> CGFloat {
+        let tops = laneTops
+        if index <= 0 { return CGFloat(index) * Theme.trackHeight }
+        if index < tops.count { return tops[index] }
+        return lanesHeight + CGFloat(index - tops.count) * Theme.trackHeight
+    }
+    /// Total height of all shown lanes.
+    var lanesHeight: CGFloat { let tops = laneTops; return tops.isEmpty ? 0 : tops[tops.count - 1] + laneHeight(tops.count - 1) }
+    /// The lane at `y` (below the ruler, before scrolling); past the last lane counts on in default-height steps.
+    func laneIndex(atY y: CGFloat) -> Int {
+        guard y >= 0 else { return Int(floor(y / Theme.trackHeight)) }
+        let tops = laneTops
+        if let i = tops.lastIndex(where: { $0 <= y }), y < tops[i] + laneHeight(i) { return i }
+        let end = lanesHeight
+        return tracks.count + Int(floor(max(0, y - end) / Theme.trackHeight))
+    }
+    private var laneCache: (revision: UInt64, unit: CGFloat, tops: [CGFloat])?
+    private var laneTops: [CGFloat] {
+        if let c = laneCache, c.revision == revision, c.unit == Theme.trackHeight, c.tops.count == tracks.count { return c.tops }
+        var tops: [CGFloat] = [], y: CGFloat = 0
+        for i in tracks.indices { tops.append(y); y += laneHeight(i) }
+        laneCache = (revision, Theme.trackHeight, tops)
+        return tops
+    }
+    func setTrackHeight(_ t: DalnokTrackId, _ height: CGFloat) { dalnok_track_set_height(h, t, Float(height)); refresh() }
     /// Every track, including members of closed stacks (`tracks` is what's shown).
     private(set) var allTracks: [TrackView] = []
     func members(of stack: DalnokTrackId) -> [TrackView] { allTracks.filter { $0.stack == stack } }

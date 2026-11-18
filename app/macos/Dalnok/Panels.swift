@@ -88,6 +88,24 @@ final class TransportBar: NSView {
     /// Secondary line under the title: audio status, or a transient message.
     let statusLabel = NSTextField(labelWithString: "")
     let timeLabel = NSTextField(labelWithString: "0:00.000")
+    /// Small second readout under the main one: real time when the main shows bars, and bars when it shows time.
+    let subTimeLabel = NSTextField(labelWithString: "")
+    /// Settings ▸ Clock: show the small second readout.
+    static var showsSecondaryClock: Bool {
+        get { UserDefaults.standard.bool(forKey: "secondaryClock") }
+        set { UserDefaults.standard.set(newValue, forKey: "secondaryClock"); NotificationCenter.default.post(name: clockChanged, object: nil) }
+    }
+    static let clockChanged = Notification.Name("DalnokClockChanged")
+    private var timeCenter: NSLayoutConstraint?, ghostCenter: NSLayoutConstraint?
+    /// Lays the display out for one or two readouts.
+    func applyClockSetting() {
+        let on = Self.showsSecondaryClock
+        subTimeLabel.isHidden = !on
+        timeLabel.font = Theme.mono(on ? 17 : 20, .medium)
+        ghost.font = timeLabel.font
+        timeCenter?.constant = on ? -5 : 0
+        ghostCenter?.constant = on ? -5 : 0
+    }
     let lcdWell = NSView()
     /// Warm Analog: unlit display segments behind the digits, as on a vacuum-fluorescent display.
     let ghost = NSTextField(labelWithString: "")
@@ -161,10 +179,16 @@ final class TransportBar: NSView {
             lcd.layer?.backgroundColor = Theme.hex(0x060B0A).cgColor
             lcd.layer?.borderColor = NSColor(white: 0, alpha: 0.9).cgColor
             lcd.layer?.borderWidth = 2
-            NSLayoutConstraint.activate([ghost.centerXAnchor.constraint(equalTo: lcd.centerXAnchor),
-                                         ghost.centerYAnchor.constraint(equalTo: lcd.centerYAnchor)])
+            ghostCenter = ghost.centerYAnchor.constraint(equalTo: lcd.centerYAnchor)
+            NSLayoutConstraint.activate([ghost.centerXAnchor.constraint(equalTo: lcd.centerXAnchor), ghostCenter!])
         }
         lcd.addSubview(timeLabel)
+        subTimeLabel.font = Theme.mono(9, .medium)
+        subTimeLabel.textColor = (Analog.on ? Theme.hex(0x7DF0D8) : Theme.accent).withAlphaComponent(0.65)
+        subTimeLabel.alignment = .center
+        subTimeLabel.translatesAutoresizingMaskIntoConstraints = false
+        subTimeLabel.setAccessibilityLabel("Secondary position")
+        lcd.addSubview(subTimeLabel)
         lcd.setAccessibilityElement(true)
         lcd.setAccessibilityLabel("Position")
 
@@ -219,12 +243,16 @@ final class TransportBar: NSView {
             lcd.widthAnchor.constraint(equalToConstant: 150),
             lcd.heightAnchor.constraint(equalToConstant: 34),
             timeLabel.centerXAnchor.constraint(equalTo: lcd.centerXAnchor),
-            timeLabel.centerYAnchor.constraint(equalTo: lcd.centerYAnchor),
+            subTimeLabel.centerXAnchor.constraint(equalTo: lcd.centerXAnchor),
+            subTimeLabel.bottomAnchor.constraint(equalTo: lcd.bottomAnchor, constant: -1),
             tools.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
             tools.centerYAnchor.constraint(equalTo: centerYAnchor),
             masterMeter.widthAnchor.constraint(equalToConstant: 132),
             masterMeter.heightAnchor.constraint(equalToConstant: 8),
         ])
+        timeCenter = timeLabel.centerYAnchor.constraint(equalTo: lcd.centerYAnchor)
+        timeCenter?.isActive = true
+        applyClockSetting()
         titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         statusLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
     }
@@ -285,6 +313,8 @@ final class TransportBar: NSView {
 
 @MainActor
 final class TrackHeaderRow: NSView, NSTextFieldDelegate {
+    /// Lane heights a track can be dragged to (points).
+    static let minHeight: CGFloat = 48, maxHeight: CGFloat = 400
     let trackId: DalnokTrackId
     let session: Session
     weak var column: TrackHeaderColumn?
@@ -354,6 +384,8 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
         solo.onToggle = { [weak self] on in guard let self else { return }; self.session.setSolo(self.trackId, on) }
         arm.onToggle = { [weak self] on in guard let self else { return }; self.session.setArmed(self.trackId, on) }
         inputButton.isBordered = false
+        inputButton.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        (inputButton.cell as? NSButtonCell)?.lineBreakMode = .byTruncatingTail
         inputButton.font = Theme.mono(10, .medium)
         inputButton.contentTintColor = Theme.textDim
         inputButton.target = self
@@ -397,6 +429,8 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
             arm.centerYAnchor.constraint(equalTo: nameLabel.centerYAnchor),
             inputButton.trailingAnchor.constraint(equalTo: solo.trailingAnchor),
             inputButton.centerYAnchor.constraint(equalTo: pan.centerYAnchor),
+            // Never over the pan knob: a long instrument name truncates instead.
+            inputButton.leadingAnchor.constraint(greaterThanOrEqualTo: pan.trailingAnchor, constant: 8),
             solo.trailingAnchor.constraint(equalTo: meter.leadingAnchor, constant: -10),
             solo.centerYAnchor.constraint(equalTo: nameLabel.centerYAnchor),
             mute.trailingAnchor.constraint(equalTo: solo.leadingAnchor, constant: -4),
@@ -497,6 +531,9 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         selectionLayer.frame = CGRect(x: 0, y: 1, width: bounds.width, height: bounds.height - 2)
+        // Short tracks show their name and buttons only; the knobs and input return when there is room.
+        let compact = bounds.height < 76
+        for v in [gain, pan, gainLabel, panLabel, inputButton] as [NSView] where v.isHidden != compact { v.isHidden = compact }
         strip.frame = CGRect(x: 0, y: 0, width: isSelected ? 5 : 3, height: bounds.height - 1)
         CATransaction.commit()
         if Analog.on {
@@ -555,10 +592,24 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
         return true
     }
 
-    // MARK: Mouse: select, double-click rename, drag to reorder
+    // MARK: Mouse: select, double-click rename, drag to reorder, drag the bottom edge to resize
+
+    /// The strip along the bottom edge that resizes the track (and double-clicks back to the default height).
+    static let resizeGrip: CGFloat = 5
+    private var resizing: (startY: CGFloat, startHeight: CGFloat)?
+    private func onResizeGrip(_ p: CGPoint) -> Bool { p.y >= bounds.height - Self.resizeGrip } // flipped
+    override func resetCursorRects() {
+        addCursorRect(CGRect(x: 0, y: bounds.height - Self.resizeGrip, width: bounds.width, height: Self.resizeGrip), cursor: .resizeUpDown)
+    }
 
     override func mouseDown(with event: NSEvent) {
         column?.select(trackId)
+        if onResizeGrip(convert(event.locationInWindow, from: nil)) {
+            if event.clickCount == 2 { session.setTrackHeight(trackId, 0); return } // back to the default
+            resizing = (event.locationInWindow.y, frame.height)
+            session.engine.beginGroup("Track Height") // the whole drag is one undo step
+            return
+        }
         if event.clickCount == 2, nameLabel.frame.insetBy(dx: -4, dy: -4).contains(convert(event.locationInWindow, from: nil)) {
             beginRename()
             return
@@ -567,11 +618,17 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
     }
 
     override func mouseDragged(with event: NSEvent) {
+        if let r = resizing {
+            let h = (r.startHeight + (r.startY - event.locationInWindow.y)).clamped(to: TrackHeaderRow.minHeight...TrackHeaderRow.maxHeight)
+            if abs(h - frame.height) >= 0.5 { session.setTrackHeight(trackId, h.rounded()) }
+            return
+        }
         guard let start = dragStartY, abs(event.locationInWindow.y - start) > 4 else { return }
         column?.dragUpdate(row: self, windowPoint: event.locationInWindow)
     }
 
     override func mouseUp(with event: NSEvent) {
+        if resizing != nil { resizing = nil; session.engine.endGroup(); return }
         if dragStartY != nil { column?.dragEnd(row: self) }
         dragStartY = nil
     }
@@ -651,12 +708,12 @@ final class TrackHeaderColumn: NSView, TrackScrollHost {
     /// Shows an insertion line between rows while dragging a header.
     func dragUpdate(row: TrackHeaderRow, windowPoint: CGPoint) {
         let y = rowClip.convert(windowPoint, from: nil).y + scrollY
-        let slot = max(0, min(rows.count, Int((y / Theme.trackHeight).rounded())))
+        let slot = (0...rows.count).min { abs(session.laneTop($0) - y) < abs(session.laneTop($1) - y) } ?? 0
         dropIndex = slot
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         insertLine.isHidden = false
-        insertLine.frame = CGRect(x: 0, y: CGFloat(slot) * Theme.trackHeight - scrollY - 1, width: rowClip.bounds.width, height: 2)
+        insertLine.frame = CGRect(x: 0, y: session.laneTop(slot) - scrollY - 1, width: rowClip.bounds.width, height: 2)
         CATransaction.commit()
     }
 
@@ -712,13 +769,17 @@ final class TrackHeaderColumn: NSView, TrackScrollHost {
             needsLayout = true
         }
         for (i, (row, t)) in zip(rows, tracks).enumerated() { row.update(t, index: i) }
+        // Heights can change without the rows changing (a resized track): lay the rows out again when they do.
+        let heights = tracks.indices.map { session.laneHeight($0) }
+        if heights != laidOutHeights { laidOutHeights = heights; needsLayout = true }
     }
+    private var laidOutHeights: [CGFloat] = []
 
     override func layout() {
         super.layout()
         rowClip.frame = CGRect(x: 0, y: Theme.rulerHeight, width: bounds.width - 1, height: max(0, bounds.height - Theme.rulerHeight))
         for (i, row) in rows.enumerated() {
-            row.frame = CGRect(x: 0, y: CGFloat(i) * Theme.trackHeight - scrollY, width: rowClip.bounds.width, height: Theme.trackHeight)
+            row.frame = CGRect(x: 0, y: session.laneTop(i) - scrollY, width: rowClip.bounds.width, height: session.laneHeight(i))
         }
         addButton.frame = CGRect(x: bounds.width - 40, y: 0, width: 34, height: Theme.rulerHeight)
     }
@@ -783,4 +844,8 @@ final class ScribbleStrip: NSView {
         NSGraphicsContext.restoreGraphicsState()
         Theme.hex(0x000000, 0.85).setStroke(); well.lineWidth = 1; well.stroke()
     }
+}
+
+extension Comparable {
+    func clamped(to r: ClosedRange<Self>) -> Self { min(max(self, r.lowerBound), r.upperBound) }
 }

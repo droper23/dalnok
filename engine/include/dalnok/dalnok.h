@@ -28,7 +28,7 @@
 extern "C" {
 #endif
 
-#define DALNOK_API_VERSION 28
+#define DALNOK_API_VERSION 29
 
 typedef enum {
     DALNOK_OK = 0,
@@ -292,6 +292,7 @@ typedef struct {
     DalnokTrackId stack;   /* the summing stack this track belongs to (0 = none) */
     bool is_stack;         /* a bus that is a summing stack */
     bool collapsed;        /* stack shown closed */
+    float height;          /* lane height in points, view only (0 = the default height) */
 } DalnokTrackInfo;
 typedef enum { DALNOK_TRACK_AUDIO = 0, DALNOK_TRACK_INSTRUMENT = 1, DALNOK_TRACK_BUS = 2 } DalnokTrackKind;
 
@@ -349,6 +350,8 @@ bool dalnok_launcher_recording(const DalnokEngine *engine);
  * Closing a stack is a display state, saved with the project. Stacks don't nest yet. */
 DalnokTrackId dalnok_track_stack_create(DalnokEngine *engine, const DalnokTrackId *members, int32_t count, const char *name);
 DalnokStatus dalnok_track_stack_set_collapsed(DalnokEngine *engine, DalnokTrackId stack, bool collapsed);
+/* Lane height in points (40-400, view only, undoable). track 0 = every track; height 0 = back to the default. */
+DalnokStatus dalnok_track_set_height(DalnokEngine *engine, DalnokTrackId track, float height);
 /* Hide a track from the arrangement and mixer (API 26; it keeps playing). track 0 + hidden=false shows all. Undoable. */
 DalnokStatus dalnok_track_set_hidden(DalnokEngine *engine, DalnokTrackId track, bool hidden);
 bool dalnok_track_hidden(const DalnokEngine *engine, DalnokTrackId track);

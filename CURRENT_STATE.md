@@ -5,7 +5,15 @@ milestone: M11 VST3 hosting (ADR-0009 stage 3) done; editors, parameters and AU 
 ---
 # Current State
 
-## Latest session (0.1.0 release preparation; 2026-11-18)
+## Latest session (0.1.0 follow-ups; 2026-11-18, later)
+- **Gain ring lit on silent tracks: found.** oviii's `leaving-consolidatedMaster8.wav` carries a constant DC offset of 0.04 (−27 dBFS) through its silent parts; the meters read it as signal. Track and master meters now remove DC (`meterLevel`, render.hpp; engine test `metersIgnoreDcOffset`). The earlier hover fix stays.
+- **Settings overhaul**: `Settings.swift` is a sidebar window with General, Appearance, Audio & MIDI, Recording, Plug-ins and Keyboard Shortcuts panes. The shortcut editor's content moved into the Shortcuts pane (`shortcutsEditor` now returns `settings.shortcuts`; its sheets attach to the Settings window).
+- **Track heights**: per-track (engine `TrackState.height`, saved, undoable, C API 29) plus the default height (48–400 pt). All lane math goes through `Session.laneTop/laneHeight/laneIndex`. ⌥-scroll sizes all tracks (⌘-scroll still zooms time). Rows under 76 pt hide their knobs.
+- Secondary clock, tape reels that stop transferring past the last clip, visible VU glass wear, header input label truncates before the pan knob.
+- **Open: Guitar Rig crash.** Loading oviii with three Guitar Rig 7 AUs (with their saved state) plus its instrument tracks, and showing a Guitar Rig unit in the device panel, crashes in Swift's main-executor check (the main thread's executor record is corrupted). It reproduces on the 0.1.0 build too. ASan finds no bad write in Dalnok code; one Guitar Rig alone doesn't crash. Next: isolate further (Guitar Rig's Qt event dispatcher on the main thread is the main suspect) and consider hosting such plug-ins out of process.
+- **Open: "1 FX" with no plug-ins** (owner report). Every oviii track's count matched its plug-ins in testing; ask the owner for a project where it happens.
+
+## Earlier session (0.1.0 release preparation; 2026-11-18)
 - **Version 0.1.0** (first preview). `scripts/release.sh` builds and zips `dist/Dalnok-0.1.0.zip`; the GitHub release is a draft until the owner publishes it. The app is ad-hoc signed, not notarized (the README explains the first-launch Open).
 - **EQ handles for any EQ**: `EqBands` (FaceplateDisplays.swift) finds bands by parameter name with fixed rules. Verified on TDR Nova (4 bands + HP/LP), AUNBandEQ (repeated names, Bypass inverted), AUParametricEQ, AUGraphicEQ (fixed-frequency sliders), MEqualizer, MAutoEqualizer, kHs Filter and Dalnok Channel EQ. Drag: frequency and gain (values set by bisecting the plug-in's own value text); scroll: Q; double-click: on/off. Presses on screens no longer drag the unit.
 - **Crash fixes**: VST3 hosts now create IMessage/IAttributeList (iZotope Trash crashed on add; the CI test plug-in now refuses hosts that can't). Quit skips library teardown after shutdown (Guitar Rig 7 VST3 crashed in its Qt teardown). A headless sweep loaded 401 installed effects (194 VST3 + 207 AU) one per process: no other crashes; Melodyne (2.6 s, PACE licensing) and Analog Lab V (1.8 s) block the UI while loading, which is likely the "hang after double-click" the owner saw. Loading plug-ins asynchronously needs thought: many plug-ins require the main thread.

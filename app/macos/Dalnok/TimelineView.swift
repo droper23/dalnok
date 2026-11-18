@@ -16,12 +16,12 @@ final class TimelineView: NSView {
     var scrollY: CGFloat = 0 { didSet { if scrollY != oldValue { needsDisplay = true; onVerticalScroll?(scrollY) } } }
     /// Largest vertical offset that still shows tracks (the track list is one shared vertical viewport).
     var maxScrollY: CGFloat {
-        max(0, CGFloat(session.tracks.count) * Theme.trackHeight - max(0, bounds.height - Theme.rulerHeight))
+        max(0, session.lanesHeight - max(0, bounds.height - Theme.rulerHeight))
     }
     /// Scrolls just enough to show the track at `index` (keyboard navigation).
     func revealTrack(at index: Int) {
-        let top = CGFloat(index) * Theme.trackHeight, visible = max(0, bounds.height - Theme.rulerHeight)
-        if top < scrollY { scrollY = top } else if top + Theme.trackHeight > scrollY + visible { scrollY = min(maxScrollY, top + Theme.trackHeight - visible) }
+        let top = session.laneTop(index), h = session.laneHeight(index), visible = max(0, bounds.height - Theme.rulerHeight)
+        if top < scrollY { scrollY = top } else if top + h > scrollY + visible { scrollY = min(maxScrollY, top + h - visible) }
     }
     /// Keeps the shared vertical offset valid after tracks are removed, collapsed or the view shrinks.
     func clampScrollY() { scrollY = min(max(0, scrollY), maxScrollY) }
@@ -136,11 +136,11 @@ final class TimelineView: NSView {
         case .pan: f = Double(value + 1) / 2
         case .plugin: f = 1 - Double(value)
         }
-        let top = laneY + autoMargin, h = Theme.trackHeight - 2 * autoMargin
+        let top = laneY + autoMargin, h = laneHeight(atLaneY: laneY) - 2 * autoMargin
         return top + CGFloat(f) * h
     }
     func autoValue(atY y: CGFloat, laneY: CGFloat, lane: AutoLane? = nil) -> Float {
-        let top = laneY + autoMargin, h = Theme.trackHeight - 2 * autoMargin
+        let top = laneY + autoMargin, h = laneHeight(atLaneY: laneY) - 2 * autoMargin
         let f = Double(min(max((y - top) / h, 0), 1))
         switch lane ?? globalLane {
         case .volume: return max(-200, FaderControl.db(for: 1 - f))
@@ -152,10 +152,10 @@ final class TimelineView: NSView {
     private func drawAutomation(_ ctx: CGContext) {
         guard showAutomation else { return }
         for (i, track) in session.tracks.enumerated() {
-            let y = laneY(i)
-            guard y + Theme.trackHeight > Theme.rulerHeight, y < bounds.height else { continue }
+            let y = laneY(i), lh = session.laneHeight(i)
+            guard y + lh > Theme.rulerHeight, y < bounds.height else { continue }
             ctx.setFillColor(Theme.laneA.withAlphaComponent(0.55).cgColor) // clips recede
-            ctx.fill(CGRect(x: 0, y: y, width: bounds.width, height: Theme.trackHeight - 1))
+            ctx.fill(CGRect(x: 0, y: y, width: bounds.width, height: lh - 1))
             let lane = lane(for: track)
             let pts = lanePoints(track, lane)
             let color = TrackTint(base: track.color).waveform
@@ -325,10 +325,12 @@ final class TimelineView: NSView {
 
     func xPos(forFrame f: Double) -> CGFloat { CGFloat((f - scrollFrame) / framesPerPoint) }
     func frame(forX x: CGFloat) -> Double { scrollFrame + Double(x) * framesPerPoint }
-    func laneY(_ index: Int) -> CGFloat { Theme.rulerHeight + CGFloat(index) * Theme.trackHeight - scrollY }
+    func laneY(_ index: Int) -> CGFloat { Theme.rulerHeight + session.laneTop(index) - scrollY }
+    /// The height of the lane whose top is at `laneY` (view coordinates).
+    func laneHeight(atLaneY laneY: CGFloat) -> CGFloat { session.laneHeight(session.laneIndex(atY: laneY - Theme.rulerHeight + scrollY + 0.5)) }
     func trackIndex(atY y: CGFloat) -> Int? {
         guard y >= Theme.rulerHeight else { return nil }
-        let i = Int(floor((y - Theme.rulerHeight + scrollY) / Theme.trackHeight))
+        let i = session.laneIndex(atY: y - Theme.rulerHeight + scrollY)
         return i >= 0 && i < session.tracks.count ? i : nil
     }
 
@@ -462,7 +464,7 @@ final class TimelineView: NSView {
         drawGrid(ctx, scale: scale)
         for (i, track) in session.tracks.enumerated() {
             let y = laneY(i)
-            guard y + Theme.trackHeight > Theme.rulerHeight, y < bounds.height else { continue }
+            guard y + session.laneHeight(i) > Theme.rulerHeight, y < bounds.height else { continue }
             if track.isStack { drawStackSummary(ctx, track, laneY: y) }
             for clip in track.clips { drawClip(ctx, clip, track: track, laneY: y, scale: scale) }
             if let rec = recording, rec.tracks.contains(track.id) { drawRecording(ctx, rec, laneY: y) }
@@ -500,7 +502,7 @@ final class TimelineView: NSView {
 
     private func drawRecording(_ ctx: CGContext, _ rec: RecordingRegion, laneY: CGFloat) {
         let x0 = xPos(forFrame: Double(rec.start)), x1 = xPos(forFrame: Double(max(rec.start, rec.end)))
-        let rect = CGRect(x: x0, y: laneY + 3, width: max(2, x1 - x0), height: Theme.trackHeight - 7)
+        let rect = CGRect(x: x0, y: laneY + 3, width: max(2, x1 - x0), height: laneHeight(atLaneY: laneY) - 7)
         let path = CGPath(roundedRect: rect, cornerWidth: 3, cornerHeight: 3, transform: nil)
         ctx.addPath(path)
         ctx.setFillColor(Theme.recordOn.withAlphaComponent(0.22).cgColor)
@@ -544,9 +546,10 @@ final class TimelineView: NSView {
         for (i, t) in session.tracks.enumerated() {
             let y = laneY(i)
             ctx.setFillColor((t.id == highlightedTrack ? Theme.laneHighlight : (i % 2 == 0 ? Theme.laneA : Theme.laneB)).cgColor)
-            ctx.fill(CGRect(x: 0, y: y, width: bounds.width, height: Theme.trackHeight))
+            let lh = session.laneHeight(i)
+            ctx.fill(CGRect(x: 0, y: y, width: bounds.width, height: lh))
             ctx.setFillColor(Theme.separator.cgColor)
-            ctx.fill(CGRect(x: 0, y: y + Theme.trackHeight - 1, width: bounds.width, height: 1))
+            ctx.fill(CGRect(x: 0, y: y + lh - 1, width: bounds.width, height: 1))
         }
     }
 
@@ -653,7 +656,7 @@ final class TimelineView: NSView {
     private func drawStackSummary(_ ctx: CGContext, _ stack: TrackView, laneY y: CGFloat) {
         let members = session.contents(of: stack.id).filter { !$0.isStack } // the audio inside, at any depth
         guard !members.isEmpty else { return }
-        let top = y + 8, h = Theme.trackHeight - 16, row = max(2, min(8, h / CGFloat(members.count)))
+        let top = y + 8, h = laneHeight(atLaneY: y) - 16, row = max(2, min(8, h / CGFloat(members.count)))
         for (k, m) in members.enumerated() {
             ctx.setFillColor(m.color.withAlphaComponent(stack.collapsed ? 0.75 : 0.4).cgColor)
             for c in m.clips {
@@ -730,7 +733,7 @@ final class TimelineView: NSView {
         var out: [Any] = []
         for (i, t) in session.tracks.enumerated() {
             let y = laneY(i)
-            guard y + Theme.trackHeight > Theme.rulerHeight, y < bounds.height else { continue }
+            guard y + session.laneHeight(i) > Theme.rulerHeight, y < bounds.height else { continue }
             for c in t.clips {
                 let r = clipRect(c, laneY: y).intersection(bounds)
                 guard !r.isEmpty else { continue }
@@ -750,8 +753,8 @@ final class TimelineView: NSView {
         return out
     }
 
-    func positionText(_ frame: Int64) -> String {
-        guard Self.barsAndBeats else { return Self.formatTime(Double(frame) / sampleRate) }
+    func positionText(_ frame: Int64, barsAndBeats: Bool = TimelineView.barsAndBeats) -> String {
+        guard barsAndBeats else { return Self.formatTime(Double(frame) / sampleRate) }
         let b = session.bar(atBeat: session.frameToBeat(Double(frame)) + 1e-9)
         let sixteenths = b.beatInBar * 16 / Double(b.den) // 16ths since the bar start
         let whole = Int(sixteenths.rounded(.down)), ticks = min(239, Int((sixteenths - Double(whole)) * 240))
@@ -770,7 +773,7 @@ final class TimelineView: NSView {
 
     func clipRect(_ clip: ClipView, laneY: CGFloat) -> CGRect {
         let x0 = xPos(forFrame: Double(clip.start)), x1 = xPos(forFrame: Double(clip.end))
-        return CGRect(x: x0, y: laneY + 3, width: max(2, x1 - x0), height: Theme.trackHeight - 7)
+        return CGRect(x: x0, y: laneY + 3, width: max(2, x1 - x0), height: laneHeight(atLaneY: laneY) - 7)
     }
 
     private func drawClip(_ ctx: CGContext, _ clip: ClipView, track: TrackView, laneY: CGFloat, scale: CGFloat) {
@@ -1178,9 +1181,16 @@ final class TimelineView: NSView {
     }
 
     /// One handler for wheel and trackpad scrolling over the arrangement, the track headers and the launcher, so
-    /// they share one vertical viewport and never drift apart. ⌘ or ⌥ zooms around `zoomAnchorX`.
+    /// they share one vertical viewport and never drift apart. ⌘ zooms around `zoomAnchorX`; ⌥ makes every track
+    /// taller or shorter.
+    var onAllTracksHeight: ((CGFloat) -> Void)?
     func scroll(with event: NSEvent, zoomAnchorX: CGFloat) {
-        if event.modifierFlags.contains(.command) || event.modifierFlags.contains(.option) {
+        if event.modifierFlags.contains(.option) && !event.modifierFlags.contains(.command) {
+            let dy = event.hasPreciseScrollingDeltas ? event.scrollingDeltaY : event.scrollingDeltaY * 8
+            if dy != 0 { onAllTracksHeight?(Theme.trackHeight * exp(dy * 0.01)) }
+            return
+        }
+        if event.modifierFlags.contains(.command) {
             zoom(by: exp(-event.scrollingDeltaY * 0.01), around: max(0, zoomAnchorX))
             return
         }

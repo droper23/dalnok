@@ -60,6 +60,9 @@ struct PluginAuto {
     std::vector<AutoPoint> points;
 };
 
+// Lane heights a track may have (points; the app's default is 88).
+constexpr float kMinTrackHeight = 40, kMaxTrackHeight = 400;
+
 struct TrackState {
     DalnokTrackId id = 0;
     std::vector<AutoPoint> volumeAuto, panAuto; // empty = not automated (the fader and knob apply)
@@ -69,6 +72,7 @@ struct TrackState {
     DalnokTrackId stack = 0;   // member of this summing stack (a bus track), 0 = none
     bool isStack = false;      // a bus track that is a summing stack (its members follow it in display order)
     bool collapsed = false;    // stack shown closed (members hidden in the arrangement)
+    float height = 0;          // lane height in points (view only; 0 = the arrangement's default)
     bool hidden = false;       // hidden from the arrangement and mixer (still plays)
     std::vector<Send> sends;   // to bus tracks
     bool armed = false;       // record-enabled
@@ -304,6 +308,8 @@ public:
     // Summing stacks: a stack bus placed above its members, which are routed into it. One undo step each.
     DalnokTrackId makeStack(const std::vector<DalnokTrackId> &members, const std::string &name, std::string &err);
     bool setStackCollapsed(DalnokTrackId stack, bool collapsed, std::string &err);
+    // Lane height (view only, one undo step): `track` 0 sets every track; `height` 0 returns to the default.
+    bool setTrackHeight(DalnokTrackId track, float height, std::string &err);
     bool ungroupStack(DalnokTrackId stack, std::string &err); // members go to the stack's output; the stack goes away
     // Take folders. setComp replaces the comp (one undo step) and rebuilds the pieces that play.
     bool setComp(int32_t folder, std::vector<CompSegment> comp, std::string &err);
@@ -538,6 +544,7 @@ private:
     PluginNote rtLiveNotes_[256]{}; // this callback's live notes for a plugin instrument
     int rtLiveNoteCount_ = 0;
     std::atomic<float> masterPeakL_{0.0f}, masterPeakR_{0.0f};
+    float masterDcL_ = 0, masterDcR_ = 0; // audio thread (meterLevel)
 
     // Shared atomics.
     std::atomic<bool> playing_{false};

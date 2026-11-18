@@ -163,6 +163,8 @@ class FaceplateScreen: NSView {
     var seed: UInt64 = 1 { didSet { needsDisplay = true } }
     /// Displays that render their own unlit state (the moving-coil meter keeps its face, just without lamps).
     var drawsOwnOffState: Bool { false }
+    /// A light face behind the glass (the VU meter's paper): dirt shows dark on it rather than pale.
+    var lightFace: Bool { false }
     override var isFlipped: Bool { true }
     final override func draw(_ dirtyRect: NSRect) {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
@@ -179,7 +181,7 @@ class FaceplateScreen: NSView {
         } else {
             drawScreen(dirtyRect)
         }
-        FaceplateDisplay.wear(ctx, bounds.insetBy(dx: 4, dy: 4), radius: 3, seed: seed, amount: Faceplate.wear)
+        FaceplateDisplay.wear(ctx, bounds.insetBy(dx: 4, dy: 4), radius: 3, seed: seed, amount: Faceplate.wear, lightFace: lightFace)
     }
     func drawScreen(_ dirtyRect: NSRect) {}
 }
@@ -187,7 +189,7 @@ class FaceplateScreen: NSView {
 extension FaceplateDisplay {
     /// What years of use leave on a display's glass: dust specks, a few greasy smudges, hairline scratches and grime
     /// settled along the bottom of the bezel. `amount` 0 is factory new; the pattern is fixed by `seed`.
-    static func wear(_ ctx: CGContext, _ window: CGRect, radius: CGFloat, seed: UInt64, amount: Double) {
+    static func wear(_ ctx: CGContext, _ window: CGRect, radius: CGFloat, seed: UInt64, amount: Double, lightFace: Bool = false) {
         guard amount > 0.001 else { return }
         var rng = Faceplate.Random(seed: seed ^ 0xA5A5_5A5A_1234_8765)
         let a = CGFloat(amount)
@@ -195,10 +197,13 @@ extension FaceplateDisplay {
         ctx.addPath(CGPath(roundedRect: window, cornerWidth: radius, cornerHeight: radius, transform: nil)); ctx.clip()
         let space = CGColorSpaceCreateDeviceRGB()
         // Smudges: soft, uneven haze catching the light.
+        // On a light face a smudge is a greasy, slightly brown film; on a dark screen it catches the light.
+        let film = lightFace ? NSColor(srgbRed: 0.42, green: 0.36, blue: 0.26, alpha: 1) : NSColor(white: 0.85, alpha: 1)
         for _ in 0..<Int((1 + 4 * amount).rounded()) {
             let c = CGPoint(x: window.minX + rng.unit * window.width, y: window.minY + rng.unit * window.height)
             let r = (0.18 + 0.30 * rng.unit) * min(window.width, window.height)
-            let colors = [NSColor(white: 0.85, alpha: 0.075 * a * (0.5 + rng.unit)).cgColor, NSColor(white: 0.85, alpha: 0).cgColor] as CFArray
+            let alpha = (lightFace ? 0.16 : 0.075) * a * (0.5 + rng.unit)
+            let colors = [film.withAlphaComponent(alpha).cgColor, film.withAlphaComponent(0).cgColor] as CFArray
             if let g = CGGradient(colorsSpace: space, colors: colors, locations: [0, 1]) {
                 ctx.saveGState()
                 ctx.translateBy(x: c.x, y: c.y); ctx.scaleBy(x: 1, y: 0.55 + 0.4 * rng.unit); ctx.rotate(by: rng.unit * .pi)
@@ -216,21 +221,23 @@ extension FaceplateDisplay {
             }
         }
         // Hairline scratches in the glass.
-        for _ in 0..<Int(6 * amount + rng.unit * 2 * amount) {
+        for _ in 0..<Int((lightFace ? 10 : 6) * amount + rng.unit * 2 * amount) {
             let p = CGPoint(x: window.minX + rng.unit * window.width, y: window.minY + rng.unit * window.height)
             let ang = (rng.unit - 0.5) * 1.2 + (rng.unit < 0.5 ? 0 : .pi / 2), len = 8 + rng.unit * 34
-            ctx.setStrokeColor(NSColor(white: 1, alpha: 0.10 + 0.12 * a * rng.unit).cgColor); ctx.setLineWidth(0.35)
+            ctx.setStrokeColor((lightFace ? NSColor(white: 0.15, alpha: 0.14 + 0.22 * a * rng.unit) : NSColor(white: 1, alpha: 0.10 + 0.12 * a * rng.unit)).cgColor)
+            ctx.setLineWidth(lightFace ? 0.45 : 0.35)
             ctx.move(to: p)
             ctx.addQuadCurve(to: CGPoint(x: p.x + cos(ang) * len, y: p.y + sin(ang) * len),
                              control: CGPoint(x: p.x + cos(ang + 0.15) * len / 2, y: p.y + sin(ang + 0.15) * len / 2))
             ctx.strokePath()
         }
         // Dust: pale specks, a few with a soft halo.
-        let specks = Int(Double(window.width * window.height) / 260 * amount)
+        let specks = Int(Double(window.width * window.height) / (lightFace ? 150 : 260) * amount)
         for _ in 0..<specks {
             let p = CGPoint(x: window.minX + rng.unit * window.width, y: window.minY + rng.unit * window.height)
             let r = 0.25 + 0.65 * rng.unit * rng.unit
-            ctx.setFillColor(NSColor(srgbRed: 0.90, green: 0.88, blue: 0.82, alpha: 0.18 + 0.35 * rng.unit).cgColor)
+            ctx.setFillColor((lightFace ? NSColor(srgbRed: 0.25, green: 0.21, blue: 0.16, alpha: 0.25 + 0.45 * rng.unit)
+                                        : NSColor(srgbRed: 0.90, green: 0.88, blue: 0.82, alpha: 0.18 + 0.35 * rng.unit)).cgColor)
             ctx.fillEllipse(in: CGRect(x: p.x - r, y: p.y - r, width: 2 * r, height: 2 * r))
         }
         ctx.restoreGState()
@@ -320,6 +327,7 @@ final class MovingCoilMeter: FaceplateScreen {
     private(set) var reductionDb: Double = 0
     private(set) var levelVu: Double = -20
     override var drawsOwnOffState: Bool { true }
+    override var lightFace: Bool { true }
 
     override var isFlipped: Bool { true }
     init(mode: Mode) {
@@ -397,6 +405,10 @@ final class MovingCoilMeter: FaceplateScreen {
                 let c = CGPoint(x: window.minX + window.width * fx, y: window.maxY + 2)
                 ctx.drawRadialGradient(g, startCenter: c, startRadius: 0, endCenter: c, endRadius: window.height * 0.75, options: [])
             }
+        }
+        // Age: the paper yellows with use (Settings ▸ wear).
+        if Faceplate.wear > 0 {
+            ctx.setFillColor(NSColor(srgbRed: 0.62, green: 0.46, blue: 0.18, alpha: 0.16 * Faceplate.wear).cgColor); ctx.fill(window)
         }
         // Scale geometry: the pivot sits under the bridge at the bottom centre.
         let pivot = CGPoint(x: window.midX, y: window.maxY + window.height * 0.10)

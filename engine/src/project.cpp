@@ -198,6 +198,7 @@ json::Value Engine::describe() const {
         if (t.stack) tv.set("stack", t.stack);
         if (t.isStack) tv.set("isStack", true);
         if (t.collapsed) tv.set("collapsed", true);
+        if (t.height > 0) tv.set("height", static_cast<double>(t.height)); // view-only
         if (t.hidden) tv.set("hidden", true); // view-only: older builds ignore it and play the same
         if (!t.sends.empty()) {
             json::Value sends = json::Value::makeArray();
@@ -523,6 +524,8 @@ std::unique_ptr<Engine::PreparedProject> Engine::prepareDocument(const json::Val
             t.isStack = tv.getBool("isStack", false) && t.kind == kTrackBus;
             t.collapsed = t.isStack && tv.getBool("collapsed", false);
             t.hidden = tv.getBool("hidden", false);
+            if (const double h = tv.getNumber("height", 0); std::isfinite(h) && h > 0)
+                t.height = std::clamp(static_cast<float>(h), kMinTrackHeight, kMaxTrackHeight);
             for (const auto &[key, pts] : {std::pair<const char *, std::vector<AutoPoint> *>{"volumeAutomation", &t.volumeAuto},
                                            {"panAutomation", &t.panAuto}}) {
                 const json::Value *list = tv.get(key);

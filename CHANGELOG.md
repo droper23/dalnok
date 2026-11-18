@@ -14,7 +14,12 @@ cover the development up to this release.
 - A bypassed Graphite unit sets back slightly and its lights go out (LED rings, switch lamps, readouts, meters, screens, the VU lamps) while the metal stays as it is.
 - The tempo readout can be dragged up or down to change the tempo (⇧ for 0.1 BPM steps, one undo step per drag). Typing accepts only numbers, in a clearly lit edit box.
 - `scripts/release.sh` packages `dist/Dalnok-<version>.zip`.
-- README screenshots (`assets/screenshots/`), captured from generated projects. Snapshots and screenshots no longer show the audio device's name.
+- README screenshots and animations (`assets/screenshots/`), captured from generated projects. `Dalnok <project> --tour <dir>` records a scripted walk (playback, mixer shown and hidden, a bypass, a track switch) as frames for the README GIFs. Snapshots, screenshots and tours never show the audio device's name.
+- Settings is one window for every preference, in panes: General (the DAW you're coming from, project saving, automation mode), Appearance (theme, ruler, second clock, track height), Audio & MIDI (output, recording input, MIDI inputs), Recording (count-in, metronome, monitoring), Plug-ins (meters, wear, display choices) and Keyboard Shortcuts (the shortcut editor now lives here).
+- Tracks can be sized one at a time (drag a header's bottom edge; double-click it for the default) or all at once (⌥-scroll over the tracks, View ▸ Taller/Shorter Tracks, or Settings). Heights are saved with the project (view only; C API 29 `dalnok_track_set_height`, command `track.setHeight`). Short tracks show their name and buttons without the knobs.
+- View ▸ Secondary Clock (or Settings): a small second readout under the position display, real time when the main display shows bars and bars when it shows real time.
+- Warm Analog's tape reels hold exactly as much tape as the project has sound; past the last clip they keep turning without transferring tape.
+- The VU meter's glass now shows wear clearly (dark dust, greasy smudges and scratches over the light face) and its paper yellows with age.
 ### Fixed (2026-11-18, release preparation)
 - Some VST3 plug-ins crashed Dalnok when added (seen with iZotope Trash): the host could not create the message and attribute-list objects plug-ins use to talk between their parts. Dalnok now provides them.
 - Quitting with some plug-ins loaded crashed in the plug-ins' own teardown (seen with a Qt-based VST3); Dalnok now leaves without running library teardown once everything is saved and shut down.
@@ -22,6 +27,8 @@ cover the development up to this release.
 - Dynamic EQs (TDR Nova as an Audio Unit) got a compressor meter; many frequency-and-gain bands now mean an EQ screen.
 - Clicking outside a track name (or the tempo) being edited keeps the typed text instead of leaving the field in edit mode.
 - A track's gain-knob ring could stay lit with no signal when a mouse-exit was missed (the window lost focus or the rows scrolled under the pointer); the ring now checks the pointer each frame.
+- Track and master meters (and the gain-knob rings that follow them) lit up on silent audio: some recordings carry a constant DC offset, which is inaudible but read as signal. The meters now track out DC (a one-pole tracker near 4 Hz); every audible frequency reads as before.
+- A long instrument name on a track header ran over the pan knob; it now truncates before it.
 
 ### Added (2026-11-18, Graphite faceplates)
 - Graphite draws each plug-in in the device panel as a hardware unit on a brushed graphite faceplate. Knobs carry printed scales with the plug-in's own end values. On/off parameters become lit push switches and short choices become stepped selectors. Related parameters share engraved sections, and every control has a value readout.

@@ -94,10 +94,62 @@ enum Screenshots {
             try? await Task.sleep(for: .seconds(0.3))
             if let v = w.pluginManager.window?.contentView { png(v, dir.appendingPathComponent("plugins.png")) }
             w.pluginManager.window?.orderOut(nil)
-            w.settings.show()
-            try? await Task.sleep(for: .seconds(0.3))
-            if let v = w.settings.window?.contentView { png(v, dir.appendingPathComponent("settings.png")) }
+            for pane in SettingsController.Pane.allCases {
+                w.settings.show(pane)
+                try? await Task.sleep(for: .seconds(0.3))
+                if let v = w.settings.window?.contentView {
+                    png(v, dir.appendingPathComponent(pane == .general ? "settings.png" : "settings-\(pane).png"))
+                }
+            }
             exit(0)
         }
+    }
+
+    /// --tour <dir>: a scripted walk through the open project for the README's animations. Plays it, shows and hides
+    /// the mixer, switches between tracks' plug-ins, bypasses a unit and turns it back on, while writing the window's
+    /// frames (1x, as fast as it can, with their times in times.txt) as frame-0000.tiff… Then quits.
+    static func tour(app: AppDelegate, dir: URL) {
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let w = app.main!, s = app.session
+        w.window?.setFrameAutosaveName("") // don't remember the tour's window size
+        w.window?.setContentSize(NSSize(width: 1440, height: 900))
+        w.window?.center()
+        if MainWindowController.showMixer { w.toggleMixer(nil) }
+        if !MainWindowController.showDevicePanel { w.toggleDevicePanel(nil) }
+        let withPlugins = s.tracks.filter { !$0.plugins.isEmpty }
+        let first = withPlugins.first ?? s.tracks.first
+        if let first { w.headers.select(first.id) }
+        app.engine.seek(0)
+        app.engine.play()
+        var frame = 0, times: [Double] = []
+        let start = Date()
+        let timer = Timer(timeInterval: 1.0 / 12, repeats: true) { _ in
+            MainActor.assumeIsolated {
+                guard let view = w.window?.contentView else { return }
+                let size = view.bounds.size
+                guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(size.width), pixelsHigh: Int(size.height), bitsPerSample: 8,
+                                                 samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)
+                else { return }
+                rep.size = size
+                view.cacheDisplay(in: view.bounds, to: rep)
+                try? rep.tiffRepresentation?.write(to: dir.appendingPathComponent(String(format: "frame-%04d.tiff", frame))) // fast to write
+                times.append(Date().timeIntervalSince(start)) // when each frame was taken, for the GIF's timing
+                try? times.map { String(format: "%.3f", $0) }.joined(separator: "\n").write(to: dir.appendingPathComponent("times.txt"), atomically: true, encoding: .utf8)
+                frame += 1
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        // The script: (seconds from the start, step).
+        let bypassTarget = first?.plugins.first?.id
+        let steps: [(Double, () -> Void)] = [
+            (1.6, { w.toggleMixer(nil) }),
+            (3.4, { if let t = first, let p = bypassTarget { s.setPluginBypassed(t.id, p, true) } }),
+            (4.6, { if let t = first, let p = bypassTarget { s.setPluginBypassed(t.id, p, false) } }),
+            (5.6, { if let other = withPlugins.dropFirst().first ?? s.tracks.first(where: { $0.isInstrument }) { w.headers.select(other.id) } }),
+            (7.0, { if let first { w.headers.select(first.id) } }),
+            (8.0, { w.toggleMixer(nil) }),
+            (9.6, { timer.invalidate(); print("tour: \(frame) frames in \(String(format: "%.1f", Date().timeIntervalSince(start))) s"); fflush(stdout); exit(0) }),
+        ]
+        for (t, step) in steps { DispatchQueue.main.asyncAfter(deadline: .now() + t) { MainActor.assumeIsolated { step() } } }
     }
 }

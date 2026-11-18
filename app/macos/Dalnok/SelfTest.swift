@@ -13,7 +13,7 @@ final class SelfTest {
     let workdir: URL
     private var failures = 0
     /// Preferences the test changes; all are restored at the end so a run never alters the owner's settings.
-    private static let restoredKeys = ["copyAudioOnSave", "comingFrom", "onboardingDone", "recordingInputUID", "rulerBarsAndBeats", "metronome", "showDevicePanel", "countIn", "showMixer", "showLauncher", "automationMode", "pedal.AUDelay", "shortcuts.preset", "shortcuts.overrides", "shortcuts.userPresets"] + PluginLibrary.keys + ["tapeSpeed", "trackHeight"]
+    private static let restoredKeys = ["copyAudioOnSave", "comingFrom", "onboardingDone", "recordingInputUID", "rulerBarsAndBeats", "metronome", "showDevicePanel", "countIn", "showMixer", "showLauncher", "automationMode", "pedal.AUDelay", "shortcuts.preset", "shortcuts.overrides", "shortcuts.userPresets"] + PluginLibrary.keys + ["tapeSpeed", "trackHeight", "secondaryClock", "faceplateWear"]
     private let previousPreferences: [String: Any]
     private var w: MainWindowController { app.main }
     private var s: Session { app.session }
@@ -76,6 +76,10 @@ final class SelfTest {
     func run() {
         Self.running = true
         MainWindowController.copyAudioOnSave = true
+        // A known layout whatever the owner left open (the mixer would squeeze the tracks to a sliver); restored at the end.
+        if MainWindowController.showMixer { w.toggleMixer(nil) }
+        if MainWindowController.showLauncher { w.toggleLauncher(nil) }
+        UserDefaults.standard.removeObject(forKey: "secondaryClock")
         try? FileManager.default.createDirectory(at: workdir, withIntermediateDirectories: true)
         s.importFiles(files) { [self] in Task { await steps() } }
     }
@@ -483,6 +487,10 @@ final class SelfTest {
         let oldCopy = MainWindowController.copyAudioOnSave
         check(perform("Settings…"), "Dalnok > Settings opens")
         check(w.settings.window?.isVisible == true, "settings window is visible")
+        for pane in SettingsController.Pane.allCases { w.settings.show(pane) }
+        check(w.settings.pane == .shortcuts && w.shortcutsEditor.table.window === w.settings.window,
+              "Settings has every pane, keyboard shortcuts included")
+        w.settings.show(.general)
         if let view = w.settings.window?.contentView, let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
             view.cacheDisplay(in: view.bounds, to: bitmap)
             try? bitmap.representation(using: .png, properties: [:])?.write(to: workdir.appendingPathComponent("settings.png"))
@@ -781,6 +789,50 @@ final class SelfTest {
         }
         check(perform("Shorter Tracks", exact: true) && abs(Theme.trackHeight - h0) < 0.5, "Shorter Tracks returns to \(h0)")
         w.window?.layoutIfNeeded()
+        // One track's height: drag its header's bottom edge (one undo step); the lanes below move with it.
+        if w.headers.rows.count >= 2 {
+            let row = w.headers.rows[0], id = row.trackId
+            let edge = row.convert(CGPoint(x: 40, y: row.bounds.height - 2), to: nil)
+            row.mouseDown(with: mouse(.leftMouseDown, edge))
+            row.mouseDragged(with: mouse(.leftMouseDragged, CGPoint(x: edge.x, y: edge.y - 30)))
+            row.mouseDragged(with: mouse(.leftMouseDragged, CGPoint(x: edge.x, y: edge.y - 60)))
+            row.mouseUp(with: mouse(.leftMouseUp, CGPoint(x: edge.x, y: edge.y - 60)))
+            w.window?.layoutIfNeeded()
+            let h = s.track(id)?.height ?? 0
+            check(abs(h - (h0 + 60)) < 1 && s.engine.undoName == "Track Height" && abs(w.headers.rows[0].frame.height - h) < 0.5
+                  && abs(w.timeline.laneY(1) - (Theme.rulerHeight + h - w.timeline.scrollY)) < 0.5 && abs(s.laneHeight(1) - Theme.trackHeight) < 0.5,
+                  "dragging a header's bottom edge sizes that one track; the lanes below follow (\(h))")
+            _ = perform("Undo")
+            check((s.track(id)?.height ?? -1) == 0, "one undo restores it")
+            s.setTrackHeight(id, 56); w.window?.layoutIfNeeded()
+            check(w.headers.rows[0].gain.isHidden && !w.headers.rows[0].nameLabel.isHidden, "a short track shows its name and buttons, not its knobs")
+            s.setTrackHeight(id, 0); w.window?.layoutIfNeeded()
+            check(!w.headers.rows[0].gain.isHidden, "and the knobs return at full height")
+            // ⌥-scroll sizes every track.
+            let before = Theme.trackHeight
+            if let cg = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: 40, wheel2: 0, wheel3: 0) {
+                cg.flags = .maskAlternate
+                if let ev = NSEvent(cgEvent: cg) { w.timeline.scrollWheel(with: ev) }
+            }
+            check(Theme.trackHeight > before + 5, "⌥-scroll makes every track taller (\(before) → \(Theme.trackHeight))")
+            w.setTrackHeight(before); w.window?.layoutIfNeeded()
+        }
+        // A long instrument name never runs over the pan knob.
+        if let row = w.headers.rows.first {
+            let saved = row.inputButton.title
+            row.inputButton.title = "A Very Long Instrument Name · 3 FX"
+            row.layoutSubtreeIfNeeded()
+            check(row.inputButton.frame.minX >= row.pan.frame.maxX + 7, "the input label stops before the pan knob (truncating)")
+            row.inputButton.title = saved
+        }
+        // The small second clock.
+        TransportBar.showsSecondaryClock = true
+        w.tick()
+        check(!w.transport.subTimeLabel.isHidden && !w.transport.subTimeLabel.stringValue.isEmpty
+              && w.transport.subTimeLabel.stringValue != w.transport.timeLabel.stringValue, "the second clock shows the other time format (\(w.transport.subTimeLabel.stringValue))")
+        TransportBar.showsSecondaryClock = false
+        check(w.transport.subTimeLabel.isHidden, "and hides again")
+        UserDefaults.standard.removeObject(forKey: "secondaryClock")
     }
 
     // MARK: Dead controls: nothing may look usable while doing nothing
@@ -1835,6 +1887,12 @@ final class SelfTest {
             let h = TapeReels.thickness(length: 120), r0 = TapeReels.hub
             let exact = 2 * CGFloat.pi * (sqrt(r0 * r0 + TapeReels.speed * 0.5 * h / .pi) - r0) / h
             check(abs(reels.reelAngles.1 - exact) < 1e-3, "the take-up angle matches the spiral model at 0.5 s (\(reels.reelAngles.1) vs \(exact))")
+            // Only as much tape as there is sound: past the end the reels spin on but no tape moves.
+            let short = TapeReels(); short.length = 2
+            short.update(seconds: 0); short.update(seconds: 0.6); short.update(seconds: 1.2); short.update(seconds: 1.8); short.update(seconds: 2.0)
+            let full = short.tapeFraction, a0 = short.reelAngles.1
+            short.update(seconds: 2.6); short.update(seconds: 3.2)
+            check(full == 1 && short.tapeFraction == 1 && short.reelAngles.1 > a0 + 1, "past the last sound the reels keep turning without transferring tape (\(short.tapeFraction))")
         }
         // Follow action from the slot's menu, then drag the slot clip out onto the timeline.
         if let slotClip = s.slotClip(track.id, 0) {

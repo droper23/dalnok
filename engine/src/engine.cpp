@@ -1381,6 +1381,16 @@ bool Engine::setStackCollapsed(DalnokTrackId stack, bool collapsed, std::string 
     });
 }
 
+bool Engine::setTrackHeight(DalnokTrackId track, float height, std::string &err) {
+    if (!std::isfinite(height) || height < 0) return fail(err, "height must be 0 (default) or positive");
+    const float h = height == 0 ? 0.0f : std::clamp(height, kMinTrackHeight, kMaxTrackHeight);
+    if (track && !model_.track(track)) return fail(err, "no such track");
+    return edit("Track Height", false, [&](Model &m) {
+        for (auto &t : m.tracks) if (!track || t.id == track) t.height = h;
+        return true;
+    });
+}
+
 bool Engine::setTrackHidden(DalnokTrackId track, bool hidden, std::string &err) {
     if (track == 0 && !hidden) {
         if (std::none_of(model_.tracks.begin(), model_.tracks.end(), [](const TrackState &t) { return t.hidden; })) return fail(err, "no hidden tracks");
@@ -2364,8 +2374,8 @@ void Engine::process(float *left, float *right, int frames) DALNOK_NONBLOCKING {
             renderClick(l, r, n, rtPosition_);
         float pl = 0, pr = 0;
         for (int i = 0; i < n; ++i) {
-            pl = std::max(pl, std::fabs(l[i]));
-            pr = std::max(pr, std::fabs(r[i]));
+            pl = std::max(pl, meterLevel(l[i], masterDcL_));
+            pr = std::max(pr, meterLevel(r[i], masterDcR_));
         }
         raisePeak(masterPeakL_, pl);
         raisePeak(masterPeakR_, pr);

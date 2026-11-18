@@ -197,6 +197,11 @@ const CommandDef kCommands[] = {
          if (!needInt(a, "track", t, err)) return DALNOK_ERR_INVALID_ARG;
          return status(e.setTrackHidden(t, a.getBool("hidden", true), err), err);
      }},
+    {"track.setHeight", "Track Height", "{track (0 = all), height (points, 0 = default)}", [](ARGS) {
+         DalnokTrackId t;
+         if (!needInt(a, "track", t, err)) return DALNOK_ERR_INVALID_ARG;
+         return status(e.setTrackHeight(t, static_cast<float>(a.getNumber("height", 0)), err), err);
+     }},
     {"track.duplicate", "Duplicate Track", "{track}", [](ARGS) {
          DalnokTrackId t;
          if (!needInt(a, "track", t, err)) return DALNOK_ERR_INVALID_ARG;

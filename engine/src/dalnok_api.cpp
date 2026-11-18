@@ -552,6 +552,10 @@ DalnokStatus dalnok_track_stack_set_collapsed(DalnokEngine *e, DalnokTrackId sta
     std::string err;
     return e ? statusFor(e->impl.setStackCollapsed(stack, collapsed, err), err) : DALNOK_ERR_INVALID_ARG;
 }
+DalnokStatus dalnok_track_set_height(DalnokEngine *e, DalnokTrackId t, float height) {
+    std::string err;
+    return e ? statusFor(e->impl.setTrackHeight(t, height, err), err) : DALNOK_ERR_INVALID_ARG;
+}
 DalnokStatus dalnok_track_stack_ungroup(DalnokEngine *e, DalnokTrackId stack) {
     std::string err;
     return e ? statusFor(e->impl.ungroupStack(stack, err), err) : DALNOK_ERR_INVALID_ARG;
@@ -882,6 +886,7 @@ DalnokStatus dalnok_track_info(const DalnokEngine *e, DalnokTrackId id, DalnokTr
     out->stack = t->stack;
     out->is_stack = t->isStack;
     out->collapsed = t->collapsed;
+    out->height = t->height;
     for (const auto &c : e->impl.model().clips) out->clip_count += c.track == id;
     return DALNOK_OK;
 }

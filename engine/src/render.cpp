@@ -207,8 +207,8 @@ void renderLiveInput(const RenderState &state, int frames, float *left, float *r
         const float vl = s.trackL[i] * gl, vr = (stereo ? s.trackR[i] : s.trackL[i]) * gr;
         left[i] += vl;
         right[i] += vr;
-        pl = std::max(pl, std::fabs(vl));
-        pr = std::max(pr, std::fabs(vr));
+        pl = std::max(pl, meterLevel(vl, rt.meterDcL));
+        pr = std::max(pr, meterLevel(vr, rt.meterDcR));
     }
     raisePeak(rt.peakL, pl);
     raisePeak(rt.peakR, pr);
@@ -407,8 +407,8 @@ void renderBlock(const RenderState &state, int64_t pos, int frames, float *left,
                     const float vl = s.trackL[i] * (l0 + sl * off), vr = s.trackR[i] * (r0 + sr * off);
                     s.fadeL[i] = vl;
                     s.fadeR[i] = vr;
-                    pl = std::max(pl, std::fabs(vl));
-                    pr = std::max(pr, std::fabs(vr));
+                    pl = std::max(pl, meterLevel(vl, rt.meterDcL));
+                    pr = std::max(pr, meterLevel(vr, rt.meterDcR));
                 }
                 const float end = static_cast<float>(f - g0 + n);
                 al = l0 + sl * end;
@@ -448,8 +448,8 @@ void renderBlock(const RenderState &state, int64_t pos, int frames, float *left,
                 const float vl = s.trackL[i] * cl, vr = s.trackR[i] * cr;
                 s.fadeL[i] = vl;
                 s.fadeR[i] = vr;
-                pl = std::max(pl, std::fabs(vl));
-                pr = std::max(pr, std::fabs(vr));
+                pl = std::max(pl, meterLevel(vl, rt.meterDcL));
+                pr = std::max(pr, meterLevel(vr, rt.meterDcR));
             }
             deliver();
             raisePeak(rt.peakL, pl);

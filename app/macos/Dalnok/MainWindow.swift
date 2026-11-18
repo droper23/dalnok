@@ -288,6 +288,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         headers.onAddTrack = { [weak self] in self?.newTrack(nil) }
         timeline.onVerticalScroll = { [weak self] y in self?.headers.scrollY = y; self?.launcher.scrollY = y }
         headers.onScroll = { [weak self] e in self?.timeline.scroll(with: e, zoomAnchorX: 0) }
+        timeline.onAllTracksHeight = { [weak self] h in self?.setTrackHeight(h) }
+        clockObserver = NotificationCenter.default.addObserver(forName: TransportBar.clockChanged, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.transport.applyClockSetting() }
+        }
         timeline.onRenameMarker = { [weak self] id in self?.renameMarker(id) }
         launcher.onScroll = { [weak self] e in self?.timeline.scroll(with: e, zoomAnchorX: 0) }
         timeline.onClipSelected = { [weak self] clip in self?.headers.selectedTrack = clip.track }
@@ -506,13 +510,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         transport.statusLabel.stringValue = text
     }
 
-    private func outputDeviceDescription() -> String {
+    func outputDeviceDescription() -> String {
         let e = session.engine
         let uid = e.outputDeviceUid
         let devices = Engine.outputDevices()
         let dev = uid.isEmpty ? devices.first(where: \.isDefault) : devices.first(where: { $0.uid == uid })
         // Captures (snapshots, documentation screenshots) never show the machine's device names, which can be personal.
-        let capturing = CommandLine.arguments.contains("--snapshot") || CommandLine.arguments.contains("--screenshots")
+        let capturing = ["--snapshot", "--screenshots", "--tour"].contains { CommandLine.arguments.contains($0) }
         var s = capturing ? "Audio output" : dev?.name ?? "No output"
         let hw = e.hardwareSampleRate
         if hw > 0 && abs(hw - e.sampleRate) > 0.5 {
@@ -523,7 +527,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         return s
     }
 
-    private func tick() {
+    func tick() {
         let e = session.engine
         e.collectGarbage()
         session.refresh() // picks up changes from any source (e.g. scripts)
@@ -564,10 +568,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         // Warm Analog power-on: every segment lit for a moment, like a display's lamp test.
         if Date() < vfdTestUntil { position = String(position.map { $0.isNumber ? "8" : $0 }) }
         transport.timeLabel.stringValue = position
+        if TransportBar.showsSecondaryClock {
+            let other = timeline.positionText(e.position, barsAndBeats: !TimelineView.barsAndBeats)
+            if transport.subTimeLabel.stringValue != other { transport.subTimeLabel.stringValue = other }
+        }
         if Analog.on {
-            if tickCount % 60 == 0 { // project length sets how full the reels are
+            if tickCount % 60 == 0 { // as much tape as there is sound in the project
                 let end = session.tracks.flatMap(\.clips).map(\.end).max() ?? 0
-                transport.reels.length = max(60, Double(end) / e.sampleRate * 1.1)
+                transport.reels.length = max(1, Double(end) / e.sampleRate)
             }
             transport.reels.update(seconds: Double(e.position) / e.sampleRate)
             if transport.tapeStrip.transport == nil { transport.tapeStrip.transport = tapeTransport }
@@ -1358,7 +1366,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     }
     @objc func tallerTracks(_ sender: Any?) { setTrackHeight(Theme.trackHeight * 1.25) }
     @objc func shorterTracks(_ sender: Any?) { setTrackHeight(Theme.trackHeight / 1.25) }
-    private func setTrackHeight(_ h: CGFloat) {
+    /// Every track to one height (menu, ⌥-scroll): tracks with their own height join the default (one undo step).
+    func setTrackHeight(_ h: CGFloat) {
+        if session.tracks.contains(where: { $0.height > 0 }) { session.setTrackHeight(0, 0) }
         Theme.trackHeight = h
         headers.needsLayout = true; headers.sync()
         timeline.clampScrollY(); timeline.needsDisplay = true; launcher.needsDisplay = true
@@ -1377,8 +1387,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
     // MARK: Shortcut editor, track navigation, bypass, style
 
-    lazy var shortcutsEditor = ShortcutEditorController()
-    @objc func showKeyboardShortcuts(_ sender: Any?) { shortcutsEditor.showWindow(nil); shortcutsEditor.window?.makeKeyAndOrderFront(nil) }
+    /// The keyboard-shortcut editor (Settings ▸ Keyboard Shortcuts).
+    var shortcutsEditor: ShortcutEditorController { settings.shortcuts }
+    @objc func showKeyboardShortcuts(_ sender: Any?) { settings.show(.shortcuts) }
 
     /// Track ▸ Select Previous/Next Track (↑ / ↓ in the arrangement).
     @objc func selectPreviousTrack(_ sender: Any?) { selectAdjacentTrack(-1) }
@@ -1476,6 +1487,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         let id = session.addBus()
         if id != 0 { headers.select(id); flash("New bus: send tracks to it from the mixer (View ▸ Mixer)") }
     }
+
+    /// View ▸ Secondary Clock (also in Settings): a small real-time (or bars) readout under the main position.
+    @objc func toggleSecondaryClock(_ sender: Any?) { TransportBar.showsSecondaryClock.toggle() }
+    private var clockObserver: NSObjectProtocol?
 
     @objc func toggleBarsAndBeats(_ sender: Any?) {
         TimelineView.barsAndBeats.toggle()
@@ -1724,8 +1739,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             return selectedTrack.flatMap { session.track($0) }.map { !$0.isStack } ?? false
         case #selector(zoomToSelection(_:)):
             return !timeline.selectedClips.isEmpty
-        case #selector(tallerTracks(_:)): return Theme.trackHeight < 220
-        case #selector(shorterTracks(_:)): return Theme.trackHeight > 88
+        case #selector(tallerTracks(_:)): return Theme.trackHeight < 400
+        case #selector(shorterTracks(_:)): return Theme.trackHeight > 48
         case #selector(toggleAnalogStyle(_:)):
             item.state = Theme.activeStyle == .warmAnalog ? .on : .off
             return !session.engine.isRecording
@@ -1750,6 +1765,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             return tempoSegmentAtPlayhead().meter > 0
         case #selector(toggleDevicePanel(_:)):
             item.state = Self.showDevicePanel ? .on : .off
+            return true
+        case #selector(toggleSecondaryClock(_:)):
+            item.state = TransportBar.showsSecondaryClock ? .on : .off
             return true
         case #selector(toggleBarsAndBeats(_:)):
             item.state = TimelineView.barsAndBeats ? .on : .off

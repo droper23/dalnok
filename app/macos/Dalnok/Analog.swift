@@ -301,8 +301,11 @@ struct ReelModel {
     static func thickness(length: Double, speed: CGFloat = speed) -> CGFloat {
         .pi * (full * full - hub * hub) / (speed * CGFloat(max(1, length)))
     }
-    /// Project length in seconds (sets how full each reel is).
+    /// Seconds of sound in the project (the end of its last clip): exactly that much tape is on the reels. Past it
+    /// the reels keep turning at tape speed but no more tape transfers.
     var length: Double = 120
+    /// The playhead at the last advance (to turn the reels past the end of the tape).
+    private var lastTarget: Double = 0
     /// Tape speed multiplier (1 = 15 ips; 0.5 = 7½ ips; 2 = 30 ips). Faster tape: the same music uses more tape.
     var speedFactor: CGFloat = 1
     /// Seconds of tape on the take-up reel (eases toward the playhead after a jump: a fast wind).
@@ -317,10 +320,20 @@ struct ReelModel {
     /// Moves the tape to `seconds`; jumps of more than a second wind there at `windRate` per second. Returns whether
     /// anything moved.
     mutating func advance(to seconds: Double, dt: Double, reduced: Bool, windRate: Double = 9) -> Bool {
-        let target = max(0, seconds)
+        let playhead = max(0, seconds)
+        defer { lastTarget = playhead }
+        // Past the end of the sound: the reels spin on, the packs stay as they are.
+        let beyond = max(0, playhead - length) - max(0, lastTarget - length)
+        var spun = false
+        if beyond > 0, beyond < 1, !reduced {
+            let r = radii, v = Self.speed * speedFactor * CGFloat(beyond)
+            angles = (angles.0 + v / r.0, angles.1 + v / r.1)
+            spun = true
+        }
+        let target = min(playhead, length)
         var next = target
         if abs(target - shown) > 1, !reduced { next = shown + (target - shown) * min(1, dt * windRate) }
-        guard abs(next - shown) > 1e-4 else { return false }
+        guard abs(next - shown) > 1e-4 else { return spun }
         if reduced { shown = next; return true } // the packs show where you are; the reels don't turn
         let before = radii
         shown = next

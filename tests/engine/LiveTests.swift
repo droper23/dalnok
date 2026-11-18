@@ -90,7 +90,7 @@ func liveEngine(_ samples: [Float]) -> (OpaquePointer, DalnokTrackId, OpaquePoin
     }
 
     @Test func metersReportPostFaderPeaksAndReset() {
-        let (e, t, m) = liveEngine([Float](repeating: 0.5, count: 48_000))
+        let (e, t, m) = liveEngine((0..<48_000).map { $0 % 2 == 0 ? Float(0.5) : -0.5 }) // full-band, no DC
         defer { dalnok_media_release(m); dalnok_engine_destroy(e) }
         dalnok_track_set_gain_db(e, t, -6.0206)
         dalnok_transport_play(e)
@@ -103,6 +103,29 @@ func liveEngine(_ samples: [Float]) -> (OpaquePointer, DalnokTrackId, OpaquePoin
         dalnok_meter_track(e, t, &l, &r)
         #expect(l == 0 && r == 0, "reading resets")
         #expect(dalnok_meter_track(e, 999, &l, &r) == DALNOK_ERR_NOT_FOUND)
+    }
+
+    /// A constant offset in a recording is inaudible: track and master meters ignore it (and still read the signal on it).
+    @Test func metersIgnoreDcOffset() {
+        let (e, t, m) = liveEngine([Float](repeating: 0.04, count: 48_000))
+        defer { dalnok_media_release(m); dalnok_engine_destroy(e) }
+        dalnok_transport_play(e)
+        _ = pump(e, 24_000) // the meter's offset tracker settles within about 0.2 s
+        var l: Float = 0, r: Float = 0
+        dalnok_meter_track(e, t, &l, &r); dalnok_meter_master(e, &l, &r) // reset both after settling
+        _ = pump(e, 4_096)
+        dalnok_meter_track(e, t, &l, &r)
+        #expect(l < 0.001 && r < 0.001, "a pure DC offset reads below -60 dB (\(l), \(r))")
+        dalnok_meter_master(e, &l, &r)
+        #expect(l < 0.001, "on the master too (\(l))")
+        let (e2, t2, m2) = liveEngine((0..<48_000).map { 0.04 + 0.25 * Float(sin(Double($0) * 2 * .pi * 440 / 48_000)) })
+        defer { dalnok_media_release(m2); dalnok_engine_destroy(e2) }
+        dalnok_transport_play(e2)
+        _ = pump(e2, 24_000)
+        dalnok_meter_track(e2, t2, &l, &r)
+        _ = pump(e2, 4_096)
+        dalnok_meter_track(e2, t2, &l, &r)
+        #expect(abs(l - 0.25) < 0.01, "a 440 Hz tone on the offset reads its own peak (\(l))")
     }
 
     @Test func pluginMetersReportInputAndOutputPeaks() {

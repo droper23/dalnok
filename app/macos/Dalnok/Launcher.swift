@@ -34,9 +34,9 @@ final class LauncherView: NSView, TrackScrollHost {
     var onDropToTimeline: ((DalnokClipId, CGPoint) -> Bool)?
     private var dragFrom: (clip: DalnokClipId, at: CGPoint)?
 
-    func laneY(_ i: Int) -> CGFloat { Theme.rulerHeight + CGFloat(i) * Theme.trackHeight - scrollY }
+    func laneY(_ i: Int) -> CGFloat { Theme.rulerHeight + session.laneTop(i) - scrollY }
     func slotRect(row: Int, slot: Int) -> CGRect {
-        CGRect(x: 4 + CGFloat(slot) * Self.slotWidth, y: laneY(row) + 6, width: Self.slotWidth - 6, height: Theme.trackHeight - 12)
+        CGRect(x: 4 + CGFloat(slot) * Self.slotWidth, y: laneY(row) + 6, width: Self.slotWidth - 6, height: session.laneHeight(row) - 12)
     }
     func sceneRect(_ slot: Int) -> CGRect { CGRect(x: 4 + CGFloat(slot) * Self.slotWidth, y: 4, width: Self.slotWidth - 6, height: Theme.rulerHeight - 8) }
 
@@ -44,7 +44,7 @@ final class LauncherView: NSView, TrackScrollHost {
     func slot(atWindow point: CGPoint) -> (row: Int, slot: Int)? {
         let p = convert(point, from: nil)
         guard bounds.contains(p), p.y >= Theme.rulerHeight else { return nil }
-        let row = Int(((p.y + scrollY - Theme.rulerHeight) / Theme.trackHeight).rounded(.down))
+        let row = session.laneIndex(atY: p.y + scrollY - Theme.rulerHeight)
         let k = Int(((p.x - 4) / Self.slotWidth).rounded(.down))
         return row >= 0 && row < session.tracks.count && k >= 0 && k < Int(session.scenes) ? (row, k) : nil
     }
@@ -79,9 +79,9 @@ final class LauncherView: NSView, TrackScrollHost {
         }
         for (i, track) in session.tracks.enumerated() {
             let y = laneY(i)
-            guard y + Theme.trackHeight > Theme.rulerHeight, y < bounds.height else { continue }
+            guard y + session.laneHeight(i) > Theme.rulerHeight, y < bounds.height else { continue }
             (i % 2 == 0 ? Theme.laneA : Theme.laneB).setFill()
-            CGRect(x: 0, y: y, width: bounds.width, height: Theme.trackHeight).fill()
+            CGRect(x: 0, y: y, width: bounds.width, height: session.laneHeight(i)).fill()
             let playing = dalnok_launcher_playing(session.engine.handle, track.id)
             for k in 0..<Int(session.scenes) {
                 let r = slotRect(row: i, slot: k)

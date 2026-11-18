@@ -193,6 +193,13 @@ final class DevicePanel: NSView {
                             : "No plug-ins on \(t!.name) yet."
     }
 
+    /// Rebuilds every unit from scratch (a display choice changed for all of them).
+    func rebuildAll() {
+        devices.forEach { $0.removeFromSuperview() }
+        devices = []
+        rebuild()
+    }
+
     /// Picks up parameter changes made elsewhere (the plug-in's own editor, undo of controls).
     func refreshValues() { devices.forEach { $0.refreshValues() } }
     /// Graphite device meters (every frame).
