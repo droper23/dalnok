@@ -48,3 +48,5 @@ Self-test (both themes) checks: Play lights and turns both reels forward, Pause 
 REWIND turns them back, Stop returns to the start point, RTZ, LOOP toggles the shared cycle, and the speed switch.
 Real input: ⇧⌘T, Space, holding F.FWD for 1 s (counter 00:12.2) and REWIND for 0.5 s (back to 00:06.0).
 Not judged: smoothness by eye over long runs.
+
+Focused tape keys accept Space or Return; hold a wind key to wind and release it to stop. Accessibility presses wind briefly. A Tab-only navigation path remains to be verified.

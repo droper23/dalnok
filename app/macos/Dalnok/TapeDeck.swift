@@ -196,11 +196,24 @@ final class DeckKey: NSControl {
         }
     }
     override var acceptsFirstResponder: Bool { true }
+    private func isActivationKey(_ event: NSEvent) -> Bool { [36, 49, 76].contains(event.keyCode) }
     override func keyDown(with event: NSEvent) {
-        if event.charactersIgnoringModifiers == " " || event.keyCode == 36 { _ = accessibilityPerformPress() } else { super.keyDown(with: event) }
+        guard isActivationKey(event) else { return super.keyDown(with: event) }
+        guard !pressed else { return }
+        pressed = true
+        if momentary { onPress?() }
+    }
+    override func keyUp(with event: NSEvent) {
+        guard isActivationKey(event) else { return super.keyUp(with: event) }
+        guard pressed else { return }
+        pressed = false
+        if momentary { onRelease?() } else { onPress?() }
     }
     override func becomeFirstResponder() -> Bool { needsDisplay = true; return true }
-    override func resignFirstResponder() -> Bool { needsDisplay = true; return true }
+    override func resignFirstResponder() -> Bool {
+        if pressed { pressed = false; if momentary { onRelease?() } }
+        needsDisplay = true; return true
+    }
 }
 
 /// The machine's top plate: reels, tape path, heads, capstan, counter and lamps.

@@ -43,7 +43,7 @@ This note is the durable inventory. Severity: **P0** data loss, crash, or corrup
 - **Plug-in isolation:** hosting stays in-process (ADR-0009); scanning is out of process. A crashing hosted plug-in can
   still take Dalnok down.
 - **Tape coloration** (saturation, wow and flutter) as an opt-in effect: not built. The Tape Machine is visual only.
-- **Accessibility:** labels and keyboard operation exist for the new controls, but a full VoiceOver pass and a
+- **Accessibility:** focused tape keys now receive Space and Return; real input verified LOOP after accessibility focus was set. A Tab-only path to the tape key was not established. A full VoiceOver pass and a
   keyboard-only walkthrough of every window have not been done.
 - **Warm Analog capture time:** the 64-track generated project capture takes about 5.5 s in Warm Analog vs 2.6 s in Graphite; layer shadows render on the CPU. On-screen cost is not measured.
 - **Plug-in categories on your real library** (453 plug-ins, metadata only, not scanned) were not reviewed one by one.

@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Fixed (2026-11-17, tape keyboard access)
+- Focused tape keys receive Space and Return; keyboard wind keys run until release and stop if focus leaves.
 ### Added and fixed (2026-11-17, Logic import and tape strip)
 - Logic import handles long continuation records, split-region pieces and MIDI notes; unsupported Drummer regions are reported. MIDI region lengths still derive from the last note, rounded to bars.
 - Markers with navigation, duplicate and hidden tracks, track height, vertical zoom and zoom to selection. Only ⌘ shortcuts run while editing text.

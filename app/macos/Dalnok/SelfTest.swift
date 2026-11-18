@@ -818,6 +818,29 @@ final class SelfTest {
         check(perform("Tape Machine", exact: true) && w.tapeDeck?.window?.isVisible == true, "View ▸ Tape Machine opens the deck")
         guard let deck = w.tapeDeck?.deck else { return }
         let saved = Motion.override; Motion.override = true; defer { Motion.override = saved }
+        if let window = w.tapeDeck?.window {
+            NSApp.activate()
+            window.makeKeyAndOrderFront(nil)
+            window.makeFirstResponder(deck.loop)
+            await wait(0.15)
+            func deckKey(_ chars: String, _ code: UInt16) -> NSEvent {
+                NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                 windowNumber: window.windowNumber, context: nil, characters: chars, charactersIgnoringModifiers: chars,
+                                 isARepeat: false, keyCode: code)!
+            }
+            let space = deckKey(" ", 49), enter = deckKey("\r", 36)
+            let cycleBefore = s.cycle.on
+            check(!(NSApp.mainMenu?.performKeyEquivalent(with: space) ?? true), "focused tape key keeps Space from the shortcut registry")
+            deck.loop.keyDown(with: space); deck.loop.keyUp(with: space)
+            check(s.cycle.on != cycleBefore && !e.isPlaying, "Space activates focused LOOP instead of starting playback")
+            deck.loop.keyDown(with: enter); deck.loop.keyUp(with: enter)
+            check(s.cycle.on == cycleBefore, "Return activates the focused tape key")
+            window.makeFirstResponder(deck.ffwd)
+            deck.ffwd.keyDown(with: space)
+            check(w.tapeTransport.winding == 1, "keyboard holds FF while pressed")
+            deck.ffwd.keyUp(with: space)
+            check(w.tapeTransport.winding == 0, "releasing the keyboard stops FF")
+        }
         deck.step(dt: 0.016)
         let a0 = deck.model.angles
         deck.play.onPress?()

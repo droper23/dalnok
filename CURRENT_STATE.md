@@ -5,6 +5,9 @@ milestone: M11 VST3 hosting (ADR-0009 stage 3) done; editors, parameters and AU 
 ---
 # Current State
 
+## Latest session (tape keyboard access; 2026-11-17)
+- Focused tape keys receive Space and Return instead of the global transport shortcut; wind keys run only while held and stop if focus leaves. Warm Analog self-test passed 468 checks, including the shortcut handoff and wind press/release. Real Space and Return input toggled the focused LOOP key after accessibility focus was set; Tab navigation to the key was not established and remains part of the keyboard-only pass.
+
 ## Latest session (Logic import and tape strip; 2026-11-17)
 - Logic import handles continuation records, split-region pieces and MIDI notes; Drummer regions are reported as skipped. The owner's oviii project imports; 60 MIDI notes matched Logic's MIDI export. Audio placement has not been compared with a Logic export, and MIDI region lengths are rounded up from the last note to whole bars.
 - Markers, duplicate and hidden tracks, track height and vertical zoom, and zoom to selection are implemented. Duplicate Track uses ⌃⇧D, verified with real keyboard input on a generated project.

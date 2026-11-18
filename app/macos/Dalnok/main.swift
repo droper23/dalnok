@@ -186,9 +186,12 @@ final class MainMenu: NSMenu {
         // While a text field is being edited, it owns every key without ⌘: plain keys type, ⌥ keys type characters
         // (⌥' is æ), and ⌃ keys edit (⌃H deletes backward, ⌃F moves forward).
         if !event.modifierFlags.contains(.command), MainActor.assumeIsolated({ MainWindowController.isTyping }) { return false }
+        nonisolated(unsafe) let e = event
+        // A focused tape key owns its activation keys, including keys also bound to transport commands.
+        if event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty,
+           [36, 49, 76].contains(event.keyCode), MainActor.assumeIsolated({ (NSApp.keyWindow ?? e.window)?.firstResponder is DeckKey }) { return false }
         // The registry decides: it runs the command bound in the active context, leaves piano-roll keys to the
         // piano roll, and never lets a menu item fire a key that belongs to another context.
-        nonisolated(unsafe) let e = event
         let verdict: Bool? = MainActor.assumeIsolated {
             let r = ShortcutRegistry.shared
             if ShortcutRegistry.capturing { return false }
