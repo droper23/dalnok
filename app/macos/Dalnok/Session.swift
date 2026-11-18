@@ -522,7 +522,12 @@ final class Session {
         let json = try await engine.importForeign(from: url)
         projectURL = nil
         refresh()
-        return ImportReport(json: json)
+        let unavailable = allTracks.flatMap { track in
+            track.plugins.filter { !$0.loaded }.map { plugin in
+                "\(track.name) — \(plugin.name): \(plugin.error.isEmpty ? "not loaded; settings are kept" : plugin.error)"
+            }
+        }
+        return ImportReport(json: json, unavailablePlugins: unavailable)
     }
 
     func save(to url: URL, copyAudio: Bool = false) throws {

@@ -879,7 +879,12 @@ void Engine::instantiatePlugins() {
             std::string err;
             std::shared_ptr<PluginProcessor> p(loadPlugin(slot.format, slot.path, slot.classId, sampleRate_, kMaxBlock, false, err));
             if (!p) { pluginErrors_[slot.id] = err; continue; }
-            if (!slot.state.empty() && !p->setState(slot.state)) pluginErrors_[slot.id] = "the saved state was not accepted";
+            if (!slot.state.empty() && !p->setState(slot.state)) {
+                // Keep the original state intact instead of running and later saving a default instance.
+                const auto detail = p->stateError();
+                pluginErrors_[slot.id] = "the saved state was not accepted" + (detail.empty() ? std::string{} : ": " + detail) + "; the original state was preserved";
+                continue;
+            }
             plugins_[slot.id] = std::move(p);
         }
 }
@@ -1897,6 +1902,9 @@ std::unique_ptr<RenderState> Engine::compile(std::vector<StretchJob> *needed, co
             if (slot.instrument && rt.instrument) rt.instrumentPlugin = it->second.get();
             else if (!slot.instrument) rt.inserts.push_back(it->second.get());
         }
+        // A missing or bypassed instrument must not silently substitute the built-in synth.
+        if (rt.instrument && !rt.instrumentPlugin && std::any_of(t.plugins.begin(), t.plugins.end(), [](const PluginSlot &p) { return p.instrument; }))
+            rt.instrument = false;
         for (const auto &c : model_.clips) {
             if (c.track != t.id || c.alt) continue; // takes in a folder don't play; the comp's pieces do
             if (c.slot >= 0 && c.midi()) { // launcher slot: notes relative to the loop start

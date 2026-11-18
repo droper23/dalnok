@@ -5,6 +5,11 @@ milestone: M11 VST3 hosting (ADR-0009 stage 3) done; editors, parameters and AU 
 ---
 # Current State
 
+## Latest session (Logic MIDI and Audio Units; 2026-11-17)
+- Logic MIDI import now uses MSeq region lengths and the note-sequence origin observed in Logic's arrangement. Notes outside or crossing a region are reported; compare unfamiliar Logic versions carefully.
+- Recognized Audio Units are assigned to their channel strips with saved class-info state. Missing or state-rejecting plug-ins retain their original state and are reported in the import sheet and device panel. Logic-native processors are reported as unsupported; they are not replaced with equivalent sound. Mixer levels, pan, routing, automation, Drummer and take folders remain incomplete, so an imported project is not necessarily identical.
+- Plug-in playback now handles notes that start and end in one audio block. A missing or bypassed instrument no longer silently plays Dalnok Poly. Generated Logic and Audio Unit fixtures cover state, channel mapping, MIDI positions and rendering; hosting fixtures cover state rejection and short notes. Verification: 171 engine tests, 17 generated plug-in hosting tests, and GUI self-tests with 455 Graphite / 472 Warm Analog checks.
+
 ## Latest session (Phase 4 verification; 2026-11-17)
 - Fixed Touch/Latch automation after a backward transport jump: committing the previous pass keeps the live control override active for the next pass. The Warm Analog self-test passed 471 checks, including generated-audio checks for both modes (0.5 output within 0.001).
 - CLAP sidechain processing is verified with a generated ducking plug-in: silent and active key signals, a muted pre-fader source, and disconnection (1e-4 tolerance). `scripts/ci/plugin-host.sh` passed 14 tests. An Audio Unit sidechain fixture is still needed; the built-in dynamics units probed here did not expose one through the host.

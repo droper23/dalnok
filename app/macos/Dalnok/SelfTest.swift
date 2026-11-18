@@ -1006,6 +1006,8 @@ final class SelfTest {
         check(s.tracks.flatMap(\.clips).map(\.start).sorted() == (0..<files.count).map { Int64($0) * Int64(e.sampleRate) },
               "clip positions from the RPP")
         check(w.lastImportReport?.notImported.first?.contains("MIDI") == true, "report explains the skipped MIDI item")
+        let unavailableReport = ImportReport(json: "{}", unavailablePlugins: ["Track — Instrument: state rejected"])
+        check(unavailableReport?.unavailablePlugins.first?.contains("state rejected") == true, "import report retains unavailable plug-in details")
         check(e.isDirty && s.projectURL == nil && w.window?.title == "Untitled", "import is a new unsaved project")
 
         // Stems folder.

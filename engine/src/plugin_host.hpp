@@ -41,6 +41,7 @@ public:
     // Opaque plugin state (control thread).
     virtual bool getState(std::string &bytes) = 0;
     virtual bool setState(const std::string &bytes) = 0;
+    virtual std::string stateError() const { return {}; }
 
     // Parameters (control thread). Changes reach the audio thread through a bounded queue and are
     // applied at the start of the next block.

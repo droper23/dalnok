@@ -159,11 +159,15 @@ public:
         return true;
     }
     bool setState(const std::string &bytes) override {
+        stateError_.clear();
         CFDataRef data = CFDataCreate(nullptr, reinterpret_cast<const UInt8 *>(bytes.data()), static_cast<CFIndex>(bytes.size()));
         CFPropertyListRef plist = data ? CFPropertyListCreateWithData(nullptr, data, kCFPropertyListImmutable, nullptr, nullptr) : nullptr;
         if (data) CFRelease(data);
-        if (!plist) return false;
-        const bool ok = AudioUnitSetProperty(unit_, kAudioUnitProperty_ClassInfo, kAudioUnitScope_Global, 0, &plist, sizeof plist) == noErr;
+        if (!plist) { stateError_ = "invalid Audio Unit state"; return false; }
+        const OSStatus status = AudioUnitSetProperty(unit_, kAudioUnitProperty_ClassInfo, kAudioUnitScope_Global, 0, &plist, sizeof plist);
+        const bool ok = status == noErr;
+        if (status == kAudioUnitErr_Unauthorized) stateError_ = "Audio Unit reported an authorization error";
+        else if (!ok) stateError_ = "Audio Unit error " + std::to_string(status);
         CFRelease(plist);
         if (ok) {
             AudioUnitParameter changed{unit_, kAUParameterListener_AnyParameter, kAudioUnitScope_Global, 0};
@@ -173,6 +177,8 @@ public:
         }
         return ok;
     }
+
+    std::string stateError() const override { return stateError_; }
 
     // Parameters: normalized over each parameter's own range.
     std::vector<AudioUnitParameterID> ids() const {
@@ -283,6 +289,7 @@ private:
     AudioTimeStamp time_{};
     std::vector<float> inL_, inR_;
     std::string name_, vendor_, classId_;
+    std::string stateError_;
     bool instrument_ = false, sidechain_ = false;
     SpscQueue<ParamChange, 1024> changes_;
     std::mutex producer_;

@@ -1,6 +1,10 @@
 # Changelog
 
 ## [Unreleased]
+### Changed (Logic import)
+- Import MIDI region boundaries and note positions from Logic's sequence metadata, avoiding overlaps caused by estimated lengths. Notes beyond region boundaries are reported.
+- Restore recognized Audio Units on their channel strips using their saved class-info state. Report unsupported Logic-native processors and plug-ins that cannot load; preserve rejected state.
+- Fix same-block plug-in note-offs and prevent missing or bypassed instruments from silently substituting Dalnok Poly.
 ### Fixed and tested (2026-11-17, Phase 4)
 - Touch and Latch automation retain the live control override across a backward transport jump or cycle wrap.
 - Added generated CLAP sidechain coverage for an unconnected input, a muted pre-fader key, and disconnection.

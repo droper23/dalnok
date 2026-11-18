@@ -114,30 +114,39 @@ void renderPluginNotes(PluginProcessor *plugin, const RenderNote *starts, const 
     }
     state.pluginExpected = pos + frames;
     const auto end = pos + frames;
+    const int cleanupCount = count;
     for (auto it = std::lower_bound(ends, ends + noteCount, pos,
                                     [](const RenderNote &n, int64_t at) DALNOK_NONBLOCKING { return n.end < at; });
-         it != ends + noteCount && it->end < end; ++it) {
-        auto &held = state.pluginHeld[it->pitch];
-        if (held) { --held; push(static_cast<int>(it->end - pos), false, it->pitch, 0); }
-    }
+         it != ends + noteCount && it->end < end; ++it)
+        push(static_cast<int>(it->end - pos), false, it->pitch, 0);
     for (auto it = std::lower_bound(starts, starts + noteCount, pos,
                                     [](const RenderNote &n, int64_t at) DALNOK_NONBLOCKING { return n.start < at; });
-         it != starts + noteCount && it->start < end; ++it) {
-        auto &held = state.pluginHeld[it->pitch];
-        if (held < 255) ++held;
+         it != starts + noteCount && it->start < end; ++it)
         push(static_cast<int>(it->start - pos), true, it->pitch, it->velocity);
-    }
-    for (int i = 0; i < s.liveNoteCount; ++i) push(s.liveNotes[i].offset, s.liveNotes[i].on, s.liveNotes[i].pitch, s.liveNotes[i].velocity);
-    // Stable insertion sort by offset; at equal offsets note-offs come first.
-    for (int i = 1; i < count; ++i) {
-        const PluginNote e = s.events[i];
-        int j = i - 1;
-        while (j >= 0 && (s.events[j].offset > e.offset || (s.events[j].offset == e.offset && s.events[j].on && !e.on))) {
-            s.events[j + 1] = s.events[j];
-            --j;
+    // Sort timeline events before tracking held notes: an onset and its release can share a block.
+    auto sortEvents = [&](int begin) DALNOK_NONBLOCKING {
+        for (int i = begin + 1; i < count; ++i) {
+            const PluginNote e = s.events[i];
+            int j = i - 1;
+            while (j >= begin && (s.events[j].offset > e.offset || (s.events[j].offset == e.offset && s.events[j].on && !e.on))) {
+                s.events[j + 1] = s.events[j];
+                --j;
+            }
+            s.events[j + 1] = e;
         }
-        s.events[j + 1] = e;
+    };
+    sortEvents(cleanupCount);
+    int written = cleanupCount;
+    for (int i = cleanupCount; i < count; ++i) {
+        const PluginNote e = s.events[i];
+        auto &held = state.pluginHeld[e.pitch];
+        if (e.on) { if (held < 255) ++held; }
+        else { if (!held) continue; --held; }
+        s.events[written++] = e;
     }
+    count = written;
+    for (int i = 0; i < s.liveNoteCount; ++i) push(s.liveNotes[i].offset, s.liveNotes[i].on, s.liveNotes[i].pitch, s.liveNotes[i].velocity);
+    sortEvents(0);
     clear(s.trackL, frames);
     clear(s.trackR, frames);
     plugin->process(s.trackL, s.trackR, frames, s.events, count);
@@ -153,6 +162,7 @@ void renderLiveInput(const RenderState &state, int frames, float *left, float *r
     if (state.liveTrack < 0 || state.liveTrack >= static_cast<int32_t>(state.tracks.size())) return;
     const RenderTrack &t = state.tracks[static_cast<size_t>(state.liveTrack)];
     TrackRuntime &rt = *t.runtime;
+    if (!t.instrument && !t.instrumentPlugin) return;
     bool stereo = false;
     if (t.instrumentPlugin) {
         // A plugin instrument plays live input through renderBlock while the transport rolls.
@@ -306,7 +316,7 @@ void renderBlock(const RenderState &state, int64_t pos, int frames, float *left,
         if (!t.inserts.empty()) {
             if (!any) { clear(s.trackL, frames); clear(s.trackR, frames); any = true; }
             // Live input on a built-in-synth track with inserts goes through the inserts too.
-            if (!synths && static_cast<int32_t>(index - 1) == state.liveTrack && !t.instrumentPlugin && rt.live.active()) {
+            if (!synths && static_cast<int32_t>(index - 1) == state.liveTrack && t.instrument && !t.instrumentPlugin && rt.live.active()) {
                 clear(s.tmp, frames);
                 rt.live.render(state.synth, s.tmp, frames, -1);
                 for (int i = 0; i < frames; ++i) { s.trackL[i] += s.tmp[i]; s.trackR[i] += s.tmp[i]; }

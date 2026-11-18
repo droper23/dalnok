@@ -8,9 +8,10 @@
 // samples — 2,667/2,667 regions fit inside their files), region-to-file
 // ownership (document order), project metadata (MetaData.plist).
 // Arrangement (event 0x24: position, row, region link = AuRg header id) and track names (row -> Trak ->
-// Envi channel strip). Volume, pan, stacks and plug-ins are not decoded.
+// Envi channel strip). Volume, pan, stacks and Logic-native plug-ins are not decoded.
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "import/import.hpp"
+#include "import/logic_plugins.hpp"
 #include "media.hpp"
 
 #include <algorithm>
@@ -30,7 +31,8 @@ namespace {
 
 constexpr uint8_t kMagic[4] = {0x23, 0x47, 0xc0, 0xab};
 constexpr size_t kFileHeader = 24, kChunkHeader = 36;
-constexpr uint32_t kTickOrigin = 34560; // bar 1 in Logic's 960-PPQ tick space
+constexpr uint32_t kTickOrigin = 34560; // arrangement placement origin
+constexpr uint32_t kNoteTickOrigin = 38400; // region-relative MIDI note origin
 constexpr double kPpq = 960;
 
 struct Chunk {
@@ -158,8 +160,26 @@ bool importLogic(const std::string &path, Result &out, std::string &err) {
     std::vector<Placement> placements;
     // Event sequences by header id: a MIDI region (event 0x20) points at the sequence holding its notes (+0x20).
     std::map<uint32_t, const Chunk *> sequences;
-    for (const auto &c : chunks)
-        if (c.tag == "EvSq" && c.length > 16) sequences.emplace(rd<uint32_t>(d, c.pos + 10), &c);
+    // A MIDI region's MSeq and its note EvSq share an id. The duration follows the variable-length,
+    // even-padded region name: record +0x72 + padded name length (960-PPQ ticks).
+    struct MidiRegion { uint32_t length; std::string name; };
+    std::map<uint32_t, MidiRegion> midiRegionInfo;
+    std::set<uint32_t> ambiguousMidiIds;
+    for (const auto &c : chunks) {
+        const auto id = rd<uint32_t>(d, c.pos + 10);
+        if (c.tag == "EvSq" && c.length > 16) sequences.emplace(id, &c);
+        if (c.tag != "MSeq" || c.length < 18) continue;
+        const size_t nameLength = rd<uint16_t>(d, c.payload + 16);
+        const size_t durationOffset = 0x4e + ((nameLength + 1) & ~size_t(1));
+        if (nameLength > c.length - 18 || durationOffset > c.length || c.length - durationOffset < 4) continue;
+        const uint32_t length = rd<uint32_t>(d, c.payload + durationOffset);
+        if (length == 0 || length >= 0x3fffffff) continue;
+        if (ambiguousMidiIds.count(id)) continue;
+        if (!midiRegionInfo.emplace(id, MidiRegion{length, d.substr(c.payload + 18, nameLength)}).second) {
+            midiRegionInfo.erase(id);
+            ambiguousMidiIds.insert(id);
+        }
+    }
     for (const auto &c : chunks) {
         if (c.tag == "MSeq") { sectionRows.emplace_back(); continue; }
         if (c.tag == "Trak" && c.length == 58 && !sectionRows.empty()) { sectionRows.back().push_back(rd<uint32_t>(d, c.payload + 8)); continue; }
@@ -192,8 +212,8 @@ bool importLogic(const std::string &path, Result &out, std::string &err) {
         }
     }
 
-    // Notes of a MIDI region's sequence (ticks relative to bar 1 of the region, Logic's 960 PPQ), from records
-    // 0x90 (32 bytes): position +4, velocity +11, pitch +12, length +28. Verified against Logic's own MIDI export.
+    // Notes of a MIDI region's sequence (ticks relative to 38,400, Logic's 960 PPQ), from records
+    // 0x90 (32 bytes): position +4, velocity +11, pitch +12, length +28. Positions were checked in Logic's piano roll.
     // Drummer regions use a longer record (0x4090) whose notes aren't Logic's performance; they're skipped.
     struct Note { uint32_t pos, length; int pitch, velocity; };
     auto notesOf = [&](uint32_t seq, bool &drummer) {
@@ -240,7 +260,7 @@ bool importLogic(const std::string &path, Result &out, std::string &err) {
         }
     }
     rep.skip("ambiguousRegionIds", static_cast<int>(ambiguousIds.size()));
-    int pieceFallbacks = 0;
+    int pieceFallbacks = 0, estimatedMidiLengths = 0, notesOutsideMidiRegions = 0, notesCrossingMidiRegions = 0;
     // Tracks in Logic's row order (placements are stored in time order).
     std::stable_sort(placements.begin(), placements.end(), [](const Placement &a, const Placement &b) { return a.track < b.track; });
     const double ticksPerBar = kPpq * 4.0 * meterNum / meterDen;
@@ -260,14 +280,22 @@ bool importLogic(const std::string &path, Result &out, std::string &err) {
             }
             std::vector<Builder::Note> out;
             double end = 0;
+            const auto info = midiRegionInfo.find(p.link);
             for (const auto &n : notes) {
-                if (n.pos < kTickOrigin) continue;
-                const double s = (n.pos - kTickOrigin) * secPerTick;
-                out.push_back({s, n.length * secPerTick, n.pitch, n.velocity});
-                end = std::max(end, double(n.pos - kTickOrigin) + n.length);
+                if (n.pos < kNoteTickOrigin) { ++notesOutsideMidiRegions; continue; }
+                const uint64_t relative = n.pos - kNoteTickOrigin;
+                if (info != midiRegionInfo.end()) {
+                    if (relative >= info->second.length) ++notesOutsideMidiRegions;
+                    else if (relative + n.length > info->second.length) ++notesCrossingMidiRegions;
+                }
+                out.push_back({relative * secPerTick, n.length * secPerTick, n.pitch, n.velocity});
+                end = std::max(end, double(relative) + n.length);
             }
-            const double bars = std::max(1.0, std::ceil(end / ticksPerBar - 1e-9));
-            b.addMidiClip(tracks[key], (p.pos - kTickOrigin) * secPerTick, bars * ticksPerBar * secPerTick, out, "MIDI");
+            const bool knownLength = info != midiRegionInfo.end();
+            if (!knownLength) ++estimatedMidiLengths;
+            const double ticks = knownLength ? info->second.length : std::max(1.0, std::ceil(end / ticksPerBar - 1e-9)) * ticksPerBar;
+            const std::string regionName = knownLength && !info->second.name.empty() ? info->second.name : "MIDI";
+            b.addMidiClip(tracks[key], (p.pos - kTickOrigin) * secPerTick, ticks * secPerTick, out, regionName);
             ++midiRegions;
             continue;
         }
@@ -295,6 +323,10 @@ bool importLogic(const std::string &path, Result &out, std::string &err) {
                   r.name.empty() ? r.file : r.name);
         placedRegions.insert(it->second);
     }
+    std::vector<LogicTrackBinding> pluginBindings;
+    for (const auto &[key, track] : tracks)
+        if (key.second <= UINT32_MAX) pluginBindings.push_back({static_cast<uint32_t>(key.second), track, b.isInstrumentTrack(track)});
+    importLogicPlugins(d, pluginBindings, b, rep);
     // Unused pieces (Logic keeps every piece a region was ever split into) aren't missing material.
     int unplaced = 0, unusedPieces = 0;
     for (size_t i = 0; i < regions.size(); ++i)
@@ -303,16 +335,21 @@ bool importLogic(const std::string &path, Result &out, std::string &err) {
     rep.skip("unusedRegionPieces", unusedPieces);
     rep.skip("regionPiecesNotFound", pieceFallbacks);
     rep.skip("unresolvedPlacements", unresolved);
+    rep.skip("midiNotesOutsideRegion", notesOutsideMidiRegions);
+    rep.skip("midiNotesCrossingRegionEnd", notesCrossingMidiRegions);
+    if (estimatedMidiLengths > 0)
+        rep.notes.push_back(std::to_string(estimatedMidiLengths) + " MIDI region(s) lack a uniquely identified duration; their lengths were estimated from notes.");
+    if (notesOutsideMidiRegions || notesCrossingMidiRegions)
+        rep.notes.push_back("Some MIDI notes begin outside their region or extend past its end; Dalnok's playback is limited to the region boundary.");
     if (midiRegions > 0)
-        rep.notes.push_back(std::to_string(midiRegions) + " MIDI region(s) imported onto instrument tracks. Dalnok Poly plays them; "
-                            "Logic's instruments and their settings aren't imported.");
+        rep.notes.push_back(std::to_string(midiRegions) + " MIDI region(s) imported onto instrument tracks. Tracks without an imported instrument use Dalnok Poly.");
     rep.skip("drummerRegions", drummerRegions);
     if (drummerRegions > 0)
         rep.notes.push_back("Drummer regions aren't imported (their notes are generated by Logic's Drummer). In Logic, "
                             "convert them to MIDI regions first (Convert to MIDI Region) to bring them over.");
     rep.notes.push_back("EXPERIMENTAL: Logic's project format is undocumented. Audio files and region trims are verified; "
                         "region positions, track assignment and track names match Logic's own per-track renders on a test "
-                        "project. Track volume, pan, track stacks, plug-ins, automation and take folders are not imported, so "
+                        "project. Track volume, pan, track stacks, Logic-native plug-ins, automation and take folders are not imported, so "
                         "levels differ from Logic. Logic's File ▸ Export ▸ Project to Final Cut Pro XML "
                         "is an alternative, but may render audio and change clip boundaries; compare the result with the original.");
     out.document = b.document();

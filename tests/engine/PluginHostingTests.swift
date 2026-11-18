@@ -126,6 +126,51 @@ struct PluginHosting {
         #expect(dalnok_plugin_add(e, audio, testVst3, synthClass, &err, 256) == 0 && cstr(err).contains("instrument"))
     }
 
+    @Test func bypassedOrMissingInstrumentDoesNotSubstituteTheBuiltInSynth() throws {
+        let e = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(e) }
+        let t = dalnok_track_add_instrument(e, "Instrument")
+        let slot = dalnok_plugin_add(e, t, testVst3, synthClass, nil, 0)
+        #expect(slot != 0)
+        let c = dalnok_midi_clip_add(e, t, 0, 4_096)
+        var note = DalnokNote(start: 100, length: 1_000, pitch: 60, velocity: 127)
+        #expect(dalnok_midi_clip_set_notes(e, c, &note, 1) == DALNOK_OK)
+        #expect(abs(renderStereo(e, 2_048).0[500] - 1) < 1e-6)
+        #expect(dalnok_plugin_set_bypassed(e, t, slot, true) == DALNOK_OK)
+        #expect(renderStereo(e, 2_048).0.allSatisfy { abs($0) < 1e-6 }, "a bypassed instrument is silent")
+        #expect(dalnok_track_set_armed(e, t, true) == DALNOK_OK)
+        dalnok_midi_inject(e, 0x90, 60, 127)
+        let live = pump(e, 1_024).0
+        #expect(live.allSatisfy { abs($0) < 1e-6 }, "live input cannot play the fallback synth either")
+        dalnok_midi_inject(e, 0x80, 60, 0); _ = pump(e, 512)
+        #expect(dalnok_plugin_set_bypassed(e, t, slot, false) == DALNOK_OK)
+        let file = tempDir().appendingPathComponent("missing-instrument.dalnok")
+        var err = [CChar](repeating: 0, count: 256)
+        #expect(dalnok_project_save(e, file.path, &err, 256) == DALNOK_OK)
+        var text = try String(contentsOf: file, encoding: .utf8)
+        text = text.replacingOccurrences(of: testVst3.replacingOccurrences(of: "/", with: "\\/"), with: "/nonexistent/Instrument.vst3")
+            .replacingOccurrences(of: testVst3, with: "/nonexistent/Instrument.vst3")
+        try text.write(to: file, atomically: true, encoding: .utf8)
+        let e2 = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(e2) }
+        #expect(dalnok_project_load(e2, file.path, nil, &err, 256) == DALNOK_OK)
+        #expect(renderStereo(e2, 2_048).0.allSatisfy { abs($0) < 1e-6 }, "a missing instrument is silent")
+    }
+
+    @Test func shortInstrumentNotesEndWithinTheSameBlock() {
+        let e = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(e) }
+        let t = dalnok_track_add_instrument(e, "Short notes")
+        #expect(dalnok_plugin_add(e, t, testVst3, synthClass, nil, 0) != 0)
+        let c = dalnok_midi_clip_add(e, t, 0, 4_096)
+        let notes = [DalnokNote(start: 100, length: 80, pitch: 60, velocity: 127),
+                     DalnokNote(start: 250, length: 50, pitch: 60, velocity: 127)]
+        #expect(dalnok_midi_clip_set_notes(e, c, notes, Int32(notes.count)) == DALNOK_OK)
+        let out = renderStereo(e, 1_024).0
+        #expect(out[0..<100].allSatisfy { abs($0) < 1e-6 })
+        #expect(out[100..<180].allSatisfy { abs($0 - 1) < 1e-6 })
+        #expect(out[180..<250].allSatisfy { abs($0) < 1e-6 })
+        #expect(out[250..<300].allSatisfy { abs($0 - 1) < 1e-6 })
+        #expect(out[300...].allSatisfy { abs($0) < 1e-6 })
+    }
+
     @Test func stateSurvivesSaveAndAMissingPluginKeepsIt() throws {
         let (e, t) = audioSession(); defer { dalnok_engine_destroy(e) }
         let dry = renderStereo(e, 4_800)
@@ -157,6 +202,36 @@ struct PluginHosting {
         let resaved = dir.appendingPathComponent("resaved.dalnok")
         #expect(dalnok_project_save(e3, resaved.path, &err, 256) == DALNOK_OK)
         #expect(try String(contentsOf: resaved, encoding: .utf8).contains(floatState(0.25)), "the saved state is kept")
+    }
+
+    @Test func rejectedPluginStateIsReportedAndPreserved() throws {
+        let (e, t) = audioSession(); defer { dalnok_engine_destroy(e) }
+        let slot = dalnok_plugin_add(e, t, testVst3, gainClass, nil, 0)
+        #expect(slot != 0)
+        let dir = tempDir(), project = dir.appendingPathComponent("invalid-state.dalnok")
+        var err = [CChar](repeating: 0, count: 256)
+        #expect(dalnok_project_save(e, project.path, &err, 256) == DALNOK_OK)
+        var doc = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: project)) as? [String: Any])
+        var tracks = try #require(doc["tracks"] as? [[String: Any]])
+        var plugins = try #require(tracks[0]["plugins"] as? [[String: Any]])
+        let rejected = Data([0x12, 0x34]).base64EncodedString()
+        plugins[0]["state"] = rejected
+        tracks[0]["plugins"] = plugins
+        doc["tracks"] = tracks
+        try JSONSerialization.data(withJSONObject: doc).write(to: project)
+        let loaded = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(loaded) }
+        #expect(dalnok_project_load(loaded, project.path, nil, &err, 256) == DALNOK_OK)
+        let track = dalnok_track_at(loaded, 0)
+        var info = DalnokPluginSlotInfo()
+        #expect(dalnok_track_plugin_info(loaded, track, 0, &info) == DALNOK_OK)
+        let message = cstr(withUnsafeBytes(of: info.error) { Array($0.bindMemory(to: CChar.self)) })
+        #expect(!info.loaded && message.contains("state") && message.contains("preserved"))
+        var state = [CChar](repeating: 0, count: 64)
+        dalnok_plugin_get_state(loaded, info.id, &state, state.count)
+        #expect(cstr(state) == rejected)
+        let resaved = dir.appendingPathComponent("resaved.dalnok")
+        #expect(dalnok_project_save(loaded, resaved.path, &err, 256) == DALNOK_OK)
+        #expect(try String(contentsOf: resaved, encoding: .utf8).contains(rejected))
     }
 
     @Test func bypassPassesAudioThroughAndSurvivesSaveAndUndo() throws {

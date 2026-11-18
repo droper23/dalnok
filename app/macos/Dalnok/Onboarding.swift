@@ -84,8 +84,9 @@ struct ImportReport {
     let tracks: Int, clips: Int, media: Int, missing: Int
     let skipped: [(key: String, count: Int)]
     let notes: [String]
+    let unavailablePlugins: [String]
 
-    init?(json: String) {
+    init?(json: String, unavailablePlugins: [String] = []) {
         guard let d = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any] else { return nil }
         app = d["app"] as? String ?? ""
         version = d["version"] as? String ?? ""
@@ -96,6 +97,7 @@ struct ImportReport {
         missing = imp["missingMedia"] as? Int ?? 0
         skipped = (d["skipped"] as? [String: Any] ?? [:]).compactMap { k, v in (v as? Int).map { (k, $0) } }.sorted { $0.1 > $1.1 }
         notes = d["notes"] as? [String] ?? []
+        self.unavailablePlugins = unavailablePlugins
     }
 
     var summary: String {
@@ -122,6 +124,10 @@ final class ImportReportController {
         let alert = NSAlert()
         alert.messageText = "Imported “\(source.deletingPathExtension().lastPathComponent)” from \(report.app)"
         var text = "Brought over: \(report.summary).\n"
+        if !report.unavailablePlugins.isEmpty {
+            text += "\nPlug-ins that could not be loaded:\n" + report.unavailablePlugins.prefix(8).map { "• " + $0 }.joined(separator: "\n") + "\n"
+            if report.unavailablePlugins.count > 8 { text += "• And \(report.unavailablePlugins.count - 8) more; see the device panel.\n" }
+        }
         let not = report.notImported
         if !not.isEmpty { text += "\nNot imported yet:\n" + not.prefix(8).map { "• " + $0 }.joined(separator: "\n") + "\n" }
         if !report.notes.isEmpty { text += "\n" + report.notes.prefix(3).joined(separator: "\n") }

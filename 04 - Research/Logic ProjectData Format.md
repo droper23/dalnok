@@ -38,7 +38,7 @@ Each MSeq begins a section; 58-byte Trak chunks give arrange rows in order, with
 Row numbers may be reused by different channel strips across sequences; the importer distinguishes row and strip identity. The role of every sequence and take folder remains uncertain.
 Envi has a u16 name length at payload +158 followed by name bytes at +160. Type `0x20` may represent MIDI.
 Generated fixtures cover region IDs, leftover sub-indices, names and row order. Duplicate primary IDs are treated as ambiguous; truncated known event records cause import failure. Take folders, tempo changes,
-channel volume and pan, track stacks, routing, plug-ins and automation remain undecoded.
+channel volume and pan, track stacks, routing, Logic-native plug-in state and automation remain undecoded. Recognized Audio Unit class-info states are imported experimentally.
 
 ## Controlled Logic export (2026-11-16)
 A disposable Logic 12.2 project using the macOS Submarine sample and its FCPXML export both imported as one track and one clip with no missing media. Logic rendered a separate 65,536-frame audio file in the XML export, shorter than the original region, so this comparison does not establish sample-accurate placement or boundaries. The audio-only project also contains type 0x20 events: counting every such event as a MIDI region is not supported by this evidence. More controlled projects with known nonzero offsets, trims and tracks are needed.
@@ -56,10 +56,19 @@ Nothing from that project is stored in this repo; the regression test uses a gen
 - **MIDI regions.** Event 0x20 at +0x20 names an event sequence by header id. In the main arrangement sequence those are
   MIDI regions; one 0x20 per row at bar 1 in another sequence points at empty sequences (track folders), so a 0x20 is
   a MIDI region only if its sequence holds notes.
-- **Notes** (record 0x90, 32 bytes): +4 position (960 PPQ, bar 1 of the region = 34,560), +11 velocity, +12 pitch,
-  +28 length in ticks. Verified against Logic's own File ▸ Export ▸ All MIDI Tracks as MIDI File: 60 of 60 notes
-  matched in position, pitch, velocity and length. +10 was a constant 65 and +15 varied (0x01, 0x81, 0x80), meaning
-  unknown.
+- **Notes** (record 0x90, 32 bytes): +4 position (960 PPQ; note-sequence origin 38,400), +11 velocity, +12 pitch,
+  +28 length in ticks. Logic's MIDI export can use a different reference from the arrangement, so compare positions
+  with the piano roll as well. +10 and +15 remain unexplained.
 - **Drummer regions** hold 48-byte 0x4090 records. Logic's MIDI export leaves them out, so they're not decoded: the
   importer skips and reports them.
-- The region length of a MIDI region wasn't found; clips run to the last note's end, rounded up to whole bars.
+- The MSeq record sharing the note sequence's ID holds the region name and a duration after the even-padded name
+  (payload offset `0x4e + padded-name-length`). When that record is missing or ambiguous, the importer estimates
+  length from the notes and reports it. Notes beyond the region boundary are preserved but currently clipped in playback.
+
+## Audio Units (experimental)
+- An Envi strip references an AuCO channel; AuCU records on that channel contain an ordered plug-in chain. Recognized
+  third-party Audio Units may contain an XML class-info property list with type, subtype, manufacturer and state.
+  The importer validates the matching identifiers and retains that plist for the Audio Unit host.
+- Logic-native processors and ambiguous mappings are reported rather than guessed. The import report identifies units
+  that are unavailable or reject their state; the original state is preserved. Mixer controls, routing and automation
+  are not yet reconstructed, so matching the source mix is not guaranteed.

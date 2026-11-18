@@ -155,7 +155,7 @@ final class DevicePanel: NSView {
             devices.forEach { $0.removeFromSuperview() }
             if devices.first?.trackId != t?.id { knownCables = [] } // a different track: draw its cables fresh
             devices = plugins.map { p in
-                let d = DeviceView(session: session, track: t!.id, slot: p.id, name: p.name, loaded: p.loaded, color: t!.color, vendor: p.vendor)
+                let d = DeviceView(session: session, track: t!.id, slot: p.id, name: p.name, loaded: p.loaded, color: t!.color, vendor: p.vendor, instrument: p.instrument, error: p.error)
                 d.onOpen = { [weak self] in self?.onOpen?(t!.id, p.id) }
                 d.onMove = { [weak self] delta in
                     guard let self, let from = self.devices.firstIndex(where: { $0.slot == p.id }) else { return }
@@ -287,6 +287,7 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
     let trackId: DalnokTrackId
     let slot: Int32
     let loaded: Bool
+    private let unavailableMessage: String
     private let color: NSColor
     private let title = NSTextField(labelWithString: "")
     private let openButton = NSButton(title: "Open", target: nil, action: nil)
@@ -303,11 +304,13 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
     static let columns = 4, defaultCount = 8
     static var ear: CGFloat { Analog.on ? 12 : 0 } // rack ear width
 
-    init(session: Session, track: DalnokTrackId, slot: Int32, name: String, loaded: Bool, color: NSColor, vendor: String = "") {
+    init(session: Session, track: DalnokTrackId, slot: Int32, name: String, loaded: Bool, color: NSColor, vendor: String = "", instrument: Bool = false, error: String = "") {
         self.session = session
         self.trackId = track
         self.slot = slot
         self.loaded = loaded
+        self.unavailableMessage = (instrument ? "Not loaded: instrument silent." : "Not loaded: effect bypassed.")
+            + (error.isEmpty ? " Settings are kept." : " " + error)
         self.color = color
         super.init(frame: .zero)
         wantsLayer = true
@@ -316,6 +319,7 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         layer?.borderWidth = Analog.on ? 0 : 1
         layer?.borderColor = Theme.hairline.cgColor
         title.stringValue = name
+        if !loaded { title.toolTip = unavailableMessage; setAccessibilityHelp(unavailableMessage) }
         title.font = Theme.ui(12, .semibold)
         title.textColor = loaded ? Theme.text : Theme.textFaint
         title.lineBreakMode = .byTruncatingTail
@@ -469,7 +473,9 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         while grid.numberOfRows > 0 { grid.removeRow(at: 0) }
         knobs = []
         if !loaded {
-            grid.addRow(with: [label("Not loaded: bypassed. Its settings are kept.", dim: true)])
+            let message = label(unavailableMessage, dim: true)
+            message.toolTip = unavailableMessage
+            grid.addRow(with: [message])
             return
         }
         if ids.isEmpty {
@@ -560,7 +566,7 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
 
     private func buildPedal(_ pedal: PedalBody, _ ids: [UInt32]) {
         knobs = []
-        pedal.message = !loaded ? "Not loaded: bypassed.\nIts settings are kept." : ids.isEmpty ? "No automatable parameters. Use Open." : nil
+        pedal.message = !loaded ? unavailableMessage : ids.isEmpty ? "No automatable parameters. Use Open." : nil
         var controls: [PedalControl] = [], names: [NSTextField] = []
         for id in loaded ? ids : [] {
             guard let p = current(id) else { continue }

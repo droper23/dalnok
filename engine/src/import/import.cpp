@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "import/import.hpp"
+#include "plugin_host.hpp"
 #include "media.hpp"
 
 #include <algorithm>
@@ -102,7 +103,7 @@ double Builder::mediaSeconds(int32_t media) const {
 
 int32_t Builder::addTrack(const std::string &name, float gainDb, float pan, bool mute, bool solo) {
     tracks_.push_back({name.empty() ? "Track " + std::to_string(tracks_.size() + 1) : name, gainDb,
-                       std::clamp(pan, -1.0f, 1.0f), mute, solo, {}});
+                       std::clamp(pan, -1.0f, 1.0f), mute, solo, {}, false, {}});
     ++report_.tracks;
     return static_cast<int32_t>(tracks_.size() - 1);
 }
@@ -111,6 +112,15 @@ int32_t Builder::addInstrumentTrack(const std::string &name) {
     const int32_t t = addTrack(name, 0, 0, false, false);
     tracks_[static_cast<size_t>(t)].instrument = true;
     return t;
+}
+
+bool Builder::isInstrumentTrack(int32_t track) const {
+    return track >= 0 && track < static_cast<int32_t>(tracks_.size()) && tracks_[static_cast<size_t>(track)].instrument;
+}
+
+void Builder::addAudioUnit(int32_t track, const std::string &id, const std::string &name, bool instrument, const std::string &state) {
+    if (track < 0 || track >= static_cast<int32_t>(tracks_.size())) return;
+    tracks_[static_cast<size_t>(track)].plugins.push_back({id, name, state, instrument});
 }
 
 void Builder::addMidiClip(int32_t track, double start, double length, const std::vector<Note> &notes, const std::string &name) {
@@ -179,7 +189,7 @@ json::Value Builder::document() const {
     }
     doc.set("media", std::move(media));
     Value tracks = Value::makeArray();
-    int64_t clipId = 1;
+    int64_t clipId = 1, pluginId = 1;
     for (size_t i = 0; i < tracks_.size(); ++i) {
         const Track &t = tracks_[i];
         Value tv = Value::makeObject();
@@ -223,6 +233,16 @@ json::Value Builder::document() const {
             clips.push(std::move(cv));
         }
         tv.set("clips", std::move(clips));
+        if (!t.plugins.empty()) {
+            Value plugins = Value::makeArray();
+            for (const auto &p : t.plugins) {
+                Value pv = Value::makeObject();
+                pv.set("id", pluginId++); pv.set("format", "au"); pv.set("path", p.id);
+                pv.set("name", p.name); pv.set("instrument", p.instrument); pv.set("state", base64Encode(p.state));
+                plugins.push(std::move(pv));
+            }
+            tv.set("plugins", std::move(plugins));
+        }
         tracks.push(std::move(tv));
     }
     doc.set("tracks", std::move(tracks));

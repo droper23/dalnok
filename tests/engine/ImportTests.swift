@@ -353,12 +353,12 @@ func skipped(_ r: [String: Any], _ key: String) -> Int { (r["skipped"] as? [Stri
         midiRef = line(0x20, 34_560 + 4 * bar) + line(0x80, 0x8900_0000 | 3, 0, 0x3fff_ffff) + line(108, 0x8800_0000)
             + line(0x600, 0x8a06_0000) + line(0, 0x8800_0000)
         arrange += midiRef + end
-        // Notes: 0x90, pos +4, velocity +11, pitch +12, length +28 (960 PPQ, relative to bar 1).
+        // Notes: 0x90, pos +4, velocity +11, pitch +12, length +28 (960 PPQ; note origin 38,400).
         func note(_ pos: UInt32, pitch: UInt8, vel: UInt8, len: UInt32) -> Data {
             var a = line(0x90, pos); a[11] = vel; a[12] = pitch; a[15] = 1
             return a + line(0x40, 0x8900_0000, 0, len)
         }
-        let notes = note(34_560, pitch: 60, vel: 80, len: 960) + note(34_560 + 1_920, pitch: 64, vel: 100, len: 480) + end
+        let notes = note(38_400, pitch: 60, vel: 80, len: 960) + note(38_400 + 1_920, pitch: 64, vel: 100, len: 480) + end
         var drum = line(0x4090, 34_560); drum[12] = 36
         let drums = drum + line(0, 0x8900_0000) + line(0, 0x8900_0000) + end
         var body = chunk("Song", Data(repeating: 0, count: 8))
@@ -389,6 +389,56 @@ func skipped(_ r: [String: Any], _ key: String) -> Int { (r["skipped"] as? [Stri
             #expect(got[1].pitch == 64 && got[1].velocity == 100 && got[1].start == 48_000 && got[1].length == 12_000)
         }
         #expect((r["skipped"] as? [String: Any])?["drummerRegions"] as? Int == 1, "the Drummer region is reported, not imported")
+    }
+
+    @Test func midiRegionsUseTheirOwnDurationsAndNoteOrigin() throws {
+        let pkg = tempDir().appendingPathComponent("Midi.logicx")
+        let alt = pkg.appendingPathComponent("Alternatives/000")
+        try FileManager.default.createDirectory(at: alt, withIntermediateDirectories: true)
+        func line(_ a: UInt32, _ b: UInt32, _ c: UInt32 = 0, _ d: UInt32 = 0) -> Data { Data(le(a) + le(b) + le(c) + le(d)) }
+        func placement(_ start: UInt32, _ link: UInt32) -> Data {
+            line(0x20, start) + line(0x80, 0x8900_0001, 0, 0x3fff_ffff) + line(link, 0x8800_0000)
+                + line(0x600, 0x8a06_0000) + line(0, 0x8800_0000)
+        }
+        func region(_ title: String, _ ticks: UInt32) -> Data {
+            let bytes = Array(title.utf8), padded = (bytes.count + 1) & ~1
+            var body = Data(repeating: 0, count: 180 + padded)
+            body.replaceSubrange(16..<18, with: le(UInt16(bytes.count)))
+            body.replaceSubrange(18..<(18 + bytes.count), with: bytes)
+            let offset = 0x4e + padded
+            body.replaceSubrange(offset..<(offset + 4), with: le(ticks))
+            return body
+        }
+        func note(_ at: UInt32, _ length: UInt32, _ pitch: UInt8) -> Data {
+            var a = line(0x90, 38_400 + at); a[11] = 80; a[12] = pitch
+            return a + line(0x40, 0x8900_0000, 0, length)
+        }
+        let end = line(0xf1, 0x3fff_ffff), bar: UInt32 = 3_840
+        // The two four-bar regions touch. The last note ends near the first boundary; treating the note origin as
+        // the placement origin shifted it one bar late and made the old inferred first region five bars long.
+        let arrange = placement(34_560, 104) + placement(34_560 + 4 * bar, 108) + end
+        var body = chunk("EvSq", arrange, id: 4)
+        body += chunk("MSeq", region("Odd", 4 * bar), id: 104)
+        body += chunk("EvSq", note(0, 960, 60) + note(3 * bar, 3_360, 62) + end, id: 104)
+        body += chunk("MSeq", region("Even name!", 4 * bar), id: 108)
+        body += chunk("EvSq", note(0, 960, 64) + end, id: 108)
+        var file = Data([0x23, 0x47, 0xc0, 0xab]); file.append(Data(repeating: 0, count: 12))
+        file.append(contentsOf: le(UInt64(body.count))); file.append(body)
+        try file.write(to: alt.appendingPathComponent("ProjectData"))
+        let (e, report) = try importInto(pkg.path); defer { dalnok_engine_destroy(e) }
+        let imported = clips(e).filter { $0.info.midi }.map(\.info).sorted { $0.start < $1.start }
+        #expect(imported.count == 2)
+        if imported.count == 2 {
+            #expect(imported[0].start == 0 && imported[0].length == 384_000)
+            #expect(imported[1].start == 384_000 && imported[1].length == 384_000, "adjacent regions don't overlap")
+            #expect(name(imported[0].name) == "Odd" && name(imported[1].name) == "Even name!")
+            var got = [DalnokNote](repeating: DalnokNote(), count: 3)
+            #expect(dalnok_midi_clip_notes(e, imported[0].id, &got, 3) == 2)
+            #expect(got[0].start == 0 && got[0].length == 24_000 && got[0].pitch == 60)
+            #expect(got[1].start == 288_000 && got[1].length == 84_000 && got[1].pitch == 62)
+            #expect(dalnok_midi_clip_notes(e, imported[1].id, &got, 3) == 1 && got[0].start == 0)
+        }
+        #expect(skipped(report, "midiNotesOutsideRegion") == 0 && skipped(report, "midiNotesCrossingRegionEnd") == 0)
     }
 
     /// Placements link to the region's header id, not its document position: a leftover split region
