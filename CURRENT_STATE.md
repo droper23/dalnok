@@ -5,6 +5,12 @@ milestone: M11 VST3 hosting (ADR-0009 stage 3) done; editors, parameters and AU 
 ---
 # Current State
 
+## Latest session (Logic effect parity research; 2026-11-17)
+- Guitar Rig works after activation in Native Access (NTKDaemon must be running). All 7 oviii Audio Units load with their saved state.
+- Clean-room measurement loop: `tools/logic-parity/`. It patches a Logic project made in Logic, exports all tracks, and fits the results. Logic renders are deterministic.
+- Channel EQ parametric band with Q-Couple off is reproduced exactly: the model nulls against Logic at −132 to −148 dB over 30 variants. The Q-Couple modes and measured curves are recorded in [[Logic Effect Parity]]. Next: the Q-Couple closed form, shelves and cuts, then a Dalnok Channel EQ in the engine.
+- Measurement renders and Logic projects stay in the session scratchpad. Never commit them; they derive from the owner's project.
+
 ## Latest session (Logic mixer, region mute, Drummer notes; 2026-11-17)
 - Logic import maps channel-strip volume, pan and track mute (AuCO records linked through Envi; ambiguous records are skipped and reported). MIDI region mute is imported as clip mute; clips can be muted in Dalnok (Clip ▸ Mute Clip, C API 27, format 12). Drummer regions now import their notes as editable MIDI; Logic's Drum Kit is not hostable, so they need a replacement instrument.
 - Audio Units restore with ClassInfoFromDocument first. Audio Unit creation/teardown is serialized (a parallel test run crashed in Apple's DLS synth during concurrent teardown).

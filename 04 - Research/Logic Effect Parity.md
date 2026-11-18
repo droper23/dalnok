@@ -96,8 +96,15 @@ The order follows payoff per effort and how often each effect appears in the own
   | 8–11, 12–15, 16–19, 20–23 | Bands 3–6: on, Hz, dB, Q |
   | 24–27 | High shelf |
   | 28–31 | High cut: on, Hz, slope code, Q |
-  | 41 | Gain-Q coupling switch (0 = off; any non-zero value = on) |
-  | 32–51 | Remaining slots: other flags, not yet mapped |
+  | 32 | Master Gain |
+  | 33–40 | Analyzer settings (no audio effect) |
+  | 41 | Gain-Q Coupling (0 = off; any non-zero value = on) |
+  | 42 | Gain-Q Couple Mode (see below) |
+  | 43 | Oversampling (HQ), probably |
+  | 44 | Channel Processing, probably |
+  | 45–51 | Display settings |
+
+  The order follows Logic's Controls view list; the slots marked "probably" still need a check by diff.
 
 - **Each band is exactly one biquad.** A least-squares biquad fit leaves −140 dB residual for every variant, which is float precision. The centre frequency and peak gain are exact, with no frequency cramping of f0.
 - **Exact model, Q-Couple off** (`tools/logic-parity/cheq_model.py`). It nulls against Logic at −132 to −148 dB on all 30 variants: boost and cut, Q 0.1–10, 100 Hz–20 kHz. That is identical to float precision.
@@ -111,9 +118,32 @@ The order follows payoff per effort and how often each effect appears in the own
     - Q: 0–127.
     - Gain: 0–480 in 0.1 dB steps.
     - Frequency: indexed; 20 Hz is 0, 100 Hz is 250 and 7500 Hz is 900. The frequency law is still to be mapped.
-- **Gain-Q coupling on** (Logic's default) adds a further Q factor that depends on gain and is asymmetric between boost and cut. At Q 1 and 1 kHz, Q_rbj is 1.103 at +6 dB, 1.266 at +12 dB and 2.792 at −12 dB. The coupling strength probably sits in another slot among 40–43.
+- **Gain-Q coupling on** (Logic's default) multiplies the effective Q by k(gain, mode):
+
+  Q_rbj = Q_e · k / A · (w/2)/tan(w/2)
+
+  - k does not depend on frequency (identical from 100 Hz to 20 kHz) or on Q.
+  - 300·log10 k is always an integer, so k is also quantized to 1/300 decade.
+  - **Mode (slot 42)**:
+    - 0 Light, 1 Medium and 2 Strong are symmetric.
+    - −1 Asymmetric Medium (Logic's default) and −2 Asymmetric Strong use the symmetric curve for boosts and a stronger curve for cuts.
+    - 3–7 behave like Medium; −3 is probably Asymmetric Light (untested).
+  - **Measured m = 300·log10 k at Q 1, 1 kHz**:
+
+    | Mode | +0.5 | +1 | +3 | +6 | +9 | +12 | +15 | +18 | +24 |
+    |---|---|---|---|---|---|---|---|---|---|
+    | Medium boost | 4 | 8 | 27 | 58 | 90 | 121 | 150 | 177 | 226 |
+    | Light boost | | | | | | 74 | | | |
+    | Strong boost | | | | | | 183 | | | |
+
+    | Mode | −0.5 | −1 | −3 | −6 | −9 | −12 | −18 | −24 |
+    |---|---|---|---|---|---|---|---|---|
+    | Asymmetric Medium cut | 12 | 23 | 69 | 129 | 180 | 224 | 296 | 353 |
+    | Asymmetric Strong cut | | | | | | 302 | | |
+
+  - A closed form for k(gain) has not been found yet. Neither linear-in-dB nor power-of-A fits. If none turns up, measure the table at all 481 gain steps; four bands per instance and fitting them jointly would give about 20 points per export.
 - **Next**:
-  1. Model the Q-Couple law; Logic's default is on.
+  1. Find the closed form of the Q-Couple law (data above), or measure it as a table.
   2. Map how stored frequency and gain values snap to the knobs.
   3. Measure the shelves, the low and high cuts (slope codes), HQ mode, the master gain and the processing modes.
   4. Implement Dalnok Channel EQ in the engine with an offline-render test against generated fixtures.
