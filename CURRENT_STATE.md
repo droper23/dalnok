@@ -9,6 +9,7 @@ milestone: M11 VST3 hosting (ADR-0009 stage 3) done; editors, parameters and AU 
 - Logic import maps channel-strip volume, pan and track mute (AuCO records linked through Envi; ambiguous records are skipped and reported). MIDI region mute is imported as clip mute; clips can be muted in Dalnok (Clip ▸ Mute Clip, C API 27, format 12). Drummer regions now import their notes as editable MIDI; Logic's Drum Kit is not hostable, so they need a replacement instrument.
 - Audio Units restore with ClassInfoFromDocument first. Audio Unit creation/teardown is serialized (a parallel test run crashed in Apple's DLS synth during concurrent teardown).
 - oviii: 17 tracks, 37 clips, 7 Audio Units. Guitar Rig 7 rejects even its own freshly read state with kAudioUnitErr_Unauthorized: no Guitar Rig licence is registered in Native Access on this Mac, so that needs activation, not a Dalnok change. Still not identical: 13 Logic-native processors (Channel EQ, Chorus, ChromaGlow, ChromaVerb, Drum Kit, Limiter), sends/buses/stacks, automation.
+- Guitar Rig: after activation in Native Access, all 7 oviii Audio Units (including 3 Guitar Rig) load with their saved state. Logic-native effect parity research: [[Logic Effect Parity]]. Logic's effects are private (MADSP.framework), so they need clean-room rebuilds measured against Logic renders. The next step is a Logic-made measurement template.
 - Verification: 176 engine tests (5 parallel runs), 17 hosting tests, self-tests 458 Graphite / 475 Warm Analog.
 
 ## Latest session (Logic MIDI and Audio Units; 2026-11-17)
