@@ -22,12 +22,16 @@ template <typename T> T read(const std::string &d, size_t off) {
 struct Chunk { std::string tag; size_t offset, payload, length; };
 struct Plugin { unsigned order; std::string id, name, state; bool instrument = false, supported = false; std::string builtin; };
 constexpr uint32_t kChannelEqSubtype = 0xec;
-// Native parameter block after the AuCU header: size, ?, count, "GAMETSPP", subtype, ?, then `count` floats.
+// Native parameter block: size, flags, count, "GAMETSPP", subtype, 0, then `count` floats. It usually follows the
+// AuCU header directly; some records (seen on Channel EQ) put a table of knob positions first and the block last.
 std::optional<std::pair<uint32_t, std::vector<float>>> nativeParams(const std::string &data, const Chunk &c) {
-    const size_t b = c.payload + 172;
-    if (c.length < 172 + 28 || data.compare(b + 12, 8, "GAMETSPP") != 0) return std::nullopt;
+    if (c.length < 172 + 28) return std::nullopt;
+    const size_t body = c.payload + 172, end = c.payload + c.length;
+    const size_t tag = data.find("GAMETSPP", body);
+    if (tag == std::string::npos || tag < body + 12 || tag + 16 > end) return std::nullopt;
+    const size_t b = tag - 12;
     const uint32_t count = read<uint32_t>(data, b + 8), subtype = read<uint32_t>(data, b + 20);
-    if (count > 4096 || 28 + size_t(count) * 4 > c.length - 172) return std::nullopt;
+    if (count > 4096 || b + 28 + size_t(count) * 4 > end) return std::nullopt;
     std::vector<float> v(count);
     for (uint32_t i = 0; i < count; ++i) v[i] = read<float>(data, b + 28 + 4 * size_t(i));
     return std::make_pair(subtype, std::move(v));

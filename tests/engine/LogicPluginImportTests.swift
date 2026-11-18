@@ -85,7 +85,7 @@ import Testing
         #expect(dalnok_track_plugin_info(e, second, 0, &secondInfo) == DALNOK_OK && !secondInfo.loaded && name(secondInfo.name) == "Missing")
         #expect(((report["skipped"] as? [String: Int])?["unsupportedLogicPlugins"] ?? 0) == 1)
     }
-    @Test func convertsChannelEqToTheBuiltInPlugin() throws {
+    @Test(arguments: [0, 96]) func convertsChannelEqToTheBuiltInPlugin(prefix: Int) throws {
         let pkg = tempDir().appendingPathComponent("ChannelEQ.logicx")
         let alt = pkg.appendingPathComponent("Alternatives/000"), folder = pkg.appendingPathComponent("Media/Audio Files")
         try FileManager.default.createDirectory(at: alt, withIntermediateDirectories: true)
@@ -104,7 +104,9 @@ import Testing
         var block = Data(le(UInt32(240))) + Data(le(UInt32(1))) + Data(le(UInt32(52))) + Data("GAMETSPP".utf8) + Data(le(UInt32(0xec))) + Data(le(UInt32(0)))
         for v in values { block.append(contentsOf: le(v.bitPattern)) }
         var native = Data(repeating: 0, count: 172); native.replaceSubrange(0..<4, with: le(UInt32(0x1a8))); native.replaceSubrange(120..<130, with: "Channel EQ".utf8)
-        native.replaceSubrange(140..<144, with: le(UInt32(0xec))); native.append(block)
+        native.replaceSubrange(140..<144, with: le(UInt32(0xec)))
+        native.append(Data(repeating: 7, count: prefix)) // some records carry a knob-position table before the block
+        native.append(block)
         var body = chunk("Envi", env, id: 20) + chunk("AuCO", Data(repeating: 0, count: 201), id: 36, sub: 0)
         body += chunk("AuCU", native, id: 36, sub: 0, kind: 2)
         body += chunk("AuFl", fl) + chunk("AuRg", region, id: 40) + chunk("MSeq", Data(repeating: 0, count: 8)) + chunk("Trak", track) + chunk("EvSq", Data(event.prefix(80)) + Data(repeating: 0, count: 16))
