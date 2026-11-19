@@ -4,6 +4,7 @@
 
 - Investigating Logic project opening crashes and audio parity; no compatibility fix is claimed yet.
 - Reproduced a Logic import crash through the published app UI; two other projects reached their import reports.
+- Tested and rejected an import scheduling workaround after a repeated import crashed; no crash fix is claimed.
 
 ## [0.1.0] - 2026-11-18
 First preview release (pre-alpha): recording and editing, MIDI, mixing, VST3/CLAP/AU hosting, project import from
