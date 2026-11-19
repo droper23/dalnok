@@ -1552,11 +1552,21 @@ final class SelfTest {
             _ = perform("Show Automation"); tl.pluginLanes = [:]
             pw.window?.close()
         } else { check(false, "AUDelay's window opens") }
-        guard let delay = panel.devices.first else { return }
         // Duplicate track names must remain distinct choices in a sidechain menu.
         let duplicate1 = s.addTrack("Sidechain duplicate")
         let duplicate2 = s.addTrack("Sidechain duplicate")
         let namedNone = s.addTrack("None")
+        if let fixture = ProcessInfo.processInfo.environment["DALNOK_TEST_CLAP"], !fixture.isEmpty {
+            let sidechainSlot = (try? s.addPlugin(track, path: fixture)) ?? 0
+            if let device = panel.devices.first(where: { $0.slot == sidechainSlot }), sidechainSlot != 0 {
+                let accepted = dalnok_plugin_set_sidechain(s.engine.handle, track, sidechainSlot, duplicate2) == DALNOK_OK
+                device.refreshControls()
+                check(accepted && !device.sidechain.isHidden && device.sidechain.selectedTag() == Int(duplicate2),
+                      "a hosted sidechain restores the selected duplicate-name track")
+                s.removePlugin(track, sidechainSlot)
+            } else { check(false, "sidechain fixture loads and opens its device") }
+        }
+        guard let delay = panel.devices.first else { return }
         let sidechainWasHidden = delay.sidechain.isHidden
         delay.sidechain.isHidden = false // AUDelay need not expose a sidechain to exercise the menu.
         delay.refreshControls()
