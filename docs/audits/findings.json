@@ -6,7 +6,8 @@
     "date": "2026-11-18",
     "version": "Dalnok 0.1.0 (pre-alpha)",
     "scope": "Engine (C++20), C API, macOS AppKit front end, tests, tools, build and CI. No feature implementation.",
-    "author": "Independent audit"
+    "author": "Independent audit",
+    "followUpBranch": "fix/audit-followups"
   },
   "scoring": {
     "priority": {
@@ -88,7 +89,7 @@
       "priority": "P0",
       "category": "Reliability",
       "subsystem": "Persistence",
-      "status": "open",
+      "status": "fixed",
       "summary": "Recording is crash-safe (per-take journal plus fsynced spool), but the project model is only written on an explicit save. Any crash, plug-in fault or power loss discards every edit since the last save.",
       "evidence": [
         "Backlog item 4: 'Autosave and crash recovery of the project' is still open.",
@@ -121,7 +122,8 @@
         "reliability": 5,
         "value": 5
       },
-      "measured": false
+      "measured": false,
+      "resolution": "Already implemented: MainWindow.tick writes a recovery snapshot every 1800 ticks (30 s) while the project is dirty, beginSessionMarker/endSessionMarker detect an unclean exit, offerCrashRecovery prompts at launch, and scripts/ci/recovery-smoke.sh plus the self-test verify write and restore after a process kill. The audit's source reading missed the timer. Residual: saveSnapshot serialises on the main thread (measured 0.27 ms at 8 clips; a 4,096-clip save has not been measured)."
     },
     {
       "id": "A-03",
@@ -171,7 +173,7 @@
       "priority": "P1",
       "category": "Performance",
       "subsystem": "Render state compilation",
-      "status": "open",
+      "status": "fixed",
       "summary": "compile() iterates the entire model_.clips vector once per track, so snapshot construction is quadratic in project size. Every structural edit rebuilds the complete snapshot, including delay-compensation graph, solo links and click schedule.",
       "evidence": [
         "engine/src/engine.cpp:1860 - the per-track loop contains `for (const auto &c : model_.clips)`, filtered by c.track.",
@@ -204,7 +206,8 @@
         "reliability": 2,
         "value": 4
       },
-      "measured": true
+      "measured": true,
+      "resolution": "compile() buckets clips by track once, so each RenderTrack build is linear in clips instead of scanning every clip per track. Measured on the same generated 4,096-clip model (16 tracks x 256 clips, release, 48 kHz): structural nudge 0.770 ms -> 0.255 ms, undo 0.745 ms -> 0.238 ms, clip-by-clip build 1,272 ms -> 527 ms. All 191 engine tests pass. Incremental per-track compilation (the second half of the recommendation) is still open."
     },
     {
       "id": "A-05",
@@ -294,7 +297,7 @@
       "priority": "P1",
       "category": "Data model",
       "subsystem": "Project model / plugin hosting",
-      "status": "open",
+      "status": "fixed",
       "summary": "PluginSlot::state holds the base64 plug-in chunk in the value model. Because edits copy the model and undo keeps 500 copies, a project with large plug-in states multiplies those chunks by undo depth and copies them on unrelated edits.",
       "evidence": [
         "engine/src/engine.hpp - `std::string state; // last known plugin state (used when the plugin is missing, and for saving)` inside PluginSlot, which is inside TrackState inside Model.",
@@ -329,7 +332,8 @@
         "reliability": 2,
         "value": 3
       },
-      "measured": false
+      "measured": false,
+      "resolution": "PluginSlot::state is now SharedPluginState, an immutable std::shared_ptr<const std::string> blob; model copies and undo snapshots share it and a new state replaces the pointer. Serialisation and the missing-plug-in path read through str(). All 191 tests pass, including state round-trip and missing-plug-in suites."
     },
     {
       "id": "A-08",
@@ -423,7 +427,7 @@
       "priority": "P1",
       "category": "Reliability",
       "subsystem": "Persistence / import",
-      "status": "open",
+      "status": "partial",
       "summary": "The project reader and four foreign importers parse untrusted, complex files with hand-written logic. Tests cover known fixtures and a few corrupt cases, but there is no fuzzing or property-based round-trip testing, and the local check script runs sanitizers only when asked.",
       "evidence": [
         "tests/engine has 31 files and 188 tests, including targeted corrupt-MIDI and truncation cases, but no fuzz target or corpus.",
@@ -456,7 +460,8 @@
         "reliability": 5,
         "value": 4
       },
-      "measured": false
+      "measured": false,
+      "resolution": "Added save -> load -> save property tests over randomised models (JSON-compared so key order is irrelevant) and a 120-case mutated/truncated project corpus that must fail without crashing or over-reading. libFuzzer targets, a nightly seed corpus, and a default local sanitizer run are still open."
     },
     {
       "id": "A-11",
@@ -505,7 +510,7 @@
       "priority": "P2",
       "category": "Performance",
       "subsystem": "DSP / real-time",
-      "status": "open",
+      "status": "fixed",
       "summary": "Filters, reverbs and plug-ins can decay into denormal floats, which are dramatically slower on some CPUs. Dalnok neither sets flush-to-zero/denormals-are-zero for the audio thread nor flushes denormals in its own feedback paths.",
       "evidence": [
         "No match for denormal, FTZ, DAZ or fesetround in engine/src or engine/include.",
@@ -537,7 +542,8 @@
         "reliability": 2,
         "value": 2
       },
-      "measured": false
+      "measured": false,
+      "resolution": "The live callback and both offline render paths set flush-to-zero (FPCR.FZ on arm64, MXCSR FTZ|DAZ on x86) and restore the caller's mode on exit. New test subnormalSamplesFlushToZeroOnLiveAndOfflinePaths feeds 1e-40 samples and requires exact silence on both paths; all 191 tests pass."
     },
     {
       "id": "A-13",
@@ -943,7 +949,7 @@
       "priority": "P2",
       "category": "Documentation",
       "subsystem": "Docs",
-      "status": "open",
+      "status": "fixed",
       "summary": "The project's own status document lists features as 'not yet' or 'known defects' that are implemented and tested, which makes it an unreliable guide for contributors and for AI-assisted work.",
       "evidence": [
         "CURRENT_STATE.md 'Not yet / incomplete': 'Plug-in editors, parameters and automation, latency compensation, AU/CLAP hosting' - all four exist (PluginWindow.swift, AutomationTests, DelayCompensationTests, au_host.mm, clap_host.cpp).",
@@ -973,7 +979,8 @@
         "reliability": 2,
         "value": 3
       },
-      "measured": false
+      "measured": false,
+      "resolution": "CURRENT_STATE.md now points at the audit roadmap, lists the real remaining gaps, records the C API at v29, and its Verified working table links the plug-in, automation, compensation, punch/count-in and multi-input suites instead of describing them as missing."
     }
   ]
 }

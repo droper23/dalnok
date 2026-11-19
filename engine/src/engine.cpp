@@ -681,7 +681,9 @@ int32_t Engine::addPlugin(DalnokTrackId track, const std::string &path, const st
     slot.name = instance->name();
     slot.vendor = instance->vendor();
     slot.instrument = instance->instrument();
-    instance->getState(slot.state);
+    std::string initialState;
+    instance->getState(initialState);
+    slot.state.assign(std::move(initialState));
     plugins_[id] = std::move(instance);
     const bool ok = edit(slot.instrument ? "Set Instrument" : "Add Plug-in", true, [&](Model &m) {
         TrackState *tr = m.track(track);
@@ -758,8 +760,8 @@ DalnokTrackId Engine::duplicateTrack(DalnokTrackId track, std::string &err) {
         s.id = nextSlot++;
         slotMap[p.id] = s.id;
         std::string state;
-        if (!pluginState(p.id, state)) state = p.state;
-        s.state = state;
+        if (!pluginState(p.id, state)) state = p.state.str();
+        s.state.assign(state);
         std::string loadErr;
         if (pluginInstance(p.id)) {
             std::shared_ptr<PluginProcessor> inst(loadPlugin(p.format, p.path, p.classId, sampleRate_, kMaxBlock, false, loadErr));
@@ -842,7 +844,7 @@ bool Engine::pluginState(int32_t id, std::string &bytes) const {
     if (PluginProcessor *p = pluginInstance(id)) return p->getState(bytes);
     for (const auto &t : model_.tracks)
         for (const auto &slot : t.plugins)
-            if (slot.id == id) { bytes = slot.state; return true; } // missing plugin: keep what was saved
+            if (slot.id == id) { bytes = slot.state.str(); return true; } // missing plugin: keep what was saved
     return false;
 }
 
@@ -881,7 +883,7 @@ void Engine::instantiatePlugins() {
             std::string err;
             std::shared_ptr<PluginProcessor> p(loadPlugin(slot.format, slot.path, slot.classId, sampleRate_, kMaxBlock, false, err));
             if (!p) { pluginErrors_[slot.id] = err; continue; }
-            if (!slot.state.empty() && !p->setStateFromDocument(slot.state)) {
+            if (!slot.state.empty() && !p->setStateFromDocument(slot.state.str())) {
                 // Keep the original state intact instead of running and later saving a default instance.
                 const auto detail = p->stateError();
                 pluginErrors_[slot.id] = "the saved state was not accepted" + (detail.empty() ? std::string{} : ": " + detail) + "; the original state was preserved";
@@ -895,7 +897,7 @@ void Engine::captureLiveState(Model &m) const {
     for (auto &t : m.tracks)
         for (auto &slot : t.plugins) {
             std::string state;
-            if (PluginProcessor *p = pluginInstance(slot.id); p && p->getState(state)) slot.state = std::move(state);
+            if (PluginProcessor *p = pluginInstance(slot.id); p && p->getState(state)) slot.state.assign(std::move(state));
         }
 }
 
@@ -1891,6 +1893,11 @@ std::unique_ptr<RenderState> Engine::compile(std::vector<StretchJob> *needed, co
             left.erase(ready);
         }
     }
+    // Clips bucketed by track once, so building each RenderTrack is linear in the project's clips instead of
+    // scanning every clip once per track (the audit's O(tracks x clips) finding, A-04).
+    std::map<DalnokTrackId, std::vector<const ClipState *>> clipsByTrack;
+    for (const auto &c : model_.clips)
+        if (!c.alt) clipsByTrack[c.track].push_back(&c); // takes in a folder don't play; the comp's pieces do
     std::map<DalnokTrackId, int32_t> indexOf;
     for (const TrackState *tp : order) {
         const TrackState &t = *tp;
@@ -1927,8 +1934,8 @@ std::unique_ptr<RenderState> Engine::compile(std::vector<StretchJob> *needed, co
         // A missing or bypassed instrument must not silently substitute the built-in synth.
         if (rt.instrument && !rt.instrumentPlugin && std::any_of(t.plugins.begin(), t.plugins.end(), [](const PluginSlot &p) { return p.instrument; }))
             rt.instrument = false;
-        for (const auto &c : model_.clips) {
-            if (c.track != t.id || c.alt) continue; // takes in a folder don't play; the comp's pieces do
+        for (const ClipState *cp : clipsByTrack[t.id]) {
+            const ClipState &c = *cp;
             if (c.muted) {
                 if (c.midi()) rt.mutedMidiSignature = (rt.mutedMidiSignature * 1099511628211ULL) ^ static_cast<uint64_t>(c.id);
                 if (c.slot >= 0) {
@@ -2263,7 +2270,34 @@ void Engine::audioCallback(void *ctx, float *left, float *right, int frames) DAL
         self->overloads_.fetch_add(1, std::memory_order_relaxed);
 }
 
+namespace {
+// Denormals are dramatically slower than normal floats on some CPUs and the DSP never needs their
+// precision (audit A-12). Flush-to-zero is set while rendering and the caller's mode is restored.
+#if defined(__aarch64__)
+constexpr uint64_t kFpcrFlushZero = 1ull << 24; // FPCR.FZ
+inline uint64_t readFpcr() DALNOK_NONBLOCKING { uint64_t v; __asm__ __volatile__("mrs %0, fpcr" : "=r"(v)); return v; }
+inline void writeFpcr(uint64_t v) DALNOK_NONBLOCKING { __asm__ __volatile__("msr fpcr, %0" : : "r"(v)); }
+#elif defined(__x86_64__)
+constexpr uint32_t kMxcsrFtz = 1u << 15, kMxcsrDaz = 1u << 6;
+inline uint32_t readMxcsr() DALNOK_NONBLOCKING { uint32_t v; __asm__ __volatile__("stmxcsr %0" : "=m"(v)); return v; }
+inline void writeMxcsr(uint32_t v) DALNOK_NONBLOCKING { __asm__ __volatile__("ldmxcsr %0" : : "m"(v)); }
+#endif
+
+struct FlushDenormals {
+#if defined(__aarch64__)
+    uint64_t saved = readFpcr();
+    FlushDenormals() DALNOK_NONBLOCKING { writeFpcr(saved | kFpcrFlushZero); }
+    ~FlushDenormals() DALNOK_NONBLOCKING { writeFpcr(saved); }
+#elif defined(__x86_64__)
+    uint32_t saved = readMxcsr();
+    FlushDenormals() DALNOK_NONBLOCKING { writeMxcsr(saved | kMxcsrFtz | kMxcsrDaz); }
+    ~FlushDenormals() DALNOK_NONBLOCKING { writeMxcsr(saved); }
+#endif
+};
+} // namespace
+
 void Engine::process(float *left, float *right, int frames) DALNOK_NONBLOCKING {
+    [[maybe_unused]] const FlushDenormals flushDenormals;
     // Adopt the newest snapshot only if the previous one can be retired.
     if (!retired_.full()) {
         if (RenderState *s = pending_.exchange(nullptr, std::memory_order_acq_rel)) {
@@ -2440,6 +2474,7 @@ void Engine::process(float *left, float *right, int frames) DALNOK_NONBLOCKING {
 // ---- Offline ------------------------------------------------------------
 
 bool Engine::renderOffline(int64_t start, int64_t frames, float *left, float *right) {
+    [[maybe_unused]] const FlushDenormals flushDenormals;
     if (start < 0 || frames < 0 || !left || !right) return false;
     renderPendingStretchesNow();
     const auto offline = offlinePlugins();
@@ -2469,6 +2504,7 @@ int32_t Engine::compensation() const {
 }
 
 bool Engine::renderToWav(const std::string &path, int64_t start, int64_t frames, int32_t bits, std::string &err) {
+    [[maybe_unused]] const FlushDenormals flushDenormals;
     if (start < 0 || frames <= 0) {
         err = "invalid range";
         return false;

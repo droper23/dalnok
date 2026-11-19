@@ -232,7 +232,7 @@ json::Value Engine::describe() const {
                     pv.set("controls", std::move(ids));
                 }
                 std::string state;
-                if (!pluginState(slot.id, state)) state = slot.state;
+                if (!pluginState(slot.id, state)) state = slot.state.str();
                 pv.set("state", base64Encode(state));
                 list.push(std::move(pv));
             }
@@ -567,11 +567,13 @@ std::unique_ptr<Engine::PreparedProject> Engine::prepareDocument(const json::Val
                     if (const json::Value *ids = pv.get("controls"); ids && ids->isArray())
                         for (const auto &c : ids->array)
                             if (c.isNumber() && c.number >= 0 && c.number <= 4294967295.0) slot.controls.push_back(static_cast<uint32_t>(c.number));
+                    std::string state;
                     if (slot.id <= 0 || !seen.insert(slot.id).second || (slot.format != "vst3" && slot.format != "au" && slot.format != "clap" && slot.format != "dalnok") ||
-                        !base64Decode(pv.getString("state", ""), slot.state)) {
+                        !base64Decode(pv.getString("state", ""), state)) {
                         err = "invalid plug-in on track " + t.name;
                         return nullptr;
                     }
+                    slot.state.assign(std::move(state));
                     t.plugins.push_back(std::move(slot));
                 }
             }

@@ -35,6 +35,19 @@ struct Send {
     bool pre = false;
 };
 
+// Plug-in state as an immutable, shared blob. Every edit and every undo step copies the model, so the
+// state chunk is shared rather than copied; a new state replaces the pointer (audit finding A-07).
+struct SharedPluginState {
+    std::shared_ptr<const std::string> blob;
+    bool empty() const { return !blob || blob->empty(); }
+    const std::string &str() const {
+        static const std::string kNone;
+        return blob ? *blob : kNone;
+    }
+    void assign(std::string s) { blob = s.empty() ? nullptr : std::make_shared<const std::string>(std::move(s)); }
+    void clear() { blob.reset(); }
+};
+
 // A plugin on a track: the instrument (instrument tracks) or an insert effect. The live instance
 // lives in Engine::plugins_ by id, outside the undoable model, so undo never reloads plugin code.
 struct PluginSlot {
@@ -44,7 +57,7 @@ struct PluginSlot {
     std::vector<uint32_t> controls; // parameters on the device panel's controller (empty = the first automatable ones)
     bool bypassed = false;          // footswitch/bypass: effects pass audio through, instruments go silent (undoable)
     int32_t sidechain = 0;          // DalnokTrackId whose pre-fader signal feeds this plug-in's sidechain input (0 = none)
-    std::string state; // last known plugin state (used when the plugin is missing, and for saving)
+    SharedPluginState state; // last known plugin state (used when the plugin is missing, and for saving)
 };
 
 // Automation: breakpoints in timeline frames. Volume values are dB; pan values are -1 (left) to 1 (right).

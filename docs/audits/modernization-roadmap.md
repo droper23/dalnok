@@ -132,3 +132,18 @@ Rules the roadmap enforces:
 2. Do not weaken an existing test to make a refactor pass; if a test must change, say why in the PR.
 3. Keep `scripts/ci/rt-effects.sh` clean for anything reachable from the callback.
 4. Update `site/parity.json` only with a test, self-test or benchmark behind the claim.
+
+---
+
+## Progress (2026-11-18, branch `fix/audit-followups`)
+
+| Item | State | Evidence |
+|---|---|---|
+| A-02 autosave + recovery | **Already implemented** (audit misread the timer) | `MainWindow.tick` snapshot every 30 s, launch prompt, `scripts/ci/recovery-smoke.sh`, self-test |
+| A-04a linear compile | **Done** | 4,096 clips: structural 0.770 -> 0.255 ms, build 1,272 -> 527 ms, undo 0.745 -> 0.238 ms; 191 tests |
+| A-07 shared plug-in state | **Done** | `SharedPluginState` blob; state round-trip and missing-plug-in suites pass |
+| A-12 denormal guard | **Done** | FPCR.FZ / MXCSR FTZ|DAZ around live and offline render; subnormal test requires exact silence |
+| A-10 fuzz/property tests | **Partial** | randomised save/load/save and 120 mutated/truncated files; libFuzzer and nightly corpus still open |
+| A-23 status documentation | **Done** | capability table now links tests; C API references corrected to v29 |
+
+Everything else in Phases 0-5 remains as written above; the measured items are unchanged except A-04a.

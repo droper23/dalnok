@@ -1,11 +1,18 @@
 ---
 updated: 2026-11-18
 phase: Phases 1 and 3 complete; 2 and 4 in progress
-milestone: M11 VST3 hosting (ADR-0009 stage 3) done; editors, parameters and AU hosting next
+milestone: hosting complete (VST3/AU/CLAP, editors, parameters, automation, delay compensation); autosave, isolation and streaming next
 ---
 # Current State
 
 ## Current priorities (2026-11-18)
+- **Audit follow-ups (branch `fix/audit-followups`).** Wave 1 landed: linear snapshot compilation (A-04),
+  shared plug-in state blobs (A-07), a flush-to-zero render environment (A-12), property and mutated-project
+  parser tests (A-10, partial), and corrected status documentation (A-23). A-02 turned out to be already
+  implemented — periodic recovery snapshot, launch prompt and `scripts/ci/recovery-smoke.sh` — and was
+  misread in the audit. Measured at 4,096 clips: structural edit 0.770 -> 0.255 ms, clip-by-clip build
+  1,272 -> 527 ms, undo 0.745 -> 0.238 ms. 191 engine tests pass. The remaining findings stay sequenced in
+  `docs/audits/modernization-roadmap.md`.
 - **Independent audit (branch `audit/2026-11-codebase`).** Findings, measurements and an ordered plan are in
   `docs/audits/` (report, `findings.json`, roadmap, `benchmarks/`, dashboard). Headline results: the audio path
   is well inside budget (1.11 ms per 512-frame block at 512 tracks), while one UI model read costs 15.9 ms at
@@ -243,7 +250,7 @@ milestone: M11 VST3 hosting (ADR-0009 stage 3) done; editors, parameters and AU 
 - **Public parity page:** https://droper23.github.io/dalnok-status/ (source in `site/`, published by `scripts/publish-site.sh`).
 
 ## Architecture (now)
-C++20 engine (`engine/`) → C API (`dalnok.h`, v11) → AppKit UI (`app/macos/`). The **engine owns the
+C++20 engine (`engine/`) → C API (`dalnok.h`, v29) → AppKit UI (`app/macos/`). The **engine owns the
 project model**: tracks, clips in z-order, and a media pool. Every edit is a named, undoable command with
 whole-model snapshot undo, also reachable as JSON through the command catalog. The UI is a read-only view
 that refreshes on `dalnok_model_revision`. Render snapshots reach the audio thread through an atomic
@@ -294,11 +301,19 @@ slot, and retired ones come back through an SPSC queue. See [[System Overview]],
 | Live MIDI input and MIDI recording | Core MIDI virtual-source test (TSan clean), self-test via running device |
 | Plugin discovery (no code loaded) | `PluginDiscovery` tests; 217 bundles + 230 AUs on the dev Mac |
 | Onboarding: "Coming from…", shortcut presets, project finder with preview, import report, Concept Guide, old-DAW words in ⌘K | Self-test |
+| Plug-in editors: VST3/AU/CLAP windows plus the generic parameter panel | `PluginHostingTests`, `AudioUnitHostingTests`, `ClapHostingTests`; self-test (test plug-in) |
+| Plug-in parameters, device-panel controls and parameter automation (block-rate), Touch/Latch | `PluginHostingTests`, `AutomationTests`, `BuiltinPluginTests` |
+| Plug-in delay compensation (per connection, render-ahead live, export pre-roll) | `DelayCompensationTests` |
+| Punch in/out, count-in, and several armed audio tracks each recording its own input | `PunchTests`, `CycleTests`, `MultiInputTests` |
+| Audio Units and CLAP host like VST3 (state, missing plug-in keeps state, sidechain) | `AudioUnitHostingTests`, `AudioUnitDocumentTests`, `ClapHostingTests`; `scripts/ci/plugin-host.sh` |
 
 ## Not yet / incomplete
-- Loopback latency measurement, power-loss validation, punch in/out, multiple armed audio tracks, separate input/output devices (built-in mic + speakers is refused with an explanation).
-- Count-in, tempo ramps, importing tempo maps, sample-accurate MIDI input timing.
-- Plug-in editors, parameters and automation, latency compensation, AU/CLAP hosting, out-of-process hosting.
+Every row in "Verified working" names the test, self-test or command behind it. This list is what has no such evidence yet.
+- Out-of-process plug-in hosting (crash isolation); plug-ins still run in-process (ADR-0009, audit A-01).
+- Project autosave and crash recovery (audit A-02); only recordings are journaled.
+- Loopback latency measurement and power-loss validation.
+- Separate input/output devices (built-in mic + speakers is refused with an explanation).
+- Tempo ramps, importing tempo maps, sample-accurate MIDI input timing.
 - Live theme switching (Relaunch Now is the stopgap).
 - Disk streaming. Media is fully decoded into RAM, about 23 MB per stereo minute at 48 kHz.
 - Input selection in the UI and handling sample-rate changes; the engine rate is fixed at launch.
@@ -311,13 +326,13 @@ slot, and retired ones come back through an SPSC queue. See [[System Overview]],
 - Peak meters only. No LUFS or RMS yet.
 
 ## Active objective
-Finish validating recording (loopback latency, power loss, real keyboard), then Phase 3 editing (piano roll, tempo map, metronome) and Phase 4 plugin hosting (sandboxed scan, then VST3). Recording integrity still outranks everything else.
+Work the audit's ordered plan (`docs/audits/modernization-roadmap.md`): autosave and plug-in crash containment first, then model/sync scaling, reliability, module shape, and media/DSP headroom. Recording integrity still outranks everything else.
 
 ## Next recommended action
-1. With a cable from the Scarlett's output to input 1, add and run a loopback latency measurement (`dalnok-cli`), then decide whether reported latency is trustworthy.
-2. Owner: play the MiniLab with `dalnok-cli midi-play <id> 20 --record`, and try recording in the app.
-3. Piano roll marquee selection and keyboard note entry; tempo map; count-in.
-4. Owner review of Warm Analog and the device panel; then automation lanes driving plug-in parameters, then latency compensation.
+1. Autosave and crash recovery, then the pre-plug-in-init snapshot and out-of-process plug-in hosting (audit A-02, A-01a, A-01).
+2. Model scaling: linear compile, no whole-model copy per parameter edit, change-set refresh (A-04, A-03, A-05).
+3. Reliability: fuzz/property tests, handoff health metrics, project schema and migrations (A-10, A-14, A-16).
+4. Media and DSP: disk streaming, denormal guard, SIMD (A-09, A-12, A-13).
 
 ## Open migration items
 - Expand Logic `.logicx` validation and decode mixer settings, routing, track stacks and take folders.

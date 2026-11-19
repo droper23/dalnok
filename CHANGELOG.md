@@ -7,6 +7,12 @@
   interactive dashboard. It measures the real-time path, model/edit/undo scaling and memory instead of
   estimating them, and adds two measurement-only `dalnok-cli` subcommands. No product behaviour changed.
 
+- Audit follow-ups (branch `fix/audit-followups`): render-snapshot compilation is linear in clips (4,096-clip
+  structural edits 0.77 -> 0.26 ms, clip-by-clip build 1.27 s -> 0.53 s), plug-in state is an immutable shared
+  blob so model copies and undo snapshots no longer copy it, the live and offline render paths flush denormals
+  to zero, and new property/mutation tests exercise the project parser. `CURRENT_STATE.md` was corrected: it
+  listed already-tested features as missing. Autosave/recovery already existed; the audit misread its timer.
+
 - Retested the import path in the built app with a generated Logic project (three tracks, duplicate channel-strip names including a track named None): the import completed through Open ▸ Import and the app stayed responsive. The owner's real projects were not available on this machine, so that retest remains outstanding.
 - MODO BASS 2 loads in 3.2 s headlessly and did not stall the built app on a generated project; the earlier app-only stall is still unexplained and is not claimed as fixed. Plug-in initialization runs on the main thread during project apply, which is where such a block would come from.
 - Fixed a device-panel crash when sidechain choices have duplicate track names, including a track named None. Sidechain choices retain their distinct track IDs.

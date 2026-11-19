@@ -11,7 +11,7 @@
       "files": [
         {
           "path": "engine/src/engine.cpp",
-          "lines": 2526
+          "lines": 2562
         },
         {
           "path": "engine/src/dalnok_api.cpp",
@@ -19,7 +19,7 @@
         },
         {
           "path": "engine/src/project.cpp",
-          "lines": 851
+          "lines": 853
         },
         {
           "path": "engine/include/dalnok/dalnok.h",
@@ -31,7 +31,7 @@
         },
         {
           "path": "engine/src/engine.hpp",
-          "lines": 598
+          "lines": 611
         },
         {
           "path": "engine/src/commands.cpp",
@@ -520,6 +520,10 @@
         {
           "path": "tests/engine/AutomationTests.swift",
           "lines": 117
+        },
+        {
+          "path": "tests/engine/ParserFuzzTests.swift",
+          "lines": 116
         },
         {
           "path": "tests/engine/DelayCompensationTests.swift",
