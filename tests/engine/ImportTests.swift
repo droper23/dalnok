@@ -309,6 +309,7 @@ func skipped(_ r: [String: Any], _ key: String) -> Int { (r["skipped"] as? [Stri
         dalnok_meter(e, &num, &den)
         #expect(dalnok_tempo_bpm(e) == 90 && num == 3 && den == 8)
         #expect((r["notes"] as? [String])?.first?.contains("key A minor") == true)
+        #expect((r["notes"] as? [String])?.contains { $0.contains("Only a constant tempo and meter") } == true)
         let c = clips(e).map(\.info)
         #expect(clips(e).first?.track == "Audio 2")
         // 7680 quarter-note ticks at 90 BPM = 256000 frames.

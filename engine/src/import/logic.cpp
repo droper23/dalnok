@@ -365,7 +365,8 @@ bool importLogic(const std::string &path, Result &out, std::string &err) {
         rep.notes.push_back("Some MIDI notes carry additional Logic-specific data that is not decoded; note timing, pitch, velocity and length were imported.");
     rep.notes.push_back("EXPERIMENTAL: Logic's project format is undocumented. Audio files and region trims are verified; "
                         "region positions, track assignment and track names match Logic's own per-track renders on a test "
-                        "project. Track stacks, Logic-native plug-ins, automation and take folders are not imported, so "
+                        "project. Only a constant tempo and meter are imported; changes are not imported. Track stacks, "
+                        "Logic-native plug-ins, automation and take folders are not imported, so "
                         "levels differ from Logic. Logic's File ▸ Export ▸ Project to Final Cut Pro XML "
                         "is an alternative, but may render audio and change clip boundaries; compare the result with the original.");
     out.document = b.document();

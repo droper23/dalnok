@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Fixed a device-panel crash when sidechain choices have duplicate track names, including a track named None. Sidechain choices retain their distinct track IDs.
+- Logic import reports now state that tempo and meter changes are not imported.
 - Investigating Logic project opening crashes and audio parity; no compatibility fix is claimed yet.
 - Reproduced a Logic import crash through the published app UI; two other projects reached their import reports.
 - Tested and rejected an import scheduling workaround after a repeated import crashed; no crash fix is claimed.

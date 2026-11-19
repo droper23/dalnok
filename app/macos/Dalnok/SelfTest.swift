@@ -1553,6 +1553,23 @@ final class SelfTest {
             pw.window?.close()
         } else { check(false, "AUDelay's window opens") }
         guard let delay = panel.devices.first else { return }
+        // Duplicate track names must remain distinct choices in a sidechain menu.
+        let duplicate1 = s.addTrack("Sidechain duplicate")
+        let duplicate2 = s.addTrack("Sidechain duplicate")
+        let namedNone = s.addTrack("None")
+        let sidechainWasHidden = delay.sidechain.isHidden
+        delay.sidechain.isHidden = false // AUDelay need not expose a sidechain to exercise the menu.
+        delay.refreshControls()
+        let duplicates = delay.sidechain.itemArray.filter { $0.title == "SC: Sidechain duplicate" }
+        check(duplicates.count == 2 && Set(duplicates.map(\.tag)) == Set([Int(duplicate1), Int(duplicate2)]),
+              "sidechain menu retains duplicate track names with distinct track IDs")
+        let noneChoices = delay.sidechain.itemArray.filter { $0.title == "SC: None" }
+        check(noneChoices.count == 2 && Set(noneChoices.map(\.tag)) == Set([0, Int(namedNone)]),
+              "a track named None remains distinct from no sidechain")
+        delay.sidechain.selectItem(withTag: Int(duplicate2))
+        check(delay.sidechain.selectedTag() == Int(duplicate2), "a duplicate-name sidechain can be selected by track ID")
+        delay.sidechain.isHidden = sidechainWasHidden
+        s.removeTrack(namedNone); s.removeTrack(duplicate2); s.removeTrack(duplicate1)
         let names = delay.knobs.map { $0.label.stringValue }
         check(delay.knobs.count == 4 && names.contains { $0.caseInsensitiveCompare("Dry/Wet Mix") == .orderedSame }, "controller shows AUDelay's parameters (\(names))")
         if let lim = panel.devices.last {

@@ -640,7 +640,11 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         guard !sidechain.isHidden else { return }
         let others = session.allTracks.filter { $0.id != trackId }
         let titles = ["SC: None"] + others.map { "SC: \($0.name)" }
-        if sidechain.itemTitles != titles { sidechain.removeAllItems(); sidechain.addItems(withTitles: titles) }
+        if sidechain.itemTitles != titles {
+            sidechain.removeAllItems()
+            // NSPopUpButton.addItems drops duplicate titles; tracks can share a name.
+            for title in titles { sidechain.menu?.addItem(NSMenuItem(title: title, action: nil, keyEquivalent: "")) }
+        }
         sidechain.item(at: 0)?.tag = 0
         for (i, t) in others.enumerated() { sidechain.item(at: i + 1)?.tag = Int(t.id) }
         sidechain.selectItem(withTag: Int(dalnok_plugin_sidechain(session.engine.handle, trackId, slot)))
