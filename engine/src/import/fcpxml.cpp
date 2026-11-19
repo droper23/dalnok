@@ -3,6 +3,9 @@
 // asset-clips/clips from the primary spine and connected lanes. Each distinct
 // lane/role becomes a track. Rational times ("1001/48000s") are honored.
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include <algorithm>
+#include <cstdlib>
+#include <cctype>
 #include "import/import.hpp"
 
 #include <pugixml.hpp>
@@ -35,8 +38,9 @@ std::string urlToPath(std::string u) {
     if (u.rfind("localhost", 0) == 0) u = u.substr(9);
     std::string out;
     for (size_t i = 0; i < u.size(); ++i) {
-        if (u[i] == '%' && i + 2 < u.size()) {
-            out += static_cast<char>(std::stoi(u.substr(i + 1, 2), nullptr, 16));
+        if (u[i] == '%' && i + 2 < u.size() && std::isxdigit(static_cast<unsigned char>(u[i + 1])) &&
+            std::isxdigit(static_cast<unsigned char>(u[i + 2]))) { // a malformed escape stays literal (found by fuzzing)
+            out += static_cast<char>(std::strtol(u.substr(i + 1, 2).c_str(), nullptr, 16));
             i += 2;
         } else {
             out += u[i];
@@ -83,7 +87,12 @@ void walk(Ctx &c, const pugi::xml_node &container, double parentTimelineStart, d
             float gain = 0;
             if (const auto av = n.child("adjust-volume")) {
                 std::string amt = av.attribute("amount").as_string();
-                if (amt.size() > 2 && amt.substr(amt.size() - 2) == "dB") gain = std::stof(amt.substr(0, amt.size() - 2));
+                if (amt.size() > 2 && amt.substr(amt.size() - 2) == "dB") {
+                    char *end = nullptr;
+                    const std::string number = amt.substr(0, amt.size() - 2);
+                    const double db = std::strtod(number.c_str(), &end);
+                    if (end != number.c_str() && std::isfinite(db)) gain = static_cast<float>(std::clamp(db, -144.0, 24.0));
+                }
             }
             c.b.addClip(trackFor(c, n, lane), media, timelineStart, start, duration, n.attribute("name").as_string(), gain);
             walk(c, n, timelineStart, start, depth + 1); // connected clips on this clip

@@ -93,6 +93,8 @@ bool Reader::open(const std::string &path, std::string &err) {
     if (!f_) { err = "cannot open " + path; return false; }
     std::fseek(f_, 0, SEEK_END);
     const long size = std::ftell(f_);
+    if (size < 22) { err = "not a ZIP archive"; return false; }
+    size_ = static_cast<uint64_t>(size);
     const long tail = std::min<long>(size, 65557);
     std::vector<unsigned char> b(static_cast<size_t>(tail));
     std::fseek(f_, size - tail, SEEK_SET);
@@ -101,6 +103,8 @@ bool Reader::open(const std::string &path, std::string &err) {
     for (long i = tail - 22; i >= 0; --i) if (get32(&b[size_t(i)]) == 0x06054b50) { eocd = i; break; }
     if (eocd < 0) { err = "not a ZIP archive (no end of central directory)"; return false; }
     const uint32_t count = get16(&b[size_t(eocd) + 10]), dirSize = get32(&b[size_t(eocd) + 12]), dirAt = get32(&b[size_t(eocd) + 16]);
+    // Sizes come from the file: never allocate or seek past what the file holds (found by scripts/ci/fuzz.sh).
+    if (uint64_t(dirAt) + dirSize > size_) { err = "damaged ZIP directory"; return false; }
     std::vector<unsigned char> dir(dirSize);
     std::fseek(f_, dirAt, SEEK_SET);
     if (std::fread(dir.data(), 1, dir.size(), f_) != dir.size()) { err = "damaged ZIP directory"; return false; }
@@ -113,7 +117,7 @@ bool Reader::open(const std::string &path, std::string &err) {
         e.size = get32(&dir[p + 24]);
         const uint32_t n = get16(&dir[p + 28]), extra = get16(&dir[p + 30]), comment = get16(&dir[p + 32]);
         e.offset = get32(&dir[p + 42]);
-        if (p + 46 + n > dir.size()) { err = "damaged ZIP directory"; return false; }
+        if (p + 46 + n > dir.size() || uint64_t(e.offset) + 30 > size_) { err = "damaged ZIP directory"; return false; }
         e.name.assign(reinterpret_cast<const char *>(&dir[p + 46]), n);
         entries_.push_back(std::move(e));
         p += 46 + n + extra + comment;
@@ -130,7 +134,13 @@ bool Reader::read(const Entry &e, std::string &out, std::string &err) {
     unsigned char h[30];
     std::fseek(f_, e.offset, SEEK_SET);
     if (std::fread(h, 1, 30, f_) != 30 || get32(h) != 0x04034b50) { err = "damaged entry " + e.name; return false; }
-    std::fseek(f_, long(e.offset) + 30 + long(get16(h + 26)) + long(get16(h + 28)), SEEK_SET);
+    const uint64_t dataAt = uint64_t(e.offset) + 30 + get16(h + 26) + get16(h + 28);
+    if (dataAt > size_ || e.compressed > size_ - dataAt) { err = "truncated entry " + e.name; return false; }
+    // Deflate expands at most ~1032:1; a larger claimed size is damage (or a bomb), not data to allocate for.
+    if (e.method == 0 ? e.size != e.compressed : uint64_t(e.size) > uint64_t(e.compressed) * 1032 + 64) {
+        err = e.name + ": damaged size"; return false;
+    }
+    std::fseek(f_, long(dataAt), SEEK_SET);
     std::string raw(e.compressed, '\0');
     if (e.compressed && std::fread(raw.data(), 1, raw.size(), f_) != raw.size()) { err = "truncated entry " + e.name; return false; }
     if (e.method == 0) { out = std::move(raw); return true; }

@@ -549,7 +549,7 @@
       "priority": "P1",
       "category": "Reliability",
       "subsystem": "Persistence / import",
-      "status": "partial",
+      "status": "fixed",
       "summary": "The project reader and four foreign importers parse untrusted, complex files with hand-written logic. Tests cover known fixtures and a few corrupt cases, but there is no fuzzing or property-based round-trip testing, and the local check script runs sanitizers only when asked.",
       "evidence": [
         "tests/engine has 31 files and 188 tests, including targeted corrupt-MIDI and truncation cases, but no fuzz target or corpus.",
@@ -583,7 +583,7 @@
         "value": 4
       },
       "measured": false,
-      "resolution": "Added save -> load -> save property tests over randomised models (JSON-compared so key order is irrelevant) and a 120-case mutated/truncated project corpus that must fail without crashing or over-reading. libFuzzer targets, a nightly seed corpus, and a default local sanitizer run are still open."
+      "resolution": "Added save -> load -> save property tests over randomised models (JSON-compared so key order is irrelevant) and a 120-case mutated/truncated project corpus that must fail without crashing or over-reading. Completed 2026-11-19: scripts/ci/fuzz.sh builds a libFuzzer + AddressSanitizer target (tools/fuzz/fuzz_projects.cpp, Homebrew LLVM) over the project reader and the REAPER, Ableton (gzip-wrapped), Logic (ProjectData in a package), FCPXML and DAWproject (zip-wrapped and raw zip) importers, seeded from generated projects and fixtures. It found two real defects: the ZIP reader allocated whatever size an archive claimed (a 200-byte file requested 5 GB) and FCPXML URL decoding/volume parsing threw out of std::stoi/std::stof, aborting the process. Both are fixed with regression tests (zipSizesAreCheckedAgainstTheFile, which failed at +4 GB peak RSS before the fix; fcpxmlMalformedEscapesAndVolumesImport, which aborted before it), and import/project-load entry points now catch exceptions at the C API boundary. Final 10-minute run: 834,391 inputs, clean (no crash, leak, OOM or timeout), earlier findings replayed clean. The same script runs the save/load/save property test over 1,000 random models (now including buses, sends, plug-ins and tempo/meter maps; seeded and replayable): pass. scripts/check.sh now always runs the parser and importer suites (33 tests) under AddressSanitizer. A nightly schedule is not set up (no CI runner configured for it); the script is ready for one."
     },
     {
       "id": "A-11",

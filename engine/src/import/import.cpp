@@ -270,7 +270,8 @@ json::Value Builder::document() const {
     return doc;
 }
 
-bool importProject(const std::string &path, Result &out, std::string &err) {
+namespace {
+bool importProjectUnchecked(const std::string &path, Result &out, std::string &err) {
     const fs::path p(path);
     std::error_code ec;
     if (!fs::exists(p, ec)) {
@@ -286,6 +287,20 @@ bool importProject(const std::string &path, Result &out, std::string &err) {
     if (ext == ".dawproject") return importDawproject(path, out, err);
     if (fs::is_directory(p, ec)) return importStems(path, out, err);
     err = "unsupported project type '" + ext + "' (supported: .rpp, .als, .logicx, .fcpxml, .dawproject, or a folder of stems)";
+    return false;
+}
+} // namespace
+
+bool importProject(const std::string &path, Result &out, std::string &err) {
+    // Importers parse untrusted files; nothing they throw may cross the C API (audit A-10).
+    try {
+        return importProjectUnchecked(path, out, err);
+    } catch (const std::exception &e) {
+        err = std::string("the file is damaged or not understood (") + e.what() + ")";
+    } catch (...) {
+        err = "the file is damaged or not understood";
+    }
+    out = Result{};
     return false;
 }
 

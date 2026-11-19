@@ -1175,7 +1175,14 @@ DalnokStatus dalnok_project_prepare(const char *path, double sr, DalnokProjectDa
     *out = nullptr;
     std::string msg;
     int32_t missing = 0;
-    auto p = Engine::prepareProject(path, sr, missing, msg);
+    std::unique_ptr<Engine::PreparedProject> p;
+    try { // untrusted file: nothing may throw across the C API (audit A-10)
+        p = Engine::prepareProject(path, sr, missing, msg);
+    } catch (const std::exception &x) {
+        msg = std::string("project file is damaged (") + x.what() + ")";
+    } catch (...) {
+        msg = "project file is damaged";
+    }
     if (!p) {
         copyOut(err, err_len, msg);
         return msg.rfind("cannot open", 0) == 0 ? DALNOK_ERR_IO : DALNOK_ERR_FORMAT;
