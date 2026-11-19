@@ -182,6 +182,14 @@ public:
     IPlugView *PLUGIN_API createView(FIDString) override { return nullptr; }
 
     tresult PLUGIN_API process(ProcessData &data) override {
+        // Isolation tests (ADR-0014): crash or hang after a few blocks, as a faulty plug-in would mid-session.
+        if (const char *mode = std::getenv("DALNOK_TEST_PROCESS_FAILURE"); mode && data.numSamples > 0) {
+            const char *after = std::getenv("DALNOK_TEST_PROCESS_AFTER");
+            if (++blocks_ > (after ? std::atoi(after) : 4)) {
+                if (std::strcmp(mode, "crash") == 0) std::abort();
+                if (std::strcmp(mode, "hang") == 0) for (;;) ::sleep(1);
+            }
+        }
         if (data.numOutputs < 1) return kResultOk;
         if (IParameterChanges *pc = data.inputParameterChanges) {
             for (int32 i = 0; i < pc->getParameterCount(); ++i) {
@@ -236,6 +244,7 @@ private:
     bool synth_, delay_, duck_;
     float line_[2][kTestDelay] = {};
     int pos_ = 0;
+    int blocks_ = 0;
     float gain_ = 0.5f, level_ = 0;
     double shown_ = 0.5;
     int16 pitch_ = -1;

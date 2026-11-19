@@ -1123,6 +1123,10 @@
           "verified"
         ],
         [
+          "Optional crash isolation: each plug-in in its own process, crashes and hangs contained (editors not yet)",
+          "verified"
+        ],
+        [
           "Latency compensation (latency is reported only)",
           "todo"
         ],
@@ -1131,7 +1135,7 @@
           "todo"
         ]
       ],
-      "evidence": "scripts/ci/plugin-host.sh builds a test VST3 (gain effect, note-driven synth) and checks exact gain, a bit-exact passthrough null test, note on/off on the exact sample across block boundaries, live input, undo/redo, state through save and reopen, and a missing plugin keeping its state (also under ThreadSanitizer). Vital (VST3, third-party) loads as an instrument through the command catalog and renders its notes offline (0.28 RMS during clips, 0.0007 in the gap). Offline renders and exports use separate plugin instances. The app adds and removes VST3 plug-ins from Audio ▸ Plug-ins and the track menu (self-test with the test plugin). Parameters: the test plug-in's processor sees changes only through process(); they apply live from the next block and in exports (replayed into the export's instance). Vital's editor opened inside Dalnok's plug-in window (1440×907 pt, checked by a window capture), with 2,855 parameters in the generic panel; editor edits were not exercised automatically."
+      "evidence": "scripts/ci/plugin-host.sh builds a test VST3 (gain effect, note-driven synth) and checks exact gain, a bit-exact passthrough null test, note on/off on the exact sample across block boundaries, live input, undo/redo, state through save and reopen, and a missing plugin keeping its state (also under ThreadSanitizer). Vital (VST3, third-party) loads as an instrument through the command catalog and renders its notes offline (0.28 RMS during clips, 0.0007 in the gap). Offline renders and exports use separate plugin instances. The app adds and removes VST3 plug-ins from Audio ▸ Plug-ins and the track menu (self-test with the test plugin). Parameters: the test plug-in's processor sees changes only through process(); they apply live from the next block and in exports (replayed into the export's instance). Vital's editor opened inside Dalnok's plug-in window (1440×907 pt, checked by a window capture), with 2,855 parameters in the generic panel; editor edits were not exercised automatically. Crash isolation (ADR-0014, Settings ▸ Plug-ins ▸ Safety, off by default): scripts/ci/plugin-isolation.sh runs the VST3, CLAP and delay-compensation suites with every plug-in in dalnok-plughost (bit-exact against in-process), and a fixture that crashes or hangs mid-session or while loading leaves the engine running, is reported and reloads; about 34 µs per plug-in per block."
     },
     {
       "id": "genericui",

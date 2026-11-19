@@ -13,7 +13,7 @@ final class SelfTest {
     let workdir: URL
     private var failures = 0
     /// Preferences the test changes; all are restored at the end so a run never alters the owner's settings.
-    private static let restoredKeys = ["copyAudioOnSave", "comingFrom", "onboardingDone", "recordingInputUID", "rulerBarsAndBeats", "metronome", "showDevicePanel", "countIn", "showMixer", "showLauncher", "automationMode", "pedal.AUDelay", "shortcuts.preset", "shortcuts.overrides", "shortcuts.userPresets"] + PluginLibrary.keys + ["tapeSpeed", "trackHeight", "secondaryClock", "gainRingLevel"] + Faceplate.preferenceKeys
+    private static let restoredKeys = ["copyAudioOnSave", "comingFrom", "onboardingDone", "recordingInputUID", "rulerBarsAndBeats", "metronome", "showDevicePanel", "countIn", "showMixer", "showLauncher", "automationMode", "pedal.AUDelay", "shortcuts.preset", "shortcuts.overrides", "shortcuts.userPresets"] + PluginLibrary.keys + ["tapeSpeed", "trackHeight", "secondaryClock", "gainRingLevel", "isolatePlugins"] + Faceplate.preferenceKeys
     private let previousPreferences: [String: Any]
     private var w: MainWindowController { app.main }
     private var s: Session { app.session }
@@ -524,6 +524,22 @@ final class SelfTest {
         let oldCopy = MainWindowController.copyAudioOnSave
         check(perform("Settings…"), "Dalnok > Settings opens")
         check(w.settings.window?.isVisible == true, "settings window is visible")
+        // ADR-0014: Settings > Plug-ins > Safety runs plug-ins loaded afterwards in their own processes.
+        let isolation = w.settings.isolatePlugins
+        if isolation.isEnabled, let action = isolation.action, let track = s.tracks.first?.id {
+            isolation.state = .on; _ = NSApp.sendAction(action, to: isolation.target, from: isolation)
+            check(s.engine.pluginHost == Engine.pluginHostPath, "Safety on: new plug-ins go to dalnok-plughost")
+            var err = [CChar](repeating: 0, count: 256)
+            let before = dalnok_track_plugin_count(s.h, track)
+            let slot = dalnok_plugin_add(s.h, track, "au:aufx:dely:appl", nil, &err, 256)
+            var info = DalnokPluginSlotInfo()
+            _ = dalnok_track_plugin_info(s.h, track, before, &info)
+            check(slot != 0 && info.isolated && info.loaded && fixedString(info.name).contains("Delay"),
+                  "an Audio Unit loads in its own process (\(cString(err)))")
+            if slot != 0 { _ = perform("Undo") }
+            isolation.state = .off; _ = NSApp.sendAction(action, to: isolation.target, from: isolation)
+            check(s.engine.pluginHost.isEmpty, "Safety off: plug-ins load in the app again")
+        } else { check(false, "the Safety setting is available (dalnok-plughost next to the app)") }
         for pane in SettingsController.Pane.allCases { w.settings.show(pane) }
         check(w.settings.pane == .shortcuts && w.shortcutsEditor.table.window === w.settings.window,
               "Settings has every pane, keyboard shortcuts included")

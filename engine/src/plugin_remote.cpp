@@ -1,0 +1,709 @@
+// Out-of-process plug-in hosting (ADR-0014).
+//
+// Engine side: RemotePluginProcessor starts dalnok-plughost, shares one block of memory with it for audio and talks
+// to it over a socket pair for everything else. Host side: plughostMain loads the plug-in with the ordinary in-process
+// loaders, runs process() on a time-constrained thread woken through the shared block, and serves control requests
+// on its main thread inside a run loop (VST3 and CLAP require the main thread for those calls).
+// SPDX-License-Identifier: GPL-3.0-or-later
+#include "plugin_remote.hpp"
+
+#include <CoreFoundation/CoreFoundation.h>
+#include <mach/mach.h>
+#include <mach/mach_time.h>
+#include <mach/thread_policy.h>
+#include <os/os_sync_wait_on_address.h>
+
+#include <atomic>
+#include <cerrno>
+#include <chrono>
+#include <csignal>
+#include <cstring>
+#include <fcntl.h>
+#include <mutex>
+#include <poll.h>
+#include <pthread.h>
+#include <spawn.h>
+#include <sys/mman.h>
+#include <sys/socket.h>
+#include <sys/wait.h>
+#include <thread>
+#include <unistd.h>
+
+extern char **environ;
+
+namespace dalnok {
+namespace {
+
+constexpr int kMaxFrames = 8192;
+constexpr int kMaxNotes = 1024;
+constexpr int kMaxAutomation = 64;
+constexpr uint32_t kMagic = 0x444C4E48; // "DLNH"
+
+// The shared block. Both processes are the same build, so the layout matches by construction; `magic` and `size`
+// still guard against a stale host binary.
+struct Shared {
+    uint32_t magic, size;
+    alignas(64) std::atomic<uint32_t> request; // engine: bumped after writing a block's inputs
+    alignas(64) std::atomic<uint32_t> done;    // host: set to `request` after writing the outputs
+    alignas(64) std::atomic<uint32_t> quit;
+    int32_t frames, noteCount, automationCount, sidechain;
+    PluginNote notes[kMaxNotes];
+    struct { uint32_t id; double value; } automation[kMaxAutomation];
+    float inL[kMaxFrames], inR[kMaxFrames], outL[kMaxFrames], outR[kMaxFrames], scL[kMaxFrames], scR[kMaxFrames];
+};
+static_assert(std::atomic<uint32_t>::is_always_lock_free);
+
+// ---- Wake/wait on a shared 32-bit counter -------------------------------------------------------------------
+
+void wake(std::atomic<uint32_t> &a) noexcept {
+    if (__builtin_available(macOS 14.4, *))
+        os_sync_wake_by_address_any(&a, sizeof(uint32_t), OS_SYNC_WAKE_BY_ADDRESS_SHARED);
+}
+
+uint64_t nowNs() noexcept { return clock_gettime_nsec_np(CLOCK_UPTIME_RAW); }
+
+// Waits until `a` differs from `old`, at most `timeoutNs` (0 = forever). True if it changed.
+bool waitChange(std::atomic<uint32_t> &a, uint32_t old, uint64_t timeoutNs) noexcept {
+    const uint64_t deadline = timeoutNs ? nowNs() + timeoutNs : 0;
+    while (a.load(std::memory_order_acquire) == old) {
+        const uint64_t now = nowNs();
+        if (deadline && now >= deadline) return false;
+        if (__builtin_available(macOS 14.4, *)) {
+            if (deadline) {
+                mach_timebase_info_data_t tb;
+                mach_timebase_info(&tb);
+                const uint64_t ticks = (deadline - now) * tb.denom / tb.numer;
+                os_sync_wait_on_address_with_timeout(&a, old, sizeof(uint32_t), OS_SYNC_WAIT_ON_ADDRESS_SHARED,
+                                                     OS_CLOCK_MACH_ABSOLUTE_TIME, ticks ? ticks : 1);
+            } else {
+                os_sync_wait_on_address(&a, old, sizeof(uint32_t), OS_SYNC_WAIT_ON_ADDRESS_SHARED);
+            }
+        } else {
+            std::this_thread::yield(); // macOS 14.0–14.3: no shared address wait; spin politely
+        }
+    }
+    return true;
+}
+
+// ---- Control messages: [u32 length][u8 op or status][payload] -----------------------------------------------
+
+enum Op : uint8_t {
+    opHello = 1, opGetState, opSetState, opSetStateDocument, opStateError, opParameterCount, opParameter,
+    opParameterText, opSetParameter, opTouched, opEditCount, opAutomationRange, opResponse, opLatency, opQuit
+};
+
+struct Writer {
+    std::string b;
+    void u8(uint8_t v) { b.push_back(static_cast<char>(v)); }
+    void u32(uint32_t v) { b.append(reinterpret_cast<const char *>(&v), 4); }
+    void i32(int32_t v) { u32(static_cast<uint32_t>(v)); }
+    void f64(double v) { b.append(reinterpret_cast<const char *>(&v), 8); }
+    void str(const std::string &s) { u32(static_cast<uint32_t>(s.size())); b += s; }
+};
+
+struct Reader {
+    const std::string &b;
+    size_t p = 0;
+    bool ok = true;
+    template <typename T> T raw() {
+        T v{};
+        if (p + sizeof(T) > b.size()) { ok = false; return v; }
+        std::memcpy(&v, b.data() + p, sizeof(T));
+        p += sizeof(T);
+        return v;
+    }
+    uint8_t u8() { return raw<uint8_t>(); }
+    uint32_t u32() { return raw<uint32_t>(); }
+    int32_t i32() { return raw<int32_t>(); }
+    double f64() { return raw<double>(); }
+    std::string str() {
+        const uint32_t n = u32();
+        if (!ok || p + n > b.size()) { ok = false; return {}; }
+        std::string s = b.substr(p, n);
+        p += n;
+        return s;
+    }
+};
+
+bool writeAll(int fd, const std::string &bytes) {
+    size_t off = 0;
+    while (off < bytes.size()) {
+        const ssize_t n = ::write(fd, bytes.data() + off, bytes.size() - off);
+        if (n < 0 && errno == EINTR) continue;
+        if (n <= 0) return false;
+        off += static_cast<size_t>(n);
+    }
+    return true;
+}
+
+// Reads exactly `n` bytes before `deadlineNs` (0 = no deadline).
+bool readAll(int fd, char *out, size_t n, uint64_t deadlineNs) {
+    size_t off = 0;
+    while (off < n) {
+        if (deadlineNs) {
+            const uint64_t now = nowNs();
+            if (now >= deadlineNs) return false;
+            pollfd p{fd, POLLIN, 0};
+            const int r = ::poll(&p, 1, static_cast<int>(std::max<uint64_t>(1, (deadlineNs - now) / 1'000'000)));
+            if (r < 0 && errno == EINTR) continue;
+            if (r <= 0) continue; // loop re-checks the deadline
+        }
+        const ssize_t got = ::read(fd, out + off, n - off);
+        if (got < 0 && errno == EINTR) continue;
+        if (got <= 0) return false;
+        off += static_cast<size_t>(got);
+    }
+    return true;
+}
+
+bool sendMessage(int fd, uint8_t head, const std::string &payload) {
+    Writer w;
+    w.u32(static_cast<uint32_t>(payload.size() + 1));
+    w.u8(head);
+    w.b += payload;
+    return writeAll(fd, w.b);
+}
+
+bool receiveMessage(int fd, uint8_t &head, std::string &payload, uint64_t deadlineNs) {
+    uint32_t len = 0;
+    if (!readAll(fd, reinterpret_cast<char *>(&len), 4, deadlineNs) || len == 0 || len > (1u << 30)) return false;
+    std::string body(len, '\0');
+    if (!readAll(fd, body.data(), len, deadlineNs)) return false;
+    head = static_cast<uint8_t>(body[0]);
+    payload = body.substr(1);
+    return true;
+}
+
+std::string shmName() {
+    static std::atomic<uint32_t> counter{0};
+    return "/dalnok." + std::to_string(::getpid()) + "." + std::to_string(counter.fetch_add(1));
+}
+
+// ---- Engine side -----------------------------------------------------------------------------------------
+
+class RemotePluginProcessor final : public PluginProcessor {
+public:
+    ~RemotePluginProcessor() override {
+        if (shared_) {
+            shared_->quit.store(1, std::memory_order_release);
+            shared_->request.fetch_add(1, std::memory_order_release);
+            wake(shared_->request);
+        }
+        if (fd_ >= 0) {
+            (void)sendMessage(fd_, opQuit, {});
+            ::close(fd_);
+        }
+        if (pid_ > 0) {
+            int status = 0;
+            const uint64_t deadline = nowNs() + 500'000'000;
+            while (::waitpid(pid_, &status, WNOHANG) == 0) {
+                if (nowNs() > deadline) { ::kill(pid_, SIGKILL); ::waitpid(pid_, &status, 0); break; }
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            }
+        }
+        if (shared_) ::munmap(shared_, sizeof(Shared));
+    }
+
+    bool start(const std::string &host, const std::string &format, const std::string &path, const std::string &classId,
+               double sampleRate, int maxBlock, bool offline, int loadTimeoutMs, std::string &err) {
+        offline_ = offline;
+        sampleRate_ = sampleRate;
+        if (maxBlock > kMaxFrames) { err = "block too large for an isolated plug-in"; return false; }
+        const std::string name = shmName();
+        const int shm = ::shm_open(name.c_str(), O_RDWR | O_CREAT | O_EXCL, 0600);
+        if (shm < 0) { err = std::string("cannot create shared memory: ") + std::strerror(errno); return false; }
+        const bool sized = ::ftruncate(shm, sizeof(Shared)) == 0;
+        void *mem = sized ? ::mmap(nullptr, sizeof(Shared), PROT_READ | PROT_WRITE, MAP_SHARED, shm, 0) : MAP_FAILED;
+        ::close(shm);
+        if (mem == MAP_FAILED) { ::shm_unlink(name.c_str()); err = "cannot map shared memory"; return false; }
+        shared_ = static_cast<Shared *>(mem);
+        shared_->magic = kMagic;
+        shared_->size = sizeof(Shared);
+
+        int sv[2];
+        if (::socketpair(AF_UNIX, SOCK_STREAM, 0, sv) != 0) { ::shm_unlink(name.c_str()); err = "cannot create socket"; return false; }
+        ::fcntl(sv[0], F_SETFD, FD_CLOEXEC);
+        // A crashed host closes its end; writing to it must fail with EPIPE, never raise SIGPIPE in the app.
+        const int on = 1;
+        ::setsockopt(sv[0], SOL_SOCKET, SO_NOSIGPIPE, &on, sizeof on);
+        posix_spawn_file_actions_t actions;
+        posix_spawn_file_actions_init(&actions);
+        posix_spawn_file_actions_adddup2(&actions, sv[1], 3);
+        posix_spawn_file_actions_addopen(&actions, 1, "/dev/null", O_WRONLY, 0); // plug-ins print; keep it out of ours
+        const std::string rate = std::to_string(sampleRate), block = std::to_string(maxBlock);
+        std::vector<std::string> args = {host, "--shm", name, "--format", format, "--path", path, "--class", classId,
+                                         "--rate", rate, "--block", block};
+        if (offline) args.push_back("--offline");
+        std::vector<char *> argv;
+        for (auto &a : args) argv.push_back(a.data());
+        argv.push_back(nullptr);
+        const int spawned = ::posix_spawn(&pid_, host.c_str(), &actions, nullptr, argv.data(), environ);
+        posix_spawn_file_actions_destroy(&actions);
+        ::close(sv[1]);
+        fd_ = sv[0];
+        if (spawned != 0) {
+            ::shm_unlink(name.c_str());
+            pid_ = 0;
+            err = "cannot start the plug-in host: " + std::string(std::strerror(spawned));
+            return false;
+        }
+        uint8_t status = 0;
+        std::string reply;
+        const bool answered = receiveMessage(fd_, status, reply, nowNs() + uint64_t(loadTimeoutMs) * 1'000'000);
+        ::shm_unlink(name.c_str()); // both processes have it mapped; the name is no longer needed
+        if (!answered) {
+            reapForError(err, loadTimeoutMs);
+            return false;
+        }
+        Reader r{reply};
+        if (status != 1) { err = r.str(); return false; }
+        instrument_ = r.u8();
+        sidechain_ = r.u8();
+        latency_.store(r.u32());
+        name_ = r.str();
+        vendor_ = r.str();
+        classId_ = r.str();
+        categories_ = r.str();
+        if (!r.ok) { err = "the plug-in host sent a damaged reply"; return false; }
+        return true;
+    }
+
+    bool instrument() const override { return instrument_; }
+    uint32_t latency() const override {
+        Writer w;
+        std::string reply;
+        if (call(opLatency, w.b, reply)) {
+            Reader r{reply};
+            const uint32_t v = r.u32();
+            if (r.ok) latency_.store(v, std::memory_order_relaxed);
+        }
+        return latency_.load(std::memory_order_relaxed);
+    }
+    const std::string &name() const override { return name_; }
+    const std::string &vendor() const override { return vendor_; }
+    std::string categories() const override { return categories_; }
+    const std::string &classId() const override { return classId_; }
+    bool hasSidechain() const override { return sidechain_; }
+    bool isolated() const override { return true; }
+
+    void process(float *left, float *right, int frames, const PluginNote *notes, int noteCount) DALNOK_NONBLOCKING override {
+        Shared *s = shared_;
+        const int automation = autoCount_;
+        autoCount_ = 0;
+        if (failed_.load(std::memory_order_acquire) || frames <= 0 || frames > kMaxFrames) { silenceIfInstrument(left, right, frames); return; }
+        const uint32_t request = s->request.load(std::memory_order_relaxed);
+        if (s->done.load(std::memory_order_acquire) != request) { // the previous block is still in the host
+            missed(); silenceIfInstrument(left, right, frames); return;
+        }
+        for (int i = 0; i < frames; ++i) { s->inL[i] = left[i]; s->inR[i] = right[i]; }
+        s->sidechain = scL_ && scR_ ? 1 : 0;
+        if (s->sidechain) for (int i = 0; i < frames; ++i) { s->scL[i] = scL_[i]; s->scR[i] = scR_[i]; }
+        const int n = noteCount < kMaxNotes ? noteCount : kMaxNotes;
+        for (int i = 0; i < n; ++i) s->notes[i] = notes[i];
+        s->noteCount = n;
+        for (int i = 0; i < automation; ++i) s->automation[i] = {autoQueue_[i].id, autoQueue_[i].value};
+        s->automationCount = automation;
+        s->frames = frames;
+        s->request.store(request + 1, std::memory_order_release);
+        // A live block may wait 40 % of its period; offline renders wait as long as the plug-in needs (10 s cap).
+        const uint64_t timeout = offline_ ? 10'000'000'000ull
+                                          : static_cast<uint64_t>(0.4e9 * frames / (sampleRate_ > 0 ? sampleRate_ : 48000));
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wfunction-effects"
+        // The one IPC exception on the audio thread (ADR-0014): a bounded wake and a bounded wait.
+        wake(s->request);
+        const bool answered = waitChange(s->done, request, timeout);
+#pragma clang diagnostic pop
+        if (!answered) { missed(); silenceIfInstrument(left, right, frames); return; }
+        consecutiveMisses_.store(0, std::memory_order_relaxed);
+        for (int i = 0; i < frames; ++i) { left[i] = s->outL[i]; right[i] = s->outR[i]; }
+    }
+
+    bool response(const double *hz, int count, double *db) override {
+        Writer w;
+        w.u32(static_cast<uint32_t>(count));
+        for (int i = 0; i < count; ++i) w.f64(hz[i]);
+        std::string reply;
+        if (!call(opResponse, w.b, reply)) return false;
+        Reader r{reply};
+        if (!r.u8()) return false;
+        for (int i = 0; i < count; ++i) db[i] = r.f64();
+        return r.ok;
+    }
+    bool getState(std::string &bytes) override {
+        std::string reply;
+        if (!call(opGetState, {}, reply)) return false;
+        Reader r{reply};
+        const bool ok = r.u8();
+        bytes = r.str();
+        return ok && r.ok;
+    }
+    bool setState(const std::string &bytes) override { return setStateVia(opSetState, bytes); }
+    bool setStateFromDocument(const std::string &bytes) override { return setStateVia(opSetStateDocument, bytes); }
+    std::string stateError() const override {
+        std::string reply;
+        if (!call(opStateError, {}, reply)) return failure();
+        Reader r{reply};
+        return r.str();
+    }
+    int32_t parameterCount() override {
+        std::string reply;
+        if (!call(opParameterCount, {}, reply)) return 0;
+        Reader r{reply};
+        const int32_t n = r.i32();
+        return r.ok ? n : 0;
+    }
+    bool parameter(int32_t index, PluginParameter &out) override {
+        Writer w;
+        w.i32(index);
+        std::string reply;
+        if (!call(opParameter, w.b, reply)) return false;
+        Reader r{reply};
+        if (!r.u8()) return false;
+        out.id = r.u32();
+        out.title = r.str(); out.units = r.str(); out.display = r.str();
+        out.value = r.f64(); out.defaultValue = r.f64();
+        out.stepCount = r.i32();
+        out.automatable = r.u8(); out.readOnly = r.u8(); out.hidden = r.u8();
+        return r.ok;
+    }
+    bool parameterText(uint32_t id, double normalized, std::string &out) override {
+        Writer w;
+        w.u32(id); w.f64(normalized);
+        std::string reply;
+        if (!call(opParameterText, w.b, reply)) return false;
+        Reader r{reply};
+        const bool ok = r.u8();
+        out = r.str();
+        return ok && r.ok;
+    }
+    bool setParameter(uint32_t id, double normalized) override {
+        Writer w;
+        w.u32(id); w.f64(normalized);
+        std::string reply;
+        if (!call(opSetParameter, w.b, reply)) return false;
+        Reader r{reply};
+        return r.u8() && r.ok;
+    }
+    void touchedParameters(std::vector<std::pair<uint32_t, double>> &out) override {
+        std::string reply;
+        if (!call(opTouched, {}, reply)) return;
+        Reader r{reply};
+        const uint32_t n = r.u32();
+        for (uint32_t i = 0; i < n && r.ok; ++i) {
+            const uint32_t id = r.u32();
+            const double v = r.f64();
+            if (r.ok) out.push_back({id, v});
+        }
+    }
+    uint64_t editCount() const override {
+        std::string reply;
+        if (call(opEditCount, {}, reply)) {
+            Reader r{reply};
+            const uint64_t v = r.raw<uint64_t>();
+            if (r.ok) edits_ = v;
+        }
+        return edits_;
+    }
+    bool automationRange(uint32_t id, double &lo, double &hi) override {
+        Writer w;
+        w.u32(id);
+        std::string reply;
+        lo = 0; hi = 1;
+        if (!call(opAutomationRange, w.b, reply)) return true;
+        Reader r{reply};
+        const bool ok = r.u8();
+        const double a = r.f64(), b = r.f64();
+        if (r.ok) { lo = a; hi = b; }
+        return ok;
+    }
+
+    // Editors stay in-process for now (ADR-0014): isolated instances offer the generic parameter panel.
+    bool hasEditor() override { return false; }
+    bool openEditor(void *, int32_t &, int32_t &, void (*)(void *, int32_t, int32_t), void *, std::string &err) override {
+        err = "this plug-in runs in its own process; its editor is not available there yet";
+        return false;
+    }
+    void closeEditor() override {}
+
+    std::string failure() const override {
+        std::lock_guard lock(failureMutex_);
+        return failure_;
+    }
+    void poll() override {
+        if (failed_.load(std::memory_order_acquire)) return;
+        int status = 0;
+        if (pid_ > 0 && ::waitpid(pid_, &status, WNOHANG) == pid_) {
+            pid_ = 0;
+            fail(WIFSIGNALED(status) ? std::string("crashed (") + strsignal(WTERMSIG(status)) + ")"
+                                     : "its process exited (status " + std::to_string(WEXITSTATUS(status)) + ")");
+            return;
+        }
+        // Live blocks only: about 2 s of consecutive missed deadlines means the plug-in has stopped answering.
+        const double perBlock = 512.0 / (sampleRate_ > 0 ? sampleRate_ : 48000);
+        if (!offline_ && consecutiveMisses_.load(std::memory_order_relaxed) * perBlock > 2.0) {
+            if (pid_ > 0) { ::kill(pid_, SIGKILL); ::waitpid(pid_, &status, 0); pid_ = 0; }
+            fail("stopped responding");
+        }
+    }
+
+private:
+    void silenceIfInstrument(float *left, float *right, int frames) DALNOK_NONBLOCKING {
+        if (!instrument_) return; // effects pass the dry signal through
+        for (int i = 0; i < frames; ++i) left[i] = right[i] = 0.0f;
+    }
+    void missed() DALNOK_NONBLOCKING {
+        misses_.fetch_add(1, std::memory_order_relaxed);
+        consecutiveMisses_.fetch_add(1, std::memory_order_relaxed);
+    }
+    void fail(std::string why) const {
+        if (why.empty()) why = "failed";
+        {
+            std::lock_guard lock(failureMutex_);
+            if (!failure_.empty()) return;
+            failure_ = why;
+        }
+        failed_.store(true, std::memory_order_release);
+    }
+    bool setStateVia(Op op, const std::string &bytes) {
+        Writer w;
+        w.str(bytes);
+        std::string reply;
+        if (!call(op, w.b, reply)) return false;
+        Reader r{reply};
+        return r.u8() && r.ok;
+    }
+    // One request and its reply, with a timeout. A host that does not answer is treated as failed.
+    bool call(Op op, const std::string &payload, std::string &reply) const {
+        if (failed_.load(std::memory_order_acquire) || fd_ < 0) return false;
+        std::lock_guard lock(callMutex_);
+        uint8_t status = 0;
+        if (!sendMessage(fd_, op, payload) || !receiveMessage(fd_, status, reply, nowNs() + 5'000'000'000ull)) {
+            const std::string reason = exitReason(); // reaps the child: call once
+            fail(reason.empty() ? "stopped responding" : reason);
+            return false;
+        }
+        return status == 1;
+    }
+    // Why the host process ended, if it did within a moment (a closed socket usually means it just died).
+    std::string exitReason() const {
+        if (pid_ <= 0) return {};
+        int status = 0;
+        for (int i = 0; i < 50; ++i) {
+            if (::waitpid(pid_, &status, WNOHANG) == pid_) {
+                pid_ = 0;
+                return WIFSIGNALED(status) ? std::string("crashed (") + strsignal(WTERMSIG(status)) + ")"
+                                           : "its process exited (status " + std::to_string(WEXITSTATUS(status)) + ")";
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        return {};
+    }
+    void reapForError(std::string &err, int timeoutMs) {
+        int status = 0;
+        if (::waitpid(pid_, &status, WNOHANG) == pid_) {
+            err = WIFSIGNALED(status) ? std::string("the plug-in crashed while loading (") + strsignal(WTERMSIG(status)) + ")"
+                                      : "the plug-in host exited while loading";
+        } else {
+            ::kill(pid_, SIGKILL);
+            ::waitpid(pid_, &status, 0);
+            err = "the plug-in did not finish loading within " + std::to_string(timeoutMs / 1000) + " s";
+        }
+        pid_ = 0;
+    }
+
+    Shared *shared_ = nullptr;
+    mutable pid_t pid_ = 0;
+    int fd_ = -1;
+    bool offline_ = false, instrument_ = false, sidechain_ = false;
+    double sampleRate_ = 48000;
+    std::string name_, vendor_, classId_, categories_;
+    mutable std::atomic<uint32_t> latency_{0};
+    mutable uint64_t edits_ = 0;
+    mutable std::mutex callMutex_, failureMutex_;
+    mutable std::string failure_;
+    mutable std::atomic<bool> failed_{false};
+    std::atomic<uint64_t> misses_{0}, consecutiveMisses_{0};
+};
+
+// ---- Host side --------------------------------------------------------------------------------------------
+
+struct Host {
+    std::unique_ptr<PluginProcessor> plugin;
+    Shared *shared = nullptr;
+    int fd = 3;
+};
+Host *gHost = nullptr;
+
+void setRealtime() {
+    mach_timebase_info_data_t tb;
+    mach_timebase_info(&tb);
+    const double msToTicks = 1e6 * tb.denom / tb.numer;
+    thread_time_constraint_policy_data_t p;
+    p.period = static_cast<uint32_t>(5 * msToTicks);
+    p.computation = static_cast<uint32_t>(1 * msToTicks);
+    p.constraint = static_cast<uint32_t>(4 * msToTicks);
+    p.preemptible = 1;
+    thread_policy_set(pthread_mach_thread_np(pthread_self()), THREAD_TIME_CONSTRAINT_POLICY,
+                      reinterpret_cast<thread_policy_t>(&p), THREAD_TIME_CONSTRAINT_POLICY_COUNT);
+}
+
+void audioLoop(Host *h) {
+    setRealtime();
+    Shared *s = h->shared;
+    uint32_t seen = s->request.load(std::memory_order_acquire);
+    PluginNote notes[kMaxNotes];
+    while (true) {
+        waitChange(s->request, seen, 0);
+        seen = s->request.load(std::memory_order_acquire);
+        if (s->quit.load(std::memory_order_acquire)) return;
+        const int frames = s->frames;
+        if (frames <= 0 || frames > kMaxFrames) { s->done.store(seen, std::memory_order_release); wake(s->done); continue; }
+        for (int i = 0; i < s->automationCount && i < kMaxAutomation; ++i) h->plugin->automate(s->automation[i].id, s->automation[i].value);
+        const int n = std::min(s->noteCount, kMaxNotes);
+        for (int i = 0; i < n; ++i) notes[i] = s->notes[i];
+        h->plugin->setSidechain(s->sidechain ? s->scL : nullptr, s->sidechain ? s->scR : nullptr);
+        std::memcpy(s->outL, s->inL, sizeof(float) * size_t(frames));
+        std::memcpy(s->outR, s->inR, sizeof(float) * size_t(frames));
+        h->plugin->process(s->outL, s->outR, frames, notes, n);
+        s->done.store(seen, std::memory_order_release);
+        wake(s->done);
+    }
+}
+
+void reply(int fd, bool ok, const std::string &payload = {}) { (void)sendMessage(fd, ok ? 1 : 0, payload); }
+
+void serve(Host *h, uint8_t op, const std::string &payload) {
+    PluginProcessor &p = *h->plugin;
+    Reader r{payload};
+    Writer w;
+    switch (op) {
+        case opGetState: { std::string s; const bool ok = p.getState(s); w.u8(ok); w.str(s); break; }
+        case opSetState: { const std::string s = r.str(); w.u8(r.ok && p.setState(s)); break; }
+        case opSetStateDocument: { const std::string s = r.str(); w.u8(r.ok && p.setStateFromDocument(s)); break; }
+        case opStateError: w.str(p.stateError()); break;
+        case opParameterCount: w.i32(p.parameterCount()); break;
+        case opParameter: {
+            PluginParameter q;
+            const int32_t index = r.i32();
+            const bool ok = r.ok && p.parameter(index, q);
+            w.u8(ok);
+            if (ok) {
+                w.u32(q.id); w.str(q.title); w.str(q.units); w.str(q.display);
+                w.f64(q.value); w.f64(q.defaultValue); w.i32(q.stepCount);
+                w.u8(q.automatable); w.u8(q.readOnly); w.u8(q.hidden);
+            }
+            break;
+        }
+        case opParameterText: {
+            const uint32_t id = r.u32();
+            const double v = r.f64();
+            std::string text;
+            const bool ok = r.ok && p.parameterText(id, v, text);
+            w.u8(ok); w.str(text);
+            break;
+        }
+        case opSetParameter: { const uint32_t id = r.u32(); const double v = r.f64(); w.u8(r.ok && p.setParameter(id, v)); break; }
+        case opTouched: {
+            std::vector<std::pair<uint32_t, double>> t;
+            p.touchedParameters(t);
+            w.u32(static_cast<uint32_t>(t.size()));
+            for (const auto &[id, v] : t) { w.u32(id); w.f64(v); }
+            break;
+        }
+        case opEditCount: { const uint64_t v = p.editCount(); w.b.append(reinterpret_cast<const char *>(&v), 8); break; }
+        case opAutomationRange: { double lo = 0, hi = 1; const uint32_t id = r.u32(); const bool ok = p.automationRange(id, lo, hi); w.u8(ok); w.f64(lo); w.f64(hi); break; }
+        case opResponse: {
+            const uint32_t n = std::min<uint32_t>(r.u32(), 1u << 16);
+            std::vector<double> hz(n), db(n);
+            for (uint32_t i = 0; i < n; ++i) hz[i] = r.f64();
+            const bool ok = r.ok && p.response(hz.data(), static_cast<int>(n), db.data());
+            w.u8(ok);
+            for (double v : db) w.f64(v);
+            break;
+        }
+        case opLatency: w.u32(p.latency()); break;
+        default: reply(h->fd, false); return;
+    }
+    reply(h->fd, true, w.b);
+}
+
+void onControl(CFFileDescriptorRef ref, CFOptionFlags, void *) {
+    Host *h = gHost;
+    uint8_t op = 0;
+    std::string payload;
+    // One message per callback; the descriptor is re-armed below so the run loop keeps serving.
+    if (!receiveMessage(h->fd, op, payload, 0) || op == opQuit) _exit(0); // engine gone or done: skip plug-in teardown
+    serve(h, op, payload);
+    CFFileDescriptorEnableCallBacks(ref, kCFFileDescriptorReadCallBack);
+}
+
+} // namespace
+
+std::unique_ptr<PluginProcessor> loadRemotePlugin(const std::string &hostPath, const std::string &format,
+                                                  const std::string &path, const std::string &classId,
+                                                  double sampleRate, int maxBlock, bool offline, int loadTimeoutMs,
+                                                  std::string &err) {
+    auto p = std::make_unique<RemotePluginProcessor>();
+    if (!p->start(hostPath, format, path, classId, sampleRate, maxBlock, offline, loadTimeoutMs, err)) return nullptr;
+    return p;
+}
+
+int plughostMain(int argc, char **argv) {
+    std::string shm, format, path, classId;
+    double rate = 48000;
+    int block = 512;
+    bool offline = false;
+    for (int i = 1; i < argc; ++i) {
+        const std::string a = argv[i];
+        auto next = [&]() -> std::string { return i + 1 < argc ? argv[++i] : ""; };
+        if (a == "--shm") shm = next();
+        else if (a == "--format") format = next();
+        else if (a == "--path") path = next();
+        else if (a == "--class") classId = next();
+        else if (a == "--rate") rate = std::atof(next().c_str());
+        else if (a == "--block") block = std::atoi(next().c_str());
+        else if (a == "--offline") offline = true;
+    }
+    std::signal(SIGPIPE, SIG_IGN);
+    Host host;
+    gHost = &host;
+    const int fd = ::shm_open(shm.c_str(), O_RDWR, 0);
+    void *mem = fd >= 0 ? ::mmap(nullptr, sizeof(Shared), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0) : MAP_FAILED;
+    if (fd >= 0) ::close(fd);
+    Writer err;
+    if (mem == MAP_FAILED || static_cast<Shared *>(mem)->magic != kMagic || static_cast<Shared *>(mem)->size != sizeof(Shared)) {
+        err.str("the plug-in host could not attach to the engine (version mismatch?)");
+        reply(host.fd, false, err.b);
+        return 2;
+    }
+    host.shared = static_cast<Shared *>(mem);
+    std::string why;
+    host.plugin = loadPlugin(format, path, classId, rate, block, offline, why);
+    if (!host.plugin) {
+        err.str(why);
+        reply(host.fd, false, err.b);
+        return 2;
+    }
+    std::thread(audioLoop, &host).detach();
+    Writer hello;
+    hello.u8(host.plugin->instrument());
+    hello.u8(host.plugin->hasSidechain());
+    hello.u32(host.plugin->latency());
+    hello.str(host.plugin->name());
+    hello.str(host.plugin->vendor());
+    hello.str(host.plugin->classId());
+    hello.str(host.plugin->categories());
+    reply(host.fd, true, hello.b);
+    // Control requests are served on the main thread inside its run loop, as the plug-in formats expect.
+    CFFileDescriptorRef ref = CFFileDescriptorCreate(nullptr, host.fd, false, onControl, nullptr);
+    CFRunLoopSourceRef source = CFFileDescriptorCreateRunLoopSource(nullptr, ref, 0);
+    CFRunLoopAddSource(CFRunLoopGetMain(), source, kCFRunLoopDefaultMode);
+    CFFileDescriptorEnableCallBacks(ref, kCFFileDescriptorReadCallBack);
+    CFRunLoopRun();
+    return 0;
+}
+
+} // namespace dalnok
+
+extern "C" int dalnok_plughost_main(int argc, char **argv) { return dalnok::plughostMain(argc, argv); }

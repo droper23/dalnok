@@ -35,9 +35,36 @@ final class Engine {
     let handle: OpaquePointer
     let sampleRate: Double
 
+    private var isolationObserver: NSObjectProtocol?
+
     init() {
         handle = dalnok_engine_create(0)
         sampleRate = dalnok_engine_sample_rate(handle)
+        applyPluginIsolation()
+        isolationObserver = NotificationCenter.default.addObserver(forName: Engine.isolationChanged, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.applyPluginIsolation() }
+        }
+    }
+
+    // MARK: Out-of-process plug-ins (ADR-0014)
+
+    static let isolationChanged = Notification.Name("DalnokPluginIsolationChanged")
+    /// Settings > Plug-ins: run third-party plug-ins in their own processes. Applies to plug-ins loaded afterwards.
+    static var isolatePlugins: Bool {
+        get { UserDefaults.standard.bool(forKey: "isolatePlugins") }
+        set { UserDefaults.standard.set(newValue, forKey: "isolatePlugins"); NotificationCenter.default.post(name: isolationChanged, object: nil) }
+    }
+    static var pluginHostPath: String {
+        (Bundle.main.executableURL ?? URL(fileURLWithPath: CommandLine.arguments[0]))
+            .deletingLastPathComponent().appendingPathComponent("dalnok-plughost").path
+    }
+    static var pluginHostAvailable: Bool { FileManager.default.isExecutableFile(atPath: pluginHostPath) }
+    /// The host this engine uses for new plug-ins ("" = in this process).
+    private(set) var pluginHost = ""
+    func applyPluginIsolation() {
+        if ProcessInfo.processInfo.environment["DALNOK_PLUGIN_HOST"] != nil { return } // developer override, read by the engine
+        pluginHost = Engine.isolatePlugins && Engine.pluginHostAvailable ? Engine.pluginHostPath : ""
+        dalnok_plugins_set_host(handle, pluginHost)
     }
 
     func startDevice() throws {

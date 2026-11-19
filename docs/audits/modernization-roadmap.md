@@ -151,6 +151,7 @@ Rules the roadmap enforces:
 | A-12 denormal guard | **Done** | FPCR.FZ / MXCSR FTZ|DAZ around live and offline render; subnormal test requires exact silence |
 | A-10 fuzz/property tests | **Done** | `scripts/ci/fuzz.sh`: libFuzzer + ASan over the project reader and all importers; found and fixed a ZIP size-allocation bug and an FCPXML abort (regression tests). 10-minute run clean (834,391 inputs); 1,000 random save/load/save round-trips pass; parser suites always run under ASan in `scripts/check.sh` |
 | A-05 change sets / incremental UI | **Done** | Per-track revisions (C API 33); Session re-reads only changed tracks; mixer parameter-only path. 4,096 clips: parameter refresh p50 ≈4.0 → 0.155 ms; one-track structural refresh 24.6 → 0.56 ms. Randomized revision property test, self-test re-read counts. Drawing/compositing still unmeasured |
+| A-01 out-of-process hosting | **Stage 1** | ADR-0014: opt-in `dalnok-plughost` per instance; existing VST3/CLAP/delay-compensation suites pass isolated; crash and hang mid-session or while loading are contained, reported and reloadable; ≈34 µs per plug-in per block. Editors out of process and default-on remain |
 | A-23 status documentation | **Done** | capability table now links tests; C API references corrected to v29 |
 
 The larger A-01 and A-03 programmes remain open; their smaller safety and performance steps do not establish crash isolation, structural sharing or incremental UI change sets. Other unfinished items remain as written above.

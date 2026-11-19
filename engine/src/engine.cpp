@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "engine.hpp"
+#include "plugin_remote.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -66,6 +67,9 @@ private:
 Engine::Engine(double sampleRate) : sampleRate_(sampleRate) {
     if (sampleRate_ <= 0) sampleRate_ = defaultOutputSampleRate();
     if (sampleRate_ <= 0) sampleRate_ = 48000.0;
+    // Tests and the CLI can run every non-built-in plug-in isolated (ADR-0014); the app sets this explicitly.
+    if (const char *host = std::getenv("DALNOK_PLUGIN_HOST"); host && *host) pluginHostPath_ = host;
+    if (const char *ms = std::getenv("DALNOK_PLUGIN_LOAD_TIMEOUT_MS"); ms && std::atoi(ms) > 0) pluginLoadTimeoutMs_ = std::atoi(ms);
     midiParsers_[0] = std::make_unique<MidiParser>();
     midiInputs_[0].store(midiParsers_[0].get(), std::memory_order_release);
     syncRuntimes(); // builds the tempo map: the first snapshot needs the metronome schedule
@@ -249,6 +253,15 @@ void Engine::collectGarbage() {
         uint64_t &known = pluginEditCounts_[id];
         if (count == known) continue;
         known = count;
+        any = true;
+        for (const auto &t : model_.tracks)
+            for (const auto &slot : t.plugins) if (slot.id == id) edited.push_back(t.id);
+    }
+    // Isolated plug-ins (ADR-0014): a host that crashed or stopped answering is reported on its track.
+    for (const auto &[id, p] : plugins_) {
+        if (!p || !p->isolated()) continue;
+        p->poll();
+        if (p->failure().empty() || !failedPlugins_.insert(id).second) continue;
         any = true;
         for (const auto &t : model_.tracks)
             for (const auto &slot : t.plugins) if (slot.id == id) edited.push_back(t.id);
@@ -792,7 +805,7 @@ int32_t Engine::addPlugin(DalnokTrackId track, const std::string &path, const st
     const bool clap = !au && !builtin && path.size() > 5 && path.compare(path.size() - 5, 5, ".clap") == 0;
     const std::string format = au ? "au" : builtin ? "dalnok" : clap ? "clap" : "vst3";
     const std::string location = au ? path.substr(3) : builtin ? path.substr(7) : path;
-    std::shared_ptr<PluginProcessor> instance(loadPlugin(format, location, classId, sampleRate_, kMaxBlock, false, err));
+    std::shared_ptr<PluginProcessor> instance(createPlugin(format, location, classId, false, err));
     if (!instance) return 0;
     if (instance->instrument() && t->kind != kTrackInstrument) return fail(err, "instrument plug-ins go on instrument tracks"), 0;
     const int32_t id = nextPlugin_;
@@ -887,7 +900,7 @@ DalnokTrackId Engine::duplicateTrack(DalnokTrackId track, std::string &err) {
         s.state.assign(state);
         std::string loadErr;
         if (pluginInstance(p.id)) {
-            std::shared_ptr<PluginProcessor> inst(loadPlugin(p.format, p.path, p.classId, sampleRate_, kMaxBlock, false, loadErr));
+            std::shared_ptr<PluginProcessor> inst(createPlugin(p.format, p.path, p.classId, false, loadErr));
             if (inst) { if (!state.empty()) inst->setState(state); made.emplace_back(s.id, std::move(inst)); }
         }
         slots.push_back(std::move(s));
@@ -983,9 +996,9 @@ Engine::PluginMap Engine::offlinePlugins() const {
     PluginMap out;
     for (const auto &t : model_.tracks)
         for (const auto &slot : t.plugins) {
-            if (!pluginInstance(slot.id)) continue;
+            if (!pluginInstance(slot.id) || !pluginInstance(slot.id)->failure().empty()) continue; // as heard live
             std::string err, state;
-            std::shared_ptr<PluginProcessor> p(loadPlugin(slot.format, slot.path, slot.classId, sampleRate_, kMaxBlock, true, err));
+            std::shared_ptr<PluginProcessor> p(createPlugin(slot.format, slot.path, slot.classId, true, err));
             if (!p) continue;
             if (pluginState(slot.id, state)) p->setState(state);
             // Parameters set since the state was captured may not be in it yet (the live processor applies
@@ -1008,7 +1021,7 @@ void Engine::instantiatePlugins() {
 
 bool Engine::instantiateSlot(const PluginSlot &slot) {
     std::string err;
-    std::shared_ptr<PluginProcessor> p(loadPlugin(slot.format, slot.path, slot.classId, sampleRate_, kMaxBlock, false, err));
+    std::shared_ptr<PluginProcessor> p(createPlugin(slot.format, slot.path, slot.classId, false, err));
     if (!p) { pluginErrors_[slot.id] = err; return false; }
     if (!slot.state.empty() && !p->setStateFromDocument(slot.state.str())) {
         // Keep the original state intact instead of running and later saving a default instance.
@@ -1019,6 +1032,14 @@ bool Engine::instantiateSlot(const PluginSlot &slot) {
     pluginErrors_.erase(slot.id);
     plugins_[slot.id] = std::move(p);
     return true;
+}
+
+std::shared_ptr<PluginProcessor> Engine::createPlugin(const std::string &format, const std::string &path,
+                                                     const std::string &classId, bool offline, std::string &err) const {
+    // Built-in plug-ins are our own code and always run here; others run in a host process when enabled (ADR-0014).
+    if (!pluginHostPath_.empty() && format != "dalnok")
+        return loadRemotePlugin(pluginHostPath_, format, path, classId, sampleRate_, kMaxBlock, offline, pluginLoadTimeoutMs_, err);
+    return loadPlugin(format, path, classId, sampleRate_, kMaxBlock, offline, err);
 }
 
 const PluginSlot *Engine::findSlot(int32_t id) const {
@@ -1069,7 +1090,11 @@ void Engine::bumpRevisionKeepingSaved() {
 bool Engine::reloadPlugin(int32_t id, std::string &err) {
     const PluginSlot *s = findSlot(id);
     if (!s) { err = "no such plug-in slot"; return false; }
-    if (plugins_.count(id)) return true;
+    if (auto it = plugins_.find(id); it != plugins_.end()) {
+        if (!it->second || it->second->failure().empty()) return true;
+        plugins_.erase(it); // a failed isolated instance restarts from the last saved state; snapshots release the old one
+        failedPlugins_.erase(id);
+    }
     pendingPlugins_.erase(std::remove(pendingPlugins_.begin(), pendingPlugins_.end(), id), pendingPlugins_.end());
     const bool ok = instantiateSlot(*s);
     if (!ok) err = pluginErrors_[id];

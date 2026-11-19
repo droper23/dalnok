@@ -44,6 +44,9 @@ Swift/AppKit front end on macOS. GPL-3.0-or-later. This repo is also the project
   owner's material, for screenshots, UI checks and bug repros.
 - Plugins: `tools/dalnok-scan` loads one plugin per process; never load third-party plugin code in the app or
   engine process for scanning. `scripts/ci/plugin-scan.sh` builds fake plugins (incl. crashing and hanging ones).
+- Out-of-process hosting (ADR-0014): `tools/dalnok-plughost` runs one plug-in instance per process. `DALNOK_PLUGIN_HOST=<path>`
+  makes every engine isolate non-built-in plug-ins (tests, CLI); the app uses Settings ▸ Plug-ins ▸ Safety.
+  `scripts/ci/plugin-isolation.sh` runs the hosting suites isolated plus crash/hang fixtures.
 - Animations go through `app/macos/Dalnok/Motion.swift` (respects Reduce Motion; off during snapshots and tests
   unless a test turns it on).
 - Tests record through `DALNOK_SIMULATED_INPUT` + `dalnok_engine_pump_input`, which runs the real duplex callback.

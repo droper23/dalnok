@@ -28,7 +28,7 @@
 extern "C" {
 #endif
 
-#define DALNOK_API_VERSION 33
+#define DALNOK_API_VERSION 34
 
 typedef enum {
     DALNOK_OK = 0,
@@ -556,6 +556,7 @@ typedef struct {
     uint32_t latency;  /* frames, as reported (not compensated yet) */
     char error[256];   /* why it is not loaded */
     bool loading;      /* queued for deferred activation (dalnok_project_apply_deferred) */
+    bool isolated;     /* runs in its own dalnok-plughost process (ADR-0014) */
 } DalnokPluginSlotInfo;
 int32_t dalnok_plugin_add(DalnokEngine *engine, DalnokTrackId track, const char *bundle_path, const char *class_id,
                           char *err, size_t err_len); /* returns the slot id, 0 on failure */
@@ -701,6 +702,12 @@ int32_t dalnok_plugins_pending(const DalnokEngine *engine);
 int32_t dalnok_plugins_activate_next(DalnokEngine *engine, int32_t *slot_out, double *seconds_out);
 /* Leaves the remaining queued plug-ins unloaded with their saved state (reloadable). */
 void dalnok_plugins_cancel_pending(DalnokEngine *engine);
+/* Out-of-process hosting (ADR-0014): plug-ins loaded from now on run in their own `host` process (dalnok-plughost);
+ * NULL or "" runs them in this process. Built-in plug-ins always run here. A crashed or unresponsive isolated
+ * plug-in is reported as not loaded with its reason; dalnok_plugin_reload restarts it. [control thread] */
+void dalnok_plugins_set_host(DalnokEngine *engine, const char *host);
+/* The host process's entry point (tools/dalnok-plughost). */
+int dalnok_plughost_main(int argc, char **argv);
 /* Loads an unloaded slot (cancelled, recovery mode, or failed) from its saved state. Not undoable.
  * DALNOK_ERR_NOT_FOUND: no such slot; DALNOK_ERR_UNSUPPORTED: it did not load (reason in err). */
 DalnokStatus dalnok_plugin_reload(DalnokEngine *engine, int32_t slot, char *err, size_t err_len);

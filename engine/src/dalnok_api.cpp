@@ -287,10 +287,12 @@ DalnokStatus dalnok_track_plugin_info(const DalnokEngine *e, DalnokTrackId t, in
     copyOut(out->path, sizeof out->path, slot.path);
     out->instrument = slot.instrument;
     PluginProcessor *p = e->impl.pluginInstance(slot.id);
-    out->loaded = p != nullptr;
+    const std::string failure = p ? p->failure() : std::string();
+    out->loaded = p != nullptr && failure.empty();
     out->loading = !p && e->impl.pluginLoading(slot.id);
-    out->latency = p ? p->latency() : 0;
-    copyOut(out->error, sizeof out->error, e->impl.pluginError(slot.id));
+    out->isolated = p && p->isolated();
+    out->latency = out->loaded ? p->latency() : 0;
+    copyOut(out->error, sizeof out->error, failure.empty() ? e->impl.pluginError(slot.id) : failure + "; Load restarts it");
     return DALNOK_OK;
 }
 size_t dalnok_plugin_get_state(const DalnokEngine *e, int32_t slot, char *out, size_t len) {
@@ -1222,6 +1224,9 @@ int32_t dalnok_plugins_activate_next(DalnokEngine *e, int32_t *slot_out, double 
     if (slot_out) *slot_out = slot;
     if (seconds_out) *seconds_out = seconds;
     return left;
+}
+void dalnok_plugins_set_host(DalnokEngine *e, const char *host) {
+    if (e) e->impl.setPluginHost(host ? host : "");
 }
 void dalnok_plugins_cancel_pending(DalnokEngine *e) {
     if (e) e->impl.cancelPendingPlugins();

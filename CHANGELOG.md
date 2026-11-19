@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- Crash isolation for plug-ins (experimental, Settings ▸ Plug-ins ▸ Safety; ADR-0014, C API 34): each third-party plug-in can run in its own `dalnok-plughost` process. A plug-in that crashes or stops responding is switched off and reported instead of taking Dalnok down, and Load restarts it. Audio stays sample-identical to in-process hosting; each isolated plug-in costs about 34 µs per block. Plug-in editor windows aren't available in this mode yet.
 - The window now re-reads only the tracks an edit changed (per-track revisions, C API 33), and the mixer updates faders and buttons in place while they move. On a generated 4,096-clip project, refresh after a fader change fell from about 4 ms to 0.16 ms and after a one-clip edit from 24.6 ms to 0.56 ms.
 - Fuzzing for every project and import parser (`scripts/ci/fuzz.sh`, libFuzzer + AddressSanitizer). Fixed what it found: a damaged `.dawproject` could make the ZIP reader allocate gigabytes, and a malformed escape or volume in an FCPXML file crashed the app. Parser errors can no longer escape the engine as exceptions. `scripts/check.sh` always runs the parser tests under AddressSanitizer.
 - Opening or importing a project no longer waits for its plug-ins (ADR-0013, C API 32): the project appears at once, plug-ins load one at a time with “Loading plug-ins n of N” and a Stop button, and stopped or recovered plug-ins can be loaded later from the track menu (Load). Slow plug-ins are named afterwards.

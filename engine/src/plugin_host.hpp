@@ -94,6 +94,12 @@ public:
 
     // The plugin's own editor (main thread). `parent` is an NSView on macOS. `onResize` is called
     // when the editor asks for a new size.
+    // Out-of-process instances (ADR-0014): why the instance stopped working (empty = fine), a control-thread health
+    // check that may set it, and whether this instance runs in its own process.
+    virtual std::string failure() const { return {}; }
+    virtual void poll() {}
+    virtual bool isolated() const { return false; }
+
     virtual bool hasEditor() = 0;
     virtual bool openEditor(void *parent, int32_t &width, int32_t &height, void (*onResize)(void *ctx, int32_t w, int32_t h),
                             void *ctx, std::string &err) = 0;

@@ -18,6 +18,7 @@
 #include <cmath>
 #include <filesystem>
 #include <map>
+#include <set>
 #include <memory>
 #include <string>
 #include <vector>
@@ -444,7 +445,9 @@ public:
     int32_t pendingPluginCount() const { return static_cast<int32_t>(pendingPlugins_.size()); }
     bool pluginLoading(int32_t slot) const;
     void cancelPendingPlugins();
-    bool reloadPlugin(int32_t slot, std::string &err); // an unloaded slot, from its saved state
+    bool reloadPlugin(int32_t slot, std::string &err); // an unloaded or failed slot, from its saved state
+    void setPluginHost(const std::string &path) { pluginHostPath_ = path; }
+    const std::string &pluginHost() const { return pluginHostPath_; }
     void setRecoveryDirectory(std::string directory) { recoveryDirectory_ = std::move(directory); }
     // Imports another DAW's project (see import/import.hpp) into a prepared project + JSON report.
     static std::unique_ptr<PreparedProject> prepareImport(const std::string &path, double sampleRate, int32_t &missing,
@@ -500,6 +503,8 @@ private:
     PluginMap offlinePlugins() const; // fresh instances with the live state, for offline renders
     void instantiatePlugins();        // creates missing instances for every slot in the model
     bool instantiateSlot(const PluginSlot &slot); // false: not loaded (reason in pluginErrors_)
+    std::shared_ptr<PluginProcessor> createPlugin(const std::string &format, const std::string &path,
+                                                  const std::string &classId, bool offline, std::string &err) const;
     const PluginSlot *findSlot(int32_t id) const;
     void bumpRevisionKeepingSaved(); // a UI-visible change that is not an edit (dirty state unchanged)
     void captureLiveState(Model &m) const;
@@ -592,6 +597,9 @@ private:
     PluginMap plugins_;                       // live instances by slot id
     std::map<int32_t, std::string> pluginErrors_;
     std::vector<int32_t> pendingPlugins_; // slots queued for deferred activation, in track order
+    std::string pluginHostPath_;          // dalnok-plughost; empty = plug-ins run in this process (ADR-0014)
+    std::set<int32_t> failedPlugins_;     // isolated instances whose failure has been reported
+    int pluginLoadTimeoutMs_ = 60'000;    // an isolated plug-in that takes longer to load is killed
     int32_t nextPlugin_ = 1;
     int32_t nextMarker_ = 1;
     std::map<int32_t, uint64_t> pluginEditCounts_; // per plug-in editor edit counts already seen
