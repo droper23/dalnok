@@ -77,6 +77,9 @@ final class Session {
     /// Takes inside take folders (not shown in the arrangement), by clip id.
     private(set) var takeClips: [DalnokClipId: ClipView] = [:]
     private var revision: UInt64 = 0 // reset to force a rebuild
+    /// Per-track views at the engine's track revision (A-05): a refresh re-reads only tracks whose revision moved.
+    private struct CachedTrack { let revision: UInt64; let style: Theme.Style; let view: TrackView; let takes: [ClipView]; let slots: [ClipView] }
+    private var trackCache: [DalnokTrackId: CachedTrack] = [:]
     private(set) var clipReads = 0 // self-test verifies scalar refreshes do not read clips
     var projectURL: URL?
     /// Called after the model changed (any source: UI, undo, scripts).
@@ -112,6 +115,12 @@ final class Session {
             if valid && engine.revision == rev {
                 let muteChanged = zip(allTracks, updated).contains { $0.0.muted != $0.1.muted }
                 allTracks = updated
+                // Only scalars changed and every track's were just re-read, so cached views stay exact (A-05).
+                for t in updated {
+                    guard let cached = trackCache[t.id] else { continue }
+                    trackCache[t.id] = CachedTrack(revision: dalnok_track_revision(h, t.id), style: cached.style, view: t,
+                                                   takes: cached.takes, slots: cached.slots)
+                }
                 let byId = Dictionary(uniqueKeysWithValues: updated.map { ($0.id, $0) })
                 tracks = tracks.compactMap { byId[$0.id] }
                 revision = rev
@@ -123,11 +132,21 @@ final class Session {
         var out: [TrackView] = []
         takeClips = [:]
         slotClips = []
+        var cache: [DalnokTrackId: CachedTrack] = [:]
+        let style = Theme.activeStyle // track colors are resolved per theme
         for i in 0..<dalnok_track_count(h) {
             let tid = dalnok_track_at(h, i)
+            let trackRevision = dalnok_track_revision(h, tid)
+            if let cached = trackCache[tid], cached.revision == trackRevision, cached.style == style {
+                out.append(cached.view)
+                for c in cached.takes { takeClips[c.id] = c }
+                slotClips += cached.slots
+                cache[tid] = cached
+                continue
+            }
             var ti = DalnokTrackInfo()
             guard dalnok_track_info(h, tid, &ti) == DALNOK_OK else { continue }
-            var clips: [ClipView] = []
+            var clips: [ClipView] = [], takes: [ClipView] = [], slots: [ClipView] = []
             for k in 0..<ti.clip_count {
                 clipReads += 1
                 var ci = DalnokClipInfo()
@@ -142,8 +161,8 @@ final class Session {
                 clip.slot = ci.slot
                 clip.follow = ci.follow
                 clip.followLoops = ci.follow_loops
-                if ci.alt { takeClips[ci.id] = clip; continue } // takes live in their folder, not the arrangement
-                if ci.slot >= 0 { slotClips.append(clip); continue } // launcher slots, beside the arrangement
+                if ci.alt { takeClips[ci.id] = clip; takes.append(clip); continue } // takes live in their folder, not the arrangement
+                if ci.slot >= 0 { slotClips.append(clip); slots.append(clip); continue } // launcher slots, beside the arrangement
                 if ci.midi {
                     clip.isMidi = true
                     clip.notes = [DalnokNote](repeating: DalnokNote(), count: Int(ci.note_count))
@@ -170,7 +189,9 @@ final class Session {
                                  stack: ti.stack, isStack: ti.is_stack, collapsed: ti.collapsed,
                                  sends: Array(sends.prefix(min(sendCount, 16))),
                                  volumeAuto: automationPoints(tid, 0), panAuto: automationPoints(tid, 1)))
+            cache[tid] = CachedTrack(revision: trackRevision, style: style, view: out[out.count - 1], takes: takes, slots: slots)
         }
+        trackCache = cache // tracks that are gone drop out
         for k in out.indices { out[k].hidden = dalnok_track_hidden(h, out[k].id) }
         for k in out.indices { var ti = DalnokTrackInfo(); dalnok_track_info(h, out[k].id, &ti); out[k].height = CGFloat(ti.height) }
         allTracks = out
@@ -451,7 +472,7 @@ final class Session {
         if n != lastPending { lastPending = n; forceRefresh() }
         return n
     }
-    func forceRefresh() { revision = 0; refresh() }
+    func forceRefresh() { revision = 0; trackCache = [:]; refresh() }
 
     func setFades(_ c: DalnokClipId, fadeIn: Int64, fadeOut: Int64, curve: DalnokFadeCurve) {
         dalnok_clip_set_fades(h, c, fadeIn, fadeOut, curve); refresh()

@@ -68,6 +68,21 @@ final class UIWalk {
             let ms = Double(DispatchTime.now().uptimeNanoseconds - t) / 1e6
             if i >= 30 { refreshes.append(ms) }
         }
+        // A-05: a structural edit to one track, then the full refresh callback (session read + view updates).
+        // Baseline: the same edit followed by a rebuild with the per-track cache dropped (every track re-read).
+        var oneTrack: [Double] = [], allTracks: [Double] = []
+        let clip = s.allTracks[0].clips[0].id
+        s.refresh()
+        for full in [false, true] { // separate runs: a forced rebuild empties the cache the other series relies on
+            for i in 0..<130 {
+                var ids = [clip]
+                _ = dalnok_clips_nudge(s.h, &ids, 1, i % 2 == 0 ? 480 : -480)
+                let t = DispatchTime.now().uptimeNanoseconds
+                if full { s.forceRefresh() } else { s.refresh() }
+                let ms = Double(DispatchTime.now().uptimeNanoseconds - t) / 1e6
+                if i >= 30 { if full { allTracks.append(ms) } else { oneTrack.append(ms) } }
+            }
+        }
         func show(_ name: String, _ values: [Double]) {
             let sorted = values.sorted()
             func pct(_ p: Double) -> Double { sorted[Int((Double(sorted.count - 1) * p).rounded())] }
@@ -76,6 +91,8 @@ final class UIWalk {
         print("AUDIT 16 tracks 4096 clips; mixer visible; 30 warmup + 100 samples; synchronous callbacks included; deferred drawing/compositing excluded")
         show("AppKit drag event", events)
         show("AppKit parameter refresh", refreshes)
+        show("AppKit structural refresh, one track re-read", oneTrack)
+        show("AppKit structural refresh, all tracks re-read (pre-A-05)", allTracks)
         fflush(stdout)
         return true
     }

@@ -33,6 +33,7 @@ struct Send {
     DalnokTrackId bus = 0;
     float db = 0;
     bool pre = false;
+    bool operator==(const Send &) const = default;
 };
 
 // Plug-in state as an immutable, shared blob. Every edit and every undo step copies the model, so the
@@ -46,6 +47,7 @@ struct SharedPluginState {
     }
     void assign(std::string s) { blob = s.empty() ? nullptr : std::make_shared<const std::string>(std::move(s)); }
     void clear() { blob.reset(); }
+    bool operator==(const SharedPluginState &) const = default; // same blob (blobs are immutable)
 };
 
 // A plugin on a track: the instrument (instrument tracks) or an insert effect. The live instance
@@ -58,12 +60,14 @@ struct PluginSlot {
     bool bypassed = false;          // footswitch/bypass: effects pass audio through, instruments go silent (undoable)
     int32_t sidechain = 0;          // DalnokTrackId whose pre-fader signal feeds this plug-in's sidechain input (0 = none)
     SharedPluginState state; // last known plugin state (used when the plugin is missing, and for saving)
+    bool operator==(const PluginSlot &) const = default;
 };
 
 // Automation: breakpoints in timeline frames. Volume values are dB; pan values are -1 (left) to 1 (right).
 struct AutoPoint {
     int64_t frame = 0;
     float value = 0;
+    bool operator==(const AutoPoint &) const = default;
 };
 enum AutoTarget : int32_t { kAutoVolume = 0, kAutoPan = 1 };
 // A plug-in parameter lane: values are normalized 0-1 (the plug-in's own range is applied at render).
@@ -71,6 +75,7 @@ struct PluginAuto {
     int32_t slot = 0;
     uint32_t param = 0;
     std::vector<AutoPoint> points;
+    bool operator==(const PluginAuto &) const = default;
 };
 
 // Lane heights a track may have (points; the app's default is 88).
@@ -99,6 +104,7 @@ struct TrackState {
     bool muted = false;
     bool solo = false;
     std::shared_ptr<TrackRuntime> runtime; // shared across model copies
+    bool operator==(const TrackState &) const = default; // used to find which tracks an edit changed (A-05)
 };
 
 // MIDI note in frames, relative to the start of its clip's source (like an audio offset).
@@ -129,6 +135,7 @@ struct ClipState {
     bool stretched() const { return std::fabs(rate - 1.0) > 1e-9 || pitch != 0; }
     int64_t sourceLength() const { return static_cast<int64_t>(std::llround(static_cast<double>(length) * rate)); }
     std::string name;
+    bool operator==(const ClipState &) const = default; // note lists compare by identity (they are immutable)
 };
 
 // Take folder (comping): takes are alternate clips (ClipState::alt, kept but not played); the comp says which
@@ -278,6 +285,12 @@ public:
     // Model (read)
     const Model &model() const { return model_; }
     uint64_t revision() const { return revision_; }
+    // The revision at which this track's view-relevant state (track fields, its clips) last changed (A-05).
+    uint64_t trackRevision(DalnokTrackId id) const {
+        auto it = trackRevisions_.find(id);
+        // A track never stamped individually has not changed since the last whole-project change.
+        return std::max(globalRevision_, it == trackRevisions_.end() ? 0 : it->second);
+    }
     bool onlyParametersSince(uint64_t revision) const {
         return lastParameterRevision_ == revision_ && revision < revision_ && revision >= firstParameterRevision_ - 1;
     }
@@ -545,6 +558,13 @@ private:
     std::string groupName_;
     std::string recoveryDirectory_; // control thread only; never part of the render snapshot
     uint64_t revision_ = 1, savedRevision_ = 1;
+    // Per-track change tracking (A-05). Edits and undo stamp only the tracks they changed; any other revision
+    // bump (loads, relinks, plug-in loading or editor edits) stamps every track through globalRevision_.
+    std::map<DalnokTrackId, uint64_t> trackRevisions_;
+    uint64_t globalRevision_ = 1;
+    std::vector<DalnokTrackId> changedTracks(const Model &before) const;
+    void stampTracks(const std::vector<DalnokTrackId> &ids) { for (auto id : ids) trackRevisions_[id] = revision_; }
+    void bumpRevisionAll() { ++revision_; globalRevision_ = revision_; }
     uint64_t firstParameterRevision_ = 0, lastParameterRevision_ = 0;
     void markParameterRevision() {
         if (lastParameterRevision_ != revision_ - 1) firstParameterRevision_ = revision_;
@@ -574,7 +594,7 @@ private:
     std::vector<int32_t> pendingPlugins_; // slots queued for deferred activation, in track order
     int32_t nextPlugin_ = 1;
     int32_t nextMarker_ = 1;
-    uint64_t pluginEdits_ = 0;
+    std::map<int32_t, uint64_t> pluginEditCounts_; // per plug-in editor edit counts already seen
     // Recording (control thread)
     bool recording_ = false;
     DalnokTrackId recordAudioTrack_ = 0, recordMidiTrack_ = 0; // audio: the first armed audio track

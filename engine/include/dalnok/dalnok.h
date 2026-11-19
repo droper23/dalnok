@@ -28,7 +28,7 @@
 extern "C" {
 #endif
 
-#define DALNOK_API_VERSION 32
+#define DALNOK_API_VERSION 33
 
 typedef enum {
     DALNOK_OK = 0,
@@ -275,6 +275,10 @@ DalnokStatus dalnok_pool_relink(DalnokEngine *engine, DalnokMediaId id, DalnokMe
 uint64_t dalnok_model_revision(const DalnokEngine *engine);
 /* True only when every change since revision was a scalar track/master parameter. */
 bool dalnok_model_only_parameters_since(const DalnokEngine *engine, uint64_t revision);
+/* The model revision at which this track's own state or its clips last changed. A view that cached a track at
+ * revision r can reuse it while this stays <= r. Changes outside edits (loading, relinking, plug-in loading)
+ * move every track. */
+uint64_t dalnok_track_revision(const DalnokEngine *engine, DalnokTrackId track);
 DalnokStatus dalnok_track_parameters(const DalnokEngine *engine, DalnokTrackId track,
                                      float *gain_db, float *pan, bool *muted, bool *solo);
 int32_t dalnok_track_count(const DalnokEngine *engine);

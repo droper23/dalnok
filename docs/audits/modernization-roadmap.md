@@ -150,6 +150,7 @@ Rules the roadmap enforces:
 | A-07 shared plug-in state | **Done** | `SharedPluginState` blob; state round-trip and missing-plug-in suites pass |
 | A-12 denormal guard | **Done** | FPCR.FZ / MXCSR FTZ|DAZ around live and offline render; subnormal test requires exact silence |
 | A-10 fuzz/property tests | **Done** | `scripts/ci/fuzz.sh`: libFuzzer + ASan over the project reader and all importers; found and fixed a ZIP size-allocation bug and an FCPXML abort (regression tests). 10-minute run clean (834,391 inputs); 1,000 random save/load/save round-trips pass; parser suites always run under ASan in `scripts/check.sh` |
+| A-05 change sets / incremental UI | **Done** | Per-track revisions (C API 33); Session re-reads only changed tracks; mixer parameter-only path. 4,096 clips: parameter refresh p50 ≈4.0 → 0.155 ms; one-track structural refresh 24.6 → 0.56 ms. Randomized revision property test, self-test re-read counts. Drawing/compositing still unmeasured |
 | A-23 status documentation | **Done** | capability table now links tests; C API references corrected to v29 |
 
-The larger A-01, A-03 and A-05 programmes remain open; their smaller safety and performance steps do not establish crash isolation, structural sharing or incremental UI change sets. Other unfinished items remain as written above.
+The larger A-01 and A-03 programmes remain open; their smaller safety and performance steps do not establish crash isolation, structural sharing or incremental UI change sets. Other unfinished items remain as written above.

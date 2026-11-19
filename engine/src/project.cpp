@@ -871,7 +871,7 @@ bool Engine::applyProject(std::unique_ptr<PreparedProject> p, ApplyMode mode) {
     std::string ignored;
     if (!setCycle(p->cycleOn, p->cycleStart, p->cycleEnd, ignored)) cycleOn_.store(false, std::memory_order_release);
     syncRuntimes();
-    ++revision_;
+    bumpRevisionAll();
     savedRevision_ = (p->imported || recovered) ? revision_ - 1 : revision_; // an import is unsaved work
     commit();
     return true;

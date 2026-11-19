@@ -328,7 +328,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         session.onParameterChange = { [weak self] muteChanged in
             guard let self else { return }
             self.headers.sync()
-            if !self.mixer.isHidden { self.mixer.rebuild() }
+            if !self.mixer.isHidden { self.mixer.updateParameters() }
             if muteChanged { self.timeline.needsDisplay = true } // muted tracks change clip tint
             self.updateTitle()
         }

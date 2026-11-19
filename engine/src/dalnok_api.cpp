@@ -860,6 +860,7 @@ size_t dalnok_pool_path(const DalnokEngine *e, DalnokMediaId id, char *buf, size
 // ---- Queries --------------------------------------------------------------
 
 uint64_t dalnok_model_revision(const DalnokEngine *e) { return e ? e->impl.revision() : 0; }
+uint64_t dalnok_track_revision(const DalnokEngine *e, DalnokTrackId t) { return e ? e->impl.trackRevision(t) : 0; }
 bool dalnok_model_only_parameters_since(const DalnokEngine *e, uint64_t revision) {
     return e && e->impl.onlyParametersSince(revision);
 }

@@ -98,6 +98,14 @@ final class MixerPanel: NSView {
         if !master.fader.tracking { master.fader.db = session.masterGainDb; master.dbLabel.stringValue = FaderControl.format(session.masterGainDb) }
     }
 
+    /// After a parameter-only change: update scalars in place; anything else falls back to a full rebuild.
+    func updateParameters() {
+        let tracks = session.tracks
+        guard strips.map(\.trackId) == tracks.map(\.id) else { return rebuild() }
+        for (s, t) in zip(strips, tracks) { s.updateParameters(t) }
+        if !master.fader.tracking { master.fader.db = session.masterGainDb; master.dbLabel.stringValue = FaderControl.format(session.masterGainDb) }
+    }
+
     func pushMeters(_ read: (DalnokTrackId) -> (Float, Float)) {
         for s in strips { let (l, r) = read(s.trackId); s.meter.push(l, r) }
     }
@@ -130,6 +138,7 @@ final class ChannelStrip: NSView {
     var onOpenPlugin: ((DalnokTrackId, Int32) -> Void)?
     var onAddPlugin: ((DalnokTrackId) -> Void)?
     private var shownInserts: [String] = []
+    private var shownSendTargets: [String] = [] // the "+ Send" menu, rebuilt only when its buses change
 
     init(session: Session, trackId: DalnokTrackId) {
         self.session = session
@@ -257,6 +266,21 @@ final class ChannelStrip: NSView {
     override var isFlipped: Bool { true }
     override func mouseDown(with event: NSEvent) { onSelect?(trackId) }
 
+    /// Scalar parameters only (gain, pan, mute, solo): the per-frame path while faders and knobs move (A-05).
+    func updateParameters(_ t: TrackView) {
+        let tint = t.muted ? TrackTint(base: t.color).muted : t.color
+        if color != tint { color = tint; needsDisplay = true }
+        if mute.isOn != t.muted {
+            name.textColor = Analog.on ? (t.muted ? Theme.textFaint : OKLCH.adjust(t.color, dl: 0.2, chromaScale: 0.7))
+                                       : (t.muted ? Theme.textDim : Theme.text)
+            scribble.lit = !t.muted
+        }
+        if !fader.tracking, fader.db != t.gainDb { fader.db = t.gainDb; dbLabel.stringValue = FaderControl.format(t.gainDb) }
+        if !pan.tracking, pan.pan != t.pan { pan.pan = t.pan }
+        mute.isOn = t.muted
+        solo.isOn = t.solo
+    }
+
     func update(_ t: TrackView) {
         color = t.muted ? TrackTint(base: t.color).muted : t.color
         needsDisplay = true
@@ -312,9 +336,12 @@ final class ChannelStrip: NSView {
             for snd in t.sends { sendsStack.addArrangedSubview(sendRow(snd)) }
         }
         for (k, snd) in zip(sendKnobs, t.sends) where !k.knob.tracking { k.knob.db = snd.db }
+        let candidates = session.buses.filter { b in b.id != t.id && !t.sends.contains { $0.bus == b.id } }
+        let targets = candidates.map { "\($0.id):\($0.name)" }
+        guard targets != shownSendTargets || addSend.numberOfItems == 0 else { return }
+        shownSendTargets = targets
         addSend.removeAllItems()
         addSend.addItem(withTitle: "+ Send")
-        let candidates = session.buses.filter { b in b.id != t.id && !t.sends.contains { $0.bus == b.id } }
         for b in candidates {
             addSend.addItem(withTitle: "Send to \(b.name)")
             addSend.lastItem?.tag = Int(b.id)

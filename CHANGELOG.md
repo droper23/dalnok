@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- The window now re-reads only the tracks an edit changed (per-track revisions, C API 33), and the mixer updates faders and buttons in place while they move. On a generated 4,096-clip project, refresh after a fader change fell from about 4 ms to 0.16 ms and after a one-clip edit from 24.6 ms to 0.56 ms.
 - Fuzzing for every project and import parser (`scripts/ci/fuzz.sh`, libFuzzer + AddressSanitizer). Fixed what it found: a damaged `.dawproject` could make the ZIP reader allocate gigabytes, and a malformed escape or volume in an FCPXML file crashed the app. Parser errors can no longer escape the engine as exceptions. `scripts/check.sh` always runs the parser tests under AddressSanitizer.
 - Opening or importing a project no longer waits for its plug-ins (ADR-0013, C API 32): the project appears at once, plug-ins load one at a time with “Loading plug-ins n of N” and a Stop button, and stopped or recovered plug-ins can be loaded later from the track menu (Load). Slow plug-ins are named afterwards.
 - Incremental snapshot compilation (A-04): each track's clip-derived render content is shared between snapshots and rebuilt only when that track's clips change. Randomized edit/undo/redo sequences compare reused content with a fresh build (`dalnok_engine_snapshot_mismatches`, C API 31). On a generated 4,096-clip project, structural edit p50 0.238 → 0.163 ms and undo p50 0.257 → 0.173 ms.

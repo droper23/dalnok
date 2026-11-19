@@ -1907,6 +1907,21 @@ final class SelfTest {
         check(s.clipReads == clipReads && abs((s.track(track)?.gainDb ?? 0) + 9) < 1e-6,
               "scripted gain edit refreshes without reading clips")
         e.undo(); s.refresh(onDisplayTick: true)
+        // A-05: a structural edit to one track re-reads only that track's clips.
+        if let edited = s.allTracks.first(where: { !$0.clips.isEmpty }), let clip = edited.clips.first {
+            s.refresh() // settle anything pending from the checks above
+            var info = DalnokTrackInfo(); _ = dalnok_track_info(s.h, edited.id, &info)
+            let before = s.clipReads
+            var ids = [clip.id]
+            _ = dalnok_clips_nudge(s.h, &ids, 1, 480)
+            s.refresh()
+            check(s.clipReads - before == Int(info.clip_count) && s.clip(clip.id)?.start == clip.start + 480,
+                  "an edit to one track re-reads only its \(info.clip_count) clip(s) (read \(s.clipReads - before) of \(s.allTracks.reduce(0) { $0 + $1.clips.count }))")
+            let afterEdit = s.clipReads
+            e.undo(); s.refresh()
+            check(s.clipReads - afterEdit == Int(info.clip_count) && s.clip(clip.id)?.start == clip.start,
+                  "undo re-reads only the track it changed")
+        } else { check(false, "a track with clips for the per-track refresh check") }
         Motion.override = true
         defer { Motion.override = false }
         // Knob glide: an undone volume change animates instead of jumping.

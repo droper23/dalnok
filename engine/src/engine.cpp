@@ -6,6 +6,7 @@
 #include <cmath>
 #include <ctime>
 #include <set>
+#include <utility>
 #include <unistd.h>
 
 namespace dalnok {
@@ -240,9 +241,19 @@ void Engine::collectGarbage() {
     RenderState *s = nullptr;
     while (retired_.pop(s)) delete s;
     // Edits made in plugin editors change what the project will save.
-    uint64_t edits = 0;
-    for (const auto &[id, p] : plugins_) edits += p ? p->editCount() : 0;
-    if (edits != pluginEdits_) { pluginEdits_ = edits; ++revision_; }
+    // Only the tracks owning an edited plug-in are stamped (A-05).
+    std::vector<DalnokTrackId> edited;
+    bool any = false;
+    for (const auto &[id, p] : plugins_) {
+        const uint64_t count = p ? p->editCount() : 0;
+        uint64_t &known = pluginEditCounts_[id];
+        if (count == known) continue;
+        known = count;
+        any = true;
+        for (const auto &t : model_.tracks)
+            for (const auto &slot : t.plugins) if (slot.id == id) edited.push_back(t.id);
+    }
+    if (any) { ++revision_; stampTracks(edited); }
     if (recording_) drainRecordedMidi();
 }
 
@@ -286,6 +297,7 @@ bool Engine::edit(const char *name, bool structural, F &&fn) {
         model_ = std::move(before);
         return false;
     }
+    const auto changed = changedTracks(before);
     if (groupDepth_ == 0 || !groupRecorded_) {
         undo_.push_back({groupDepth_ && !groupName_.empty() ? groupName_ : name,
                          std::make_unique<Model>(std::move(before)), {}});
@@ -299,6 +311,7 @@ bool Engine::edit(const char *name, bool structural, F &&fn) {
     if (undo_.size() > kMaxUndo) undo_.erase(undo_.begin());
     redo_.clear();
     ++revision_;
+    stampTracks(changed);
     syncRuntimes();
     if (structural) commit();
     return true;
@@ -369,6 +382,7 @@ bool Engine::editParameter(const char *name, DalnokTrackId track, ParameterField
     redo_.clear();
     applyParameter({track, field, value});
     ++revision_;
+    if (field != ParameterField::masterGain) stampTracks({track});
     markParameterRevision();
     return true;
 }
@@ -397,10 +411,30 @@ void Engine::syncRuntimes() {
 }
 
 void Engine::restore(Model m) {
-    model_ = std::move(m);
+    const Model before = std::exchange(model_, std::move(m));
+    const auto changed = changedTracks(before);
     syncRuntimes();
     ++revision_;
+    stampTracks(changed);
     commit();
+}
+
+std::vector<DalnokTrackId> Engine::changedTracks(const Model &before) const {
+    // A track changed if its own state or its clips (in z-order) differ. O(tracks + clips) comparisons.
+    std::map<DalnokTrackId, std::vector<const ClipState *>> oldClips, newClips;
+    for (const auto &c : before.clips) oldClips[c.track].push_back(&c);
+    for (const auto &c : model_.clips) newClips[c.track].push_back(&c);
+    std::map<DalnokTrackId, const TrackState *> oldTracks;
+    for (const auto &t : before.tracks) oldTracks[t.id] = &t;
+    std::vector<DalnokTrackId> out;
+    for (const auto &t : model_.tracks) {
+        auto old = oldTracks.find(t.id);
+        const auto &a = oldClips[t.id], &b = newClips[t.id];
+        const bool same = old != oldTracks.end() && *old->second == t &&
+                          std::equal(a.begin(), a.end(), b.begin(), b.end(), [](const ClipState *x, const ClipState *y) { return *x == *y; });
+        if (!same) out.push_back(t.id);
+    }
+    return out;
 }
 
 void Engine::applyUndo(std::vector<UndoStep> &from, std::vector<UndoStep> &to) {
@@ -418,6 +452,7 @@ void Engine::applyUndo(std::vector<UndoStep> &from, std::vector<UndoStep> &to) {
         }
         to.push_back(std::move(inverse));
         ++revision_;
+        for (const auto &v : step.parameters) if (v.field != ParameterField::masterGain) stampTracks({v.track});
         markParameterRevision();
     }
 }
@@ -463,7 +498,7 @@ void Engine::resetModel() {
     cycleStart_.store(0, std::memory_order_relaxed);
     cycleEnd_.store(0, std::memory_order_relaxed);
     syncRuntimes();
-    ++revision_;
+    bumpRevisionAll();
     savedRevision_ = revision_;
 }
 
@@ -891,7 +926,7 @@ DalnokTrackId Engine::duplicateTrack(DalnokTrackId track, std::string &err) {
     nextClip_ = nextClipId;
     ++nextTrack_;
     syncRuntimes();
-    ++revision_;
+    bumpRevisionAll();
     return id;
 }
 
@@ -940,7 +975,7 @@ bool Engine::setPluginState(int32_t id, const std::string &bytes, std::string &e
     PluginProcessor *p = pluginInstance(id);
     if (!p) return fail(err, "no such plug-in, or it is not loaded");
     if (!p->setState(bytes)) return fail(err, "the plug-in rejected the state");
-    ++revision_; // plugin state is saved with the project, so the project changed
+    bumpRevisionAll(); // plugin state is saved with the project, so the project changed
     return true;
 }
 
@@ -1027,7 +1062,7 @@ void Engine::cancelPendingPlugins() {
 
 void Engine::bumpRevisionKeepingSaved() {
     const bool clean = revision_ == savedRevision_;
-    ++revision_;
+    bumpRevisionAll();
     if (clean) savedRevision_ = revision_;
 }
 
@@ -1771,7 +1806,7 @@ bool Engine::poolRelink(DalnokMediaId id, std::shared_ptr<const Media> media, co
     it->second.channels = media->channelCount();
     it->second.handle = std::make_unique<DalnokMedia>(DalnokMedia{std::move(media)});
     cache_.clear();
-    ++revision_;
+    bumpRevisionAll();
     commit();
     return true;
 }

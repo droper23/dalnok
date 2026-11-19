@@ -296,7 +296,7 @@
       "priority": "P1",
       "category": "Performance",
       "subsystem": "App / model sync",
-      "status": "partial",
+      "status": "fixed",
       "summary": "Session.refresh() walks every track, clip, plug-in, send and automation lane through the C API whenever the model revision changes. MainWindow calls it from a 60 Hz tick and after every edit, and modelChanged() then rebuilds the device panel and mixer. A fader drag therefore pays a full O(tracks + clips) C-API pass per mouse event.",
       "evidence": [
         "app/macos/Dalnok/Session.swift:95 - refresh() re-queries dalnok_track_count/at/info, dalnok_track_clip_at, dalnok_clip_info, note lists, plug-in slots, sends, automation and hidden flags.",
@@ -331,7 +331,7 @@
         "value": 4
       },
       "measured": true,
-      "resolution": "Partial: A-05a fixes scalar revision refresh, with coalescing and clip-read self-tests, both-theme UI walks, and matching AppKit timing (benchmarks/results.json; deferred drawing excluded). Incremental change sets, per-track structural refresh and whole-frame performance remain open."
+      "resolution": "Partial: A-05a fixes scalar revision refresh, with coalescing and clip-read self-tests, both-theme UI walks, and matching AppKit timing (benchmarks/results.json; deferred drawing excluded). Completed 2026-11-19: per-track revisions (dalnok_track_revision, C API 33). Engine::edit and undo diff the old and new model per track (track state plus that track's clips) and stamp only changed tracks; scalar edits stamp their track; plug-in editor edits stamp the owning track; loads, relinks and plug-in loading stamp every track. Session.refresh caches each TrackView at its revision and re-reads only tracks whose revision moved; the parameter fast path keeps the cache exact. The mixer gained a parameter-only update path and rebuilds its send menus only when the buses change. Tests: TrackRevisions (stamping, a randomized 'unchanged revision means unchanged view' property over 3 seeds x 400 edits, and loaded tracks keeping their revision, which caught a bug where every loaded track always read as changed); self-test checks that an edit and its undo re-read only that track's clips. Release audit-ui on the 16 x 256 project (100 samples after 30 warmups, three runs): parameter refresh p50 4.0-4.15 -> 0.154-0.156 ms; structural refresh after a one-clip nudge p50 24.5-24.7 ms with every track re-read (the previous behavior, same binary) -> 0.559-0.561 ms; drag event p50 0.033-0.035 ms. Synchronous callbacks included; deferred drawing and compositing are still not measured."
     },
     {
       "id": "A-05a",
