@@ -7,7 +7,7 @@ milestone: M11 VST3 hosting (ADR-0009 stage 3) done; editors, parameters and AU 
 
 ## Current priorities (2026-11-18)
 - Owner's goal: Logic projects should sound the same in both DAWs, including plug-ins. Import, routing, automation and native processor parity need measured verification; this is not yet achieved.
-- Owner reports crashes opening multiple Logic projects. Headless import alone does not reproduce every app crash; isolate the app path and preserve project privacy when building generated regression fixtures.
+- Owner reports crashes opening multiple Logic projects. Reproduced during a published-build UI import: SIGSEGV in the main thread's Swift main-executor check, with Guitar Rig 7 and other Audio Units loaded. Two other UI imports reached their reports. Headless import did not reproduce the crash. This implicates the same failure mode as the earlier Guitar Rig crash, but does not establish which plug-in corrupts the executor. Isolate the app path and preserve project privacy when building generated regression fixtures.
 - Guitar Rig crash and 44.1 kHz timing remain open. The display floors ticks after converting integer frames to beats; some self-test expectations also multiply rounded beat lengths, so diagnose those separately from quantization.
 - Verification: `swift test --disable-sandbox` outside the sandbox: 188 tests pass; `scripts/ci/plugin-host.sh` and `scripts/ci/rt-effects.sh` pass. Both theme self-tests pass, with hosted plug-in UI checks skipped (test plug-in not configured).
 
