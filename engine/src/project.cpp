@@ -814,7 +814,8 @@ std::unique_ptr<Engine::PreparedProject> Engine::prepareDocument(const json::Val
     return prepared;
 }
 
-bool Engine::applyProject(std::unique_ptr<PreparedProject> p, bool recovered) {
+bool Engine::applyProject(std::unique_ptr<PreparedProject> p, ApplyMode mode) {
+    const bool recovered = mode == ApplyMode::recover;
     if (!recoveryDirectory_.empty()) {
         std::error_code ec;
         fs::create_directories(recoveryDirectory_, ec);
@@ -854,6 +855,12 @@ bool Engine::applyProject(std::unique_ptr<PreparedProject> p, bool recovered) {
         for (const auto &t : model_.tracks) for (const auto &slot : t.plugins) {
             nextPlugin_ = std::max(nextPlugin_, slot.id + 1);
             pluginErrors_[slot.id] = "Not loaded in recovery mode; saved state preserved";
+        }
+    } else if (mode == ApplyMode::defer) {
+        // Shown now with every slot unloaded (state kept); the host activates them one at a time (ADR-0013).
+        for (const auto &t : model_.tracks) for (const auto &slot : t.plugins) {
+            nextPlugin_ = std::max(nextPlugin_, slot.id + 1);
+            pendingPlugins_.push_back(slot.id);
         }
     } else instantiatePlugins(); // third-party code runs on the control thread
     nextTrack_ = std::max(nextTrack_, p->maxTrack + 1);

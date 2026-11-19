@@ -516,6 +516,7 @@ final class SelfTest {
         deadControls()
         await tapeMachine()
         await markersAndTrackTools()
+        await deferredPluginLoading()
         try? w.snapshot(to: workdir.appendingPathComponent("selftest.png"))
         await migrationSteps()
         // Settings: exercise the menu, appearance selection, and project preference.
@@ -752,6 +753,55 @@ final class SelfTest {
     }
 
     // MARK: Markers, duplicate track, zoom to selection, vertical zoom
+
+    /// ADR-0013: an opened project is shown before its plug-ins load; they load one per run-loop turn with progress,
+    /// Stop leaves the rest unloaded with their settings, and the track menu loads one later.
+    private func deferredPluginLoading() async {
+        let e = s.engine
+        e.pause()
+        let restore = workdir.appendingPathComponent("before-deferred.dalnok")
+        check(w.saveProject(to: restore), "save before the deferred-loading check")
+        e.newProject(); s.refresh()
+        let t = dalnok_track_add(e.handle, "Deferred")
+        for _ in 0..<3 { _ = dalnok_plugin_add(e.handle, t, "dalnok:channel-eq", nil, nil, 0) }
+        let project = workdir.appendingPathComponent("deferred.dalnok")
+        check(w.saveProject(to: project), "save a project with three plug-ins")
+        e.newProject(); s.refresh()
+        let previous = s.onPluginLoadProgress
+        var shownFirst = false, sawProgress = false, stopVisible = false, statusText = ""
+        s.onPluginLoadProgress = { [weak self] p in
+            previous?(p)
+            guard let self, let p else { return }
+            if p.done == 0 {
+                shownFirst = self.s.tracks.count == 1 && self.s.tracks[0].plugins.allSatisfy { $0.loading && !$0.loaded }
+                stopVisible = !self.w.transport.stopLoadingButton.isHidden
+                statusText = self.w.transport.statusLabel.stringValue
+            } else if p.done == 1 {
+                sawProgress = self.s.tracks[0].plugins.map(\.loaded) == [true, false, false]
+                self.w.transport.stopLoadingButton.performClick(nil) // Stop after the first plug-in
+            }
+        }
+        let opened = await withCheckedContinuation { cont in w.openProject(project) { cont.resume(returning: $0) } }
+        s.onPluginLoadProgress = previous
+        check(opened, "deferred open completed")
+        check(shownFirst, "the project is shown before its plug-ins load, each marked loading")
+        check(stopVisible && statusText == "Loading plug-ins 1 of 3…", "status shows progress with a Stop button (\(statusText))")
+        check(sawProgress, "plug-ins load one at a time")
+        let plugins = s.tracks.first?.plugins ?? []
+        check(plugins.map(\.loaded) == [true, false, false] && plugins.dropFirst().allSatisfy { $0.error.contains("cancelled") && !$0.loading },
+              "Stop leaves the remaining plug-ins unloaded with their settings")
+        check(w.transport.stopLoadingButton.isHidden && !e.isDirty, "Stop button hidden afterwards; loading is not an edit")
+        if let track = s.tracks.first {
+            let menu = w.pluginsMenu(for: track)
+            if let load = menu.items.first(where: { $0.title == "Load \(plugins[1].name)" }), let action = load.action {
+                _ = NSApp.sendAction(action, to: load.target, from: load)
+                check(s.tracks.first?.plugins.map(\.loaded) == [true, true, false], "track menu ▸ Load loads one stopped plug-in")
+            } else { check(false, "track menu offers Load for a stopped plug-in") }
+            check(!menu.items.contains { $0.title == "Load \(plugins[0].name)" && $0.representedObject as? Int32 == plugins[0].id },
+                  "no Load item for a loaded plug-in")
+        }
+        _ = await withCheckedContinuation { cont in w.openProject(restore) { cont.resume(returning: $0) } }
+    }
 
     private func markersAndTrackTools() async {
         let e = s.engine

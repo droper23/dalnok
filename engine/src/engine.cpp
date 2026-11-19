@@ -2,6 +2,7 @@
 #include "engine.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <ctime>
 #include <set>
@@ -451,6 +452,7 @@ void Engine::resetModel() {
     clipboard_.clear(); // clips refer to this project's media
     plugins_.clear(); // snapshots still holding instances release them on this thread
     pluginErrors_.clear();
+    pendingPlugins_.clear();
     pool_.clear();
     cache_.clear();
     undo_.clear();
@@ -965,18 +967,80 @@ void Engine::instantiatePlugins() {
     for (const auto &t : model_.tracks)
         for (const auto &slot : t.plugins) {
             nextPlugin_ = std::max(nextPlugin_, slot.id + 1);
-            if (plugins_.count(slot.id)) continue;
-            std::string err;
-            std::shared_ptr<PluginProcessor> p(loadPlugin(slot.format, slot.path, slot.classId, sampleRate_, kMaxBlock, false, err));
-            if (!p) { pluginErrors_[slot.id] = err; continue; }
-            if (!slot.state.empty() && !p->setStateFromDocument(slot.state.str())) {
-                // Keep the original state intact instead of running and later saving a default instance.
-                const auto detail = p->stateError();
-                pluginErrors_[slot.id] = "the saved state was not accepted" + (detail.empty() ? std::string{} : ": " + detail) + "; the original state was preserved";
-                continue;
-            }
-            plugins_[slot.id] = std::move(p);
+            if (!plugins_.count(slot.id)) instantiateSlot(slot);
         }
+}
+
+bool Engine::instantiateSlot(const PluginSlot &slot) {
+    std::string err;
+    std::shared_ptr<PluginProcessor> p(loadPlugin(slot.format, slot.path, slot.classId, sampleRate_, kMaxBlock, false, err));
+    if (!p) { pluginErrors_[slot.id] = err; return false; }
+    if (!slot.state.empty() && !p->setStateFromDocument(slot.state.str())) {
+        // Keep the original state intact instead of running and later saving a default instance.
+        const auto detail = p->stateError();
+        pluginErrors_[slot.id] = "the saved state was not accepted" + (detail.empty() ? std::string{} : ": " + detail) + "; the original state was preserved";
+        return false;
+    }
+    pluginErrors_.erase(slot.id);
+    plugins_[slot.id] = std::move(p);
+    return true;
+}
+
+const PluginSlot *Engine::findSlot(int32_t id) const {
+    for (const auto &t : model_.tracks)
+        for (const auto &slot : t.plugins)
+            if (slot.id == id) return &slot;
+    return nullptr;
+}
+
+int32_t Engine::activateNextPlugin(int32_t &slot, double &seconds) {
+    slot = 0;
+    seconds = 0;
+    while (!pendingPlugins_.empty()) {
+        const int32_t id = pendingPlugins_.front();
+        pendingPlugins_.erase(pendingPlugins_.begin());
+        const PluginSlot *s = findSlot(id);
+        if (!s || plugins_.count(id)) continue; // removed or already loaded meanwhile
+        pluginErrors_.erase(id);
+        const auto t0 = std::chrono::steady_clock::now();
+        instantiateSlot(*s); // third-party code runs here, on the caller's (main) thread
+        seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+        slot = id;
+        bumpRevisionKeepingSaved(); // loaded state and latency are visible to the UI; not an edit
+        commit();
+        return static_cast<int32_t>(pendingPlugins_.size());
+    }
+    return -1;
+}
+
+bool Engine::pluginLoading(int32_t slot) const {
+    return std::find(pendingPlugins_.begin(), pendingPlugins_.end(), slot) != pendingPlugins_.end();
+}
+
+void Engine::cancelPendingPlugins() {
+    if (pendingPlugins_.empty()) return;
+    for (int32_t id : pendingPlugins_)
+        if (!plugins_.count(id)) pluginErrors_[id] = "Not loaded: loading was cancelled; saved state preserved";
+    pendingPlugins_.clear();
+    bumpRevisionKeepingSaved();
+}
+
+void Engine::bumpRevisionKeepingSaved() {
+    const bool clean = revision_ == savedRevision_;
+    ++revision_;
+    if (clean) savedRevision_ = revision_;
+}
+
+bool Engine::reloadPlugin(int32_t id, std::string &err) {
+    const PluginSlot *s = findSlot(id);
+    if (!s) { err = "no such plug-in slot"; return false; }
+    if (plugins_.count(id)) return true;
+    pendingPlugins_.erase(std::remove(pendingPlugins_.begin(), pendingPlugins_.end(), id), pendingPlugins_.end());
+    const bool ok = instantiateSlot(*s);
+    if (!ok) err = pluginErrors_[id];
+    bumpRevisionKeepingSaved();
+    commit();
+    return ok;
 }
 
 void Engine::captureLiveState(Model &m) const {

@@ -462,7 +462,7 @@
       "priority": "P1",
       "category": "Reliability",
       "subsystem": "App / plugin hosting",
-      "status": "open",
+      "status": "partial",
       "summary": "dalnok_project_apply calls Engine::instantiatePlugins() synchronously on the calling thread, and the app applies projects on the main actor. A plug-in that waits on the main queue during initialisation therefore freezes the whole app; MODO BASS produced a multi-minute stall that was never explained or fixed.",
       "evidence": [
         "engine/src/project.cpp:820 - `instantiatePlugins(); // loads plugin code on this (control) thread`.",
@@ -498,7 +498,8 @@
         "reliability": 5,
         "value": 4
       },
-      "measured": false
+      "measured": false,
+      "resolution": "Partial (2026-11-19, ADR-0013): opening or importing a project applies it with every plug-in slot queued as loading (dalnok_project_apply_deferred, C API 32); the window shows the project at once and the app loads one plug-in per main run-loop turn (dalnok_plugins_activate_next), showing 'Loading plug-ins n of N' with a Stop button. Stop leaves the rest unloaded with saved state (dalnok_plugins_cancel_pending), and any unloaded slot can be loaded later from the track menu (dalnok_plugin_reload). Plug-ins slower than 2 s are named afterwards. Loading never marks the project edited. DeferredActivation tests cover queue order, dry playback while loading, cancel, state preservation on save, reload, removed and undone slots; the GUI self-test checks the project is shown first, the progress text and Stop, and the track-menu Load. Still open: plug-in creation must stay on the main thread (CLAP and VST3 require it), so one plug-in that blocks its own initialization still blocks the UI for that long; containing that needs the host process (A-01)."
     },
     {
       "id": "A-09",

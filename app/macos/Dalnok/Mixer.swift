@@ -129,7 +129,7 @@ final class ChannelStrip: NSView {
     let insertsStack = NSStackView()
     var onOpenPlugin: ((DalnokTrackId, Int32) -> Void)?
     var onAddPlugin: ((DalnokTrackId) -> Void)?
-    private var shownInserts: [Int32] = []
+    private var shownInserts: [String] = []
 
     init(session: Session, trackId: DalnokTrackId) {
         self.session = session
@@ -277,7 +277,7 @@ final class ChannelStrip: NSView {
         arm.isOn = t.armed
         arm.isHidden = t.isBus
         // Insert slots: each plug-in (click to open its window), then + to add one.
-        let ids = t.plugins.map(\.id)
+        let ids = t.plugins.map { "\($0.id):\($0.loaded):\($0.error)" } // rebuild when a plug-in finishes loading
         if ids != shownInserts || insertsStack.arrangedSubviews.isEmpty {
             shownInserts = ids
             insertsStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
@@ -285,7 +285,7 @@ final class ChannelStrip: NSView {
                 let b = slotButton((p.instrument ? "♪ " : "") + p.name, dim: !p.loaded)
                 b.tag = Int(p.id)
                 b.action = #selector(openInsert(_:))
-                b.toolTip = p.loaded ? "Open \(p.name)" : "\(p.name) isn't installed: bypassed, settings kept"
+                b.toolTip = p.loaded ? "Open \(p.name)" : p.loading ? "\(p.name) is loading" : "\(p.name) isn't loaded: bypassed, settings kept"
                 insertsStack.addArrangedSubview(b)
             }
             if !t.isBus || true {

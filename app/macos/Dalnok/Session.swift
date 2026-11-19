@@ -46,7 +46,7 @@ struct TrackView {
     var isInstrument = false
     var armed = false
     var inputChannel: Int32 = 0
-    struct Plugin { let id: Int32; let name: String; let vendor: String; let instrument: Bool; let loaded: Bool; let error: String; let latency: UInt32; let bypassed: Bool; var path = "" }
+    struct Plugin { let id: Int32; let name: String; let vendor: String; let instrument: Bool; let loaded: Bool; let error: String; let latency: UInt32; let bypassed: Bool; var path = ""; var loading = false }
     var plugins: [Plugin] = []
     var isBus = false
     var output: DalnokTrackId = 0 // 0 = master
@@ -156,7 +156,8 @@ final class Session {
                 var pi = DalnokPluginSlotInfo()
                 guard dalnok_track_plugin_info(h, tid, k, &pi) == DALNOK_OK else { continue }
                 plugins.append(.init(id: pi.id, name: fixedString(pi.name), vendor: fixedString(pi.vendor), instrument: pi.instrument, loaded: pi.loaded,
-                                     error: fixedString(pi.error), latency: pi.latency, bypassed: dalnok_plugin_bypassed(h, tid, pi.id), path: fixedString(pi.path)))
+                                     error: pi.loading ? "Loading…" : fixedString(pi.error), latency: pi.latency, bypassed: dalnok_plugin_bypassed(h, tid, pi.id),
+                                     path: fixedString(pi.path), loading: pi.loading))
             }
             var sends = [DalnokSend](repeating: DalnokSend(), count: 16)
             let sendCount = Int(dalnok_track_sends(h, tid, &sends, 16))
@@ -565,9 +566,62 @@ final class Session {
         onMessage?("Opening \(url.lastPathComponent)…")
         let missing = try await engine.loadInBackground(from: url)
         projectURL = url
+        refresh() // the project is shown now; its plug-ins load next (ADR-0013)
+        let slow = await activatePendingPlugins()
+        let opened = missing > 0 ? "\(missing) audio file\(missing == 1 ? "" : "s") missing — File ▸ Relink Missing Audio…"
+                                 : "Opened \(url.lastPathComponent)"
+        onMessage?(slow.isEmpty ? opened : opened + "; slow to load: " + slow)
+    }
+
+    // MARK: Deferred plug-in activation (ADR-0013)
+
+    /// (loaded so far, total) while a project's plug-ins load; nil otherwise. The window shows it with a Stop button.
+    private(set) var pluginLoadProgress: (done: Int, total: Int)?
+    var onPluginLoadProgress: (((done: Int, total: Int)?) -> Void)?
+    private var pluginLoadCancelled = false
+    /// Plug-ins slower than this are named when loading finishes.
+    static let slowPluginSeconds = 2.0
+
+    /// Loads queued plug-ins one at a time on the main thread, returning to the run loop between them so the
+    /// window draws and Stop works. Returns the slow ones ("Name (3.1 s), …"), empty if none.
+    func activatePendingPlugins() async -> String {
+        let total = Int(dalnok_plugins_pending(h))
+        guard total > 0 else { return "" }
+        pluginLoadCancelled = false
+        var done = 0, slow: [String] = []
+        func progress(_ p: (done: Int, total: Int)?) { pluginLoadProgress = p; onPluginLoadProgress?(p) }
+        progress((0, total))
+        while !pluginLoadCancelled {
+            try? await Task.sleep(nanoseconds: 1_000_000) // one run-loop turn: draw, handle Stop
+            if pluginLoadCancelled { break }
+            var slot: Int32 = 0, seconds = 0.0
+            let left = dalnok_plugins_activate_next(h, &slot, &seconds)
+            if left < 0 { break }
+            done += 1
+            if seconds >= Self.slowPluginSeconds, let p = allTracks.lazy.flatMap(\.plugins).first(where: { $0.id == slot }) {
+                slow.append("\(p.name) (\(String(format: "%.1f", seconds)) s)")
+            }
+            refresh()
+            progress((done, total))
+            if left == 0 { break }
+        }
+        if pluginLoadCancelled {
+            dalnok_plugins_cancel_pending(h)
+            refresh()
+        }
+        progress(nil)
+        return slow.joined(separator: ", ")
+    }
+
+    /// Stop loading the remaining plug-ins; they stay unloaded with their settings and can be loaded later.
+    func cancelPluginLoading() { if pluginLoadProgress != nil { pluginLoadCancelled = true } }
+
+    /// Loads one unloaded plug-in (cancelled, recovered or failed) from its saved settings.
+    func loadPlugin(_ slot: Int32) {
+        var err = [CChar](repeating: 0, count: 512)
+        let status = dalnok_plugin_reload(h, slot, &err, err.count)
         refresh()
-        onMessage?(missing > 0 ? "\(missing) audio file\(missing == 1 ? "" : "s") missing — File ▸ Relink Missing Audio…"
-                                : "Opened \(url.lastPathComponent)")
+        if status != DALNOK_OK { onMessage?("Couldn't load the plug-in: \(cString(err))") }
     }
 
     /// Recovery copies are opened as unsaved projects; the snapshot is never overwritten by Save.
@@ -588,6 +642,7 @@ final class Session {
         let json = try await engine.importForeign(from: url)
         projectURL = nil
         refresh()
+        _ = await activatePendingPlugins()
         let unavailable = allTracks.flatMap { track in
             track.plugins.filter { !$0.loaded }.map { plugin in
                 "\(track.name) — \(plugin.name): \(plugin.error.isEmpty ? "not loaded; settings are kept" : plugin.error)"

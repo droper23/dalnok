@@ -421,7 +421,17 @@ public:
     struct PreparedProject;
     static std::unique_ptr<PreparedProject> prepareProject(const std::string &path, double sampleRate,
                                                            int32_t &missing, std::string &err);
-    bool applyProject(std::unique_ptr<PreparedProject> p, bool recovered = false);
+    // load: activate every plug-in now. recover: keep slots unloaded. defer: show the project now and queue its
+    // plug-ins for activateNextPlugin (ADR-0013).
+    enum class ApplyMode { load, recover, defer };
+    bool applyProject(std::unique_ptr<PreparedProject> p, ApplyMode mode = ApplyMode::load);
+    // Deferred activation (control/main thread). Loads the next queued plug-in and returns how many remain, or -1
+    // if none were queued; `slot` and `seconds` report the one just handled.
+    int32_t activateNextPlugin(int32_t &slot, double &seconds);
+    int32_t pendingPluginCount() const { return static_cast<int32_t>(pendingPlugins_.size()); }
+    bool pluginLoading(int32_t slot) const;
+    void cancelPendingPlugins();
+    bool reloadPlugin(int32_t slot, std::string &err); // an unloaded slot, from its saved state
     void setRecoveryDirectory(std::string directory) { recoveryDirectory_ = std::move(directory); }
     // Imports another DAW's project (see import/import.hpp) into a prepared project + JSON report.
     static std::unique_ptr<PreparedProject> prepareImport(const std::string &path, double sampleRate, int32_t &missing,
@@ -476,6 +486,9 @@ private:
     std::unique_ptr<RenderState> compile(std::vector<StretchJob> *needed = nullptr, const PluginMap *plugins = nullptr) const;
     PluginMap offlinePlugins() const; // fresh instances with the live state, for offline renders
     void instantiatePlugins();        // creates missing instances for every slot in the model
+    bool instantiateSlot(const PluginSlot &slot); // false: not loaded (reason in pluginErrors_)
+    const PluginSlot *findSlot(int32_t id) const;
+    void bumpRevisionKeepingSaved(); // a UI-visible change that is not an edit (dirty state unchanged)
     void captureLiveState(Model &m) const;
     StretchKey stretchKey(const ClipState &c) const;
     // Per-track content cache for incremental compilation (A-04). A key records every clip input the content
@@ -558,6 +571,7 @@ private:
     std::string outputUid_;
     PluginMap plugins_;                       // live instances by slot id
     std::map<int32_t, std::string> pluginErrors_;
+    std::vector<int32_t> pendingPlugins_; // slots queued for deferred activation, in track order
     int32_t nextPlugin_ = 1;
     int32_t nextMarker_ = 1;
     uint64_t pluginEdits_ = 0;

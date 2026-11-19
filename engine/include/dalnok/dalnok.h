@@ -28,7 +28,7 @@
 extern "C" {
 #endif
 
-#define DALNOK_API_VERSION 31
+#define DALNOK_API_VERSION 32
 
 typedef enum {
     DALNOK_OK = 0,
@@ -551,6 +551,7 @@ typedef struct {
     bool loaded;
     uint32_t latency;  /* frames, as reported (not compensated yet) */
     char error[256];   /* why it is not loaded */
+    bool loading;      /* queued for deferred activation (dalnok_project_apply_deferred) */
 } DalnokPluginSlotInfo;
 int32_t dalnok_plugin_add(DalnokEngine *engine, DalnokTrackId track, const char *bundle_path, const char *class_id,
                           char *err, size_t err_len); /* returns the slot id, 0 on failure */
@@ -686,6 +687,19 @@ void dalnok_project_set_recovery_directory(DalnokEngine *engine, const char *dir
 DalnokStatus dalnok_project_apply(DalnokEngine *engine, DalnokProjectData *data);
 /* Apply as an unsaved project without activating its plug-ins; consumes data. */
 DalnokStatus dalnok_project_apply_recovery(DalnokEngine *engine, DalnokProjectData *data);
+/* Apply without blocking on plug-ins (ADR-0013): the project is live at once with every plug-in slot unloaded
+ * and queued (DalnokPluginSlotInfo.loading); consumes data. Then call dalnok_plugins_activate_next repeatedly
+ * on the main thread, returning to the run loop between calls. [control thread] */
+DalnokStatus dalnok_project_apply_deferred(DalnokEngine *engine, DalnokProjectData *data);
+int32_t dalnok_plugins_pending(const DalnokEngine *engine);
+/* Loads the next queued plug-in; returns how many remain, or -1 if none was queued. `slot_out` and `seconds_out`
+ * (optional) report the slot handled and how long its initialization took. */
+int32_t dalnok_plugins_activate_next(DalnokEngine *engine, int32_t *slot_out, double *seconds_out);
+/* Leaves the remaining queued plug-ins unloaded with their saved state (reloadable). */
+void dalnok_plugins_cancel_pending(DalnokEngine *engine);
+/* Loads an unloaded slot (cancelled, recovery mode, or failed) from its saved state. Not undoable.
+ * DALNOK_ERR_NOT_FOUND: no such slot; DALNOK_ERR_UNSUPPORTED: it did not load (reason in err). */
+DalnokStatus dalnok_plugin_reload(DalnokEngine *engine, int32_t slot, char *err, size_t err_len);
 void dalnok_project_data_release(DalnokProjectData *data); /* [any thread] */
 
 /* Imports another DAW's project: REAPER (.rpp), Ableton Live (.als), Logic Pro

@@ -88,6 +88,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         session.removePlugin(track, slot)
     }
 
+    @objc func loadPluginItem(_ sender: NSMenuItem) {
+        guard let slot = sender.representedObject as? Int32 else { return }
+        session.loadPlugin(slot)
+    }
+
     /// Track context menu: the track's plug-ins (remove) and a way to add more.
     func pluginsMenu(for track: TrackView) -> NSMenu {
         let m = NSMenu(title: "Plug-ins")
@@ -97,6 +102,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             open.target = self
             open.isEnabled = p.loaded
             m.addItem(open)
+            if !p.loaded && !p.loading { // cancelled, recovered or failed: load it from its saved settings
+                let load = NSMenuItem(title: "Load \(p.name)", action: #selector(loadPluginItem(_:)), keyEquivalent: "")
+                load.representedObject = p.id
+                load.target = self
+                m.addItem(load)
+            }
         }
         if !track.plugins.isEmpty { m.addItem(.separator()) }
         for p in track.plugins {
@@ -306,6 +317,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         }
         palette.onOpenGuide = { [weak self] c in self?.conceptGuide.show(daw: c.daw, query: c.term) }
         session.onChange = { [weak self] in self?.modelChanged() }
+        transport.stopLoadingButton.target = self
+        transport.stopLoadingButton.action = #selector(stopLoadingPlugins(_:))
+        session.onPluginLoadProgress = { [weak self] progress in
+            guard let self else { return }
+            self.transport.stopLoadingButton.isHidden = progress == nil
+            if progress != nil { self.transientMessageUntil = .distantPast } // progress replaces "Opening…"
+            if self.transientMessageUntil < Date() { self.updateStatus() }
+        }
         session.onParameterChange = { [weak self] muteChanged in
             guard let self else { return }
             self.headers.sync()
@@ -552,7 +571,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         transientMessageUntil = Date().addingTimeInterval(4)
     }
 
+    @objc func stopLoadingPlugins(_ sender: Any?) { session.cancelPluginLoading() }
+
     private func updateStatus() {
+        if let p = session.pluginLoadProgress {
+            transport.statusLabel.stringValue = "Loading plug-ins \(min(p.done + 1, p.total)) of \(p.total)…"
+            return
+        }
         let e = session.engine
         let sr = e.sampleRate
         let n = session.tracks.count

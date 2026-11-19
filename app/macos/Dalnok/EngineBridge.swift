@@ -212,7 +212,7 @@ final class Engine {
             }
             return Prepared(data: data, missing: Int(missing))
         }.value
-        let status = recovering ? dalnok_project_apply_recovery(handle, prepared.data) : dalnok_project_apply(handle, prepared.data)
+        let status = recovering ? dalnok_project_apply_recovery(handle, prepared.data) : dalnok_project_apply_deferred(handle, prepared.data)
         guard status == DALNOK_OK else {
             throw EngineError(description: status == DALNOK_ERR_IO ? "Could not write the recovery snapshot; the current project was left open." : "project could not be applied")
         }
@@ -230,7 +230,7 @@ final class Engine {
                   let data else { throw EngineError(description: cString(err)) }
             return Prepared(data: data, report: cString(report))
         }.value
-        let status = dalnok_project_apply(handle, prepared.data)
+        let status = dalnok_project_apply_deferred(handle, prepared.data) // plug-ins load afterwards (ADR-0013)
         guard status == DALNOK_OK else { throw EngineError(description: status == DALNOK_ERR_IO ? "Could not write the recovery snapshot; the current project was left open." : "import could not be applied") }
         return prepared.report
     }

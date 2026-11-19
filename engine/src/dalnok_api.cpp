@@ -288,6 +288,7 @@ DalnokStatus dalnok_track_plugin_info(const DalnokEngine *e, DalnokTrackId t, in
     out->instrument = slot.instrument;
     PluginProcessor *p = e->impl.pluginInstance(slot.id);
     out->loaded = p != nullptr;
+    out->loading = !p && e->impl.pluginLoading(slot.id);
     out->latency = p ? p->latency() : 0;
     copyOut(out->error, sizeof out->error, e->impl.pluginError(slot.id));
     return DALNOK_OK;
@@ -1196,7 +1197,33 @@ DalnokStatus dalnok_project_apply_recovery(DalnokEngine *e, DalnokProjectData *d
     std::unique_ptr<DalnokProjectData> owned(data);
     if (!e || !data || !data->impl) return DALNOK_ERR_INVALID_ARG;
     if (data->impl->sampleRate != e->impl.sampleRate()) return DALNOK_ERR_INVALID_ARG;
-    return e->impl.applyProject(std::move(data->impl), true) ? DALNOK_OK : DALNOK_ERR_IO;
+    return e->impl.applyProject(std::move(data->impl), Engine::ApplyMode::recover) ? DALNOK_OK : DALNOK_ERR_IO;
+}
+DalnokStatus dalnok_project_apply_deferred(DalnokEngine *e, DalnokProjectData *data) {
+    std::unique_ptr<DalnokProjectData> owned(data);
+    if (!e || !data || !data->impl) return DALNOK_ERR_INVALID_ARG;
+    if (data->impl->sampleRate != e->impl.sampleRate()) return DALNOK_ERR_INVALID_ARG;
+    return e->impl.applyProject(std::move(data->impl), Engine::ApplyMode::defer) ? DALNOK_OK : DALNOK_ERR_IO;
+}
+int32_t dalnok_plugins_pending(const DalnokEngine *e) { return e ? e->impl.pendingPluginCount() : 0; }
+int32_t dalnok_plugins_activate_next(DalnokEngine *e, int32_t *slot_out, double *seconds_out) {
+    if (!e) return -1;
+    int32_t slot = 0;
+    double seconds = 0;
+    const int32_t left = e->impl.activateNextPlugin(slot, seconds);
+    if (slot_out) *slot_out = slot;
+    if (seconds_out) *seconds_out = seconds;
+    return left;
+}
+void dalnok_plugins_cancel_pending(DalnokEngine *e) {
+    if (e) e->impl.cancelPendingPlugins();
+}
+DalnokStatus dalnok_plugin_reload(DalnokEngine *e, int32_t slot, char *err, size_t err_len) {
+    if (!e) return DALNOK_ERR_INVALID_ARG;
+    std::string why;
+    if (e->impl.reloadPlugin(slot, why)) return DALNOK_OK;
+    copyOut(err, err_len, why);
+    return why == "no such plug-in slot" ? DALNOK_ERR_NOT_FOUND : DALNOK_ERR_UNSUPPORTED;
 }
 void dalnok_project_data_release(DalnokProjectData *data) { delete data; }
 
