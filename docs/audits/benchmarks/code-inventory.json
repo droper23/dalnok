@@ -11,19 +11,23 @@
       "files": [
         {
           "path": "engine/src/engine.cpp",
-          "lines": 2674
+          "lines": 2908
         },
         {
           "path": "engine/src/dalnok_api.cpp",
-          "lines": 1297
+          "lines": 1340
         },
         {
           "path": "engine/src/project.cpp",
-          "lines": 890
+          "lines": 897
         },
         {
           "path": "engine/include/dalnok/dalnok.h",
-          "lines": 771
+          "lines": 800
+        },
+        {
+          "path": "engine/src/plugin_remote.cpp",
+          "lines": 709
         },
         {
           "path": "engine/src/platform/macos/vst3_host.cpp",
@@ -31,7 +35,7 @@
         },
         {
           "path": "engine/src/engine.hpp",
-          "lines": 638
+          "lines": 706
         },
         {
           "path": "engine/src/commands.cpp",
@@ -71,19 +75,19 @@
         },
         {
           "path": "engine/src/import/import.cpp",
-          "lines": 292
+          "lines": 307
         },
         {
           "path": "engine/src/import/ableton.cpp",
           "lines": 285
         },
         {
-          "path": "engine/src/fx/channel_eq.cpp",
-          "lines": 259
+          "path": "engine/src/render.hpp",
+          "lines": 266
         },
         {
-          "path": "engine/src/render.hpp",
-          "lines": 258
+          "path": "engine/src/fx/channel_eq.cpp",
+          "lines": 259
         },
         {
           "path": "engine/src/import/reaper.cpp",
@@ -107,19 +111,19 @@
         },
         {
           "path": "engine/src/zip.cpp",
-          "lines": 159
+          "lines": 169
         },
         {
           "path": "engine/src/import/dawproject.cpp",
           "lines": 155
         },
         {
-          "path": "engine/src/tempo_map.cpp",
-          "lines": 143
+          "path": "engine/src/import/fcpxml.cpp",
+          "lines": 150
         },
         {
-          "path": "engine/src/import/fcpxml.cpp",
-          "lines": 141
+          "path": "engine/src/tempo_map.cpp",
+          "lines": 143
         },
         {
           "path": "engine/src/synth.hpp",
@@ -127,7 +131,7 @@
         },
         {
           "path": "engine/src/plugin_host.hpp",
-          "lines": 120
+          "lines": 126
         },
         {
           "path": "engine/src/stretch_cache.cpp",
@@ -219,7 +223,7 @@
         },
         {
           "path": "engine/src/zip.hpp",
-          "lines": 42
+          "lines": 43
         },
         {
           "path": "engine/src/plugins.hpp",
@@ -235,6 +239,10 @@
         },
         {
           "path": "engine/dsp/include/dalnok_dsp.h",
+          "lines": 22
+        },
+        {
+          "path": "engine/src/plugin_remote.hpp",
           "lines": 22
         },
         {
@@ -272,23 +280,23 @@
       "files": [
         {
           "path": "app/macos/Dalnok/SelfTest.swift",
-          "lines": 2395
+          "lines": 2476
         },
         {
           "path": "app/macos/Dalnok/MainWindow.swift",
-          "lines": 1910
+          "lines": 1935
         },
         {
           "path": "app/macos/Dalnok/TimelineView.swift",
           "lines": 1240
         },
         {
-          "path": "app/macos/Dalnok/FaceplateDisplays.swift",
-          "lines": 1192
+          "path": "app/macos/Dalnok/DevicePanel.swift",
+          "lines": 1194
         },
         {
-          "path": "app/macos/Dalnok/DevicePanel.swift",
-          "lines": 1191
+          "path": "app/macos/Dalnok/FaceplateDisplays.swift",
+          "lines": 1192
         },
         {
           "path": "app/macos/Dalnok/Faceplate.swift",
@@ -296,7 +304,7 @@
         },
         {
           "path": "app/macos/Dalnok/Panels.swift",
-          "lines": 851
+          "lines": 862
         },
         {
           "path": "app/macos/Dalnok/Controls.swift",
@@ -307,16 +315,16 @@
           "lines": 787
         },
         {
+          "path": "app/macos/Dalnok/Session.swift",
+          "lines": 681
+        },
+        {
           "path": "app/macos/Dalnok/PianoRoll.swift",
           "lines": 624
         },
         {
           "path": "app/macos/Dalnok/PluginManager.swift",
           "lines": 617
-        },
-        {
-          "path": "app/macos/Dalnok/Session.swift",
-          "lines": 605
         },
         {
           "path": "app/macos/Dalnok/Shortcuts.swift",
@@ -332,7 +340,11 @@
         },
         {
           "path": "app/macos/Dalnok/Settings.swift",
-          "lines": 474
+          "lines": 481
+        },
+        {
+          "path": "app/macos/Dalnok/Mixer.swift",
+          "lines": 470
         },
         {
           "path": "app/macos/Dalnok/Onboarding.swift",
@@ -341,10 +353,6 @@
         {
           "path": "app/macos/Dalnok/ShortcutEditor.swift",
           "lines": 451
-        },
-        {
-          "path": "app/macos/Dalnok/Mixer.swift",
-          "lines": 443
         },
         {
           "path": "app/macos/Dalnok/Analog.swift",
@@ -360,7 +368,11 @@
         },
         {
           "path": "app/macos/Dalnok/UIWalk.swift",
-          "lines": 305
+          "lines": 322
+        },
+        {
+          "path": "app/macos/Dalnok/EngineBridge.swift",
+          "lines": 270
         },
         {
           "path": "app/macos/Dalnok/Launcher.swift",
@@ -373,10 +385,6 @@
         {
           "path": "app/macos/Dalnok/CompEditor.swift",
           "lines": 247
-        },
-        {
-          "path": "app/macos/Dalnok/EngineBridge.swift",
-          "lines": 243
         },
         {
           "path": "app/macos/Dalnok/Migration.swift",
@@ -455,7 +463,7 @@
       "files": [
         {
           "path": "tests/engine/ImportTests.swift",
-          "lines": 635
+          "lines": 639
         },
         {
           "path": "tests/engine/ModelTests.swift",
@@ -471,7 +479,7 @@
         },
         {
           "path": "tests/engine/PluginHostingTests.swift",
-          "lines": 298
+          "lines": 300
         },
         {
           "path": "tests/engine/RoutingTests.swift",
@@ -484,6 +492,10 @@
         {
           "path": "tests/engine/BuiltinPluginTests.swift",
           "lines": 215
+        },
+        {
+          "path": "tests/engine/ParserFuzzTests.swift",
+          "lines": 210
         },
         {
           "path": "tests/engine/M4Tests.swift",
@@ -506,6 +518,10 @@
           "lines": 164
         },
         {
+          "path": "tests/engine/PluginIsolationTests.swift",
+          "lines": 139
+        },
+        {
           "path": "tests/engine/PunchTests.swift",
           "lines": 136
         },
@@ -518,11 +534,15 @@
           "lines": 121
         },
         {
+          "path": "tests/engine/TrackRevisionTests.swift",
+          "lines": 119
+        },
+        {
           "path": "tests/engine/AutomationTests.swift",
           "lines": 117
         },
         {
-          "path": "tests/engine/ParserFuzzTests.swift",
+          "path": "tests/engine/DeferredActivationTests.swift",
           "lines": 116
         },
         {
@@ -544,6 +564,10 @@
         {
           "path": "tests/engine/CycleTests.swift",
           "lines": 85
+        },
+        {
+          "path": "tests/engine/IncrementalCompileTests.swift",
+          "lines": 79
         },
         {
           "path": "tests/engine/LogicMixerImportTests.swift",
