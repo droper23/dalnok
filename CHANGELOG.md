@@ -4,6 +4,7 @@
 
 - Fixed a device-panel crash when sidechain choices have duplicate track names, including a track named None. Sidechain choices retain their distinct track IDs.
 - Added a hosted sidechain regression using the generated CLAP fixture.
+- Both reported Guitar Rig cases were retested in a diagnostic build; a separate MODO BASS load stall remains under investigation.
 - Logic import reports now state that tempo and meter changes are not imported.
 - Investigating Logic project opening crashes and audio parity; no compatibility fix is claimed yet.
 - Reproduced a Logic import crash through the published app UI; two other projects reached their import reports.
