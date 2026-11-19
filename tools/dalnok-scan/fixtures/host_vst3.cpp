@@ -2,7 +2,11 @@
 //   "Dalnok Test Gain"  (effect): out = in × gain; gain is the plugin state (float, default 0.5) and
 //                                  parameter 1 "Gain" (normalized = gain). The processor sees parameter
 //                                  changes only through process() (as with a separate controller);
-//                                  reports 7 frames of latency (not applied, only reported). No editor view.
+//                                  reports 7 frames of latency (not applied, only reported). No editor view,
+//                                  unless DALNOK_TEST_EDITOR=1: then a 400 × 300 NSView painted solid green
+//                                  (built through the Objective-C runtime, so this file stays plain C++);
+//                                  DALNOK_TEST_EDITOR_RESIZE=WxH asks the host frame for that size once attached, and
+//                                  DALNOK_TEST_EDITOR_EDIT=v performs an edit of parameter 1 to v (a user edit).
 //   "Dalnok Test Synth" (instrument): outputs a constant level = velocity/127 while a note is held,
 //                                  switching at the exact event sample offset; 0 otherwise.
 // SPDX-License-Identifier: GPL-3.0-or-later
@@ -20,6 +24,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <unistd.h>
+#include <dlfcn.h>
+#include "pluginterfaces/gui/iplugview.h"
+#include "pluginterfaces/vst/ivsteditcontroller.h"
 #include "pluginterfaces/vst/vstspeaker.h"
 #include <CoreFoundation/CoreFoundation.h>
 #include <cmath>
@@ -38,6 +45,11 @@ DEF_CLASS_IID(IMessage)
 DEF_CLASS_IID(IAttributeList)
 DEF_CLASS_IID(IParameterChanges)
 DEF_CLASS_IID(IParamValueQueue)
+DEF_CLASS_IID(IComponentHandler)
+}
+namespace Steinberg {
+DEF_CLASS_IID(IPlugView)
+DEF_CLASS_IID(IPlugFrame)
 }
 
 namespace {
@@ -48,6 +60,72 @@ const TUID kDelayId = {'D', 'a', 'l', 'n', 'o', 'k', 'T', 'e', 's', 't', 'D', 'e
 // Ducks its main input by its sidechain level: out = in * (1 - min(1, |sidechain|)) (sidechain tests).
 const TUID kDuckId = {'D', 'a', 'l', 'n', 'o', 'k', 'T', 'e', 's', 't', 'D', 'u', 'c', 'k', '0', '1'};
 constexpr int kTestDelay = 300;
+
+// ---- Editor view (DALNOK_TEST_EDITOR=1): an NSView made through the Objective-C runtime --------------------
+struct Rect { double x, y, w, h; };
+struct Size { double w, h; };
+using Id = void *;
+template <typename R, typename... A> R msg(Id obj, const char *sel, A... a) {
+    static void *send = dlsym(RTLD_DEFAULT, "objc_msgSend");
+    static auto selector = reinterpret_cast<void *(*)(const char *)>(dlsym(RTLD_DEFAULT, "sel_registerName"));
+    return reinterpret_cast<R (*)(Id, void *, A...)>(send)(obj, selector(sel), a...);
+}
+Id cls(const char *name) { return reinterpret_cast<Id (*)(const char *)>(dlsym(RTLD_DEFAULT, "objc_getClass"))(name); }
+
+class TestView final : public IPlugView {
+public:
+    explicit TestView(IComponentHandler *handler) : handler_(handler) {}
+    tresult PLUGIN_API queryInterface(const TUID iid, void **obj) override {
+        if (FUnknownPrivate::iidEqual(iid, IPlugView::iid) || FUnknownPrivate::iidEqual(iid, FUnknown::iid)) { *obj = this; addRef(); return kResultOk; }
+        *obj = nullptr;
+        return kNoInterface;
+    }
+    uint32 PLUGIN_API addRef() override { return ++refs_; }
+    uint32 PLUGIN_API release() override { const uint32 r = --refs_; if (!r) delete this; return r; }
+    tresult PLUGIN_API isPlatformTypeSupported(FIDString type) override { return std::strcmp(type, kPlatformTypeNSView) == 0 ? kResultTrue : kResultFalse; }
+    tresult PLUGIN_API attached(void *parent, FIDString) override {
+        if (!parent || !cls("NSView")) return kResultFalse;
+        view_ = msg<Id>(msg<Id>(cls("NSView"), "alloc"), "initWithFrame:", Rect{0, 0, double(w_), double(h_)});
+        msg<void>(view_, "setWantsLayer:", true);
+        Id green = msg<Id>(cls("NSColor"), "colorWithSRGBRed:green:blue:alpha:", 0.1, 0.8, 0.3, 1.0);
+        msg<void>(msg<Id>(view_, "layer"), "setBackgroundColor:", msg<Id>(green, "CGColor"));
+        msg<void>(static_cast<Id>(parent), "addSubview:", view_);
+        if (const char *size = std::getenv("DALNOK_TEST_EDITOR_RESIZE"); size && frame_) {
+            int w = 0, h = 0;
+            if (std::sscanf(size, "%dx%d", &w, &h) == 2) { ViewRect r(0, 0, w, h); frame_->resizeView(this, &r); }
+        }
+        if (const char *edit = std::getenv("DALNOK_TEST_EDITOR_EDIT"); edit && handler_) {
+            handler_->beginEdit(1);
+            handler_->performEdit(1, std::atof(edit));
+            handler_->endEdit(1);
+        }
+        return kResultOk;
+    }
+    tresult PLUGIN_API removed() override {
+        if (view_) { msg<void>(view_, "removeFromSuperview"); msg<void>(view_, "release"); view_ = nullptr; }
+        return kResultOk;
+    }
+    tresult PLUGIN_API onWheel(float) override { return kResultFalse; }
+    tresult PLUGIN_API onKeyDown(char16, int16, int16) override { return kResultFalse; }
+    tresult PLUGIN_API onKeyUp(char16, int16, int16) override { return kResultFalse; }
+    tresult PLUGIN_API getSize(ViewRect *r) override { if (!r) return kInvalidArgument; *r = ViewRect(0, 0, w_, h_); return kResultOk; }
+    tresult PLUGIN_API onSize(ViewRect *r) override {
+        if (!r) return kInvalidArgument;
+        w_ = r->getWidth(); h_ = r->getHeight();
+        if (view_) msg<void>(view_, "setFrameSize:", Size{double(w_), double(h_)});
+        return kResultOk;
+    }
+    tresult PLUGIN_API onFocus(TBool) override { return kResultOk; }
+    tresult PLUGIN_API setFrame(IPlugFrame *frame) override { frame_ = frame; return kResultOk; }
+    tresult PLUGIN_API canResize() override { return kResultFalse; }
+    tresult PLUGIN_API checkSizeConstraint(ViewRect *) override { return kResultOk; }
+private:
+    uint32 refs_ = 1;
+    int32 w_ = 400, h_ = 300;
+    Id view_ = nullptr;
+    IPlugFrame *frame_ = nullptr;
+    IComponentHandler *handler_ = nullptr;
+};
 
 void setName(String128 out, const char *s) {
     int i = 0;
@@ -183,8 +261,12 @@ public:
     ParamValue PLUGIN_API plainParamToNormalized(ParamID, ParamValue v) override { return v; }
     ParamValue PLUGIN_API getParamNormalized(ParamID id) override { return id == 1 ? shown_ : 0; }
     tresult PLUGIN_API setParamNormalized(ParamID id, ParamValue v) override { if (id == 1) shown_ = v; return kResultOk; }
-    tresult PLUGIN_API setComponentHandler(IComponentHandler *) override { return kResultOk; }
-    IPlugView *PLUGIN_API createView(FIDString) override { return nullptr; }
+    tresult PLUGIN_API setComponentHandler(IComponentHandler *h) override { handler_ = h; return kResultOk; }
+    IPlugView *PLUGIN_API createView(FIDString name) override {
+        const char *on = std::getenv("DALNOK_TEST_EDITOR");
+        if (!on || std::strcmp(on, "1") != 0 || !name || std::strcmp(name, ViewType::kEditor) != 0) return nullptr;
+        return new TestView(handler_);
+    }
 
     tresult PLUGIN_API process(ProcessData &data) override {
         // Isolation tests (ADR-0014): crash or hang after a few blocks, as a faulty plug-in would mid-session.
@@ -252,6 +334,7 @@ private:
     int blocks_ = 0;
     float gain_ = 0.5f, level_ = 0;
     double shown_ = 0.5;
+    IComponentHandler *handler_ = nullptr;
     int16 pitch_ = -1;
     uint32 refs_ = 1;
 };

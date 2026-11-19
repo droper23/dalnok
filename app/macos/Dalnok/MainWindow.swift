@@ -41,10 +41,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
     /// Opens (or brings forward) a hosted plug-in's window: its editor and the generic parameter panel.
     func openPluginWindow(track: DalnokTrackId, slot: Int32) {
-        if let existing = pluginWindows[slot] { existing.window?.makeKeyAndOrderFront(nil); return }
+        if let existing = pluginWindows[slot] { existing.window?.makeKeyAndOrderFront(nil); existing.showHostEditor(); return }
         guard let t = session.track(track), let p = t.plugins.first(where: { $0.id == slot }) else { return }
         guard p.loaded else { return flash("\(p.name) is not loaded: \(p.error)") }
-        let w = PluginWindowController(engine: session.engine, slot: slot, title: "\(p.name) — \(t.name)")
+        let w = PluginWindowController(engine: session.engine, slot: slot, title: "\(p.name) — \(t.name)", isolated: p.isolated)
         w.onAutomate = { [weak self] slot, param, name in
             guard let self else { return }
             self.timeline.pluginLanes[track] = .plugin(slot: slot, param: param, name: "\(p.name): \(name)")

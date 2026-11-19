@@ -6,6 +6,7 @@
 // on its main thread inside a run loop (VST3 and CLAP require the main thread for those calls).
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "plugin_remote.hpp"
+#include "platform/macos/plughost_editor.hpp"
 
 #include <CoreFoundation/CoreFoundation.h>
 #include <mach/mach.h>
@@ -90,7 +91,8 @@ bool waitChange(std::atomic<uint32_t> &a, uint32_t old, uint64_t timeoutNs) noex
 enum Op : uint8_t {
     opHello = 1, opGetState, opSetState, opSetStateDocument, opStateError, opParameterCount, opParameter,
     opParameterText, opSetParameter, opTouched, opEditCount, opAutomationRange, opResponse, opLatency, opQuit,
-    opInit // engine → host once after starting: [u8 has state][u8 from document][str state]
+    opInit, // engine → host once after starting: [u8 has state][u8 from document][str state]
+    opHasEditor, opShowEditor, opCloseEditor, opEditorWindow, opEditorSnapshot // ADR-0015
 };
 // Reply heads: 0 = refused (payload: reason), 1 = done, 2 = the host is crashing (payload: str reason; see onCrash).
 constexpr uint8_t kCrashed = 2;
@@ -483,13 +485,47 @@ public:
         return ok;
     }
 
-    // Editors stay in-process for now (ADR-0014): isolated instances offer the generic parameter panel.
-    bool hasEditor() override { return false; }
+    // Editors (ADR-0015): the plug-in's process owns the editor's window; it cannot be embedded in one of Dalnok's.
+    bool hasEditor() override {
+        std::string reply;
+        if (!call(opHasEditor, {}, reply)) return false;
+        Reader r{reply};
+        return r.u8() && r.ok;
+    }
     bool openEditor(void *, int32_t &, int32_t &, void (*)(void *, int32_t, int32_t), void *, std::string &err) override {
-        err = "this plug-in runs in its own process; its editor is not available there yet";
+        err = "this plug-in runs in its own process; its editor opens in its own window (showEditorWindow)";
         return false;
     }
-    void closeEditor() override {}
+    bool showEditorWindow(const std::string &title, double x, double y, std::string &err) override {
+        Writer w;
+        w.str(title); w.f64(x); w.f64(y);
+        std::string reply;
+        if (!call(opShowEditor, w.b, reply)) {
+            Reader r{reply};
+            err = failure().empty() ? r.str() : failure();
+            if (err.empty()) err = "the editor could not be opened";
+            return false;
+        }
+        return true;
+    }
+    void closeEditor() override { std::string reply; (void)call(opCloseEditor, {}, reply); }
+    bool editorWindow(EditorWindowInfo &out) override {
+        std::string reply;
+        if (!call(opEditorWindow, {}, reply)) return false;
+        Reader r{reply};
+        out.visible = r.u8(); out.open = r.u8();
+        out.x = r.f64(); out.y = r.f64(); out.width = r.f64(); out.height = r.f64();
+        out.contentWidth = r.f64(); out.contentHeight = r.f64();
+        out.windowNumber = r.raw<int64_t>(); out.level = r.raw<int64_t>();
+        out.processId = pid_;
+        return r.ok;
+    }
+    bool editorSnapshot(const std::string &path) override {
+        Writer w;
+        w.str(path);
+        std::string reply;
+        return call(opEditorSnapshot, w.b, reply);
+    }
 
     std::string failure() const override {
         std::lock_guard lock(failureMutex_);
@@ -740,6 +776,38 @@ void serve(Host *h, uint8_t op, const std::string &payload) {
             break;
         }
         case opLatency: w.u32(p.latency()); break;
+        case opHasEditor: w.u8(p.hasEditor()); break;
+        case opShowEditor: {
+            const std::string title = r.str();
+            const double x = r.f64(), y = r.f64();
+            int32_t width = 0, height = 0;
+            std::string why;
+            const bool first = !hostui::appStarted();
+            if (!r.ok || !hostui::showEditor(p, title, x, y, width, height, why)) {
+                Writer e;
+                e.str(why);
+                reply(h->fd, false, e.b);
+                return;
+            }
+            // From now on the main thread runs AppKit's event loop (plughostMain switches to it).
+            if (first) CFRunLoopStop(CFRunLoopGetMain());
+            w.i32(width); w.i32(height);
+            break;
+        }
+        case opCloseEditor: hostui::closeEditor(); break;
+        case opEditorWindow: {
+            const hostui::EditorWindow e = hostui::editorWindow();
+            w.u8(e.visible); w.u8(e.open);
+            w.f64(e.x); w.f64(e.y); w.f64(e.width); w.f64(e.height); w.f64(e.contentWidth); w.f64(e.contentHeight);
+            w.b.append(reinterpret_cast<const char *>(&e.windowNumber), 8);
+            w.b.append(reinterpret_cast<const char *>(&e.level), 8);
+            break;
+        }
+        case opEditorSnapshot: {
+            const std::string path = r.str();
+            if (!r.ok || !hostui::snapshot(path)) { reply(h->fd, false); return; }
+            break;
+        }
         default: reply(h->fd, false); return;
     }
     reply(h->fd, true, w.b);
@@ -859,9 +927,12 @@ int plughostMain(int argc, char **argv) {
     // Control requests are served on the main thread inside its run loop, as the plug-in formats expect.
     CFFileDescriptorRef ref = CFFileDescriptorCreate(nullptr, host.fd, false, onControl, nullptr);
     CFRunLoopSourceRef source = CFFileDescriptorCreateRunLoopSource(nullptr, ref, 0);
-    CFRunLoopAddSource(CFRunLoopGetMain(), source, kCFRunLoopDefaultMode);
+    // Common modes: requests are still served while an editor tracks the mouse or runs a modal dialog, so holding a
+    // knob never looks like a hang to the engine.
+    CFRunLoopAddSource(CFRunLoopGetMain(), source, kCFRunLoopCommonModes);
     CFFileDescriptorEnableCallBacks(ref, kCFFileDescriptorReadCallBack);
     CFRunLoopRun();
+    if (hostui::appStarted()) hostui::runApp(); // the first editor turned the host into an AppKit application
     return 0;
 }
 

@@ -376,6 +376,28 @@ DalnokStatus dalnok_plugin_open_editor(DalnokEngine *e, int32_t slot, void *pare
 void dalnok_plugin_close_editor(DalnokEngine *e, int32_t slot) {
     if (PluginProcessor *p = e ? e->impl.pluginInstance(slot) : nullptr) p->closeEditor();
 }
+DalnokStatus dalnok_plugin_show_editor_window(DalnokEngine *e, int32_t slot, const char *title, double x, double y,
+                                              char *err, size_t len) {
+    PluginProcessor *p = e ? e->impl.pluginInstance(slot) : nullptr;
+    if (!p) return DALNOK_ERR_INVALID_ARG;
+    std::string msg;
+    if (!p->showEditorWindow(title ? title : "", x, y, msg)) { copyOut(err, len, msg); return DALNOK_ERR_UNSUPPORTED; }
+    return DALNOK_OK;
+}
+DalnokStatus dalnok_plugin_editor_window(DalnokEngine *e, int32_t slot, DalnokPluginEditorWindow *out) {
+    PluginProcessor *p = e ? e->impl.pluginInstance(slot) : nullptr;
+    if (!p || !out) return DALNOK_ERR_INVALID_ARG;
+    PluginProcessor::EditorWindowInfo i;
+    if (!p->editorWindow(i)) return DALNOK_ERR_UNSUPPORTED;
+    *out = DalnokPluginEditorWindow{i.open, i.visible, i.x, i.y, i.width, i.height, i.contentWidth, i.contentHeight,
+                                    i.windowNumber, i.level, i.processId};
+    return DALNOK_OK;
+}
+DalnokStatus dalnok_plugin_editor_snapshot(DalnokEngine *e, int32_t slot, const char *path) {
+    PluginProcessor *p = e ? e->impl.pluginInstance(slot) : nullptr;
+    if (!p || !path) return DALNOK_ERR_INVALID_ARG;
+    return p->editorSnapshot(path) ? DALNOK_OK : DALNOK_ERR_UNSUPPORTED;
+}
 
 size_t dalnok_plugins_validate(const char *scanner, const char *cache, const char *extra, bool onlyExtra, bool au,
                                const char *filter, int32_t timeoutMs, bool rescan, char *out, size_t len) {

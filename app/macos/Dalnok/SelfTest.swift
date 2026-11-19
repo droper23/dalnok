@@ -518,6 +518,7 @@ final class SelfTest {
         await markersAndTrackTools()
         await deferredPluginLoading()
         await slowIsolatedPluginLoading()
+        await isolatedPluginEditors()
         try? w.snapshot(to: workdir.appendingPathComponent("selftest.png"))
         await migrationSteps()
         // Settings: exercise the menu, appearance selection, and project preference.
@@ -896,6 +897,107 @@ final class SelfTest {
         }
         e.applyPluginIsolation()
         _ = await withCheckedContinuation { cont in w.openProject(restore) { cont.resume(returning: $0) } }
+    }
+
+    /// ADR-0015: an isolated plug-in's editor opens in a floating window of its own process, beside the plug-in window,
+    /// without taking activation from Dalnok; it hides while another application is active and returns with Dalnok;
+    /// closing the plug-in window closes it. The test VST3 (DALNOK_TEST_EDITOR=1) and Apple's AUDelay.
+    private func isolatedPluginEditors() async {
+        guard let bundle = ProcessInfo.processInfo.environment["DALNOK_TEST_VST3"], !bundle.isEmpty, Engine.pluginHostAvailable,
+              let track = s.tracks.first?.id else {
+            return print("SKIP  isolated plug-in editors (set DALNOK_TEST_VST3; dalnok-plughost next to the app)")
+        }
+        let e = s.engine
+        dalnok_plugins_set_host(e.handle, Engine.pluginHostPath)
+        setenv("DALNOK_TEST_EDITOR", "1", 1)
+        defer { unsetenv("DALNOK_TEST_EDITOR"); e.applyPluginIsolation() }
+        let frontBefore = NSWorkspace.shared.frontmostApplication
+        for (path, cls, label) in [(bundle, "44616C6E6F6B546573744761696E3031", "test VST3"), ("au:aufx:dely:appl", "", "AUDelay")] {
+            var err = [CChar](repeating: 0, count: 256)
+            let slot = dalnok_plugin_add(e.handle, track, path, cls.isEmpty ? nil : cls, &err, 256)
+            s.refresh()
+            guard slot != 0 else { check(false, "\(label) loads isolated (\(cString(err)))"); continue }
+            w.openPluginWindow(track: track, slot: slot)
+            guard let pw = w.pluginWindows[slot] else { check(false, "\(label): plug-in window opens"); continue }
+            await wait(0.4)
+            var ed = DalnokPluginEditorWindow()
+            _ = dalnok_plugin_editor_window(e.handle, slot, &ed)
+            let frame = pw.window?.frame ?? .zero
+            check(pw.isolated && pw.hostEditorOpen && ed.open && ed.visible && ed.process_id != getpid() && ed.process_id > 0,
+                  "\(label): the editor opens in its host's window (pid \(ed.process_id))")
+            let roomRight = frame.maxX + 212 < (pw.window?.screen?.visibleFrame.maxX ?? 0)
+            check(!roomRight || (abs(ed.x - Double(frame.maxX + 12)) < 1 && abs(ed.y + ed.height - Double(frame.maxY)) < 1),
+                  "\(label): beside the plug-in window (editor x \(Int(ed.x)), window right \(Int(frame.maxX)))")
+            check(pw.tabs.selectedSegment == 1 && pw.tabs.isEnabled(forSegment: 0),
+                  "\(label): Dalnok's plug-in window keeps the parameter panel; its Editor tab brings the host's window forward")
+            check(NSWorkspace.shared.frontmostApplication?.processIdentifier != ed.process_id, "\(label): showing the editor does not activate the host")
+            let png = workdir.appendingPathComponent("isolated-editor-\(label.replacingOccurrences(of: " ", with: "-")).png").path
+            check(dalnok_plugin_editor_snapshot(e.handle, slot, png) == DALNOK_OK, "\(label): editor snapshot written (\(png))")
+            if label == "AUDelay", ProcessInfo.processInfo.environment["DALNOK_REAL_INPUT"] == "1" { await typeIntoIsolatedEditor(slot, ed) }
+            if label == "AUDelay", let finder = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.finder").first {
+                // Follows Dalnok: hidden while another application is active, back when Dalnok is.
+                NSApp.activate(ignoringOtherApps: true); await wait(0.5)
+                finder.activate(); await wait(0.6)
+                _ = dalnok_plugin_editor_window(e.handle, slot, &ed)
+                let hidden = !ed.visible && ed.open
+                NSApp.activate(ignoringOtherApps: true); await wait(0.6)
+                _ = dalnok_plugin_editor_window(e.handle, slot, &ed)
+                check(hidden && ed.visible, "AUDelay: the editor hides while Finder is active and returns with Dalnok (hidden \(hidden), back \(ed.visible))")
+            }
+            pw.window?.performClose(nil)
+            await wait(0.2)
+            _ = dalnok_plugin_editor_window(e.handle, slot, &ed)
+            check(!ed.open && !ed.visible && w.pluginWindows[slot] == nil, "\(label): closing the plug-in window closes the editor")
+            _ = dalnok_plugin_remove(e.handle, track, slot)
+            s.refresh()
+        }
+        frontBefore?.activate()
+    }
+
+    /// DALNOK_REAL_INPUT=1 (unlocked screen, Accessibility): real OS-level clicks and typing reach an isolated editor.
+    /// Clicks AUDelay's Dry/Wet value field in the host's window, types 25 and Return, and reads the parameter back.
+    /// Dalnok is made frontmost first, so a key that missed the editor would land in Dalnok, never another app.
+    private func typeIntoIsolatedEditor(_ slot: Int32, _ ed: DalnokPluginEditorWindow) async {
+        // Never post input at a lock screen (it would type into the password field).
+        if let session = CGSessionCopyCurrentDictionary() as? [String: Any], session["CGSSessionScreenIsLocked"] as? Bool == true {
+            return print("SKIP  real typing into the isolated editor (the screen is locked)")
+        }
+        NSApp.activate(ignoringOtherApps: true); await wait(0.5)
+        guard NSWorkspace.shared.frontmostApplication?.processIdentifier == getpid() else {
+            return print("SKIP  real typing into the isolated editor (Dalnok could not be made frontmost)")
+        }
+        func dryWet() -> String {
+            for i in 0..<dalnok_plugin_parameter_count(s.h, slot) {
+                var p = DalnokPluginParameter()
+                if dalnok_plugin_parameter(s.h, slot, i, &p) == DALNOK_OK, fixedString(p.title).contains("Dry/Wet") { return fixedString(p.display) }
+            }
+            return ""
+        }
+        let before = dryWet()
+        // The value field sits at (405, 201) points from the content's top-left in AUDelay's 484 × 255 view.
+        let screenHeight = NSScreen.screens.first?.frame.height ?? 0
+        let contentTop = screenHeight - (ed.y + ed.height - (ed.height - ed.content_height))
+        let field = CGPoint(x: ed.x + 405 * ed.content_width / 484, y: contentTop + 201 * ed.content_height / 255)
+        let src = CGEventSource(stateID: .hidSystemState)
+        func post(_ e: CGEvent?) { e?.post(tap: .cghidEventTap); usleep(15_000) }
+        func key(_ code: CGKeyCode, _ flags: CGEventFlags = []) {
+            if flags.contains(.maskCommand) { let d = CGEvent(keyboardEventSource: src, virtualKey: 55, keyDown: true); d?.type = .flagsChanged; d?.flags = .maskCommand; post(d) }
+            let d = CGEvent(keyboardEventSource: src, virtualKey: code, keyDown: true); d?.flags = flags; post(d)
+            let u = CGEvent(keyboardEventSource: src, virtualKey: code, keyDown: false); u?.flags = flags; post(u)
+            if flags.contains(.maskCommand) { let r = CGEvent(keyboardEventSource: src, virtualKey: 55, keyDown: false); r?.type = .flagsChanged; post(r) }
+        }
+        for type in [CGEventType.leftMouseDown, .leftMouseUp] {
+            let e = CGEvent(mouseEventSource: src, mouseType: type, mouseCursorPosition: field, mouseButton: .left); post(e)
+        }
+        await wait(0.3)
+        key(0, .maskCommand)                 // ⌘A selects the field's text
+        for code: CGKeyCode in [19, 23] { key(code) } // 2, 5
+        key(36)                              // Return
+        await wait(0.6)
+        let after = dryWet(), front = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        print("MEASURE real input into isolated AUDelay editor at \(field): Dry/Wet \(before) → \(after)")
+        check(after.hasPrefix("25"), "real clicks and typing reach the isolated editor (Dry/Wet \(before) → \(after))")
+        check(front == getpid(), "typing into the editor leaves Dalnok the active application")
     }
 
     private func markersAndTrackTools() async {

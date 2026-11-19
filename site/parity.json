@@ -1123,7 +1123,7 @@
           "verified"
         ],
         [
-          "Optional crash isolation: each plug-in in its own process, crashes and hangs contained (editors not yet)",
+          "Optional crash isolation: each plug-in in its own process, crashes and hangs contained, editors in the plug-in's own window",
           "verified"
         ],
         [

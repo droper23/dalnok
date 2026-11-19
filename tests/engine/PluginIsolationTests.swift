@@ -3,6 +3,7 @@
 // DALNOK_TEST_PROCESS_FAILURE, which every host started afterwards inherits, so the script runs this suite alone.
 // SPDX-License-Identifier: GPL-3.0-or-later
 import DalnokEngine
+import AppKit
 import Foundation
 import Testing
 
@@ -264,5 +265,115 @@ struct PluginIsolation {
             #expect(dalnok_track_plugin_count(e, t) == 3 && plughostChildren() == 0)
             dalnok_engine_destroy(e)
         }
+    }
+
+    // MARK: Editors in the host's window (ADR-0015)
+
+    /// The window server's record of a window: owner process and bounds (no screen-recording permission needed).
+    func windowServerEntry(_ number: Int64) -> (pid: Int32, bounds: CGRect)? {
+        let list = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] ?? []
+        guard let w = list.first(where: { ($0[kCGWindowNumber as String] as? Int64) == number }),
+              let pid = w[kCGWindowOwnerPID as String] as? Int32,
+              let b = w[kCGWindowBounds as String] as? NSDictionary, let rect = CGRect(dictionaryRepresentation: b) else { return nil }
+        return (pid, rect)
+    }
+
+    /// Mean colour and spread of a PNG's pixels (0…1).
+    func pixels(_ path: String) -> (mean: [Double], spread: Double, size: CGSize)? {
+        guard let image = NSImage(contentsOfFile: path), let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
+        let w = cg.width, h = cg.height
+        var data = [UInt8](repeating: 0, count: w * h * 4)
+        guard let ctx = CGContext(data: &data, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
+                                  space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        ctx.draw(cg, in: CGRect(x: 0, y: 0, width: w, height: h))
+        var sum = [0.0, 0.0, 0.0], sq = 0.0
+        for i in stride(from: 0, to: data.count, by: 4) { for c in 0..<3 { sum[c] += Double(data[i + c]) / 255 } }
+        let n = Double(w * h), mean = sum.map { $0 / n }
+        for i in stride(from: 0, to: data.count, by: 4) { for c in 0..<3 { let d = Double(data[i + c]) / 255 - mean[c]; sq += d * d } }
+        return (mean, (sq / (3 * n)).squareRoot(), CGSize(width: w, height: h))
+    }
+
+    func editorWindow(_ e: OpaquePointer, _ slot: Int32) -> DalnokPluginEditorWindow {
+        var w = DalnokPluginEditorWindow()
+        #expect(dalnok_plugin_editor_window(e, slot, &w) == DALNOK_OK)
+        return w
+    }
+
+    /// The test VST3's editor (a green 400 × 300 view that asks to be 480 × 320 and edits its gain to 0.75) opens in
+    /// a floating window owned by its host process; the resize, the edit and the audio all cross the boundary.
+    @Test func isolatedVst3EditorOpensInTheHostsWindow() throws {
+        setenv("DALNOK_TEST_EDITOR", "1", 1); setenv("DALNOK_TEST_EDITOR_RESIZE", "480x320", 1); setenv("DALNOK_TEST_EDITOR_EDIT", "0.75", 1)
+        defer { unsetenv("DALNOK_TEST_EDITOR"); unsetenv("DALNOK_TEST_EDITOR_RESIZE"); unsetenv("DALNOK_TEST_EDITOR_EDIT") }
+        let (e, t) = audioSession(); defer { dalnok_engine_destroy(e) }
+        dalnok_plugins_set_host(e, isolationHost)
+        let dry = renderStereo(e, 4_800)
+        var err = [CChar](repeating: 0, count: 256)
+        let slot = dalnok_plugin_add(e, t, testVst3, gainClass, &err, 256)
+        #expect(slot != 0 && info(e, t).isolated, "\(cstr(err))")
+        #expect(dalnok_plugin_has_editor(e, slot))
+        let dummy = UnsafeMutableRawPointer.allocate(byteCount: 8, alignment: 8); defer { dummy.deallocate() }
+        #expect(dalnok_plugin_open_editor(e, slot, dummy, nil, nil, nil, nil, &err, 256) == DALNOK_ERR_UNSUPPORTED)
+        #expect(cstr(err).contains("its own window"), "embedding is refused with the reason: \(cstr(err))")
+        #expect(dalnok_project_dirty(e) && dalnok_project_save(e, tempDir().appendingPathComponent("ed-\(UUID()).dalnok").path, nil, 0) == DALNOK_OK)
+        #expect(!dalnok_project_dirty(e))
+
+        #expect(dalnok_plugin_show_editor_window(e, slot, "Audio — Dalnok Test Gain", 120, 700, &err, 256) == DALNOK_OK, "\(cstr(err))")
+        let w = editorWindow(e, slot)
+        print(String(format: "EDITOR vst3: content %.0f × %.0f, frame %.0f × %.0f at (%.0f, %.0f), level %lld, pid %d (app %d)",
+                     w.content_width, w.content_height, w.width, w.height, w.x, w.y, w.level, w.process_id, getpid()))
+        #expect(w.open && w.visible, "shown")
+        #expect(w.content_width == 480 && w.content_height == 320, "the editor's resize request reached the window")
+        #expect(abs(w.x - 120) < 1 && abs(w.y + w.height - 700) < 1, "placed with its top-left where asked")
+        #expect(w.level == Int64(NSWindow.Level.floating.rawValue), "floats above Dalnok's windows")
+        #expect(w.process_id > 0 && w.process_id != getpid())
+        let ws = windowServerEntry(w.window_number)
+        #expect(ws?.pid == w.process_id && ws?.bounds.width == 480, "the window server shows it owned by the host: \(String(describing: ws))")
+        let png = tempDir().appendingPathComponent("vst3-editor-\(UUID().uuidString).png").path
+        #expect(dalnok_plugin_editor_snapshot(e, slot, png) == DALNOK_OK)
+        let p = pixels(png)
+        print("EDITOR vst3 snapshot \(png): \(String(describing: p))")
+        #expect(p.map { abs($0.mean[0] - 0.1) < 0.03 && abs($0.mean[1] - 0.8) < 0.03 && abs($0.mean[2] - 0.3) < 0.03 } == true,
+                "the editor's own pixels (solid green) are in the window")
+        // The editor's edit (gain 0.75) is a project change and is heard.
+        dalnok_engine_collect_garbage(e)
+        #expect(dalnok_project_dirty(e), "an edit in the isolated editor marks the project edited")
+        let wet = renderStereo(e, 4_800)
+        #expect(zip(wet.0, dry.0).allSatisfy { abs($0 - $1 * 0.75) < 1e-6 }, "the editor's edit reaches the audio (gain 0.75)")
+        // Showing again keeps one window; closing closes it; it reopens.
+        #expect(dalnok_plugin_show_editor_window(e, slot, "Audio — Dalnok Test Gain", .nan, .nan, &err, 256) == DALNOK_OK)
+        #expect(editorWindow(e, slot).window_number == w.window_number)
+        dalnok_plugin_close_editor(e, slot)
+        let closed = editorWindow(e, slot)
+        #expect(!closed.open && !closed.visible)
+        #expect(dalnok_plugin_show_editor_window(e, slot, "Audio — Dalnok Test Gain", .nan, .nan, &err, 256) == DALNOK_OK)
+        #expect(editorWindow(e, slot).open && editorWindow(e, slot).visible, "reopens")
+        // Removing the plug-in takes its window with its process.
+        #expect(dalnok_plugin_remove(e, t, slot) == DALNOK_OK)
+    }
+
+    /// An Apple Audio Unit's own Cocoa editor in the host's window.
+    @Test func isolatedAudioUnitEditorOpensInTheHostsWindow() throws {
+        let (e, t) = audioSession(); defer { dalnok_engine_destroy(e) }
+        dalnok_plugins_set_host(e, isolationHost)
+        var err = [CChar](repeating: 0, count: 256)
+        let slot = dalnok_plugin_add(e, t, "au:aufx:dely:appl", nil, &err, 256)
+        #expect(slot != 0 && info(e, t).isolated, "\(cstr(err))")
+        #expect(dalnok_plugin_has_editor(e, slot))
+        #expect(dalnok_plugin_show_editor_window(e, slot, "Audio — AUDelay", .nan, .nan, &err, 256) == DALNOK_OK, "\(cstr(err))")
+        usleep(300_000) // Apple's views settle their layout on the host's next run-loop turns
+        let w = editorWindow(e, slot)
+        print(String(format: "EDITOR au: content %.0f × %.0f, level %lld, pid %d", w.content_width, w.content_height, w.level, w.process_id))
+        #expect(w.open && w.visible && w.content_width >= 200 && w.content_height >= 100)
+        #expect(windowServerEntry(w.window_number)?.pid == w.process_id)
+        let png = tempDir().appendingPathComponent("au-editor-\(UUID().uuidString).png").path
+        #expect(dalnok_plugin_editor_snapshot(e, slot, png) == DALNOK_OK)
+        let p = pixels(png)
+        print("EDITOR au snapshot \(png): \(String(describing: p))")
+        #expect((p?.spread ?? 0) > 0.05, "the Audio Unit drew its controls (pixel spread \(p?.spread ?? 0))")
+        // Audio still runs through it while the editor is open.
+        let a = renderStereo(e, 4_800)
+        #expect(a.0.contains { $0 != 0 })
+        dalnok_plugin_close_editor(e, slot)
+        #expect(!editorWindow(e, slot).open)
     }
 }

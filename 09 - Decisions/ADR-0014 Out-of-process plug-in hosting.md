@@ -38,3 +38,6 @@ saved state travels with the start request and the host restores it before answe
 restoring runs on the engine's thread. Stop kills hosts still loading. A host's crash handler reports the signal over
 the control socket at once, because the system crash reporter can hold a dying process for seconds. With isolation
 on, a plug-in that blocks its own initialization no longer blocks the window (A-08 closed for isolated plug-ins).
+
+**Editors (2026-11-19).** Isolated instances now show their editors in a window owned by the host process; see
+ADR-0015. The stage 1 "parameter panel only" restriction no longer applies.

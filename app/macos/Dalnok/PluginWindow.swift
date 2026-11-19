@@ -24,9 +24,17 @@ final class PluginWindowController: NSWindowController, NSWindowDelegate, NSTabl
     var onAutomate: ((Int32, UInt32, String) -> Void)?
     let automateButton = NSButton(title: "Automate in Arrangement", target: nil, action: nil)
 
-    init(engine: Engine, slot: Int32, title: String) {
+    /// Isolated plug-ins (ADR-0015): the editor is a window of the plug-in's own process, shown beside this one, which
+    /// keeps the parameter panel. The Editor tab brings that window forward.
+    let isolated: Bool
+    private(set) var hostEditorOpen = false
+    private let editorTitle: String
+
+    init(engine: Engine, slot: Int32, title: String, isolated: Bool = false) {
         self.engine = engine
         self.slot = slot
+        self.isolated = isolated
+        self.editorTitle = title
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 640, height: 480),
                               styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         window.title = title
@@ -96,6 +104,7 @@ final class PluginWindowController: NSWindowController, NSWindowDelegate, NSTabl
     required init?(coder: NSCoder) { fatalError() }
 
     func show() {
+        if isolated { return showIsolated() }
         let wantsEditor = dalnok_plugin_has_editor(engine.handle, slot) && openEditor()
         tabs.selectedSegment = wantsEditor ? 0 : 1
         tabs.setEnabled(editorOpen, forSegment: 0)
@@ -105,6 +114,30 @@ final class PluginWindowController: NSWindowController, NSWindowDelegate, NSTabl
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.refreshValues() }
         }
+    }
+
+    private func showIsolated() {
+        tabs.selectedSegment = 1
+        tabChanged(nil)
+        window?.center()
+        window?.makeKeyAndOrderFront(nil)
+        if dalnok_plugin_has_editor(engine.handle, slot) { showHostEditor() } else { tabs.setEnabled(false, forSegment: 0) }
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refreshValues() }
+        }
+    }
+
+    /// Opens (or brings forward) an isolated plug-in's editor window, beside this window.
+    func showHostEditor() {
+        guard isolated, let frame = window?.frame else { return }
+        var err = [CChar](repeating: 0, count: 256)
+        // Its top-left at this window's top-right, or centered if that would leave the screen.
+        let screen = window?.screen?.visibleFrame ?? .infinite
+        let x = frame.maxX + 12 < screen.maxX - 200 ? Double(frame.maxX + 12) : .nan
+        hostEditorOpen = dalnok_plugin_show_editor_window(engine.handle, slot, editorTitle, x, x.isNaN ? .nan : Double(frame.maxY), &err, 256) == DALNOK_OK
+        note.stringValue = hostEditorOpen ? "The editor runs in the plug-in's own process, in its own window."
+                                          : "No editor: \(cString(err)). Use the parameters below."
+        tabs.setEnabled(hostEditorOpen, forSegment: 0)
     }
 
     /// The editor asks for a size: resize the window around it.
@@ -151,6 +184,14 @@ final class PluginWindowController: NSWindowController, NSWindowDelegate, NSTabl
     }
 
     @objc func tabChanged(_ sender: Any?) {
+        if isolated { // the editor is the host's window: the tab brings it forward and this window keeps the parameters
+            if tabs.selectedSegment == 0 && sender != nil { showHostEditor() }
+            tabs.selectedSegment = 1
+            editorHost.isHidden = true
+            panel.isHidden = false
+            refreshValues()
+            return
+        }
         let showEditor = tabs.selectedSegment == 0 && editorOpen
         editorHost.isHidden = !showEditor
         panel.isHidden = showEditor
@@ -160,8 +201,9 @@ final class PluginWindowController: NSWindowController, NSWindowDelegate, NSTabl
     func windowWillClose(_ notification: Notification) {
         refreshTimer?.invalidate()
         refreshTimer = nil
-        if editorOpen { dalnok_plugin_close_editor(engine.handle, slot) }
+        if editorOpen || hostEditorOpen { dalnok_plugin_close_editor(engine.handle, slot) }
         editorOpen = false
+        hostEditorOpen = false
         onClose?()
     }
 

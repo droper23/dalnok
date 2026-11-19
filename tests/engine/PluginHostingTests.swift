@@ -82,14 +82,15 @@ struct PluginHosting {
         for _ in 0..<4 { dalnok_engine_pump(e, &l, &r, 512) }
         #expect(l[100] == dry.0[1_536 + 100] * 0.25)
         #expect(dalnok_plugin_set_parameter(e, slot, 1, 2) != DALNOK_OK) // out of range
-        // No editor view: opening fails cleanly. Isolated instances (ADR-0014) offer no editor yet and say why.
+        // No editor view: opening fails cleanly. Isolated instances (ADR-0015) are never embedded and say where
+        // their editor opens instead.
         var slotInfo = DalnokPluginSlotInfo()
         _ = dalnok_track_plugin_info(e, t, 0, &slotInfo)
-        #expect(dalnok_plugin_has_editor(e, slot) != slotInfo.isolated)
+        #expect(dalnok_plugin_has_editor(e, slot))
         var err = [CChar](repeating: 0, count: 128)
         let dummy = UnsafeMutableRawPointer.allocate(byteCount: 8, alignment: 8); defer { dummy.deallocate() }
         #expect(dalnok_plugin_open_editor(e, slot, dummy, nil, nil, nil, nil, &err, 128) == DALNOK_ERR_UNSUPPORTED)
-        #expect(cstr(err).contains(slotInfo.isolated ? "its own process" : "no editor"), "\(cstr(err))")
+        #expect(cstr(err).contains(slotInfo.isolated ? "its own window" : "no editor"), "\(cstr(err))")
     }
 
     @Test func instrumentPluginPlaysNotesSampleAccurately() {

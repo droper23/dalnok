@@ -28,7 +28,7 @@
 extern "C" {
 #endif
 
-#define DALNOK_API_VERSION 35
+#define DALNOK_API_VERSION 36
 
 typedef enum {
     DALNOK_OK = 0,
@@ -597,6 +597,24 @@ DalnokStatus dalnok_plugin_open_editor(DalnokEngine *engine, int32_t slot, void 
                                        int32_t *height, void (*on_resize)(void *ctx, int32_t width, int32_t height),
                                        void *ctx, char *err, size_t err_len);
 void dalnok_plugin_close_editor(DalnokEngine *engine, int32_t slot);
+/* Isolated plug-ins (DalnokPluginSlotInfo.isolated; ADR-0015) cannot be embedded: their editor opens in a window
+ * owned by the plug-in's own process, a floating panel that follows Dalnok (hidden while another application is
+ * active). Shows it, or brings it to the front, titled `title`, with its top-left at (x, y) in AppKit screen
+ * coordinates (NaN centers it). dalnok_plugin_close_editor closes it. Main thread. (API 36) */
+DalnokStatus dalnok_plugin_show_editor_window(DalnokEngine *engine, int32_t slot, const char *title, double x, double y,
+                                              char *err, size_t err_len);
+typedef struct {
+    bool open;                 /* opened and not closed by the user */
+    bool visible;              /* on screen now (an open editor hides while another application is active) */
+    double x, y, width, height;            /* window frame, AppKit screen coordinates */
+    double content_width, content_height;  /* the editor's area */
+    int64_t window_number;     /* the window server's number (CGWindowList), owned by process_id */
+    int64_t level;
+    int32_t process_id;        /* the plug-in's dalnok-plughost process */
+} DalnokPluginEditorWindow;
+DalnokStatus dalnok_plugin_editor_window(DalnokEngine *engine, int32_t slot, DalnokPluginEditorWindow *out);
+/* Writes the editor window's pixels to a PNG (visual checks, self-tests). */
+DalnokStatus dalnok_plugin_editor_snapshot(DalnokEngine *engine, int32_t slot, const char *png_path);
 
 /* ---- Instruments, MIDI clips, tempo --------------------------------- */
 

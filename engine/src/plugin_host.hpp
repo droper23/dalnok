@@ -104,6 +104,22 @@ public:
     virtual bool openEditor(void *parent, int32_t &width, int32_t &height, void (*onResize)(void *ctx, int32_t w, int32_t h),
                             void *ctx, std::string &err) = 0;
     virtual void closeEditor() = 0;
+
+    // Isolated instances (ADR-0015): the editor opens in a window owned by the host process instead of `openEditor`.
+    // `x`, `y`: the window's top-left in screen coordinates (NaN centers). Main thread.
+    struct EditorWindowInfo {
+        bool visible = false, open = false;
+        double x = 0, y = 0, width = 0, height = 0, contentWidth = 0, contentHeight = 0;
+        int64_t windowNumber = 0, level = 0;
+        int32_t processId = 0;
+    };
+    virtual bool showEditorWindow(const std::string &title, double x, double y, std::string &err) {
+        (void)title; (void)x; (void)y;
+        err = "this plug-in's editor opens inside Dalnok";
+        return false;
+    }
+    virtual bool editorWindow(EditorWindowInfo &out) { (void)out; return false; }
+    virtual bool editorSnapshot(const std::string &pngPath) { (void)pngPath; return false; }
 };
 
 // Loads a VST3 bundle in this process. `classId` (32 hex digits) picks a class; empty = the first
