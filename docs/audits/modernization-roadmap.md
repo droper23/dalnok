@@ -118,7 +118,7 @@ Rules the roadmap enforces:
 
 ## Milestones
 
-1. **M-A "Cannot lose work"** — Phase 0 items 1–3. Data-loss exposure is bounded.
+1. **M-A "Cannot lose work"** — Phase 0 items 1–3. Recovery bounds the project-apply initialization window; in-process hosting and other crash windows remain open.
 2. **M-B "Scale without jank"** — items 5–9. A 4,096-clip session edits and refreshes under a frame.
 3. **M-C "Trustworthy failures"** — Phase 2. Plug-in faults, parse faults and formatting faults are
    contained and observable.
@@ -139,6 +139,10 @@ Rules the roadmap enforces:
 
 | Item | State | Evidence |
 |---|---|---|
+| A-01a pre-activation recovery | **Done** | `scripts/ci/plugin-recovery.sh`: crash and hang, full normalized-model comparison, normal and ASan; `scripts/ci/recovery-smoke.sh`; `preactivationRecoveryAndFailure` covers I/O status and rollback. Pending marker copies survive repeated crashes and clean quits; old/new selection is covered by self-test. Final full sanitizer check passed: 197 tests each under normal, ASan and TSan, plus live audio smoke and self-test |
+| A-03a compact scalar undo | **Done** | 4,096 clips, 500 gain edits: p50 0.058 ms → <0.001 ms display precision; final RSS 302.6 → 34.5 MB. Group, failure and random full-undo tests; ADR-0012 |
+| A-05a parameter refresh | **Done** | 4,096-clip AppKit audit: drag p50/p95/p99/max 27.771875/30.493334/31.077125/31.706958 → 0.025000/0.031333/0.033625/0.037625 ms; refresh 28.385333/29.191209/29.532209/29.715750 → 3.865959/3.934792/3.967375/3.967375 ms. Graphite, visible mixer, 30 warmups + 100 samples; tight-burst events, synchronous callbacks included, deferred drawing excluded. `scripts/check.sh` self-test verifies display-tick coalescing, unrelated-track zero clip reads, scripted edits, undo and same-frame Touch; final generated-project walks cover gain drag, undo and scripted change in both themes |
+| A-14 handoff health | **Done** | Instrumented 100-callback test reaches depth 64 and 36 skips, verifies reset and adoption after collection; audible edit in one callback. A full queue has no finite adoption bound without collection |
 | A-02 autosave + recovery | **Already implemented** (audit misread the timer) | `MainWindow.tick` snapshot every 30 s, launch prompt, `scripts/ci/recovery-smoke.sh`, self-test |
 | A-04a linear compile | **Done** | 4,096 clips: structural 0.770 -> 0.255 ms, build 1,272 -> 527 ms, undo 0.745 -> 0.238 ms; 191 tests |
 | A-07 shared plug-in state | **Done** | `SharedPluginState` blob; state round-trip and missing-plug-in suites pass |
@@ -146,4 +150,4 @@ Rules the roadmap enforces:
 | A-10 fuzz/property tests | **Partial** | randomised save/load/save and 120 mutated/truncated files; libFuzzer and nightly corpus still open |
 | A-23 status documentation | **Done** | capability table now links tests; C API references corrected to v29 |
 
-Everything else in Phases 0-5 remains as written above; the measured items are unchanged except A-04a.
+The larger A-01, A-03 and A-05 programmes remain open; their smaller safety and performance steps do not establish crash isolation, structural sharing or incremental UI change sets. Other unfinished items remain as written above.

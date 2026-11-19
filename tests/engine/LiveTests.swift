@@ -30,9 +30,48 @@ func liveEngine(_ samples: [Float]) -> (OpaquePointer, DalnokTrackId, OpaquePoin
     return (e, t, m)
 }
 
+#if DALNOK_TEST_HOOKS
+@_silgen_name("dalnok_test_handoff_saturation")
+private func handoffSaturationFixture(_ out: UnsafeMutablePointer<UInt64>)
+#endif
+
 @Suite struct LivePath {
     // 5 ms fade at 48 kHz = 240 samples; a 0.5 step spread over 240 samples is ~0.0021/sample.
     let declickStep: Float = 0.5 / 240 * 1.05
+
+    #if DALNOK_TEST_HOOKS
+    @Test func snapshotSaturationWithoutCollection() {
+        var values = [UInt64](repeating: 0, count: 30)
+        values.withUnsafeMutableBufferPointer { handoffSaturationFixture($0.baseAddress!) }
+        #expect(Array(values[0..<5]) == [64, 64, 36, 36, 64], "100 callbacks fill the queue then skip 36 adoptions")
+        #expect(Array(values[5..<10]) == [64, 64, 0, 0, 0], "reset preserves live depth and resets counters")
+        #expect(Array(values[10..<15]) == [64, 64, 3, 3, 0], "pending age and skips advance while saturated")
+        #expect(Array(values[15..<20]) == [0, 64, 3, 3, 0], "collection drains retire queue without adopting")
+        #expect(Array(values[20..<25]) == [1, 64, 0, 3, 1], "next callback adopts pending snapshot")
+        #expect(Array(values[25..<30]) == [1, 1, 0, 0, 0], "reset uses current queue depth as high-water baseline")
+    }
+    #endif
+
+    @Test func snapshotBacklogAndAdoption() {
+        let (e, t, m) = liveEngine([Float](repeating: 0.5, count: 48_000))
+        defer { dalnok_media_release(m); dalnok_engine_destroy(e) }
+        dalnok_transport_play(e)
+        _ = pump(e, 2_048)
+        let clip = dalnok_track_clip_at(e, t, 0)
+        #expect(dalnok_clip_remove(e, clip) == DALNOK_OK)
+        let after = pump(e, 256, block: 256).0
+        #expect(after.allSatisfy { abs($0) < 1e-6 }, "the structural edit is audible within one callback")
+        _ = pump(e, 99 * 256, block: 256)
+        var stats = DalnokStats()
+        dalnok_engine_stats(e, &stats)
+        // The public pump collects garbage after each callback.
+        #expect(stats.retired_queue_depth == 0)
+        #expect(stats.retired_queue_high_water >= 1)
+        #expect(stats.snapshot_adoption_skips == 0)
+        dalnok_engine_collect_garbage(e)
+        dalnok_engine_stats(e, &stats)
+        #expect(stats.retired_queue_depth == 0)
+    }
 
     @Test func playFadesInWithoutAClickAndPositionIsExact() {
         let (e, _, m) = liveEngine([Float](repeating: 0.5, count: 48_000))

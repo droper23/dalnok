@@ -285,17 +285,90 @@ bool Engine::edit(const char *name, bool structural, F &&fn) {
         model_ = std::move(before);
         return false;
     }
-    if (groupDepth_ == 0) {
-        undo_.push_back({name, std::move(before)});
-    } else if (!groupRecorded_) {
-        undo_.push_back({groupName_.empty() ? name : groupName_, std::move(before)});
-        groupRecorded_ = true;
+    if (groupDepth_ == 0 || !groupRecorded_) {
+        undo_.push_back({groupDepth_ && !groupName_.empty() ? groupName_ : name,
+                         std::make_unique<Model>(std::move(before)), {}});
+        if (groupDepth_) groupRecorded_ = true;
+    } else if (!undo_.back().model) {
+        // Promote the scalar group to a snapshot of its original state.
+        for (const auto &value : undo_.back().parameters) setParameterInModel(before, value);
+        undo_.back().model = std::make_unique<Model>(std::move(before));
+        undo_.back().parameters.clear();
     }
     if (undo_.size() > kMaxUndo) undo_.erase(undo_.begin());
     redo_.clear();
     ++revision_;
     syncRuntimes();
     if (structural) commit();
+    return true;
+}
+
+float Engine::parameterValue(DalnokTrackId id, ParameterField field) const {
+    if (field == ParameterField::masterGain) return model_.masterGainDb;
+    const TrackState *track = model_.track(id);
+    switch (field) {
+        case ParameterField::gain: return track->gainDb;
+        case ParameterField::pan: return track->pan;
+        case ParameterField::mute: return track->muted;
+        case ParameterField::solo: return track->solo;
+        case ParameterField::masterGain: break;
+    }
+    return 0;
+}
+
+void Engine::setParameterInModel(Model &model, const ParameterValue &v) {
+    if (v.field == ParameterField::masterGain) { model.masterGainDb = v.value; return; }
+    TrackState *track = model.track(v.track);
+    if (!track) return;
+    switch (v.field) {
+        case ParameterField::gain: track->gainDb = v.value; break;
+        case ParameterField::pan: track->pan = v.value; break;
+        case ParameterField::mute: track->muted = v.value != 0; break;
+        case ParameterField::solo: track->solo = v.value != 0; break;
+        case ParameterField::masterGain: break;
+    }
+}
+
+void Engine::applyParameter(const ParameterValue &v) {
+    const float previous = parameterValue(v.track, v.field);
+    setParameterInModel(model_, v);
+    if (v.field == ParameterField::masterGain) {
+        masterRuntime_->gain.store(dbToGain(v.value), std::memory_order_relaxed);
+        return;
+    }
+    TrackState *track = model_.track(v.track);
+    switch (v.field) {
+        case ParameterField::gain: track->runtime->gain.store(dbToGain(v.value), std::memory_order_relaxed); break;
+        case ParameterField::pan: track->runtime->pan.store(v.value, std::memory_order_relaxed); break;
+        case ParameterField::mute: track->runtime->muted.store(v.value != 0, std::memory_order_relaxed); break;
+        case ParameterField::solo:
+            track->runtime->solo.store(v.value != 0, std::memory_order_relaxed);
+            if ((previous != 0) != (v.value != 0)) soloCount_.fetch_add(v.value != 0 ? 1 : -1, std::memory_order_relaxed);
+            break;
+        case ParameterField::masterGain: break;
+    }
+}
+
+bool Engine::editParameter(const char *name, DalnokTrackId track, ParameterField field, float value, std::string &err) {
+    if (field != ParameterField::masterGain && !model_.track(track)) { err = "no such track"; return false; }
+    if (std::isnan(value)) { err = field == ParameterField::pan ? "pan is NaN" : "gain is NaN"; return false; }
+    if (field == ParameterField::gain || field == ParameterField::masterGain)
+        value = value <= -96.0f ? -INFINITY : std::min(value, 12.0f);
+    if (field == ParameterField::pan) value = std::clamp(value, -1.0f, 1.0f);
+    ParameterValue old{track, field, parameterValue(track, field)};
+    if (groupDepth_ == 0 || !groupRecorded_) {
+        undo_.push_back({groupDepth_ && !groupName_.empty() ? groupName_ : name, nullptr, {old}});
+        if (groupDepth_) groupRecorded_ = true;
+    } else if (!undo_.back().model) {
+        auto &values = undo_.back().parameters;
+        if (std::none_of(values.begin(), values.end(), [&](const auto &v) { return v.track == track && v.field == field; }))
+            values.push_back(old);
+    }
+    if (undo_.size() > kMaxUndo) undo_.erase(undo_.begin());
+    redo_.clear();
+    applyParameter({track, field, value});
+    ++revision_;
+    markParameterRevision();
     return true;
 }
 
@@ -329,23 +402,36 @@ void Engine::restore(Model m) {
     commit();
 }
 
+void Engine::applyUndo(std::vector<UndoStep> &from, std::vector<UndoStep> &to) {
+    UndoStep step = std::move(from.back());
+    from.pop_back();
+    if (step.model) {
+        to.push_back({step.name, std::make_unique<Model>(model_), {}});
+        restore(std::move(*step.model));
+    } else {
+        UndoStep inverse{step.name, nullptr, {}};
+        inverse.parameters.reserve(step.parameters.size());
+        for (const auto &v : step.parameters) {
+            inverse.parameters.push_back({v.track, v.field, parameterValue(v.track, v.field)});
+            applyParameter(v);
+        }
+        to.push_back(std::move(inverse));
+        ++revision_;
+        markParameterRevision();
+    }
+}
+
 bool Engine::undo() {
     groupDepth_ = 0;
     if (undo_.empty()) return false;
-    UndoStep step = std::move(undo_.back());
-    undo_.pop_back();
-    redo_.push_back({step.name, model_});
-    restore(std::move(step.model));
+    applyUndo(undo_, redo_);
     return true;
 }
 
 bool Engine::redo() {
     groupDepth_ = 0;
     if (redo_.empty()) return false;
-    UndoStep step = std::move(redo_.back());
-    redo_.pop_back();
-    undo_.push_back({step.name, model_});
-    restore(std::move(step.model));
+    applyUndo(redo_, undo_);
     return true;
 }
 
@@ -1506,44 +1592,19 @@ bool Engine::renameTrack(DalnokTrackId id, const std::string &name, std::string 
 }
 
 bool Engine::setMasterGainDb(float db, std::string &err) {
-    return edit("Master Volume", false, [&](Model &m) {
-        if (std::isnan(db)) return fail(err, "gain is NaN");
-        m.masterGainDb = db <= -96.0f ? -INFINITY : std::min(db, 12.0f);
-        masterRuntime_->gain.store(dbToGain(m.masterGainDb), std::memory_order_relaxed);
-        return true;
-    });
+    return editParameter("Master Volume", 0, ParameterField::masterGain, db, err);
 }
 
 bool Engine::setGainDb(DalnokTrackId id, float db, std::string &err) {
-    return edit("Volume", false, [&](Model &m) {
-        TrackState *t = m.track(id);
-        if (!t) return fail(err, "no such track");
-        if (std::isnan(db)) return fail(err, "gain is NaN");
-        t->gainDb = db <= -96.0f ? -INFINITY : std::min(db, 12.0f);
-        t->runtime->gain.store(dbToGain(t->gainDb), std::memory_order_relaxed);
-        return true;
-    });
+    return editParameter("Volume", id, ParameterField::gain, db, err);
 }
 
 bool Engine::setPan(DalnokTrackId id, float pan, std::string &err) {
-    return edit("Pan", false, [&](Model &m) {
-        TrackState *t = m.track(id);
-        if (!t) return fail(err, "no such track");
-        if (std::isnan(pan)) return fail(err, "pan is NaN");
-        t->pan = std::clamp(pan, -1.0f, 1.0f);
-        t->runtime->pan.store(t->pan, std::memory_order_relaxed);
-        return true;
-    });
+    return editParameter("Pan", id, ParameterField::pan, pan, err);
 }
 
 bool Engine::setMute(DalnokTrackId id, bool muted, std::string &err) {
-    return edit(muted ? "Mute" : "Unmute", false, [&](Model &m) {
-        TrackState *t = m.track(id);
-        if (!t) return fail(err, "no such track");
-        t->muted = muted;
-        t->runtime->muted.store(muted, std::memory_order_relaxed);
-        return true;
-    });
+    return editParameter(muted ? "Mute" : "Unmute", id, ParameterField::mute, muted, err);
 }
 
 bool Engine::setTrackColor(DalnokTrackId id, int32_t customRgb, std::string &err) {
@@ -1567,12 +1628,7 @@ bool Engine::recolorAsGradient(std::string &err) {
 }
 
 bool Engine::setSolo(DalnokTrackId id, bool solo, std::string &err) {
-    return edit(solo ? "Solo" : "Unsolo", false, [&](Model &m) {
-        TrackState *t = m.track(id);
-        if (!t) return fail(err, "no such track");
-        t->solo = solo;
-        return true;
-    });
+    return editParameter(solo ? "Solo" : "Unsolo", id, ParameterField::solo, solo, err);
 }
 
 bool Engine::moveTrack(DalnokTrackId id, int32_t index, std::string &err) {
@@ -2304,7 +2360,14 @@ void Engine::process(float *left, float *right, int frames) DALNOK_NONBLOCKING {
             if (current_) retired_.push(current_);
             current_ = s;
             swaps_.fetch_add(1, std::memory_order_relaxed);
+            pendingSnapshotCallbacks_.store(0, std::memory_order_relaxed);
+            const auto depth = static_cast<uint32_t>(retired_.size());
+            const auto high = retiredHighWater_.load(std::memory_order_relaxed);
+            if (depth > high) retiredHighWater_.store(depth, std::memory_order_relaxed);
         }
+    } else if (pending_.load(std::memory_order_acquire)) {
+        pendingSnapshotCallbacks_.fetch_add(1, std::memory_order_relaxed);
+        adoptionSkips_.fetch_add(1, std::memory_order_relaxed);
     }
     const int64_t before = rtPosition_;
     handleMidiInput(before);
@@ -2547,6 +2610,10 @@ void Engine::stats(DalnokStats &o) const {
     o.max_frames_per_callback = maxFrames_.load(std::memory_order_relaxed);
     o.overloads = overloads_.load(std::memory_order_relaxed);
     o.snapshot_swaps = swaps_.load(std::memory_order_relaxed);
+    o.retired_queue_depth = static_cast<uint32_t>(retired_.size());
+    o.retired_queue_high_water = retiredHighWater_.load(std::memory_order_relaxed);
+    o.pending_snapshot_callbacks = pendingSnapshotCallbacks_.load(std::memory_order_relaxed);
+    o.snapshot_adoption_skips = adoptionSkips_.load(std::memory_order_relaxed);
 }
 
 void Engine::resetStats() {
@@ -2557,6 +2624,51 @@ void Engine::resetStats() {
     maxFrames_ = 0;
     overloads_ = 0;
     swaps_ = 0;
+    retiredHighWater_ = static_cast<uint32_t>(retired_.size());
+    pendingSnapshotCallbacks_ = 0;
+    adoptionSkips_ = 0;
 }
 
+#ifdef DALNOK_TEST_HOOKS
+// Compiled only for the explicit saturation test build. Reproduce publication
+// and the device callback without the normal control-thread collection calls.
+void handoffSaturationFixture(uint64_t *out) {
+    Engine engine(48000);
+    float left[64]{}, right[64]{};
+    engine.process(left, right, 64); // adopt the constructor's initial snapshot
+    engine.resetStats();
+    for (int i = 0; i < 100; ++i) {
+        auto state = engine.compile();
+        delete engine.pending_.exchange(state.release(), std::memory_order_acq_rel);
+        engine.process(left, right, 64);
+    }
+    DalnokStats stats{};
+    auto record = [&](int offset) {
+        engine.stats(stats);
+        out[offset] = stats.retired_queue_depth;
+        out[offset + 1] = stats.retired_queue_high_water;
+        out[offset + 2] = stats.pending_snapshot_callbacks;
+        out[offset + 3] = stats.snapshot_adoption_skips;
+        out[offset + 4] = stats.snapshot_swaps;
+    };
+    record(0);
+    engine.resetStats();
+    record(5);
+    for (int i = 0; i < 3; ++i) engine.process(left, right, 64);
+    record(10);
+    engine.collectGarbage();
+    record(15);
+    engine.process(left, right, 64);
+    record(20);
+    engine.resetStats();
+    record(25);
+}
+#endif
+
 } // namespace dalnok
+
+#ifdef DALNOK_TEST_HOOKS
+extern "C" void dalnok_test_handoff_saturation(uint64_t *out) {
+    dalnok::handoffSaturationFixture(out);
+}
+#endif

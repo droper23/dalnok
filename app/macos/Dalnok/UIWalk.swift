@@ -21,9 +21,63 @@ final class UIWalk {
 
     func run() {
         Task { @MainActor in
+            if ProcessInfo.processInfo.environment["DALNOK_AUDIT_UI"] == "1" { exit(await auditUI() ? 0 : 2) }
             await walk()
             NSApp.terminate(nil)
         }
+    }
+
+    // Audit-only: synchronous AppKit event and refresh costs on the loaded project.
+    private func auditUI() async -> Bool {
+        guard let win = w.window else { print("AUDIT ERROR no window"); return false }
+        win.makeKeyAndOrderFront(nil)
+        await pause(600)
+        let wasShown = MainWindowController.showMixer
+        if !wasShown { w.toggleMixer(nil) }
+        defer { if !wasShown { w.toggleMixer(nil) } }
+        await pause(300)
+        guard let strip = w.mixer.strips.first, let track = s.tracks.first else { print("AUDIT ERROR no strip"); return false }
+        let clips = s.allTracks.reduce(0) { $0 + $1.clips.count }
+        guard s.tracks.count == 16 && clips == 4096 else { print("AUDIT ERROR fixture \(s.tracks.count) tracks \(clips) clips"); return false }
+        var initial = DalnokTrackInfo()
+        guard dalnok_track_info(s.h, track.id, &initial) == DALNOK_OK else { print("AUDIT ERROR no track"); return false }
+        let initialRevision = dalnok_model_revision(s.h)
+        let fader = strip.fader
+        let start = point(fader, CGPoint(x: fader.bounds.midX, y: fader.bounds.midY))
+        mouse(.leftMouseDown, win, start)
+        var events: [Double] = [], refreshes: [Double] = []
+        for i in 0..<130 {
+            let p = CGPoint(x: start.x, y: start.y + CGFloat((i % 80) - 40))
+            let t = DispatchTime.now().uptimeNanoseconds
+            mouse(.leftMouseDragged, win, p)
+            let ms = Double(DispatchTime.now().uptimeNanoseconds - t) / 1e6
+            if i >= 30 { events.append(ms) }
+        }
+        mouse(.leftMouseUp, win, start)
+        var afterDrag = DalnokTrackInfo()
+        guard dalnok_track_info(s.h, track.id, &afterDrag) == DALNOK_OK,
+              dalnok_model_revision(s.h) >= initialRevision + 100, afterDrag.gain_db != initial.gain_db else {
+            print("AUDIT ERROR drag events did not change gain"); return false
+        }
+        // Change engine values directly to measure the complete refresh callback,
+        // independently of the synchronous drag event cost in the old version.
+        for i in 0..<130 {
+            _ = dalnok_track_set_gain_db(s.h, track.id, Float(-(i % 20)))
+            let t = DispatchTime.now().uptimeNanoseconds
+            s.refresh(onDisplayTick: true)
+            let ms = Double(DispatchTime.now().uptimeNanoseconds - t) / 1e6
+            if i >= 30 { refreshes.append(ms) }
+        }
+        func show(_ name: String, _ values: [Double]) {
+            let sorted = values.sorted()
+            func pct(_ p: Double) -> Double { sorted[Int((Double(sorted.count - 1) * p).rounded())] }
+            print(String(format: "AUDIT %@ n=%d p50=%.6f ms p95=%.6f ms p99=%.6f ms max=%.6f ms", name, sorted.count, pct(0.5), pct(0.95), pct(0.99), sorted.last!))
+        }
+        print("AUDIT 16 tracks 4096 clips; mixer visible; 30 warmup + 100 samples; synchronous callbacks included; deferred drawing/compositing excluded")
+        show("AppKit drag event", events)
+        show("AppKit parameter refresh", refreshes)
+        fflush(stdout)
+        return true
     }
 
     // MARK: Events
@@ -151,6 +205,11 @@ final class UIWalk {
             let g = row.gain
             await drag(g, CGPoint(x: g.bounds.midX, y: g.bounds.midY), CGPoint(x: g.bounds.midX, y: g.bounds.midY + 40), shotAt: "gain-drag")
             key("z", code: 6, mods: .command)
+            await pause(); shot("gain-undo")
+            _ = dalnok_track_set_gain_db(s.h, row.trackId, -9)
+            await pause(); shot("gain-script")
+            _ = dalnok_undo(s.h)
+            await pause()
             click(row.nameLabel, CGPoint(x: row.nameLabel.bounds.midX, y: row.nameLabel.bounds.midY), clicks: 2)
             await pause(); shot("rename")
             key("\u{1b}", code: 53)

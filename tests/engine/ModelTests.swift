@@ -5,6 +5,22 @@ import Foundation
 import Testing
 
 @Suite struct UndoAndEditing {
+    @Test func parameterRevisionHintFallsBackAfterOtherEdits() {
+        let e = dalnok_engine_create(sr)!
+        defer { dalnok_engine_destroy(e) }
+        let track = dalnok_track_add(e, "Track")
+        let initial = dalnok_model_revision(e)
+        #expect(dalnok_track_set_gain_db(e, track, -6) == DALNOK_OK)
+        #expect(dalnok_model_only_parameters_since(e, initial))
+        var gain: Float = 0, pan: Float = 0, muted = false, solo = false
+        #expect(dalnok_track_parameters(e, track, &gain, &pan, &muted, &solo) == DALNOK_OK)
+        #expect(abs(gain + 6) < 1e-6)
+        _ = dalnok_track_add(e, "Other")
+        #expect(dalnok_track_set_pan(e, track, 0.5) == DALNOK_OK)
+        #expect(!dalnok_model_only_parameters_since(e, initial))
+        let current = dalnok_model_revision(e)
+        #expect(!dalnok_model_only_parameters_since(e, current))
+    }
     @Test func nudgeClipsIsAtomicAndPreservesSpacing() {
         let e = dalnok_engine_create(sr)!; defer { dalnok_engine_destroy(e) }
         let m = makeMedia([ramp(10_000)]); defer { dalnok_media_release(m) }
@@ -70,6 +86,71 @@ import Testing
         #expect(dalnok_undo(e))
         #expect(clipInfo(e, c).start == 0, "one undo reverts the whole drag")
         #expect(undoName(e) == "Add Clip")
+    }
+
+    @Test func parameterGroupsAndMixedEditsUndoExactly() {
+        let e = dalnok_engine_create(sr)!; defer { dalnok_engine_destroy(e) }
+        let t = dalnok_track_add(e, "Original")
+        dalnok_undo_begin_group(e, "Fader")
+        for i in 0..<100 { #expect(dalnok_track_set_gain_db(e, t, Float(-i) / 10) == DALNOK_OK) }
+        #expect(dalnok_track_set_pan(e, t, 0.75) == DALNOK_OK)
+        #expect(dalnok_track_set_mute(e, t, true) == DALNOK_OK)
+        #expect(dalnok_track_set_solo(e, t, true) == DALNOK_OK)
+        #expect(dalnok_master_set_gain_db(e, -3) == DALNOK_OK)
+        #expect(dalnok_track_set_gain_db(e, t, .nan) != DALNOK_OK)
+        #expect(dalnok_track_set_pan(e, -999, 0) != DALNOK_OK)
+        dalnok_undo_end_group(e)
+        #expect(undoName(e) == "Fader" && dalnok_undo(e))
+        var info = DalnokTrackInfo(); _ = dalnok_track_info(e, t, &info)
+        #expect(abs(info.gain_db) < 1e-6 && abs(info.pan) < 1e-6 && !info.muted && !info.solo)
+        #expect(abs(dalnok_master_gain_db(e)) < 1e-6 && undoName(e) == "New Track")
+        #expect(dalnok_redo(e))
+        _ = dalnok_track_info(e, t, &info)
+        #expect(abs(info.gain_db + 9.9) < 1e-5 && abs(info.pan - 0.75) < 1e-6 && info.muted && info.solo)
+        #expect(abs(dalnok_master_gain_db(e) + 3) < 1e-6)
+        dalnok_undo_begin_group(e, "Mixed")
+        _ = dalnok_track_set_gain_db(e, t, -12)
+        _ = dalnok_track_add(e, "Structural")
+        _ = dalnok_track_set_pan(e, t, -0.5)
+        dalnok_undo_end_group(e)
+        #expect(dalnok_undo(e) && dalnok_track_count(e) == 1)
+        _ = dalnok_track_info(e, t, &info)
+        #expect(abs(info.gain_db + 9.9) < 1e-5 && abs(info.pan - 0.75) < 1e-6)
+        #expect(dalnok_redo(e) && dalnok_track_count(e) == 2)
+        _ = dalnok_track_info(e, t, &info)
+        #expect(abs(info.gain_db + 12) < 1e-6 && abs(info.pan + 0.5) < 1e-6)
+        dalnok_undo_begin_group(e, "Structural first")
+        _ = dalnok_track_add(e, "Third")
+        _ = dalnok_track_set_gain_db(e, t, -22)
+        dalnok_undo_end_group(e)
+        #expect(dalnok_undo(e) && dalnok_track_count(e) == 2)
+        _ = dalnok_track_info(e, t, &info)
+        #expect(abs(info.gain_db + 12) < 1e-6)
+    }
+
+    @Test func randomEditsFullyUndoToSerializedBaseline() throws {
+        let e = dalnok_engine_create(sr)!; defer { dalnok_engine_destroy(e) }
+        let t = dalnok_track_add(e, "Baseline")
+        let dir = tempDir(), before = dir.appendingPathComponent("before.dalnok"), after = dir.appendingPathComponent("after.dalnok")
+        #expect(dalnok_project_save_snapshot(e, before.path, nil, 0) == DALNOK_OK)
+        var seed: UInt64 = 0x12345678
+        for i in 0..<150 {
+            seed = seed &* 6364136223846793005 &+ 1
+            switch seed % 7 {
+            case 0: #expect(dalnok_track_set_gain_db(e, t, Float(Int(seed % 60) - 40)) == DALNOK_OK)
+            case 1: #expect(dalnok_track_set_pan(e, t, Float(Int(seed % 200) - 100) / 100) == DALNOK_OK)
+            case 2: #expect(dalnok_track_set_mute(e, t, seed & 8 != 0) == DALNOK_OK)
+            case 3: #expect(dalnok_track_set_solo(e, t, seed & 16 != 0) == DALNOK_OK)
+            case 4: #expect(dalnok_master_set_gain_db(e, Float(Int(seed % 30) - 25)) == DALNOK_OK)
+            case 5: #expect(dalnok_track_rename(e, t, "Track \(i)") == DALNOK_OK)
+            default: #expect(dalnok_track_add(e, "Extra \(i)") != 0)
+            }
+        }
+        for _ in 0..<150 { #expect(dalnok_undo(e)) }
+        #expect(dalnok_project_save_snapshot(e, after.path, nil, 0) == DALNOK_OK)
+        let a = try JSONSerialization.jsonObject(with: Data(contentsOf: before)) as! [String: Any]
+        let b = try JSONSerialization.jsonObject(with: Data(contentsOf: after)) as! [String: Any]
+        #expect(NSDictionary(dictionary: a).isEqual(to: b))
     }
 
     @Test func failedEditsChangeNothing() {
@@ -198,6 +279,82 @@ import Testing
         expectClose(actual.1, expected.1, tol: 0, "snapshot right")
         #expect(dalnok_project_save_snapshot(e, dir.appendingPathComponent("missing/recovery.dalnok").path, nil, 0) == DALNOK_ERR_IO)
         #expect(dalnok_project_dirty(e) && dalnok_model_revision(e) == revision)
+    }
+
+    @Test func preactivationRecoveryAndFailure() throws {
+        let source = dalnok_engine_create(sr)!; defer { dalnok_engine_destroy(source) }
+        try makeProject(source, audio: dir.appendingPathComponent("preactivation.wav"))
+        let project = dir.appendingPathComponent("source.dalnok")
+        #expect(dalnok_project_save(source, project.path, nil, 0) == DALNOK_OK)
+        let target = dalnok_engine_create(sr)!; defer { dalnok_engine_destroy(target) }
+        let old = dalnok_track_add(target, "old")
+        let invalid = dir.appendingPathComponent("not-a-directory")
+        try Data().write(to: invalid)
+        dalnok_project_set_recovery_directory(target, invalid.path)
+        var data: OpaquePointer?
+        #expect(dalnok_project_prepare(project.path, sr, &data, nil, nil, 0) == DALNOK_OK)
+        #expect(dalnok_project_apply(target, data) == DALNOK_ERR_IO)
+        #expect(dalnok_track_count(target) == 1 && old != 0)
+        let oldRevision = dalnok_model_revision(target)
+        #expect(dalnok_project_load(target, project.path, nil, nil, 0) == DALNOK_ERR_IO)
+        #expect(dalnok_track_count(target) == 1 && dalnok_model_revision(target) == oldRevision)
+        let recovery = dir.appendingPathComponent("recovery-dir")
+        dalnok_project_set_recovery_directory(target, recovery.path)
+        #expect(dalnok_project_prepare(project.path, sr, &data, nil, nil, 0) == DALNOK_OK)
+        #expect(dalnok_project_apply(target, data) == DALNOK_OK)
+        #expect(!dalnok_project_dirty(target))
+        let files = try FileManager.default.contentsOfDirectory(at: recovery, includingPropertiesForKeys: nil)
+        #expect(files.count == 1 && files[0].lastPathComponent.hasPrefix("Recovery-"))
+        let restored = dalnok_engine_create(sr)!; defer { dalnok_engine_destroy(restored) }
+        #expect(dalnok_project_prepare(files[0].path, sr, &data, nil, nil, 0) == DALNOK_OK)
+        #expect(dalnok_project_apply_recovery(restored, data) == DALNOK_OK)
+        #expect(dalnok_project_dirty(restored) && dalnok_track_count(restored) == 2)
+        let expected = render(source, frames: 30_000), actual = render(restored, frames: 30_000)
+        expectClose(actual.0, expected.0, tol: 0, "preactivation snapshot left")
+        expectClose(actual.1, expected.1, tol: 0, "preactivation snapshot right")
+    }
+
+    @Test func recoveryPluginFixture() throws {
+        let env = ProcessInfo.processInfo.environment
+        guard let project = env["DALNOK_TEST_RECOVERY_PROJECT"], let recovery = env["DALNOK_TEST_RECOVERY_DIR"] else { return }
+        let engine = dalnok_engine_create(sr)!; defer { dalnok_engine_destroy(engine) }
+        var data: OpaquePointer?
+        if env["DALNOK_TEST_RECOVERY_VERIFY"] == "1" {
+            let files = try FileManager.default.contentsOfDirectory(atPath: recovery).filter { $0.hasSuffix(".dalnok") }
+            #expect(files.count == 1)
+            let path = URL(fileURLWithPath: recovery).appendingPathComponent(try #require(files.first)).path
+            #expect(dalnok_project_prepare(path, sr, &data, nil, nil, 0) == DALNOK_OK)
+            #expect(dalnok_project_apply_recovery(engine, data) == DALNOK_OK)
+            var info = DalnokPluginSlotInfo()
+            #expect(dalnok_track_plugin_info(engine, 1, 0, &info) == DALNOK_OK && !info.loaded)
+            let original = try JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: project))) as! [String: Any]
+            let snapshot = try JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: path))) as! [String: Any]
+            let inputTracks = try #require(original["tracks"] as? [[String: Any]])
+            let savedTracks = try #require(snapshot["tracks"] as? [[String: Any]])
+            #expect(inputTracks.count == savedTracks.count)
+            #expect(try JSONSerialization.data(withJSONObject: inputTracks[0]["plugins"]!, options: [.sortedKeys]) == JSONSerialization.data(withJSONObject: savedTracks[0]["plugins"]!, options: [.sortedKeys]))
+            #expect((snapshot["cycle"] as? [NSNumber]) == (original["cycle"] as? [NSNumber]))
+            // Normalize the incoming document through recovery mode, which never
+            // initializes the fixture, then compare the entire serialized model.
+            let expectedEngine = dalnok_engine_create(sr)!
+            defer { dalnok_engine_destroy(expectedEngine) }
+            var expectedData: OpaquePointer?
+            #expect(dalnok_project_prepare(project, sr, &expectedData, nil, nil, 0) == DALNOK_OK)
+            #expect(dalnok_project_apply_recovery(expectedEngine, expectedData) == DALNOK_OK)
+            let expectedPath = URL(fileURLWithPath: recovery).appendingPathComponent("expected.dalnok").path
+            #expect(dalnok_project_save_snapshot(expectedEngine, expectedPath, nil, 0) == DALNOK_OK)
+            let expected = try JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: expectedPath)))
+            #expect(try JSONSerialization.data(withJSONObject: expected, options: [.sortedKeys]) == JSONSerialization.data(withJSONObject: snapshot, options: [.sortedKeys]))
+            let roundTrip = URL(fileURLWithPath: recovery).appendingPathComponent("roundtrip.dalnok").path
+            #expect(dalnok_project_save_snapshot(engine, roundTrip, nil, 0) == DALNOK_OK)
+            let again = try JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: roundTrip)))
+            #expect(try JSONSerialization.data(withJSONObject: snapshot, options: [.sortedKeys]) == JSONSerialization.data(withJSONObject: again, options: [.sortedKeys]))
+        } else {
+            dalnok_project_set_recovery_directory(engine, recovery)
+            #expect(dalnok_project_prepare(project, sr, &data, nil, nil, 0) == DALNOK_OK)
+            _ = dalnok_project_apply(engine, data) // fixture intentionally aborts or blocks here
+            Issue.record("fixture unexpectedly returned from initialize")
+        }
     }
 
     @Test func saveLoadRoundTripsExactly() throws {

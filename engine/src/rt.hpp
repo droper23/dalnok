@@ -40,6 +40,13 @@ public:
     bool full() const DALNOK_NONBLOCKING {
         return write_.load(std::memory_order_acquire) - read_.load(std::memory_order_acquire) == Capacity;
     }
+    std::size_t size() const DALNOK_NONBLOCKING {
+        const auto r = read_.load(std::memory_order_acquire);
+        const auto depth = write_.load(std::memory_order_acquire) - r;
+        // An observer that is neither producer nor consumer can sample a stale
+        // read index while both endpoints advance; never report more than capacity.
+        return depth > Capacity ? Capacity : depth;
+    }
 
 private:
     std::array<T, Capacity> slots_{};

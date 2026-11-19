@@ -91,5 +91,81 @@
     "RSS under a multi-hour session (no soak test).",
     "Denormal and SIMD deltas (hypotheses in A-12 and A-13, not measured).",
     "Out-of-process hosting overhead (A-01 is a design, not a measurement)."
-  ]
+  ],
+  "wave2": {
+    "fixture": "generated, 16 tracks x 256 clips, 48000 Hz",
+    "command": ".build/release/dalnok-cli audit-bench /tmp/dalnok-a03-fixture/scale.dalnok --edits 500",
+    "gainEditP50MsBefore": 0.058,
+    "gainEditP50MsAfter": "<0.001 (display precision)",
+    "rssBeforeRunMB": [
+      34.2,
+      302.6
+    ],
+    "rssAfterRunMB": [
+      34.4,
+      34.5
+    ],
+    "parameterReadP50Ms": "<0.001 (C API only)",
+    "gainEditAndParameterReadP50Ms": 0.003,
+    "note": "Parameter-read and combined measurements exclude AppKit refresh and rendering. The audit-scale run after a full structural undo history measured 0.038 ms gain p50 as old snapshots were evicted; model read 48.009 ms, structural edit 0.507 ms, undo 0.000 ms rounded. The earlier matching before audit-bench model read was 15.629 ms; later model-read timing was 42.564 ms, indicating noisy conditions.",
+    "appKit": {
+      "command": "DALNOK_THEME=graphite .build/release/dalnok-cli audit-ui /tmp/dalnok-a03-fixture/scale.dalnok",
+      "baselineRevision": "bab598b",
+      "currentRevision": "uncommitted wave 2 changes",
+      "fixture": "generated 16 tracks x 256 clips, 48000 Hz",
+      "build": "release",
+      "theme": "graphite",
+      "mixer": "visible",
+      "warmupSamples": 30,
+      "recordedSamples": 100,
+      "dragEventMs": {
+        "before": {
+          "p50": 27.771875,
+          "p95": 30.493334,
+          "p99": 31.077125,
+          "max": 31.706958
+        },
+        "after": {
+          "p50": 0.025,
+          "p95": 0.031333,
+          "p99": 0.033625,
+          "max": 0.037625
+        }
+      },
+      "parameterRefreshMs": {
+        "before": {
+          "p50": 28.385333,
+          "p95": 29.191209,
+          "p99": 29.532209,
+          "max": 29.71575
+        },
+        "after": {
+          "p50": 3.865959,
+          "p95": 3.934792,
+          "p99": 3.967375,
+          "max": 3.967375
+        }
+      },
+      "notes": "Synthetic AppKit drag events are dispatched in a tight burst; parameter refreshes are separately forced after engine edits. Refresh time includes synchronous UI callbacks. Deferred AppKit drawing/compositing, normal display pacing and full frame latency are not measured. A gain change and at least 100 model revisions were asserted. Both releases were built and run outside the sandbox using the same generated fixture.",
+      "rawOutput": "docs/audits/benchmarks/raw/wave2-appkit.txt"
+    },
+    "finalVerification": {
+      "fixture": "generated 16 tracks x 256 clips, 48000 Hz",
+      "auditBench": {
+        "gainEditP50Ms": "<0.001 (display precision)",
+        "rssStartMB": 34.4,
+        "rssAfter500MB": 34.5,
+        "fullModelReadP50Ms": 15.592,
+        "gainEditAndScalarReadP50Ms": 0.002
+      },
+      "auditScale": {
+        "buildMs": 330,
+        "fullModelReadP50Ms": 15.458,
+        "structuralEditP50Ms": 0.146,
+        "gainEditP50Ms": 0.012,
+        "undoP50Ms": "<0.001 (display precision)"
+      },
+      "note": "audit-scale gain edits evict structural snapshots already in the 500-step history; do not compare directly with audit-bench compact-only history."
+    }
+  }
 }

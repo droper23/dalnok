@@ -859,6 +859,16 @@ size_t dalnok_pool_path(const DalnokEngine *e, DalnokMediaId id, char *buf, size
 // ---- Queries --------------------------------------------------------------
 
 uint64_t dalnok_model_revision(const DalnokEngine *e) { return e ? e->impl.revision() : 0; }
+bool dalnok_model_only_parameters_since(const DalnokEngine *e, uint64_t revision) {
+    return e && e->impl.onlyParametersSince(revision);
+}
+DalnokStatus dalnok_track_parameters(const DalnokEngine *e, DalnokTrackId id, float *gain, float *pan, bool *muted, bool *solo) {
+    if (!e || !gain || !pan || !muted || !solo) return DALNOK_ERR_INVALID_ARG;
+    const TrackState *t = e->impl.model().track(id);
+    if (!t) return DALNOK_ERR_NOT_FOUND;
+    *gain = t->gainDb; *pan = t->pan; *muted = t->muted; *solo = t->solo;
+    return DALNOK_OK;
+}
 int32_t dalnok_track_count(const DalnokEngine *e) {
     return e ? static_cast<int32_t>(e->impl.model().tracks.size()) : 0;
 }
@@ -1150,7 +1160,8 @@ DalnokStatus dalnok_project_load(DalnokEngine *e, const char *path, int32_t *mis
     int32_t missing = 0;
     if (!e->impl.loadProject(path, missing, msg)) {
         copyOut(err, err_len, msg);
-        return msg.rfind("cannot open", 0) == 0 ? DALNOK_ERR_IO : DALNOK_ERR_FORMAT;
+        return msg.rfind("cannot open", 0) == 0 || msg == "cannot write pre-load recovery snapshot"
+                   ? DALNOK_ERR_IO : DALNOK_ERR_FORMAT;
     }
     if (missing_out) *missing_out = missing;
     return DALNOK_OK;
@@ -1172,19 +1183,20 @@ DalnokStatus dalnok_project_prepare(const char *path, double sr, DalnokProjectDa
     *out = new DalnokProjectData{std::move(p)};
     return DALNOK_OK;
 }
+void dalnok_project_set_recovery_directory(DalnokEngine *e, const char *path) {
+    if (e) e->impl.setRecoveryDirectory(path ? path : "");
+}
 DalnokStatus dalnok_project_apply(DalnokEngine *e, DalnokProjectData *data) {
     std::unique_ptr<DalnokProjectData> owned(data);
     if (!e || !data || !data->impl) return DALNOK_ERR_INVALID_ARG;
     if (data->impl->sampleRate != e->impl.sampleRate()) return DALNOK_ERR_INVALID_ARG;
-    e->impl.applyProject(std::move(data->impl));
-    return DALNOK_OK;
+    return e->impl.applyProject(std::move(data->impl)) ? DALNOK_OK : DALNOK_ERR_IO;
 }
 DalnokStatus dalnok_project_apply_recovery(DalnokEngine *e, DalnokProjectData *data) {
     std::unique_ptr<DalnokProjectData> owned(data);
     if (!e || !data || !data->impl) return DALNOK_ERR_INVALID_ARG;
     if (data->impl->sampleRate != e->impl.sampleRate()) return DALNOK_ERR_INVALID_ARG;
-    e->impl.applyProject(std::move(data->impl), true);
-    return DALNOK_OK;
+    return e->impl.applyProject(std::move(data->impl), true) ? DALNOK_OK : DALNOK_ERR_IO;
 }
 void dalnok_project_data_release(DalnokProjectData *data) { delete data; }
 

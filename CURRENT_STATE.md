@@ -1,18 +1,23 @@
 ---
-updated: 2026-11-18
+updated: 2026-11-19
 phase: Phases 1 and 3 complete; 2 and 4 in progress
-milestone: hosting complete (VST3/AU/CLAP, editors, parameters, automation, delay compensation); autosave, isolation and streaming next
+milestone: hosting complete (VST3/AU/CLAP, editors, parameters, automation, delay compensation); isolation and streaming next
 ---
 # Current State
 
-## Current priorities (2026-11-18)
+## Current priorities (2026-11-19)
+- **Audit follow-ups, wave 2.** Before activating incoming plug-ins, project apply writes a unique atomic recovery copy; if the write fails, the current project remains open. Recovery opens plug-in slots unloaded with their saved state. A crashing or hanging VST3 initialization fixture leaves a reloadable snapshot (`scripts/ci/plugin-recovery.sh`, normal and AddressSanitizer); `scripts/ci/recovery-smoke.sh` also passes. Synchronous project load now reports snapshot-write failure as an I/O error, with failure atomicity covered by `preactivationRecoveryAndFailure`. The crash/hang fixture compares the full normalized incoming model. Recovery markers retain unresolved copies across repeated crashes and clean quits; the self-test covers selection of both an older recovery and a newer incoming snapshot. This bounds the project-apply exposure; plug-ins remain in-process and A-01 crash isolation is open.
+- Scalar gain, pan, mute, solo and master-gain edits use compact coalesced undo; mixed groups promote to a snapshot (ADR-0012). On the same generated 16-track × 256-clip project, `audit-bench --edits 500` measured gain-edit p50 0.058 ms → below its 0.001 ms display precision, and RSS after 500 edits 302.6 MB → 34.5 MB (starting RSS 34.2 MB and 34.4 MB). Snapshot undo and failure rollback remain for other edits; structural sharing remains open (A-03).
+- Parameter-revision hints and a clip-free scalar refresh path are implemented; scalar setters and undo/redo defer refresh to the display tick. On the same generated 16 × 256 project, release `dalnok-cli audit-ui` measured AppKit drag p50/p95/p99/max 27.771875/30.493334/31.077125/31.706958 → 0.025000/0.031333/0.033625/0.037625 ms and parameter refresh 28.385333/29.191209/29.532209/29.715750 → 3.865959/3.934792/3.967375/3.967375 ms. Each used 30 warmups and 100 samples, Graphite and a visible mixer. Drag events were a tight burst; refresh includes synchronous UI callbacks but excludes deferred drawing/compositing and normal frame pacing. A-05a is **fixed**: the self-test verifies display-tick coalescing, unrelated-track edits without clip reads, scripted changes, undo and same-frame Touch recording; final generated-project walks in both themes cover gain drag, undo and scripted change.
+- A-14 is **fixed**: an instrumented test withheld automatic collection for 100 callbacks, measured depth/high-water 64 and age/skips 36, then verified reset, collection and adoption on the next callback. A structural edit became audible within one 256-frame callback. `commit()` and the public pump normally collect automatically. If the queue is full and collection stops, adoption has no finite bound; no free-list was added.
+- Verification: `DALNOK_SANITIZE=1 scripts/check.sh` passed on the final recovery changes: 197 tests in normal, ASan and TSan runs, live audio smoke and self-test. The self-test covers coalescing, unrelated-track clip reads, same-frame Touch and recovery-marker selection. `scripts/ci/recovery-smoke.sh` passed after the marker changes; the normal and ASan plug-in recovery fixtures passed the full normalized-model crash/hang comparison. Final corrected UI walks in both themes loaded a generated project and captured gain drag, undo and scripted changes for review. Full-frame drawing/compositing timing remains open. The UI walk now waits for project load; the reel self-test waits for the forward animation to settle before testing rewind.
 - **Audit follow-ups (branch `fix/audit-followups`).** Wave 1 landed: linear snapshot compilation (A-04),
   shared plug-in state blobs (A-07), a flush-to-zero render environment (A-12), property and mutated-project
   parser tests (A-10, partial), and corrected status documentation (A-23). A-02 turned out to be already
   implemented — periodic recovery snapshot, launch prompt and `scripts/ci/recovery-smoke.sh` — and was
   misread in the audit. Measured at 4,096 clips: structural edit 0.770 -> 0.255 ms, clip-by-clip build
   1,272 -> 527 ms, undo 0.745 -> 0.238 ms. 191 engine tests pass. The remaining findings stay sequenced in
-  `docs/audits/modernization-roadmap.md`.
+  `docs/audits/modernization-roadmap.md`. The later wave-2 update above supersedes the count and next steps here.
 - **Independent audit (branch `audit/2026-11-codebase`).** Findings, measurements and an ordered plan are in
   `docs/audits/` (report, `findings.json`, roadmap, `benchmarks/`, dashboard). Headline results: the audio path
   is well inside budget (1.11 ms per 512-frame block at 512 tracks), while one UI model read costs 15.9 ms at
@@ -250,9 +255,9 @@ milestone: hosting complete (VST3/AU/CLAP, editors, parameters, automation, dela
 - **Public parity page:** https://droper23.github.io/dalnok-status/ (source in `site/`, published by `scripts/publish-site.sh`).
 
 ## Architecture (now)
-C++20 engine (`engine/`) → C API (`dalnok.h`, v29) → AppKit UI (`app/macos/`). The **engine owns the
+C++20 engine (`engine/`) → C API (`dalnok.h`, v30) → AppKit UI (`app/macos/`). The **engine owns the
 project model**: tracks, clips in z-order, and a media pool. Every edit is a named, undoable command with
-whole-model snapshot undo, also reachable as JSON through the command catalog. The UI is a read-only view
+compact scalar undo and whole-model snapshot undo for other edits, also reachable as JSON through the command catalog. The UI is a read-only view
 that refreshes on `dalnok_model_revision`. Render snapshots reach the audio thread through an atomic
 slot, and retired ones come back through an SPSC queue. See [[System Overview]],
 [[Real-Time Processing]], [[ADR-0005 Project model and commands]], and [[Project Format]].
@@ -310,7 +315,7 @@ slot, and retired ones come back through an SPSC queue. See [[System Overview]],
 ## Not yet / incomplete
 Every row in "Verified working" names the test, self-test or command behind it. This list is what has no such evidence yet.
 - Out-of-process plug-in hosting (crash isolation); plug-ins still run in-process (ADR-0009, audit A-01).
-- Project autosave and crash recovery (audit A-02); only recordings are journaled.
+- Recovery snapshots do not isolate the app from plug-in crashes or hangs; power-loss durability has not been verified.
 - Loopback latency measurement and power-loss validation.
 - Separate input/output devices (built-in mic + speakers is refused with an explanation).
 - Tempo ramps, importing tempo maps, sample-accurate MIDI input timing.

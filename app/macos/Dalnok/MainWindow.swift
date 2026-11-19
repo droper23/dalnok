@@ -306,6 +306,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         }
         palette.onOpenGuide = { [weak self] c in self?.conceptGuide.show(daw: c.daw, query: c.term) }
         session.onChange = { [weak self] in self?.modelChanged() }
+        session.onParameterChange = { [weak self] muteChanged in
+            guard let self else { return }
+            self.headers.sync()
+            if !self.mixer.isHidden { self.mixer.rebuild() }
+            if muteChanged { self.timeline.needsDisplay = true } // muted tracks change clip tint
+            self.updateTitle()
+        }
         session.onMessage = { [weak self] msg in self?.flash(msg) }
         emptyState.isHidden = true // modelChanged shows it if the project has no tracks (also for a rebuilt window)
         modelChanged()
@@ -327,7 +334,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     }
 
     private var lastRecoveryRevision: UInt64?
-    private var recoveryDirectory: URL? {
+    var recoveryDirectory: URL? {
         if let override = ProcessInfo.processInfo.environment["DALNOK_RECOVERY_DIR"], !override.isEmpty {
             return URL(fileURLWithPath: override, isDirectory: true)
         }
@@ -353,47 +360,82 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     /// that is gone means the last session ended unexpectedly.
     private var sessionMarker: URL? { recoveryDirectory?.appendingPathComponent("running.json") }
 
-    /// The newest recovery snapshot written by a session that didn't quit cleanly, if any (and that session's
-    /// process isn't still running). Call before `beginSessionMarker`.
-    func unfinishedSessionSnapshot() -> URL? {
+    /// Recover the latest snapshot of the interrupted session plus any earlier
+    /// offers that were still pending when it began. Call before writing the marker.
+    func unfinishedSessionSnapshots() -> [URL] {
         guard let marker = sessionMarker, let dir = recoveryDirectory,
               let data = try? Data(contentsOf: marker),
-              let info = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+              let info = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return [] }
         let pid = (info["pid"] as? NSNumber)?.int32Value ?? 0
-        if pid > 0 && pid != getpid() && (kill(pid, 0) == 0 || errno == EPERM) { return nil } // that session is still open
+        if pid > 0 && pid != getpid() && (kill(pid, 0) == 0 || errno == EPERM) { return [] }
         let started = (info["started"] as? NSNumber)?.doubleValue ?? 0
         let snapshots = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
-        return snapshots
-            .filter { $0.pathExtension == "dalnok" && $0.lastPathComponent.hasPrefix("Recovery-") }
-            .compactMap { url -> (URL, Date)? in
-                guard let d = try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate,
-                      d.timeIntervalSince1970 >= started else { return nil }
-                return (url, d)
-            }
-            .max { $0.1 < $1.1 }?.0
+        let eligible = snapshots.filter { $0.pathExtension == "dalnok" && $0.lastPathComponent.hasPrefix("Recovery-") }
+        let handled = Set(info["handledRecoveries"] as? [String] ?? [])
+        let pendingNames = (info["pendingRecoveries"] as? [String] ?? []) + ((info["pendingRecovery"] as? String).map { [$0] } ?? [])
+        let pending = pendingNames.compactMap { name in eligible.first { $0.lastPathComponent == name && !handled.contains(name) } }
+        let newest = eligible.compactMap { url -> (URL, Date)? in
+            guard !handled.contains(url.lastPathComponent),
+                  let date = try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate,
+                  date.timeIntervalSince1970 >= started else { return nil }
+            return (url, date)
+        }.max { $0.1 < $1.1 }?.0
+        var seen = Set<String>()
+        return ([newest].compactMap { $0 } + pending).filter { seen.insert($0.lastPathComponent).inserted }
     }
 
+    func unfinishedSessionSnapshot() -> URL? { unfinishedSessionSnapshots().first }
+
     /// Records this session as running and prunes recovery snapshots older than two weeks.
-    func beginSessionMarker() {
+    func beginSessionMarker(carrying snapshots: [URL] = []) {
         guard let marker = sessionMarker, let dir = recoveryDirectory else { return }
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let info: [String: Any] = ["pid": Int(getpid()), "started": Date().timeIntervalSince1970]
+        let carried = snapshots.compactMap { url -> String? in
+            guard url.deletingLastPathComponent().standardizedFileURL == dir.standardizedFileURL,
+                  url.pathExtension == "dalnok", url.lastPathComponent.hasPrefix("Recovery-") else { return nil }
+            return url.lastPathComponent
+        }
+        var info: [String: Any] = ["pid": Int(getpid()), "started": Date().timeIntervalSince1970]
+        if !carried.isEmpty { info["pendingRecoveries"] = carried }
         try? JSONSerialization.data(withJSONObject: info).write(to: marker, options: .atomic)
         let cutoff = Date().addingTimeInterval(-14 * 86_400)
         for url in (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
-        where url.lastPathComponent.hasPrefix("Recovery-") {
+        where url.lastPathComponent.hasPrefix("Recovery-") && !carried.contains(url.lastPathComponent) {
             if let d = try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate, d < cutoff {
                 try? FileManager.default.removeItem(at: url)
             }
         }
     }
-    func endSessionMarker() { if let m = sessionMarker { try? FileManager.default.removeItem(at: m) } }
+    func endSessionMarker() {
+        guard let marker = sessionMarker else { return }
+        if let data = try? Data(contentsOf: marker),
+           var info = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+           let pending = info["pendingRecoveries"] as? [String], !pending.isEmpty {
+            // A successfully opened recovery is dirty. Keep the other offers
+            // for the next launch, even when this session quits cleanly.
+            info["pid"] = 0
+            info["started"] = Date().timeIntervalSince1970 + 1
+            if let updated = try? JSONSerialization.data(withJSONObject: info) { try? updated.write(to: marker, options: .atomic) }
+        } else { try? FileManager.default.removeItem(at: marker) }
+    }
 
-    /// At launch: if the last session ended unexpectedly and left a snapshot, offer to open it.
-    func offerCrashRecovery() {
-        let snapshot = unfinishedSessionSnapshot()
-        beginSessionMarker()
-        guard let snapshot, let window else { return }
+    func clearPendingRecovery(_ snapshot: URL) {
+        guard let marker = sessionMarker, let data = try? Data(contentsOf: marker),
+              var info = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              (info["pid"] as? NSNumber)?.int32Value == getpid() else { return }
+        let name = snapshot.lastPathComponent
+        var pending = info["pendingRecoveries"] as? [String] ?? []
+        pending.removeAll { $0 == name }
+        info["pendingRecoveries"] = pending
+        var handled = info["handledRecoveries"] as? [String] ?? []
+        if !handled.contains(name) { handled.append(name) }
+        info["handledRecoveries"] = handled
+        if let updated = try? JSONSerialization.data(withJSONObject: info) { try? updated.write(to: marker, options: .atomic) }
+    }
+
+    /// Offer each unresolved copy; cancelling or a failed open leaves the rest in the marker.
+    func offerCrashRecovery(_ snapshots: [URL]) {
+        guard let snapshot = snapshots.first, let window else { return }
         let when = (try? snapshot.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? Date()
         let alert = NSAlert()
         alert.messageText = "Dalnok quit unexpectedly"
@@ -401,8 +443,18 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         alert.addButton(withTitle: "Open Recovered Project")
         alert.addButton(withTitle: "Not Now")
         alert.beginSheetModal(for: window) { [weak self] resp in
-            guard resp == .alertFirstButtonReturn else { return }
-            MainActor.assumeIsolated { self?.confirmDiscard { self?.openRecovery(snapshot) } }
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                let next = { self.offerCrashRecovery(Array(snapshots.dropFirst())) }
+                guard resp == .alertFirstButtonReturn else { self.clearPendingRecovery(snapshot); next(); return }
+                self.confirmDiscard {
+                    self.openRecovery(snapshot) { opened in
+                        // Opening a copy makes it dirty; do not immediately ask
+                        // the user to discard it to open the next one.
+                        if opened { self.clearPendingRecovery(snapshot) }
+                    }
+                }
+            }
         }
     }
 
@@ -530,7 +582,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     func tick() {
         let e = session.engine
         e.collectGarbage()
-        session.refresh() // picks up changes from any source (e.g. scripts)
+        session.refresh(onDisplayTick: true) // picks up changes from any source (e.g. scripts)
         _ = session.pollJobs() // installs finished time-stretch renders
         followTempoSegment()
         automationWriter.tick()
@@ -788,13 +840,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     }
 
     @objc func toggleMuteTrack(_ sender: Any?) {
-        guard let t = selectedTrack, let tv = session.track(t) else { return }
-        session.setMute(t, !tv.muted)
+        guard let t = selectedTrack else { return }
+        var gain: Float = 0, pan: Float = 0, muted = false, solo = false
+        guard dalnok_track_parameters(session.h, t, &gain, &pan, &muted, &solo) == DALNOK_OK else { return }
+        session.setMute(t, !muted)
     }
 
     @objc func toggleSoloTrack(_ sender: Any?) {
-        guard let t = selectedTrack, let tv = session.track(t) else { return }
-        session.setSolo(t, !tv.solo)
+        guard let t = selectedTrack else { return }
+        var gain: Float = 0, pan: Float = 0, muted = false, solo = false
+        guard dalnok_track_parameters(session.h, t, &gain, &pan, &muted, &solo) == DALNOK_OK else { return }
+        session.setSolo(t, !solo)
     }
 
     @objc func renameTrack(_ sender: Any?) {

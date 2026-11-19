@@ -41,6 +41,7 @@ usage:
                                                                          load each plugin in a separate scanner process
   dalnok-cli bench [--tracks N] [--seconds S]                          render-cost benchmark (no device)
   dalnok-cli audit-bench <project.dalnok> [--edits N]                   audit-only: model-read, edit and undo cost
+  dalnok-cli audit-ui <project.dalnok>                               audit-only: AppKit drag and refresh timings
   dalnok-cli audit-scale [--tracks N] [--clips N]                       audit-only: edit cost vs model size
   dalnok-cli import <project.rpp|.als|.logicx|.fcpxml|stems-folder> [--save out.dalnok] [--render out.wav] [--quiet]
 """
@@ -402,6 +403,19 @@ case "import":
     }
     dalnok_engine_destroy(engine)
 
+case "audit-ui":
+    guard args.count >= 2 else { print(usage); exit(2) }
+    let executable = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL.deletingLastPathComponent().appendingPathComponent("Dalnok")
+    let process = Process()
+    process.executableURL = executable
+    process.arguments = [args[1], "--uiwalk", NSTemporaryDirectory(), "--no-welcome"]
+    var environment = ProcessInfo.processInfo.environment
+    environment["DALNOK_AUDIT_UI"] = "1"
+    environment["DALNOK_RECOVERY_DIR"] = NSTemporaryDirectory() + "dalnok-audit-recovery-" + UUID().uuidString
+    process.environment = environment
+    do { try process.run(); process.waitUntilExit() } catch { fail("AppKit audit launch failed: \(error)") }
+    if process.terminationStatus != 0 { exit(process.terminationStatus) }
+
 case "audit-bench":
     // Audit instrumentation only (docs/audits): measures what the app pays per model read and per edit on a
     // real project. It adds no engine or app behaviour; it only calls the public C API.
@@ -486,6 +500,25 @@ case "audit-bench":
     summarize("parameter edit (track gain, undoable)", gains)
     print(String(format: "undo memory: RSS %.1f MB -> %.1f MB after %d undoable parameter edits (%.2f MB/edit)",
                  rssBefore, rssMB(), edits, (rssMB() - rssBefore) / Double(edits)))
+    let trackIds = (0..<max(0, dalnok_track_count(engine))).map { dalnok_track_at(engine, $0) }
+    func readParameters() {
+        for tid in trackIds {
+            var gain: Float = 0, pan: Float = 0, muted = false, solo = false
+            _ = dalnok_track_parameters(engine, tid, &gain, &pan, &muted, &solo)
+        }
+    }
+    var scalarReads: [Double] = [], dragEvents: [Double] = []
+    for i in 0..<100 {
+        var start = DispatchTime.now().uptimeNanoseconds
+        readParameters()
+        scalarReads.append(Double(DispatchTime.now().uptimeNanoseconds - start) / 1e6)
+        start = DispatchTime.now().uptimeNanoseconds
+        _ = dalnok_track_set_gain_db(engine, firstTrack, Float(-(i % 20)))
+        readParameters()
+        dragEvents.append(Double(DispatchTime.now().uptimeNanoseconds - start) / 1e6)
+    }
+    summarize("scalar read (C API only)", scalarReads)
+    summarize("gain edit plus scalar read (C API only)", dragEvents)
     if firstClip != 0 {
         var moves: [Double] = []
         for i in 0..<edits {

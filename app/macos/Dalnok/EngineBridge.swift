@@ -83,6 +83,10 @@ final class Engine {
     func endGroup() { dalnok_undo_end_group(handle) }
 
     // Project
+    func setRecoveryDirectory(_ directory: URL?) {
+        if let directory { dalnok_project_set_recovery_directory(handle, directory.path) }
+        else { dalnok_project_set_recovery_directory(handle, nil) }
+    }
     var isDirty: Bool { dalnok_project_dirty(handle) }
     func newProject() { dalnok_project_new(handle) }
     func save(to url: URL, copyAudio: Bool = false) throws {
@@ -210,7 +214,7 @@ final class Engine {
         }.value
         let status = recovering ? dalnok_project_apply_recovery(handle, prepared.data) : dalnok_project_apply(handle, prepared.data)
         guard status == DALNOK_OK else {
-            throw EngineError(description: "project could not be applied")
+            throw EngineError(description: status == DALNOK_ERR_IO ? "Could not write the recovery snapshot; the current project was left open." : "project could not be applied")
         }
         return prepared.missing
     }
@@ -226,7 +230,8 @@ final class Engine {
                   let data else { throw EngineError(description: cString(err)) }
             return Prepared(data: data, report: cString(report))
         }.value
-        guard dalnok_project_apply(handle, prepared.data) == DALNOK_OK else { throw EngineError(description: "import could not be applied") }
+        let status = dalnok_project_apply(handle, prepared.data)
+        guard status == DALNOK_OK else { throw EngineError(description: status == DALNOK_ERR_IO ? "Could not write the recovery snapshot; the current project was left open." : "import could not be applied") }
         return prepared.report
     }
 

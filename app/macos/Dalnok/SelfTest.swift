@@ -49,6 +49,7 @@ final class SelfTest {
         m.update()
         guard it.isEnabled else { return false }
         m.performActionForItem(at: m.index(of: it))
+        s.refresh(onDisplayTick: true) // simulate a display tick between scripted menu actions
         return true
     }
 
@@ -292,14 +293,17 @@ final class SelfTest {
             f.mouseDown(with: mouse(.leftMouseDown, center))
             f.mouseDragged(with: mouse(.leftMouseDragged, CGPoint(x: center.x, y: center.y - 40)))
             f.mouseUp(with: mouse(.leftMouseUp, center))
+            s.refresh(onDisplayTick: true) // simulate the next display tick
             let g = s.track(row.trackId)!.gainDb
             check(g < -2 && e.undoName == "Volume", String(format: "gain knob drag lowered volume to %.1f dB (one undo step)", g))
             f.mouseDown(with: mouse(.leftMouseDown, center, .option))
+            s.refresh(onDisplayTick: true)
             check(s.track(row.trackId)!.gainDb == 0, "⌥-click resets gain to 0 dB")
             let k = row.pan
             k.mouseDown(with: mouse(.leftMouseDown, at(k, k.bounds.midX, k.bounds.midY)))
             k.mouseDragged(with: mouse(.leftMouseDragged, CGPoint(x: at(k, k.bounds.midX, 0).x, y: at(k, k.bounds.midX, k.bounds.midY).y + 30)))
             k.mouseUp(with: mouse(.leftMouseUp, at(k, k.bounds.midX, k.bounds.midY)))
+            s.refresh(onDisplayTick: true)
             check((s.track(row.trackId)?.pan ?? 0) > 0.2, "pan knob drag up pans right (\(s.track(row.trackId)?.pan ?? 0))")
             _ = perform("Undo"); _ = perform("Undo"); _ = perform("Undo")
             check(s.track(row.trackId)!.gainDb == 0 && s.track(row.trackId)!.pan == 0, "undo restores gain and pan")
@@ -316,8 +320,10 @@ final class SelfTest {
         guard let t0 = s.tracks.first?.id else { check(false, "a track exists for track commands"); return finish() }
         w.headers.select(t0)
         check(perform("Solo Track"), "menu Track > Solo Track")
+        s.refresh(onDisplayTick: true)
         check(s.track(t0)?.solo == true, "track soloed")
         _ = perform("Solo Track")
+        s.refresh(onDisplayTick: true)
         check(s.track(t0)?.solo == false, "track unsoloed")
         check(perform("Move Track Down"), "menu Track > Move Track Down")
         check(s.tracks.dropFirst().first?.id == t0, "track moved down")
@@ -468,6 +474,36 @@ final class SelfTest {
             check(w.unfinishedSessionSnapshot() == nil, "no offer while that session is still running")
             writeMarker(pid: 999_999, started: Date().timeIntervalSince1970 + 60) // nothing saved since it started
             check(w.unfinishedSessionSnapshot() == nil, "no offer when that session saved no snapshot")
+            if let recovery {
+                // Simulate a previous snapshot predating this new session, then
+                // another crash before the delayed recovery alert appears.
+                try? FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(-3_600)], ofItemAtPath: recovery.path)
+                w.beginSessionMarker(carrying: [recovery])
+                if let data = try? Data(contentsOf: marker),
+                   var info = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
+                    info["pid"] = 999_999
+                    try? JSONSerialization.data(withJSONObject: info).write(to: marker)
+                }
+                check(w.unfinishedSessionSnapshot()?.resolvingSymlinksInPath() == recovery.resolvingSymlinksInPath(),
+                      "a second crash before the alert keeps the previous recovery offer")
+                w.beginSessionMarker(carrying: [recovery])
+                let incoming = recoveryDir.appendingPathComponent("Recovery-incoming.dalnok")
+                try? Data("new project".utf8).write(to: incoming)
+                let pending = w.unfinishedSessionSnapshots()
+                check(pending.map(\.lastPathComponent) == [incoming.lastPathComponent, recovery.lastPathComponent],
+                      "newer incoming snapshot and previous recovery are both offered after a crash")
+                w.beginSessionMarker(carrying: pending)
+                w.clearPendingRecovery(incoming)
+                check(w.unfinishedSessionSnapshot()?.lastPathComponent == recovery.lastPathComponent,
+                      "handling the newer copy exposes the earlier recovery")
+                w.endSessionMarker()
+                check(w.unfinishedSessionSnapshot()?.lastPathComponent == recovery.lastPathComponent,
+                      "a clean quit preserves an unresolved recovery offer")
+                w.beginSessionMarker(carrying: [recovery])
+                w.clearPendingRecovery(recovery)
+                check(w.unfinishedSessionSnapshots().isEmpty, "handled offers are not repeated")
+                try? FileManager.default.removeItem(at: incoming)
+            }
             w.beginSessionMarker()
             w.endSessionMarker()
             check(!FileManager.default.fileExists(atPath: marker.path) && w.unfinishedSessionSnapshot() == nil,
@@ -564,7 +600,7 @@ final class SelfTest {
         w.timeline.clampScrollY()
         check(w.timeline.scrollY == w.timeline.maxScrollY && w.headers.scrollY == w.timeline.scrollY, "vertical scrolling stops at the last track")
         for _ in 0..<added { e.undo() }
-        s.refresh(); w.window?.layoutIfNeeded()
+        s.refresh(onDisplayTick: true); w.window?.layoutIfNeeded()
         check(w.timeline.scrollY <= w.timeline.maxScrollY && w.headers.scrollY == w.timeline.scrollY,
               "removing tracks keeps the viewport valid and aligned (\(w.timeline.scrollY))")
         w.timeline.scrollY = 0
@@ -919,9 +955,17 @@ final class SelfTest {
         await wait(0.15); deck.step(dt: 0.016)
         let wound = Double(e.position - start) / e.sampleRate
         check(abs(wound - TapeDeckView.windSpeed) < 1.5 && deck.model.angles.1 > held.1, "F.FWD winds the playhead forward at \(TapeDeckView.windSpeed)× (\(wound) s)")
+        // Let the reel animation catch the forward seek before testing the opposite direction.
+        for _ in 0..<40 {
+            if abs(deck.model.shown - Double(e.position) / e.sampleRate) < 0.1 { break }
+            await wait(0.05); deck.step(dt: 0.05)
+        }
         let before = deck.model.angles
         deck.wind(-1, seconds: 0.5)
-        await wait(0.15); deck.step(dt: 0.016)
+        for _ in 0..<40 {
+            await wait(0.05); deck.step(dt: 0.05)
+            if deck.model.angles.1 < before.1 { break }
+        }
         check(deck.model.angles.1 < before.1, "REWIND turns the reels backwards")
         deck.play.onPress?(); await wait(0.3)
         deck.stop.onPress?(); await wait(0.15)
@@ -1793,6 +1837,26 @@ final class SelfTest {
     private func motion() async {
         let e = s.engine
         guard let track = s.tracks.first?.id, let row = w.headers.row(track) else { return check(false, "a track for motion checks") }
+        let clipReads = s.clipReads
+        s.setGain(track, db: -1)
+        check(!s.refresh() && !s.refresh(), "parameter refresh waits for the display tick")
+        s.refresh(onDisplayTick: true)
+        check(s.clipReads == clipReads && abs((s.track(track)?.gainDb ?? 0) + 1) < 1e-6,
+              "parameter refresh updates gain without reading clips")
+        e.undo(); s.refresh(onDisplayTick: true)
+        check(s.clipReads == clipReads, "parameter undo refresh does not read clips")
+        if let other = s.tracks.first(where: { $0.id != track }) {
+            s.setPan(other.id, 0.25)
+            s.refresh(onDisplayTick: true)
+            check(s.clipReads == clipReads && abs((s.track(other.id)?.pan ?? 0) - 0.25) < 1e-6,
+                  "another track's parameter change does not read clips")
+            e.undo(); s.refresh(onDisplayTick: true)
+        }
+        _ = dalnok_track_set_gain_db(s.h, track, -9)
+        s.refresh(onDisplayTick: true)
+        check(s.clipReads == clipReads && abs((s.track(track)?.gainDb ?? 0) + 9) < 1e-6,
+              "scripted gain edit refreshes without reading clips")
+        e.undo(); s.refresh(onDisplayTick: true)
         Motion.override = true
         defer { Motion.override = false }
         // Knob glide: an undone volume change animates instead of jumping.
@@ -2017,6 +2081,7 @@ final class SelfTest {
         f.mouseDown(with: mouse(.leftMouseDown, a))
         for k in 1...6 { f.mouseDragged(with: mouse(.leftMouseDragged, CGPoint(x: a.x, y: a.y + (b.y - a.y) * CGFloat(k) / 6))) }
         f.mouseUp(with: mouse(.leftMouseUp, b))
+        s.refresh(onDisplayTick: true)
         let after = s.track(src)?.gainDb ?? 0
         check(after < before - 3, "dragging the strip fader down lowers the volume (\(before) → \(after) dB)")
         check(s.engine.undoName == "Volume" && perform("Undo") && abs((s.track(src)?.gainDb ?? 0) - before) < 0.01, "the fader drag is one undo step")
@@ -2061,12 +2126,19 @@ final class SelfTest {
                 let pool = dalnok_pool_add(engine.handle, media, nil)
                 _ = dalnok_clip_add(engine.handle, track, pool, 0, 0, 0)
                 dalnok_media_release(media)
-                session.refresh()
+                session.refresh(onDisplayTick: true)
                 _ = session.setAutomation(track, 0, [DalnokAutoPoint(frame: 0, value: -200), DalnokAutoPoint(frame: 90_000, value: -200)])
                 AutomationWriter.mode = .touch
                 var l = [Float](repeating: 0, count: 512), r = l
                 func pump(_ count: Int) { for _ in 0..<count { _ = dalnok_engine_pump(engine.handle, &l, &r, 512) } }
                 engine.play(); pump(12)
+                writer.touch(track, 0, true)
+                session.setGain(track, db: -6)
+                writer.touch(track, 0, false)
+                check(session.track(track)?.volumeAuto.contains(where: { $0.frame == engine.position && abs($0.value + 6) < 1e-6 }) == true,
+                      "same-frame Touch records the final engine gain")
+                session.setGain(track, db: 0)
+                _ = session.setAutomation(track, 0, [DalnokAutoPoint(frame: 0, value: -200), DalnokAutoPoint(frame: 90_000, value: -200)])
                 writer.touch(track, 0, true); pump(4); writer.tick()
                 engine.seek(0); pump(3); writer.tick()
                 pump(4)

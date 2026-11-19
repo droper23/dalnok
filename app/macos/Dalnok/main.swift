@@ -80,26 +80,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         if let dir = ProcessInfo.processInfo.environment["DALNOK_WINDOW_DUMP"] { WindowDump.install(dir: URL(fileURLWithPath: dir)) }
-        if let dir = value("--uiwalk") {
-            Motion.override = false
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { UIWalk(app: self, dir: URL(fileURLWithPath: dir)).run() }
-        }
         if let dir = value("--selftest") {
             SelfTest(app: self, files: files, workdir: URL(fileURLWithPath: dir)).run()
             return
+        }
+        // Record the new session before opening a project: plug-in activation can
+        // crash or hang before the delayed recovery alert is presented.
+        let previousRecovery = interactiveLaunch ? main.unfinishedSessionSnapshots() : []
+        if interactiveLaunch {
+            main.beginSessionMarker(carrying: previousRecovery)
+            engine.setRecoveryDirectory(main.recoveryDirectory)
         }
         let projects = files.filter { $0.pathExtension == "dalnok" }
         let foreign = files.filter { MainWindowController.foreignExtensions.contains($0.pathExtension.lowercased()) }
         let audio = files.filter { $0.pathExtension != "dalnok" && !foreign.contains($0) }
 
         if let f = foreign.first { main.importProject(f, confirm: false) }
-        if interactiveLaunch { DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in self?.main.offerCrashRecovery() } }
+        if interactiveLaunch { DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in self?.main.offerCrashRecovery(previousRecovery) } }
         if interactiveLaunch && Analog.on && !Motion.reduced { main.vfdTestUntil = Date().addingTimeInterval(0.6) }
         if files.isEmpty && snapshot == nil && !args.contains("--no-welcome") && !WelcomeController.hasCompleted {
             main.welcome.show()
         }
         let finish = { [weak self] in
             guard let self else { return }
+            if let dir = value("--uiwalk") {
+                Motion.override = false
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    UIWalk(app: self, dir: URL(fileURLWithPath: dir)).run()
+                }
+                return
+            }
             // Developer: --tour <dir> plays a scripted walk through the window and writes its frames (README GIFs).
             if let dir = value("--tour") { return Screenshots.tour(app: self, dir: URL(fileURLWithPath: dir)) }
             if args.contains("--play") { engine.play() }
@@ -115,7 +125,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         if let p = projects.first {
-            main.openProject(p) { _ in finish() } // snapshots wait until the project (and its plug-ins) loaded
+            main.openProject(p) { ok in
+                if !ok && args.contains("--uiwalk") { exit(2) }
+                finish()
+            } // snapshots and UI walks wait until the project (and its plug-ins) loaded
         } else if audio.isEmpty { finish() } else { session.importFiles(audio, completion: finish) }
     }
 

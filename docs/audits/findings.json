@@ -42,7 +42,7 @@
       "priority": "P0",
       "category": "Reliability",
       "subsystem": "Plugin hosting",
-      "status": "open",
+      "status": "partial",
       "summary": "VST3, CLAP and Audio Units are loaded in-process on the audio thread and on the control thread. A crash in any plug-in terminates Dalnok, taking unsaved project edits with it.",
       "evidence": [
         "ADR-0009: 'Processing starts in-process. Plugins run on the audio thread inside an instrument slot or an insert chain, called through one explicit boundary where the nonblocking check is suppressed.'",
@@ -81,7 +81,51 @@
         "reliability": 5,
         "value": 5
       },
-      "measured": false
+      "measured": false,
+      "resolution": "Partial mitigation: A-01a snapshots the incoming project before plug-in activation and recovery opens slots unloaded. Third-party plug-ins still run in-process; crash isolation and hang containment remain open."
+    },
+    {
+      "id": "A-01a",
+      "title": "Snapshot incoming project before plug-in activation",
+      "priority": "P0",
+      "category": "Reliability",
+      "subsystem": "Plugin hosting",
+      "status": "fixed",
+      "summary": "Protect incoming project state before initializing in-process plug-ins.",
+      "evidence": [
+        "Before activation, a unique atomic recovery copy is written; on write failure the existing project remains open and synchronous load reports an I/O error (Persistence/preactivationRecoveryAndFailure). Recovery preserves plug-in slots and state without initializing them. scripts/ci/plugin-recovery.sh compares the full normalized incoming model and passes crash and hang fixtures normally and under AddressSanitizer; scripts/ci/recovery-smoke.sh passes. Recovery markers carry unresolved copies across repeated crashes and clean quits; the self-test covers old/new snapshot selection. The final DALNOK_SANITIZE=1 scripts/check.sh passed after the recovery changes: 197 tests each in normal, ASan and TSan runs, plus live audio smoke and self-test. In-process plug-in crashes and hangs are not contained."
+      ],
+      "files": [
+        "engine/src/plugin_host.hpp",
+        "engine/src/platform/macos/vst3_host.cpp",
+        "engine/src/platform/macos/au_host.mm",
+        "engine/src/platform/macos/clap_host.cpp",
+        "engine/src/engine.cpp"
+      ],
+      "recommendation": "Incoming project is preserved before third-party initialization and can be opened with plug-ins unloaded.",
+      "alternatives": [],
+      "effort": "S",
+      "confidence": "high",
+      "risk": "See parent finding for remaining programme-level risks.",
+      "dependencies": [
+        "A-02"
+      ],
+      "verification": [
+        "scripts/ci/plugin-recovery.sh: crash and hang, full normalized incoming-model comparison",
+        "DALNOK_SANITIZE=1 scripts/ci/plugin-recovery.sh",
+        "scripts/ci/recovery-smoke.sh",
+        "Persistence/preactivationRecoveryAndFailure: I/O status and unchanged current project",
+        "SelfTest: previous and newer pending recovery selection across crashes and clean quit; final full sanitizer check passed after recovery changes"
+      ],
+      "acceptance": "Incoming project is preserved before third-party initialization and can be opened with plug-ins unloaded.",
+      "impact": {
+        "performance": 2,
+        "maintenance": 3,
+        "reliability": 5,
+        "value": 5
+      },
+      "measured": false,
+      "resolution": "Before activation, a unique atomic recovery copy is written; on write failure the existing project remains open and synchronous load reports an I/O error (Persistence/preactivationRecoveryAndFailure). Recovery preserves plug-in slots and state without initializing them. scripts/ci/plugin-recovery.sh compares the full normalized incoming model and passes crash and hang fixtures normally and under AddressSanitizer; scripts/ci/recovery-smoke.sh passes. Recovery markers carry unresolved copies across repeated crashes and clean quits; the self-test covers old/new snapshot selection. The final DALNOK_SANITIZE=1 scripts/check.sh passed after the recovery changes: 197 tests each in normal, ASan and TSan runs, plus live audio smoke and self-test. In-process plug-in crashes and hangs are not contained."
     },
     {
       "id": "A-02",
@@ -131,7 +175,7 @@
       "priority": "P1",
       "category": "Performance",
       "subsystem": "Project model / undo",
-      "status": "open",
+      "status": "partial",
       "summary": "Engine::edit copies the entire Model before running the edit closure, for every mutation, including gain/pan/mute edits whose real effect is an atomic store. Undo keeps up to 500 of those copies, each containing every clip, every plug-in slot and every plug-in state string.",
       "evidence": [
         "engine/src/engine.cpp:282 - `Model before = model_;` runs for every edit, structural or not.",
@@ -165,7 +209,44 @@
         "reliability": 2,
         "value": 4
       },
-      "measured": true
+      "measured": true,
+      "resolution": "Partial: A-03a uses compact undo for scalar mixer edits and measured 500 gain-edit RSS 302.6 MB to 34.5 MB at 4,096 clips. Structural edits still retain whole-model snapshots; structurally shared undo remains open."
+    },
+    {
+      "id": "A-03a",
+      "title": "Compact undo for scalar mixer edits",
+      "priority": "P1",
+      "category": "Performance",
+      "subsystem": "Project model / undo",
+      "status": "fixed",
+      "summary": "Avoid full model copies for gain, pan, mute, solo and master gain edits.",
+      "evidence": [
+        "Compact scalar undo coalesces drags and promotes mixed groups to pre-group snapshots; failed validation is atomic. UndoAndEditing.parameterGroupsAndMixedEditsUndoExactly and randomEditsFullyUndoToSerializedBaseline pass. On the same generated 16-track × 256-clip project, audit-bench --edits 500 measured gain p50 0.058 ms to below 0.001 ms display precision, with RSS after 500 edits 302.6 MB to 34.5 MB (starting RSS 34.2 and 34.4 MB). ADR-0012 records the change; structural snapshots remain."
+      ],
+      "files": [
+        "engine/src/engine.cpp",
+        "engine/src/engine.hpp"
+      ],
+      "recommendation": "A scalar fader drag is one undo step without a full model copy; mixed groups and failed edits preserve correctness.",
+      "alternatives": [],
+      "effort": "M",
+      "confidence": "high",
+      "risk": "See parent finding for remaining programme-level risks.",
+      "dependencies": [],
+      "verification": [
+        "UndoAndEditing.parameterGroupsAndMixedEditsUndoExactly",
+        "UndoAndEditing.randomEditsFullyUndoToSerializedBaseline",
+        "dalnok-cli audit-bench on the same generated 4,096-clip project with --edits 500"
+      ],
+      "acceptance": "A scalar fader drag is one undo step without a full model copy; mixed groups and failed edits preserve correctness.",
+      "impact": {
+        "performance": 4,
+        "maintenance": 3,
+        "reliability": 2,
+        "value": 4
+      },
+      "measured": true,
+      "resolution": "Compact scalar undo coalesces drags and promotes mixed groups to pre-group snapshots; failed validation is atomic. UndoAndEditing.parameterGroupsAndMixedEditsUndoExactly and randomEditsFullyUndoToSerializedBaseline pass. On the same generated 16-track × 256-clip project, audit-bench --edits 500 measured gain p50 0.058 ms to below 0.001 ms display precision, with RSS after 500 edits 302.6 MB to 34.5 MB (starting RSS 34.2 and 34.4 MB). ADR-0012 records the change; structural snapshots remain."
     },
     {
       "id": "A-04",
@@ -215,7 +296,7 @@
       "priority": "P1",
       "category": "Performance",
       "subsystem": "App / model sync",
-      "status": "open",
+      "status": "partial",
       "summary": "Session.refresh() walks every track, clip, plug-in, send and automation lane through the C API whenever the model revision changes. MainWindow calls it from a 60 Hz tick and after every edit, and modelChanged() then rebuilds the device panel and mixer. A fader drag therefore pays a full O(tracks + clips) C-API pass per mouse event.",
       "evidence": [
         "app/macos/Dalnok/Session.swift:95 - refresh() re-queries dalnok_track_count/at/info, dalnok_track_clip_at, dalnok_clip_info, note lists, plug-in slots, sends, automation and hidden flags.",
@@ -249,7 +330,47 @@
         "reliability": 3,
         "value": 4
       },
-      "measured": true
+      "measured": true,
+      "resolution": "Partial: A-05a fixes scalar revision refresh, with coalescing and clip-read self-tests, both-theme UI walks, and matching AppKit timing (benchmarks/results.json; deferred drawing excluded). Incremental change sets, per-track structural refresh and whole-frame performance remain open."
+    },
+    {
+      "id": "A-05a",
+      "title": "Skip full model reads for scalar revisions",
+      "priority": "P1",
+      "category": "Performance",
+      "subsystem": "App / model sync",
+      "status": "fixed",
+      "summary": "Use parameter-only revision hints to avoid reading clips during scalar refresh.",
+      "evidence": [
+        "Fixed: scalar setters and scalar undo/redo defer to a clip-free parameter refresh on the display tick. scripts/check.sh self-tests verify coalescing, zero clip reads for another track, scripted edits, undo, and same-frame Touch recording; final generated-project UI walks in both themes cover gain drag, undo and scripted change. On a generated 16 × 256 project, release AppKit audit-ui measured drag p50/p95/p99/max 27.771875/30.493334/31.077125/31.706958 ms before and 0.025000/0.031333/0.033625/0.037625 ms after; parameter refresh 28.385333/29.191209/29.532209/29.715750 ms before and 3.865959/3.934792/3.967375/3.967375 ms after. Graphite, mixer visible, 30 warmups and 100 samples; drag events were a tight burst. Refresh includes synchronous UI callbacks; deferred drawing/compositing and normal frame pacing are excluded."
+      ],
+      "files": [
+        "app/macos/Dalnok/Session.swift",
+        "app/macos/Dalnok/MainWindow.swift",
+        "engine/src/dalnok_api.cpp"
+      ],
+      "recommendation": "Parameter-only changes avoid clip and note reads and coalesce to at most one refresh per frame, with measured UI and drag costs.",
+      "alternatives": [],
+      "effort": "S",
+      "confidence": "high",
+      "risk": "See parent finding for remaining programme-level risks.",
+      "dependencies": [
+        "A-03a"
+      ],
+      "verification": [
+        "scripts/check.sh self-test: parameter coalescing, unrelated-track zero clip reads, scripted edits, undo and same-frame Touch",
+        "Final generated-project --uiwalk in Graphite and Warm Analog: gain drag, undo and scripted edit",
+        "dalnok-cli audit-ui on the same generated 4,096-clip project in baseline and final release builds"
+      ],
+      "acceptance": "Parameter-only changes avoid clip and note reads and coalesce to at most one refresh per frame, with measured UI and drag costs.",
+      "impact": {
+        "performance": 4,
+        "maintenance": 3,
+        "reliability": 3,
+        "value": 4
+      },
+      "measured": true,
+      "resolution": "Fixed: scalar setters and scalar undo/redo defer to a clip-free parameter refresh on the display tick. scripts/check.sh self-tests verify coalescing, zero clip reads for another track, scripted edits, undo, and same-frame Touch recording; final generated-project UI walks in both themes cover gain drag, undo and scripted change. On a generated 16 × 256 project, release AppKit audit-ui measured drag p50/p95/p99/max 27.771875/30.493334/31.077125/31.706958 ms before and 0.025000/0.031333/0.033625/0.037625 ms after; parameter refresh 28.385333/29.191209/29.532209/29.715750 ms before and 3.865959/3.934792/3.967375/3.967375 ms after. Graphite, mixer visible, 30 warmups and 100 samples; drag events were a tight burst. Refresh includes synchronous UI callbacks; deferred drawing/compositing and normal frame pacing are excluded."
     },
     {
       "id": "A-06",
@@ -591,7 +712,7 @@
       "priority": "P2",
       "category": "Reliability",
       "subsystem": "Real-time handoff",
-      "status": "open",
+      "status": "fixed",
       "summary": "The audio thread adopts a new snapshot only when the 64-entry retire queue has space. If the control thread stops collecting, edits quietly stop taking effect (playback continues with stale state) and nothing surfaces it.",
       "evidence": [
         "engine/src/engine.cpp:2266 - `if (!retired_.full()) { ... adopted ... }`.",
@@ -622,7 +743,8 @@
         "reliability": 4,
         "value": 3
       },
-      "measured": false
+      "measured": false,
+      "resolution": "Fixed: snapshotSaturationWithoutCollection fills the 64-slot queue over 100 callbacks and verifies depth/high-water 64, pending age/skips 36, reset, collection and next-callback adoption; snapshotBacklogAndAdoption verifies a structural edit is audible within one 256-frame callback. The instrumented test bypasses automatic collection without changing production behavior. If collection stops at a full queue, adoption has no finite bound."
     },
     {
       "id": "A-15",

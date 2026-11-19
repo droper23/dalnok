@@ -28,7 +28,7 @@
 extern "C" {
 #endif
 
-#define DALNOK_API_VERSION 29
+#define DALNOK_API_VERSION 30
 
 typedef enum {
     DALNOK_OK = 0,
@@ -273,6 +273,10 @@ DalnokStatus dalnok_pool_relink(DalnokEngine *engine, DalnokMediaId id, DalnokMe
 /* ---- Model queries --------------------------------------------------- */
 
 uint64_t dalnok_model_revision(const DalnokEngine *engine);
+/* True only when every change since revision was a scalar track/master parameter. */
+bool dalnok_model_only_parameters_since(const DalnokEngine *engine, uint64_t revision);
+DalnokStatus dalnok_track_parameters(const DalnokEngine *engine, DalnokTrackId track,
+                                     float *gain_db, float *pan, bool *muted, bool *solo);
 int32_t dalnok_track_count(const DalnokEngine *engine);
 DalnokTrackId dalnok_track_at(const DalnokEngine *engine, int32_t index);
 
@@ -677,8 +681,10 @@ DalnokStatus dalnok_project_load(DalnokEngine *engine, const char *path, int32_t
 typedef struct DalnokProjectData DalnokProjectData;
 DalnokStatus dalnok_project_prepare(const char *path, double sample_rate, DalnokProjectData **out,
                                     int32_t *missing_out, char *err, size_t err_len); /* [any thread] */
+/* Set a directory for pre-activation recovery copies; NULL disables it. [control thread] */
+void dalnok_project_set_recovery_directory(DalnokEngine *engine, const char *directory);
 DalnokStatus dalnok_project_apply(DalnokEngine *engine, DalnokProjectData *data);
-/* Apply a prepared recovery copy as an unsaved project; consumes data. */
+/* Apply as an unsaved project without activating its plug-ins; consumes data. */
 DalnokStatus dalnok_project_apply_recovery(DalnokEngine *engine, DalnokProjectData *data);
 void dalnok_project_data_release(DalnokProjectData *data); /* [any thread] */
 
@@ -750,6 +756,10 @@ typedef struct {
     uint32_t max_frames_per_callback;
     uint32_t overloads;          /* callbacks that exceeded their time budget */
     uint32_t snapshot_swaps;
+    uint32_t retired_queue_depth;
+    uint32_t retired_queue_high_water;
+    uint64_t pending_snapshot_callbacks;
+    uint64_t snapshot_adoption_skips;
 } DalnokStats;
 
 void dalnok_engine_stats(const DalnokEngine *engine, DalnokStats *out); /* [any thread] */

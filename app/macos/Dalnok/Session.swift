@@ -38,10 +38,10 @@ struct TrackView {
     let name: String
     let color: NSColor
     let customColor: Int32
-    let gainDb: Float
-    let pan: Float
-    let muted: Bool
-    let solo: Bool
+    var gainDb: Float
+    var pan: Float
+    var muted: Bool
+    var solo: Bool
     let clips: [ClipView] // z-order
     var isInstrument = false
     var armed = false
@@ -77,9 +77,11 @@ final class Session {
     /// Takes inside take folders (not shown in the arrangement), by clip id.
     private(set) var takeClips: [DalnokClipId: ClipView] = [:]
     private var revision: UInt64 = 0 // reset to force a rebuild
+    private(set) var clipReads = 0 // self-test verifies scalar refreshes do not read clips
     var projectURL: URL?
     /// Called after the model changed (any source: UI, undo, scripts).
     var onChange: (() -> Void)?
+    var onParameterChange: ((Bool) -> Void)?
     var onMessage: ((String) -> Void)?
 
     init(engine: Engine) {
@@ -92,9 +94,31 @@ final class Session {
 
     /// Rebuilds the view if the engine's revision moved. Returns true if it did.
     @discardableResult
-    func refresh() -> Bool {
+    func refresh(onDisplayTick: Bool = false) -> Bool {
         let rev = engine.revision
         guard rev != revision else { return false }
+        if revision != 0 && dalnok_model_only_parameters_since(h, revision) {
+            guard onDisplayTick else { return false }
+            var updated = allTracks
+            var valid = true
+            for i in updated.indices {
+                var gain: Float = 0, pan: Float = 0, muted = false, solo = false
+                if dalnok_track_parameters(h, updated[i].id, &gain, &pan, &muted, &solo) != DALNOK_OK {
+                    valid = false; break
+                }
+                updated[i].gainDb = gain; updated[i].pan = pan
+                updated[i].muted = muted; updated[i].solo = solo
+            }
+            if valid && engine.revision == rev {
+                let muteChanged = zip(allTracks, updated).contains { $0.0.muted != $0.1.muted }
+                allTracks = updated
+                let byId = Dictionary(uniqueKeysWithValues: updated.map { ($0.id, $0) })
+                tracks = tracks.compactMap { byId[$0.id] }
+                revision = rev
+                onParameterChange?(muteChanged)
+                return true
+            }
+        }
         revision = rev
         var out: [TrackView] = []
         takeClips = [:]
@@ -105,6 +129,7 @@ final class Session {
             guard dalnok_track_info(h, tid, &ti) == DALNOK_OK else { continue }
             var clips: [ClipView] = []
             for k in 0..<ti.clip_count {
+                clipReads += 1
                 var ci = DalnokClipInfo()
                 guard dalnok_clip_info(h, dalnok_track_clip_at(h, tid, k), &ci) == DALNOK_OK else { continue }
                 var clip = ClipView(id: ci.id, track: ci.track, media: ci.media, start: ci.start, offset: ci.offset,
@@ -229,9 +254,9 @@ final class Session {
     // MARK: Edits (each is an engine command)
 
     func setClipMuted(_ clip: DalnokClipId, _ muted: Bool) { dalnok_clip_set_muted(h, clip, muted); refresh() }
-    func setGain(_ t: DalnokTrackId, db: Float) { dalnok_track_set_gain_db(h, t, db); refresh() }
+    func setGain(_ t: DalnokTrackId, db: Float) { dalnok_track_set_gain_db(h, t, db) }
     var masterGainDb: Float { dalnok_master_gain_db(h) }
-    func setMasterGain(_ db: Float) { dalnok_master_set_gain_db(h, db); refresh() }
+    func setMasterGain(_ db: Float) { dalnok_master_set_gain_db(h, db) }
     // Routing
     @discardableResult func addBus(_ name: String = "") -> DalnokTrackId { let id = dalnok_track_add_bus(h, name); refresh(); return id }
     @discardableResult func setOutput(_ t: DalnokTrackId, _ bus: DalnokTrackId) -> Bool {
@@ -308,9 +333,9 @@ final class Session {
         let pa = FaderControl.position(for: a.value), pb = FaderControl.position(for: b.value)
         return FaderControl.db(for: pa + (pb - pa) * Double(f))
     }
-    func setPan(_ t: DalnokTrackId, _ p: Float) { dalnok_track_set_pan(h, t, p); refresh() }
-    func setMute(_ t: DalnokTrackId, _ m: Bool) { dalnok_track_set_mute(h, t, m); refresh() }
-    func setSolo(_ t: DalnokTrackId, _ on: Bool) { dalnok_track_set_solo(h, t, on); refresh() }
+    func setPan(_ t: DalnokTrackId, _ p: Float) { dalnok_track_set_pan(h, t, p) }
+    func setMute(_ t: DalnokTrackId, _ m: Bool) { dalnok_track_set_mute(h, t, m) }
+    func setSolo(_ t: DalnokTrackId, _ on: Bool) { dalnok_track_set_solo(h, t, on) }
     func moveTrack(_ t: DalnokTrackId, to index: Int) { dalnok_track_move(h, t, Int32(index)); refresh() }
     func renameTrack(_ t: DalnokTrackId, _ name: String) { dalnok_track_rename(h, t, name); refresh() }
     func setTrackColor(_ t: DalnokTrackId, rgb: Int32) { dalnok_track_set_color(h, t, rgb); refresh() }
@@ -496,8 +521,8 @@ final class Session {
         refresh()
         return ok
     }
-    func undo() { engine.undo(); refresh() }
-    func redo() { engine.redo(); refresh() }
+    func undo() { engine.undo(); if !dalnok_model_only_parameters_since(h, revision) { refresh() } }
+    func redo() { engine.redo(); if !dalnok_model_only_parameters_since(h, revision) { refresh() } }
 
     /// Decodes off the main thread, then adds one track per file as a single undo step.
     func importFiles(_ urls: [URL], completion: (() -> Void)? = nil) {

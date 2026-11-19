@@ -449,12 +449,12 @@ pre{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padd
       <div class="grid g4" style="margin-top:18px">
         <div class="card"><div class="muted tiny">Findings</div><div class="kpi">${F.length}</div>
           <div class="tiny muted">${priorityCount('P0')} critical · ${priorityCount('P1')} high · ${priorityCount('P2')} medium · ${priorityCount('P3')} low</div></div>
-        <div class="card"><div class="muted tiny">Engine tests</div><div class="kpi">${B.tests.engineTests}</div>
+        <div class="card"><div class="muted tiny">Engine tests (audit baseline)</div><div class="kpi">${B.tests.engineTests}</div>
           <div class="tiny muted">${B.tests.engineSuites} suites · ${B.tests.wallSeconds}s wall · all passing</div></div>
         <div class="card"><div class="muted tiny">Live path, 64 tracks</div><div class="kpi">${t[1].avgUs}<span class="tiny"> µs</span></div>
           <div class="tiny muted">${t[1].loadPercent}% of a 10.67 ms block · 512-frame blocks</div></div>
-        <div class="card"><div class="muted tiny">UI model read, 4,096 clips</div><div class="kpi">15.9<span class="tiny"> ms</span></div>
-          <div class="tiny muted">measured per revision change; a 60 Hz frame is 16.7 ms</div></div>
+        <div class="card"><div class="muted tiny">Full model read, 4,096 clips (audit baseline)</div><div class="kpi">15.9<span class="tiny"> ms</span></div>
+          <div class="tiny muted">a 60 Hz frame is 16.7 ms</div></div>
       </div>
 
       <h2>Assessment</h2>
@@ -463,17 +463,17 @@ pre{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padd
           <li>Compile-time real-time safety: <code>[[clang::nonblocking]]</code> with <code>-Werror=function-effects</code> and a negative test.</li>
           <li>Engine-owned model, revision counter, no UI mirror, all edits undoable and scriptable.</li>
           <li>Immutable render snapshots through one atomic slot; atomics for continuous parameters.</li>
-          <li>188 tests with generated fixtures and numeric tolerances; durable, atomic project writes.</li>
+          <li>Generated fixtures and numeric-tolerance tests; durable, atomic project writes.</li>
         </ul></div>
         <div class="card"><h3>Principal risks</h3><ul class="tiny" style="font-size:13px">
-          <li>In-process third-party plug-ins can crash the app; there is no autosave.</li>
-          <li>Every edit copies the whole model; structural edits rebuild the whole snapshot.</li>
-          <li>The UI re-reads the entire model on every revision change, including during drags.</li>
+          <li>In-process third-party plug-ins can crash or hang the app; recovery snapshots mitigate data loss.</li>
+          <li>Structural edits still retain whole-model undo snapshots and rebuild the render snapshot.</li>
+          <li>Structural revisions still trigger a full UI model read; parameter-only refresh has a fast path.</li>
           <li>Media is fully decoded into RAM; no streaming, no long-session test.</li>
         </ul></div>
         <div class="card"><h3>Most valuable next moves</h3><ul class="tiny" style="font-size:13px">
-          <li>Autosave, then out-of-process plug-in hosting.</li>
-          <li>Linear and then incremental snapshot compilation.</li>
+          <li>Out-of-process plug-in hosting and further recovery validation.</li>
+          <li>Incremental snapshot compilation.</li>
           <li>Change sets so the UI touches only what moved.</li>
           <li>Disk streaming before the session size grows further.</li>
         </ul></div>

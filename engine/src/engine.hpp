@@ -278,6 +278,9 @@ public:
     // Model (read)
     const Model &model() const { return model_; }
     uint64_t revision() const { return revision_; }
+    bool onlyParametersSince(uint64_t revision) const {
+        return lastParameterRevision_ == revision_ && revision < revision_ && revision >= firstParameterRevision_ - 1;
+    }
     int64_t sessionLength() const;
 
     // Commands (each is an undo step unless inside a group). Return false and
@@ -418,7 +421,8 @@ public:
     struct PreparedProject;
     static std::unique_ptr<PreparedProject> prepareProject(const std::string &path, double sampleRate,
                                                            int32_t &missing, std::string &err);
-    void applyProject(std::unique_ptr<PreparedProject> p, bool recovered = false);
+    bool applyProject(std::unique_ptr<PreparedProject> p, bool recovered = false);
+    void setRecoveryDirectory(std::string directory) { recoveryDirectory_ = std::move(directory); }
     // Imports another DAW's project (see import/import.hpp) into a prepared project + JSON report.
     static std::unique_ptr<PreparedProject> prepareImport(const std::string &path, double sampleRate, int32_t &missing,
                                                           std::string &reportJson, std::string &err);
@@ -442,10 +446,25 @@ public:
     void resetStats();
 
 private:
+#ifdef DALNOK_TEST_HOOKS
+    friend void handoffSaturationFixture(uint64_t *out);
+#endif
+    enum class ParameterField { gain, pan, mute, solo, masterGain };
+    struct ParameterValue {
+        DalnokTrackId track;
+        ParameterField field;
+        float value;
+    };
     struct UndoStep {
         std::string name;
-        Model model;
+        std::unique_ptr<Model> model; // snapshot edits; null for scalar edits
+        std::vector<ParameterValue> parameters;
     };
+    bool editParameter(const char *name, DalnokTrackId track, ParameterField field, float value, std::string &err);
+    static void setParameterInModel(Model &model, const ParameterValue &value);
+    float parameterValue(DalnokTrackId track, ParameterField field) const;
+    void applyParameter(const ParameterValue &value);
+    void applyUndo(std::vector<UndoStep> &from, std::vector<UndoStep> &to);
 
     // Runs `fn` against the model; on success records an undo step and publishes.
     template <typename F>
@@ -485,7 +504,13 @@ private:
     int groupDepth_ = 0;
     bool groupRecorded_ = false;
     std::string groupName_;
+    std::string recoveryDirectory_; // control thread only; never part of the render snapshot
     uint64_t revision_ = 1, savedRevision_ = 1;
+    uint64_t firstParameterRevision_ = 0, lastParameterRevision_ = 0;
+    void markParameterRevision() {
+        if (lastParameterRevision_ != revision_ - 1) firstParameterRevision_ = revision_;
+        lastParameterRevision_ = revision_;
+    }
     DalnokTrackId nextTrack_ = 1;
     DalnokClipId nextClip_ = 1;
     struct ClipboardEntry { ClipState clip; int32_t row = 0; };
@@ -586,6 +611,8 @@ private:
     // Diagnostics (written by the audio thread).
     std::atomic<uint64_t> callbacks_{0}, framesRendered_{0}, maxCallbackNs_{0}, lastCallbackNs_{0};
     std::atomic<uint32_t> maxFrames_{0}, overloads_{0}, swaps_{0};
+    std::atomic<uint32_t> retiredHighWater_{0};
+    std::atomic<uint64_t> pendingSnapshotCallbacks_{0}, adoptionSkips_{0};
 };
 
 struct Engine::PreparedProject {

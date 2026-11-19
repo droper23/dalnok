@@ -814,12 +814,48 @@ std::unique_ptr<Engine::PreparedProject> Engine::prepareDocument(const json::Val
     return prepared;
 }
 
-void Engine::applyProject(std::unique_ptr<PreparedProject> p, bool recovered) {
+bool Engine::applyProject(std::unique_ptr<PreparedProject> p, bool recovered) {
+    if (!recoveryDirectory_.empty()) {
+        std::error_code ec;
+        fs::create_directories(recoveryDirectory_, ec);
+        if (ec) return false;
+        // Stage under a non-project suffix so a crash cannot expose an empty
+        // recovery copy. Publish with link(), which refuses to overwrite a file.
+        std::string pattern = (fs::path(recoveryDirectory_) / "Recovery-XXXXXX.tmp").string();
+        std::vector<char> name(pattern.begin(), pattern.end());
+        name.push_back('\0');
+        const int fd = ::mkstemps(name.data(), 4);
+        if (fd < 0) return false;
+        ::close(fd);
+        Engine staged(sampleRate_);
+        staged.model_ = std::move(p->model);
+        staged.pool_ = std::move(p->pool);
+        staged.cycleOn_.store(p->cycleOn);
+        staged.cycleStart_.store(p->cycleStart);
+        staged.cycleEnd_.store(p->cycleEnd);
+        std::string err;
+        const bool saved = staged.saveProject(name.data(), err, false, false);
+        p->model = std::move(staged.model_);
+        p->pool = std::move(staged.pool_);
+        const std::string staging(name.data());
+        const std::string destination = staging.substr(0, staging.size() - 4) + ".dalnok";
+        const bool published = saved && ::link(staging.c_str(), destination.c_str()) == 0;
+        std::remove(staging.c_str());
+        if (!published) return false;
+        if (!syncDirectory(recoveryDirectory_)) return false;
+    }
     resetModel();
     for (auto &[k, m] : p->stretched) cache_.insert(k, std::move(m));
     model_ = std::move(p->model);
     pool_ = std::move(p->pool);
-    instantiatePlugins(); // loads plugin code on this (control) thread; missing plugins keep their state
+    if (recovered) {
+        // A plug-in may have caused the crash; retain every slot and state but
+        // do not run its code during recovery.
+        for (const auto &t : model_.tracks) for (const auto &slot : t.plugins) {
+            nextPlugin_ = std::max(nextPlugin_, slot.id + 1);
+            pluginErrors_[slot.id] = "Not loaded in recovery mode; saved state preserved";
+        }
+    } else instantiatePlugins(); // third-party code runs on the control thread
     nextTrack_ = std::max(nextTrack_, p->maxTrack + 1);
     nextClip_ = std::max(nextClip_, p->maxClip + 1);
     nextMedia_ = std::max(nextMedia_, p->maxMedia + 1);
@@ -831,6 +867,7 @@ void Engine::applyProject(std::unique_ptr<PreparedProject> p, bool recovered) {
     ++revision_;
     savedRevision_ = (p->imported || recovered) ? revision_ - 1 : revision_; // an import is unsaved work
     commit();
+    return true;
 }
 
 std::unique_ptr<Engine::PreparedProject> Engine::prepareImport(const std::string &path, double sampleRate,
@@ -846,7 +883,7 @@ std::unique_ptr<Engine::PreparedProject> Engine::prepareImport(const std::string
 bool Engine::loadProject(const std::string &path, int32_t &missing, std::string &err) {
     auto p = prepareProject(path, sampleRate_, missing, err);
     if (!p) return false;
-    applyProject(std::move(p));
+    if (!applyProject(std::move(p))) { err = "cannot write pre-load recovery snapshot"; return false; }
     return true;
 }
 

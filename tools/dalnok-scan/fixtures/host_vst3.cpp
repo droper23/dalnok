@@ -18,6 +18,8 @@
 #include "pluginterfaces/vst/ivstattributes.h"
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
+#include <unistd.h>
 #include "pluginterfaces/vst/vstspeaker.h"
 #include <CoreFoundation/CoreFoundation.h>
 #include <cmath>
@@ -78,6 +80,13 @@ public:
     // Like many real plug-ins: build a message through the host (as for IConnectionPoint traffic) and refuse a host
     // that cannot make one, rather than crash on it.
     tresult PLUGIN_API initialize(FUnknown *context) override {
+        if (const char *mode = std::getenv("DALNOK_TEST_INIT_FAILURE")) {
+            if (const char *marker = std::getenv("DALNOK_TEST_INIT_MARKER")) {
+                if (FILE *f = std::fopen(marker, "w")) { std::fputs("initialized", f); std::fclose(f); }
+            }
+            if (std::strcmp(mode, "crash") == 0) std::abort();
+            if (std::strcmp(mode, "hang") == 0) for (;;) ::sleep(1);
+        }
         IHostApplication *host = nullptr;
         if (!context || context->queryInterface(IHostApplication::iid, reinterpret_cast<void **>(&host)) != kResultOk || !host) return kResultFalse;
         TUID id;

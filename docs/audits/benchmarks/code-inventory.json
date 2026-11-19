@@ -11,19 +11,19 @@
       "files": [
         {
           "path": "engine/src/engine.cpp",
-          "lines": 2562
+          "lines": 2674
         },
         {
           "path": "engine/src/dalnok_api.cpp",
-          "lines": 1285
+          "lines": 1297
         },
         {
           "path": "engine/src/project.cpp",
-          "lines": 853
+          "lines": 890
         },
         {
           "path": "engine/include/dalnok/dalnok.h",
-          "lines": 761
+          "lines": 771
         },
         {
           "path": "engine/src/platform/macos/vst3_host.cpp",
@@ -31,7 +31,7 @@
         },
         {
           "path": "engine/src/engine.hpp",
-          "lines": 611
+          "lines": 638
         },
         {
           "path": "engine/src/commands.cpp",
@@ -198,6 +198,10 @@
           "lines": 58
         },
         {
+          "path": "engine/src/rt.hpp",
+          "lines": 57
+        },
+        {
           "path": "engine/src/json.hpp",
           "lines": 55
         },
@@ -208,10 +212,6 @@
         {
           "path": "engine/src/fx/channel_eq.hpp",
           "lines": 52
-        },
-        {
-          "path": "engine/src/rt.hpp",
-          "lines": 50
         },
         {
           "path": "engine/src/midi_parser.hpp",
@@ -272,11 +272,11 @@
       "files": [
         {
           "path": "app/macos/Dalnok/SelfTest.swift",
-          "lines": 2323
+          "lines": 2395
         },
         {
           "path": "app/macos/Dalnok/MainWindow.swift",
-          "lines": 1854
+          "lines": 1910
         },
         {
           "path": "app/macos/Dalnok/TimelineView.swift",
@@ -315,24 +315,24 @@
           "lines": 617
         },
         {
-          "path": "app/macos/Dalnok/Shortcuts.swift",
-          "lines": 591
+          "path": "app/macos/Dalnok/Session.swift",
+          "lines": 605
         },
         {
-          "path": "app/macos/Dalnok/Session.swift",
-          "lines": 580
+          "path": "app/macos/Dalnok/Shortcuts.swift",
+          "lines": 591
         },
         {
           "path": "app/macos/Dalnok/TapeDeck.swift",
           "lines": 544
         },
         {
-          "path": "app/macos/Dalnok/Settings.swift",
-          "lines": 474
+          "path": "app/macos/Dalnok/main.swift",
+          "lines": 483
         },
         {
-          "path": "app/macos/Dalnok/main.swift",
-          "lines": 470
+          "path": "app/macos/Dalnok/Settings.swift",
+          "lines": 474
         },
         {
           "path": "app/macos/Dalnok/Onboarding.swift",
@@ -359,6 +359,10 @@
           "lines": 324
         },
         {
+          "path": "app/macos/Dalnok/UIWalk.swift",
+          "lines": 305
+        },
+        {
           "path": "app/macos/Dalnok/Launcher.swift",
           "lines": 264
         },
@@ -371,12 +375,8 @@
           "lines": 247
         },
         {
-          "path": "app/macos/Dalnok/UIWalk.swift",
-          "lines": 246
-        },
-        {
           "path": "app/macos/Dalnok/EngineBridge.swift",
-          "lines": 238
+          "lines": 243
         },
         {
           "path": "app/macos/Dalnok/Migration.swift",
@@ -404,7 +404,7 @@
         },
         {
           "path": "app/macos/Dalnok/AutomationWriter.swift",
-          "lines": 84
+          "lines": 88
         },
         {
           "path": "app/macos/Dalnok/EmptyState.swift",
@@ -421,7 +421,7 @@
       "files": [
         {
           "path": "tools/dalnok-cli/main.swift",
-          "lines": 605
+          "lines": 638
         },
         {
           "path": "tools/dalnok-cli/TestProject.swift",
@@ -459,19 +459,19 @@
         },
         {
           "path": "tests/engine/ModelTests.swift",
-          "lines": 394
+          "lines": 551
         },
         {
           "path": "tests/engine/MidiTests.swift",
           "lines": 346
         },
         {
-          "path": "tests/engine/PluginHostingTests.swift",
-          "lines": 298
+          "path": "tests/engine/LiveTests.swift",
+          "lines": 309
         },
         {
-          "path": "tests/engine/LiveTests.swift",
-          "lines": 270
+          "path": "tests/engine/PluginHostingTests.swift",
+          "lines": 298
         },
         {
           "path": "tests/engine/RoutingTests.swift",
