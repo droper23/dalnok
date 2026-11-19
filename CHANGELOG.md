@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+- Added an independent engineering audit on `audit/2026-11-codebase`: `docs/audits/codebase-audit-2026-11.md`
+  (findings with evidence), `findings.json`, `modernization-roadmap.md`, reproducible benchmark data and an
+  interactive dashboard. It measures the real-time path, model/edit/undo scaling and memory instead of
+  estimating them, and adds two measurement-only `dalnok-cli` subcommands. No product behaviour changed.
+
 - Retested the import path in the built app with a generated Logic project (three tracks, duplicate channel-strip names including a track named None): the import completed through Open ▸ Import and the app stayed responsive. The owner's real projects were not available on this machine, so that retest remains outstanding.
 - MODO BASS 2 loads in 3.2 s headlessly and did not stall the built app on a generated project; the earlier app-only stall is still unexplained and is not claimed as fixed. Plug-in initialization runs on the main thread during project apply, which is where such a block would come from.
 - Fixed a device-panel crash when sidechain choices have duplicate track names, including a track named None. Sidechain choices retain their distinct track IDs.

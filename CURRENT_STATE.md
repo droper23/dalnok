@@ -6,6 +6,14 @@ milestone: M11 VST3 hosting (ADR-0009 stage 3) done; editors, parameters and AU 
 # Current State
 
 ## Current priorities (2026-11-18)
+- **Independent audit (branch `audit/2026-11-codebase`).** Findings, measurements and an ordered plan are in
+  `docs/audits/` (report, `findings.json`, roadmap, `benchmarks/`, dashboard). Headline results: the audio path
+  is well inside budget (1.11 ms per 512-frame block at 512 tracks), while one UI model read costs 15.9 ms at
+  4,096 clips, structural edits recompile in O(tracks × clips), every edit deep-copies the model, plug-ins run
+  in-process with no autosave behind them, and media is fully decoded into RAM. Two P0 items: project autosave
+  and out-of-process plug-in hosting. Note that the tables below are stale: plug-in editors, parameters and
+  automation, latency compensation, AU/CLAP hosting, punch, count-in and multi-input recording are implemented
+  and tested (audit finding A-23).
 - **Release-app retest (later 2026-11-18).** A generated Logic project (three audio tracks, two audio files, duplicate channel-strip names including a track named `None`) imported through the built app's Open ▸ Import UI: the report appeared, the window showed the three tracks, the main thread returned to its run loop and the process stayed up. `scripts/make-test-project.sh` and a generated `.logicx` fixture supplied the material; nothing from the owner's projects was written or committed.
 - **MODO BASS did not stall here.** `dalnok-cli render-project` instantiates MODO BASS 2 on a generated project in 3.2 s, and opening the same project in the built app left the main thread idle (sampled) with the project shown. The earlier multi-minute app-only stall therefore is not reproduced and is **not** fixed. Structure worth knowing: `dalnok_project_apply` calls `Engine::instantiatePlugins()` synchronously on the caller's thread, and `EngineBridge.importForeign` applies on the main actor, so plug-in initialization runs on the AppKit main thread — the arrangement that would turn a plug-in's main-queue wait into an app block. Changing that needs a designed, measured change (or the separate host process), not a quick move.
 - **The owner's two reported projects were not available on this machine** (no paths in the repo, preferences or scratch space), so the full real-project import retest is still outstanding; it is the one remaining step for the crash report.

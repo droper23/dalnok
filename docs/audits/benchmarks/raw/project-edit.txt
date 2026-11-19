@@ -1,0 +1,24 @@
+## audit-bench .audit/proj-band/band.dalnok
+model read (one Session.refresh pass): n=20 p50=0.002 ms p95=0.003 ms p99=0.006 ms max=0.006 ms
+model: 8 tracks, 8 clips, 176 MIDI notes
+parameter edit (track gain, undoable): n=200 p50=0.000 ms p95=0.002 ms p99=0.005 ms max=0.007 ms
+undo memory: RSS 57.5 MB -> 58.2 MB after 200 undoable parameter edits (0.00 MB/edit)
+structural edit (nudge one clip, recompile): n=200 p50=0.006 ms p95=0.010 ms p99=0.016 ms max=0.018 ms
+undo (whole-model restore + recompile): n=20 p50=0.007 ms p95=0.012 ms p99=0.012 ms max=0.012 ms
+
+## audit-bench .audit/proj-large64/large.dalnok
+model read (one Session.refresh pass): n=20 p50=0.021 ms p95=0.024 ms p99=0.028 ms max=0.028 ms
+model: 64 tracks, 64 clips, 0 MIDI notes
+parameter edit (track gain, undoable): n=200 p50=0.004 ms p95=0.006 ms p99=0.011 ms max=0.013 ms
+undo memory: RSS 381.6 MB -> 386.9 MB after 200 undoable parameter edits (0.03 MB/edit)
+structural edit (nudge one clip, recompile): n=200 p50=0.038 ms p95=0.044 ms p99=0.046 ms max=0.058 ms
+undo (whole-model restore + recompile): n=20 p50=0.037 ms p95=0.041 ms p99=0.046 ms max=0.046 ms
+
+## audit-bench .audit/proj-large256/large.dalnok
+model read (one Session.refresh pass): n=20 p50=0.220 ms p95=0.236 ms p99=0.243 ms max=0.243 ms
+model: 256 tracks, 256 clips, 0 MIDI notes
+parameter edit (track gain, undoable): n=200 p50=0.022 ms p95=0.027 ms p99=0.040 ms max=0.044 ms
+undo memory: RSS 541.3 MB -> 543.3 MB after 200 undoable parameter edits (0.01 MB/edit)
+structural edit (nudge one clip, recompile): n=200 p50=0.222 ms p95=0.241 ms p99=0.266 ms max=0.294 ms
+undo (whole-model restore + recompile): n=20 p50=0.222 ms p95=0.233 ms p99=0.238 ms max=0.238 ms
+

@@ -1,0 +1,16 @@
+## bench --tracks 8 --seconds 20
+live path: 8 tracks, 1875 blocks of 512 frames: avg 18.8 us, worst 45.2 us (budget 10667 us, 0.2% avg load)
+offline: 20 s of 8 tracks in 31 ms (640x realtime)
+
+## bench --tracks 64 --seconds 20
+live path: 64 tracks, 1875 blocks of 512 frames: avg 140.6 us, worst 263.7 us (budget 10667 us, 1.3% avg load)
+offline: 20 s of 64 tracks in 251 ms (80x realtime)
+
+## bench --tracks 256 --seconds 20
+live path: 256 tracks, 1875 blocks of 512 frames: avg 557.3 us, worst 992.4 us (budget 10667 us, 5.2% avg load)
+offline: 20 s of 256 tracks in 1005 ms (20x realtime)
+
+## bench --tracks 512 --seconds 20
+live path: 512 tracks, 1875 blocks of 512 frames: avg 1116.6 us, worst 2016.4 us (budget 10667 us, 10.5% avg load)
+offline: 20 s of 512 tracks in 2004 ms (10x realtime)
+

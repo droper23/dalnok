@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import DalnokEngine
 import Foundation
+import Darwin
 
 func cstr(_ a: [CChar]) -> String { String(decoding: a.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self) }
 func fail(_ msg: String) -> Never { FileHandle.standardError.write(Data("error: \(msg)\n".utf8)); exit(1) }
@@ -39,6 +40,8 @@ usage:
   dalnok-cli plugins --validate [--match NAME] [--folder F --only-folder] [--au] [--timeout S] [--rescan] [--cache FILE]
                                                                          load each plugin in a separate scanner process
   dalnok-cli bench [--tracks N] [--seconds S]                          render-cost benchmark (no device)
+  dalnok-cli audit-bench <project.dalnok> [--edits N]                   audit-only: model-read, edit and undo cost
+  dalnok-cli audit-scale [--tracks N] [--clips N]                       audit-only: edit cost vs model size
   dalnok-cli import <project.rpp|.als|.logicx|.fcpxml|stems-folder> [--save out.dalnok] [--render out.wav] [--quiet]
 """
 
@@ -398,6 +401,159 @@ case "import":
         print("rendered \(out)")
     }
     dalnok_engine_destroy(engine)
+
+case "audit-bench":
+    // Audit instrumentation only (docs/audits): measures what the app pays per model read and per edit on a
+    // real project. It adds no engine or app behaviour; it only calls the public C API.
+    guard args.count >= 2 else { print(usage); exit(2) }
+    let engine = openProject(args[1])
+    let edits = Int(opt("--edits") ?? "200") ?? 200
+    func rssMB() -> Double {
+        var info = mach_task_basic_info()
+        var count = mach_msg_type_number_t(MemoryLayout<mach_task_basic_info>.size / MemoryLayout<natural_t>.size)
+        let kr = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                task_info(mach_task_self_, task_flavor_t(MACH_TASK_BASIC_INFO), $0, &count)
+            }
+        }
+        return kr == KERN_SUCCESS ? Double(info.resident_size) / 1_048_576 : -1
+    }
+    // One pass over everything the Swift UI's Session.refresh() reads.
+    func readModel() -> (tracks: Int, clips: Int, notes: Int) {
+        var tracks = 0, clips = 0, notes = 0
+        for i in 0..<max(0, dalnok_track_count(engine)) {
+            let tid = dalnok_track_at(engine, i)
+            var ti = DalnokTrackInfo()
+            guard dalnok_track_info(engine, tid, &ti) == DALNOK_OK else { continue }
+            tracks += 1
+            for k in 0..<max(0, ti.clip_count) {
+                var ci = DalnokClipInfo()
+                guard dalnok_clip_info(engine, dalnok_track_clip_at(engine, tid, k), &ci) == DALNOK_OK else { continue }
+                clips += 1
+                if ci.midi && ci.note_count > 0 {
+                    var n = [DalnokNote](repeating: DalnokNote(), count: Int(ci.note_count))
+                    _ = dalnok_midi_clip_notes(engine, ci.id, &n, ci.note_count)
+                    notes += Int(ci.note_count)
+                }
+            }
+            for k in 0..<max(0, dalnok_track_plugin_count(engine, tid)) {
+                var pi = DalnokPluginSlotInfo()
+                _ = dalnok_track_plugin_info(engine, tid, k, &pi)
+            }
+            _ = dalnok_track_hidden(engine, tid)
+            var sends = [DalnokSend](repeating: DalnokSend(), count: 16)
+            _ = dalnok_track_sends(engine, tid, &sends, 16)
+            for target in 0..<2 {
+                let c = dalnok_track_automation(engine, tid, Int32(target), nil, 0)
+                if c > 0 {
+                    var pts = [DalnokAutoPoint](repeating: DalnokAutoPoint(), count: Int(c))
+                    _ = dalnok_track_automation(engine, tid, Int32(target), &pts, c)
+                }
+            }
+        }
+        return (tracks, clips, notes)
+    }
+    func summarize(_ label: String, _ samples: [Double]) {
+        guard !samples.isEmpty else { return }
+        let s = samples.sorted()
+        func pct(_ p: Double) -> Double { s[min(s.count - 1, Int((Double(s.count - 1) * p).rounded()))] }
+        print(String(format: "%@: n=%d p50=%.3f ms p95=%.3f ms p99=%.3f ms max=%.3f ms", label, s.count,
+                     pct(0.50), pct(0.95), pct(0.99), s[s.count - 1]))
+    }
+    let model = readModel()
+    var reads: [Double] = []
+    for _ in 0..<20 {
+        let t0 = DispatchTime.now().uptimeNanoseconds
+        _ = readModel()
+        reads.append(Double(DispatchTime.now().uptimeNanoseconds - t0) / 1e6)
+    }
+    summarize("model read (one Session.refresh pass)", reads)
+    print("model: \(model.tracks) tracks, \(model.clips) clips, \(model.notes) MIDI notes")
+
+    let firstTrack = dalnok_track_at(engine, 0)
+    var firstClip: DalnokClipId = 0
+    for i in 0..<max(0, dalnok_track_count(engine)) where firstClip == 0 {
+        let tid = dalnok_track_at(engine, i)
+        if dalnok_track_clip_at(engine, tid, 0) != 0 { firstClip = dalnok_track_clip_at(engine, tid, 0) }
+    }
+    var gains: [Double] = []
+    let rssBefore = rssMB()
+    for i in 0..<edits {
+        let t0 = DispatchTime.now().uptimeNanoseconds
+        _ = dalnok_track_set_gain_db(engine, firstTrack, -Double(i % 24) * 0.5 > -96 ? Float(-Double(i % 24) * 0.5) : -96)
+        gains.append(Double(DispatchTime.now().uptimeNanoseconds - t0) / 1e6)
+    }
+    summarize("parameter edit (track gain, undoable)", gains)
+    print(String(format: "undo memory: RSS %.1f MB -> %.1f MB after %d undoable parameter edits (%.2f MB/edit)",
+                 rssBefore, rssMB(), edits, (rssMB() - rssBefore) / Double(edits)))
+    if firstClip != 0 {
+        var moves: [Double] = []
+        for i in 0..<edits {
+            let t0 = DispatchTime.now().uptimeNanoseconds
+            _ = dalnok_clips_nudge(engine, [firstClip], 1, i % 2 == 0 ? 1 : -1)
+            moves.append(Double(DispatchTime.now().uptimeNanoseconds - t0) / 1e6)
+        }
+        summarize("structural edit (nudge one clip, recompile)", moves)
+    }
+    var undo: [Double] = []
+    for _ in 0..<20 {
+        let t0 = DispatchTime.now().uptimeNanoseconds
+        _ = dalnok_undo(engine)
+        undo.append(Double(DispatchTime.now().uptimeNanoseconds - t0) / 1e6)
+    }
+    summarize("undo (whole-model restore + recompile)", undo)
+    dalnok_engine_destroy(engine)
+
+case "audit-scale":
+    // Audit instrumentation only: builds T tracks x C clips in memory and measures the cost of one model read,
+    // one structural edit (which recompiles the render snapshot) and one undo at that size.
+    let tracks = Int(opt("--tracks") ?? "64") ?? 64
+    let clipsPer = Int(opt("--clips") ?? "16") ?? 16
+    let rate = 48_000.0
+    guard let e = dalnok_engine_create(rate) else { fail("engine creation failed") }
+    var samples = (0..<4_800).map { Float(sin(Double($0) * 0.01)) * 0.1 }
+    let media = samples.withUnsafeMutableBufferPointer { p in
+        var chans: [UnsafePointer<Float>?] = [UnsafePointer(p.baseAddress)]
+        return chans.withUnsafeMutableBufferPointer { dalnok_media_from_samples($0.baseAddress, 1, 4_800, rate)! }
+    }
+    let mid = dalnok_pool_add(e, media, nil)
+    dalnok_media_release(media)
+    func measure(_ label: String, _ body: (Int) -> Void, n: Int = 30) {
+        var s: [Double] = []
+        for i in 0..<n {
+            let t0 = DispatchTime.now().uptimeNanoseconds
+            body(i)
+            s.append(Double(DispatchTime.now().uptimeNanoseconds - t0) / 1e6)
+        }
+        s.sort()
+        func pct(_ p: Double) -> Double { s[min(s.count - 1, Int((Double(s.count - 1) * p).rounded()))] }
+        print(String(format: "%@: n=%d p50=%.3f ms p95=%.3f ms p99=%.3f ms max=%.3f ms", label, s.count,
+                     pct(0.50), pct(0.95), pct(0.99), s[s.count - 1]))
+    }
+    let t0 = DispatchTime.now().uptimeNanoseconds
+    for t in 0..<tracks {
+        let tr = dalnok_track_add(e, "T\(t)")
+        for c in 0..<clipsPer { _ = dalnok_clip_add(e, tr, mid, Int64(c) * 4_800, 0, 4_800) }
+    }
+    let build = Double(DispatchTime.now().uptimeNanoseconds - t0) / 1e6
+    print(String(format: "model: %d tracks x %d clips = %d clips, built in %.0f ms", tracks, clipsPer, tracks * clipsPer, build))
+    func readModel() {
+        for i in 0..<max(0, dalnok_track_count(e)) {
+            let tid = dalnok_track_at(e, i)
+            var ti = DalnokTrackInfo()
+            guard dalnok_track_info(e, tid, &ti) == DALNOK_OK else { continue }
+            for k in 0..<max(0, ti.clip_count) {
+                var ci = DalnokClipInfo()
+                _ = dalnok_clip_info(e, dalnok_track_clip_at(e, tid, k), &ci)
+            }
+        }
+    }
+    measure("model read (one Session.refresh pass)", { _ in readModel() })
+    let firstClip = dalnok_track_clip_at(e, dalnok_track_at(e, 0), 0)
+    measure("structural edit (nudge one clip, recompile)", { i in _ = dalnok_clips_nudge(e, [firstClip], 1, i % 2 == 0 ? 1 : -1) })
+    measure("parameter edit (track gain, undoable)", { i in _ = dalnok_track_set_gain_db(e, dalnok_track_at(e, 0), Float(-(i % 20))) })
+    measure("undo (whole-model restore + recompile)", { _ in _ = dalnok_undo(e) })
+    dalnok_engine_destroy(e)
 
 case "bench":
     // N stereo tracks, each with a fully-faded clip over shared media; measures the

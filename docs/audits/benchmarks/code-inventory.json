@@ -1,0 +1,723 @@
+{
+  "areas": {
+    "engine": {
+      "code_files": 63,
+      "loc": 15258,
+      "languages": {
+        "C/C++ header": 783,
+        "C++": 14072,
+        "Objective-C++": 403
+      },
+      "files": [
+        {
+          "path": "engine/src/engine.cpp",
+          "lines": 2526
+        },
+        {
+          "path": "engine/src/dalnok_api.cpp",
+          "lines": 1285
+        },
+        {
+          "path": "engine/src/project.cpp",
+          "lines": 851
+        },
+        {
+          "path": "engine/include/dalnok/dalnok.h",
+          "lines": 761
+        },
+        {
+          "path": "engine/src/platform/macos/vst3_host.cpp",
+          "lines": 708
+        },
+        {
+          "path": "engine/src/engine.hpp",
+          "lines": 598
+        },
+        {
+          "path": "engine/src/commands.cpp",
+          "lines": 567
+        },
+        {
+          "path": "engine/src/record.cpp",
+          "lines": 478
+        },
+        {
+          "path": "engine/src/render.cpp",
+          "lines": 473
+        },
+        {
+          "path": "engine/src/platform/macos/coreaudio_device.cpp",
+          "lines": 400
+        },
+        {
+          "path": "engine/src/import/logic.cpp",
+          "lines": 380
+        },
+        {
+          "path": "engine/src/platform/macos/clap_host.cpp",
+          "lines": 344
+        },
+        {
+          "path": "engine/src/platform/macos/au_host.mm",
+          "lines": 337
+        },
+        {
+          "path": "engine/src/plugins.cpp",
+          "lines": 335
+        },
+        {
+          "path": "engine/src/json.cpp",
+          "lines": 320
+        },
+        {
+          "path": "engine/src/import/import.cpp",
+          "lines": 292
+        },
+        {
+          "path": "engine/src/import/ableton.cpp",
+          "lines": 285
+        },
+        {
+          "path": "engine/src/fx/channel_eq.cpp",
+          "lines": 259
+        },
+        {
+          "path": "engine/src/render.hpp",
+          "lines": 258
+        },
+        {
+          "path": "engine/src/import/reaper.cpp",
+          "lines": 244
+        },
+        {
+          "path": "engine/src/dawproject.cpp",
+          "lines": 232
+        },
+        {
+          "path": "engine/src/platform/macos/audio_file_macos.cpp",
+          "lines": 220
+        },
+        {
+          "path": "engine/src/fx/builtin.cpp",
+          "lines": 183
+        },
+        {
+          "path": "engine/src/import/logic_plugins.cpp",
+          "lines": 173
+        },
+        {
+          "path": "engine/src/zip.cpp",
+          "lines": 159
+        },
+        {
+          "path": "engine/src/import/dawproject.cpp",
+          "lines": 155
+        },
+        {
+          "path": "engine/src/tempo_map.cpp",
+          "lines": 143
+        },
+        {
+          "path": "engine/src/import/fcpxml.cpp",
+          "lines": 141
+        },
+        {
+          "path": "engine/src/synth.hpp",
+          "lines": 139
+        },
+        {
+          "path": "engine/src/plugin_host.hpp",
+          "lines": 120
+        },
+        {
+          "path": "engine/src/stretch_cache.cpp",
+          "lines": 117
+        },
+        {
+          "path": "engine/src/capture_spool.hpp",
+          "lines": 103
+        },
+        {
+          "path": "engine/src/capture_recovery.cpp",
+          "lines": 103
+        },
+        {
+          "path": "engine/src/media.cpp",
+          "lines": 101
+        },
+        {
+          "path": "engine/src/import/import.hpp",
+          "lines": 97
+        },
+        {
+          "path": "engine/src/platform/macos/coremidi.cpp",
+          "lines": 92
+        },
+        {
+          "path": "engine/src/capture_writer.hpp",
+          "lines": 90
+        },
+        {
+          "path": "engine/src/fx/builtin.hpp",
+          "lines": 81
+        },
+        {
+          "path": "engine/dsp/src/stretch.cpp",
+          "lines": 77
+        },
+        {
+          "path": "engine/src/platform/macos/plist_macos.cpp",
+          "lines": 76
+        },
+        {
+          "path": "engine/src/import/logic_mixer.cpp",
+          "lines": 72
+        },
+        {
+          "path": "engine/src/stretch_cache.hpp",
+          "lines": 67
+        },
+        {
+          "path": "engine/src/platform/macos/audiounits_macos.mm",
+          "lines": 66
+        },
+        {
+          "path": "engine/src/capture_ring.hpp",
+          "lines": 65
+        },
+        {
+          "path": "engine/src/device.hpp",
+          "lines": 65
+        },
+        {
+          "path": "engine/src/media.hpp",
+          "lines": 61
+        },
+        {
+          "path": "engine/src/tempo_map.hpp",
+          "lines": 58
+        },
+        {
+          "path": "engine/src/json.hpp",
+          "lines": 55
+        },
+        {
+          "path": "engine/src/import/stems.cpp",
+          "lines": 55
+        },
+        {
+          "path": "engine/src/fx/channel_eq.hpp",
+          "lines": 52
+        },
+        {
+          "path": "engine/src/rt.hpp",
+          "lines": 50
+        },
+        {
+          "path": "engine/src/midi_parser.hpp",
+          "lines": 48
+        },
+        {
+          "path": "engine/src/zip.hpp",
+          "lines": 42
+        },
+        {
+          "path": "engine/src/plugins.hpp",
+          "lines": 35
+        },
+        {
+          "path": "engine/src/platform/macos/vst3_iids.cpp",
+          "lines": 34
+        },
+        {
+          "path": "engine/src/sample_clock.hpp",
+          "lines": 25
+        },
+        {
+          "path": "engine/dsp/include/dalnok_dsp.h",
+          "lines": 22
+        },
+        {
+          "path": "engine/src/commands.hpp",
+          "lines": 18
+        },
+        {
+          "path": "engine/src/midi.hpp",
+          "lines": 17
+        },
+        {
+          "path": "engine/src/import/logic_plugins.hpp",
+          "lines": 14
+        },
+        {
+          "path": "engine/src/record.hpp",
+          "lines": 12
+        },
+        {
+          "path": "engine/src/import/logic_mixer.hpp",
+          "lines": 12
+        },
+        {
+          "path": "engine/src/capture_recovery.hpp",
+          "lines": 10
+        }
+      ]
+    },
+    "app": {
+      "code_files": 35,
+      "loc": 19913,
+      "languages": {
+        "Swift": 19913
+      },
+      "files": [
+        {
+          "path": "app/macos/Dalnok/SelfTest.swift",
+          "lines": 2323
+        },
+        {
+          "path": "app/macos/Dalnok/MainWindow.swift",
+          "lines": 1854
+        },
+        {
+          "path": "app/macos/Dalnok/TimelineView.swift",
+          "lines": 1240
+        },
+        {
+          "path": "app/macos/Dalnok/FaceplateDisplays.swift",
+          "lines": 1192
+        },
+        {
+          "path": "app/macos/Dalnok/DevicePanel.swift",
+          "lines": 1191
+        },
+        {
+          "path": "app/macos/Dalnok/Faceplate.swift",
+          "lines": 953
+        },
+        {
+          "path": "app/macos/Dalnok/Panels.swift",
+          "lines": 851
+        },
+        {
+          "path": "app/macos/Dalnok/Controls.swift",
+          "lines": 818
+        },
+        {
+          "path": "app/macos/Dalnok/Pedals.swift",
+          "lines": 787
+        },
+        {
+          "path": "app/macos/Dalnok/PianoRoll.swift",
+          "lines": 624
+        },
+        {
+          "path": "app/macos/Dalnok/PluginManager.swift",
+          "lines": 617
+        },
+        {
+          "path": "app/macos/Dalnok/Shortcuts.swift",
+          "lines": 591
+        },
+        {
+          "path": "app/macos/Dalnok/Session.swift",
+          "lines": 580
+        },
+        {
+          "path": "app/macos/Dalnok/TapeDeck.swift",
+          "lines": 544
+        },
+        {
+          "path": "app/macos/Dalnok/Settings.swift",
+          "lines": 474
+        },
+        {
+          "path": "app/macos/Dalnok/main.swift",
+          "lines": 470
+        },
+        {
+          "path": "app/macos/Dalnok/Onboarding.swift",
+          "lines": 455
+        },
+        {
+          "path": "app/macos/Dalnok/ShortcutEditor.swift",
+          "lines": 451
+        },
+        {
+          "path": "app/macos/Dalnok/Mixer.swift",
+          "lines": 443
+        },
+        {
+          "path": "app/macos/Dalnok/Analog.swift",
+          "lines": 389
+        },
+        {
+          "path": "app/macos/Dalnok/Recording.swift",
+          "lines": 385
+        },
+        {
+          "path": "app/macos/Dalnok/CommandPalette.swift",
+          "lines": 324
+        },
+        {
+          "path": "app/macos/Dalnok/Launcher.swift",
+          "lines": 264
+        },
+        {
+          "path": "app/macos/Dalnok/PluginWindow.swift",
+          "lines": 250
+        },
+        {
+          "path": "app/macos/Dalnok/CompEditor.swift",
+          "lines": 247
+        },
+        {
+          "path": "app/macos/Dalnok/UIWalk.swift",
+          "lines": 246
+        },
+        {
+          "path": "app/macos/Dalnok/EngineBridge.swift",
+          "lines": 238
+        },
+        {
+          "path": "app/macos/Dalnok/Migration.swift",
+          "lines": 216
+        },
+        {
+          "path": "app/macos/Dalnok/Theme.swift",
+          "lines": 198
+        },
+        {
+          "path": "app/macos/Dalnok/Screenshots.swift",
+          "lines": 180
+        },
+        {
+          "path": "app/macos/Dalnok/PluginTaxonomy.swift",
+          "lines": 133
+        },
+        {
+          "path": "app/macos/Dalnok/MeterView.swift",
+          "lines": 112
+        },
+        {
+          "path": "app/macos/Dalnok/Motion.swift",
+          "lines": 111
+        },
+        {
+          "path": "app/macos/Dalnok/AutomationWriter.swift",
+          "lines": 84
+        },
+        {
+          "path": "app/macos/Dalnok/EmptyState.swift",
+          "lines": 78
+        }
+      ]
+    },
+    "cli": {
+      "code_files": 2,
+      "loc": 823,
+      "languages": {
+        "Swift": 823
+      },
+      "files": [
+        {
+          "path": "tools/dalnok-cli/main.swift",
+          "lines": 605
+        },
+        {
+          "path": "tools/dalnok-cli/TestProject.swift",
+          "lines": 218
+        }
+      ]
+    },
+    "scanner": {
+      "code_files": 2,
+      "loc": 163,
+      "languages": {
+        "C++": 163
+      },
+      "files": [
+        {
+          "path": "tools/dalnok-scan/main.cpp",
+          "lines": 159
+        },
+        {
+          "path": "tools/dalnok-scan/vst3_iids.cpp",
+          "lines": 4
+        }
+      ]
+    },
+    "tests": {
+      "code_files": 31,
+      "loc": 5093,
+      "languages": {
+        "Swift": 5093
+      },
+      "files": [
+        {
+          "path": "tests/engine/ImportTests.swift",
+          "lines": 635
+        },
+        {
+          "path": "tests/engine/ModelTests.swift",
+          "lines": 394
+        },
+        {
+          "path": "tests/engine/MidiTests.swift",
+          "lines": 346
+        },
+        {
+          "path": "tests/engine/PluginHostingTests.swift",
+          "lines": 298
+        },
+        {
+          "path": "tests/engine/LiveTests.swift",
+          "lines": 270
+        },
+        {
+          "path": "tests/engine/RoutingTests.swift",
+          "lines": 249
+        },
+        {
+          "path": "tests/engine/EngineTests.swift",
+          "lines": 219
+        },
+        {
+          "path": "tests/engine/BuiltinPluginTests.swift",
+          "lines": 215
+        },
+        {
+          "path": "tests/engine/M4Tests.swift",
+          "lines": 204
+        },
+        {
+          "path": "tests/engine/RecordingTests.swift",
+          "lines": 199
+        },
+        {
+          "path": "tests/engine/LogicPluginImportTests.swift",
+          "lines": 176
+        },
+        {
+          "path": "tests/engine/TempoMapTests.swift",
+          "lines": 166
+        },
+        {
+          "path": "tests/engine/StretchTests.swift",
+          "lines": 164
+        },
+        {
+          "path": "tests/engine/PunchTests.swift",
+          "lines": 136
+        },
+        {
+          "path": "tests/engine/ClipCopyTests.swift",
+          "lines": 122
+        },
+        {
+          "path": "tests/engine/LauncherTests.swift",
+          "lines": 121
+        },
+        {
+          "path": "tests/engine/AutomationTests.swift",
+          "lines": 117
+        },
+        {
+          "path": "tests/engine/DelayCompensationTests.swift",
+          "lines": 110
+        },
+        {
+          "path": "tests/engine/CaptureRecoveryTests.swift",
+          "lines": 109
+        },
+        {
+          "path": "tests/engine/TakeFolderTests.swift",
+          "lines": 100
+        },
+        {
+          "path": "tests/engine/MultiInputTests.swift",
+          "lines": 85
+        },
+        {
+          "path": "tests/engine/CycleTests.swift",
+          "lines": 85
+        },
+        {
+          "path": "tests/engine/LogicMixerImportTests.swift",
+          "lines": 78
+        },
+        {
+          "path": "tests/engine/MarkerTests.swift",
+          "lines": 74
+        },
+        {
+          "path": "tests/engine/AudioUnitHostingTests.swift",
+          "lines": 70
+        },
+        {
+          "path": "tests/engine/DawprojectTests.swift",
+          "lines": 61
+        },
+        {
+          "path": "tests/engine/ClapHostingTests.swift",
+          "lines": 61
+        },
+        {
+          "path": "tests/engine/AudioUnitDocumentTests.swift",
+          "lines": 60
+        },
+        {
+          "path": "tests/engine/Helpers.swift",
+          "lines": 57
+        },
+        {
+          "path": "tests/engine/ClipMuteTests.swift",
+          "lines": 56
+        },
+        {
+          "path": "tests/engine/PluginTests.swift",
+          "lines": 56
+        }
+      ]
+    }
+  },
+  "languages": {
+    "C/C++ header": 783,
+    "C++": 14235,
+    "Objective-C++": 403,
+    "Swift": 25829
+  },
+  "largest_files": [
+    {
+      "path": "engine/src/engine.cpp",
+      "lines": 2526,
+      "area": "engine"
+    },
+    {
+      "path": "app/macos/Dalnok/SelfTest.swift",
+      "lines": 2323,
+      "area": "app"
+    },
+    {
+      "path": "app/macos/Dalnok/MainWindow.swift",
+      "lines": 1854,
+      "area": "app"
+    },
+    {
+      "path": "engine/src/dalnok_api.cpp",
+      "lines": 1285,
+      "area": "engine"
+    },
+    {
+      "path": "app/macos/Dalnok/TimelineView.swift",
+      "lines": 1240,
+      "area": "app"
+    },
+    {
+      "path": "app/macos/Dalnok/FaceplateDisplays.swift",
+      "lines": 1192,
+      "area": "app"
+    },
+    {
+      "path": "app/macos/Dalnok/DevicePanel.swift",
+      "lines": 1191,
+      "area": "app"
+    },
+    {
+      "path": "app/macos/Dalnok/Faceplate.swift",
+      "lines": 953,
+      "area": "app"
+    },
+    {
+      "path": "engine/src/project.cpp",
+      "lines": 851,
+      "area": "engine"
+    },
+    {
+      "path": "app/macos/Dalnok/Panels.swift",
+      "lines": 851,
+      "area": "app"
+    },
+    {
+      "path": "app/macos/Dalnok/Controls.swift",
+      "lines": 818,
+      "area": "app"
+    },
+    {
+      "path": "app/macos/Dalnok/Pedals.swift",
+      "lines": 787,
+      "area": "app"
+    },
+    {
+      "path": "engine/include/dalnok/dalnok.h",
+      "lines": 761,
+      "area": "engine"
+    },
+    {
+      "path": "engine/src/platform/macos/vst3_host.cpp",
+      "lines": 708,
+      "area": "engine"
+    },
+    {
+      "path": "tests/engine/ImportTests.swift",
+      "lines": 635,
+      "area": "tests"
+    },
+    {
+      "path": "app/macos/Dalnok/PianoRoll.swift",
+      "lines": 624,
+      "area": "app"
+    },
+    {
+      "path": "app/macos/Dalnok/PluginManager.swift",
+      "lines": 617,
+      "area": "app"
+    },
+    {
+      "path": "tools/dalnok-cli/main.swift",
+      "lines": 605,
+      "area": "cli"
+    },
+    {
+      "path": "engine/src/engine.hpp",
+      "lines": 598,
+      "area": "engine"
+    },
+    {
+      "path": "app/macos/Dalnok/Shortcuts.swift",
+      "lines": 591,
+      "area": "app"
+    },
+    {
+      "path": "app/macos/Dalnok/Session.swift",
+      "lines": 580,
+      "area": "app"
+    },
+    {
+      "path": "engine/src/commands.cpp",
+      "lines": 567,
+      "area": "engine"
+    },
+    {
+      "path": "app/macos/Dalnok/TapeDeck.swift",
+      "lines": 544,
+      "area": "app"
+    },
+    {
+      "path": "engine/src/record.cpp",
+      "lines": 478,
+      "area": "engine"
+    },
+    {
+      "path": "app/macos/Dalnok/Settings.swift",
+      "lines": 474,
+      "area": "app"
+    }
+  ],
+  "counts": {
+    "engine_methods": 117,
+    "c_api_functions": 211,
+    "catalog_commands": 70,
+    "test_files": 31,
+    "swift_types": 118
+  }
+}

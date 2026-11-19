@@ -1,0 +1,134 @@
+# Dalnok modernization roadmap (from the 2026-11 audit)
+
+Companion to `codebase-audit-2026-11.md` and `findings.json`. Effort: S ≤ 1 day, M 2–5 days,
+L 2–4 weeks, XL > 1 month. Priority follows the audit's P0–P3 scale.
+
+The order is chosen so that **nothing here breaks existing behaviour**, each phase leaves the test
+suite green, and later work depends only on earlier work that has landed.
+
+---
+
+## Phase 0 — Stop the bleeding (P0, ~2–3 weeks)
+
+Do these before any new feature. They bound every other failure.
+
+| Order | ID | Item | Effort | Depends on | Acceptance |
+|---|---|---|---|---|---|
+| 1 | A-02 | Autosave + project crash recovery | M | — | Kill -9 at any point; relaunch restores edits newer than one interval; saved file untouched |
+| 2 | A-23 | Regenerate the capability matrix from tests | S | — | Every "works / not yet" row links a test, self-test check or benchmark |
+| 3 | A-01a | Crash-safe boundary: pre-plug-in-init snapshot | S | A-02 | A plug-in crash during project apply loses no edits |
+| 4 | A-01 | Out-of-process plug-in hosting (design → effects → instruments) | XL | A-02, A-01a | Crashing/hanging plug-in leaves app alive; pass-through nulls bit-exactly |
+
+**Why this order:** autosave is the cheapest way to make every other risk survivable, and the
+capability matrix must be trustworthy before contributors act on the audit. Out-of-process hosting is
+XL and must not block the rest of the roadmap.
+
+---
+
+## Phase 1 — Make the model scale (P1, ~6–8 weeks)
+
+The measured ceilings: 15.9 ms per UI read and 0.77 ms per structural edit at 4,096 clips, and a full
+model copy per parameter edit.
+
+| Order | ID | Item | Effort | Depends on | Acceptance |
+|---|---|---|---|---|---|
+| 5 | A-04a | Linear compile: bucket clips by track once | S | — | Compile no longer O(T×C); existing tests unchanged |
+| 6 | A-03a | Parameter edits skip the model copy (coalesced undo) | M | — | Fader drag = one undo step, no copy; measured RSS flat |
+| 7 | A-07 | Share plug-in state (immutable blobs) | S | A-03a | No byte copies of plug-in state on model copy |
+| 8 | A-05a | Skip full refresh for parameter-only revisions | S | A-03a | Drag path does no model read; measured stall gone |
+| 9 | A-05 | Change sets + incremental UI refresh | L | A-05a, A-15 | One-track edit re-reads only that track; 4,096 clips < 4 ms/frame |
+| 10 | A-04 | Incremental snapshot compilation | M | A-04a | Incremental == full on randomised edits; < 0.2 ms at 4,096 clips |
+| 11 | A-03 | Structurally shared undo model | L | A-03a, A-07 | 500-edit RSS reduced by ≥5x at 4,096 clips |
+
+**Gate:** re-run `audit-scale` and `audit-bench`; publish before/after numbers in
+`benchmarks/results.json`. No speedup claim without a measured run.
+
+---
+
+## Phase 2 — Reliability hardening (P1, ~4 weeks, partly parallel)
+
+| Order | ID | Item | Effort | Depends on | Acceptance |
+|---|---|---|---|---|---|
+| 12 | A-08 | Async plug-in activation with progress/cancel/watchdog | L | A-01a | Slow fixture plug-in never freezes the UI |
+| 13 | A-10 | libFuzzer targets + property tests + local sanitizer pass | M | — | 10-minute fuzz run clean; 1,000 random round-trips pass |
+| 14 | A-14 | Handoff health metrics + test | S | — | Backlog observable; edit audible within N callbacks |
+| 15 | A-16 | Project schema + migration chain + round-trip tests | M | A-10 | Versions 1–13 load; save/load stable |
+| 16 | A-18 | Split self-test harness; inject clock and sample rate | M | — | Deterministic at 44.1/48 kHz; check count unchanged |
+
+---
+
+## Phase 3 — Structural clarity (P1/P2, ~6 weeks)
+
+Do this **after** Phase 1, because the service boundaries are easier to see once edit/compile paths
+are split.
+
+| Order | ID | Item | Effort | Depends on | Acceptance |
+|---|---|---|---|---|---|
+| 17 | A-06 | Extract Transport, Recording, PluginHost, RenderCompiler, UndoStack services | L | Phase 1 | 188 tests unchanged; no file > ~1,200 engine lines |
+| 18 | A-15 | Generate or bulk-load the C API model DTOs | L | A-05, A-06 | One definition per field; measured per-clip read cost down |
+| 19 | A-19 | Split engine targets + build cache + compile_commands.json | M | A-06 | Adapter-only change rebuilds < 10 s; CI time down |
+| 20 | A-17 | Inject theme values; enable live switching | M | — | Both themes pixel-identical; switch without relaunch |
+
+---
+
+## Phase 4 — Media and DSP headroom (P1/P2, ~8–12 weeks)
+
+| Order | ID | Item | Effort | Depends on | Acceptance |
+|---|---|---|---|---|---|
+| 21 | A-09 | Disk streaming with block cache and guaranteed residency | XL | A-04 | 2-hour file plays, bounded RSS, zero dropouts, bit-identical renders |
+| 22 | A-11 | Skip silent/no-op tracks per block | M | A-04 | 256-track/8-active costs near 8-track; bit-identical output |
+| 23 | A-12 | Denormal/FP-environment guard | S | — | No decay-tail penalty; output unchanged above −140 dBFS |
+| 24 | A-13 | SIMD for copy, fades, ramp, meters | M | A-11 | ≥25% live-path gain at 64–256 tracks (measured) |
+
+---
+
+## Phase 5 — Optional / speculative (P3, opportunistic)
+
+| ID | Item | Effort | Note |
+|---|---|---|---|
+| A-20 | Central policy header for real-time constants | S | Do alongside any engine edit |
+| A-21 | Error classes in the C API | S | Additive enum |
+| A-22 | Decide the undo rule for view-only state | S | Product decision; document it |
+
+---
+
+## Dependency graph (text form)
+
+```
+A-02 ──► A-01a ──► A-01
+  │                  │
+  └──────────► A-08 ◄┘
+
+A-04a ──► A-04 ──► A-11 ──► A-13
+A-03a ──► A-07
+   └────► A-05a ──► A-05 ──► A-15
+                      │        │
+                      └──► A-03 (needs A-03a, A-07)
+A-10 ──► A-16
+A-06 ──► {A-15, A-19}
+```
+
+Rules the roadmap enforces:
+
+- Nothing in Phase 1 depends on A-01 (XL) or A-09 (XL), so slow programmes cannot stall quick wins.
+- A-15 (C API generation) waits for A-05 because the change-set shape determines what the API should
+  return.
+- A-19 (build split) waits for A-06 because target seams follow service seams.
+- A-09 (streaming) waits for A-04 so media residency assumptions are made against a stable snapshot.
+
+## Milestones
+
+1. **M-A "Cannot lose work"** — Phase 0 items 1–3. Data-loss exposure is bounded.
+2. **M-B "Scale without jank"** — items 5–9. A 4,096-clip session edits and refreshes under a frame.
+3. **M-C "Trustworthy failures"** — Phase 2. Plug-in faults, parse faults and formatting faults are
+   contained and observable.
+4. **M-D "Module shape"** — Phase 3. A new effect or importer touches one service.
+5. **M-E "Long sessions"** — Phase 4. Hours of audio, bounded memory, DSP headroom.
+
+## Verification discipline for every item
+
+1. Do not claim a performance result without a before/after run of the same command on the same
+   machine; append it to `benchmarks/results.json`.
+2. Do not weaken an existing test to make a refactor pass; if a test must change, say why in the PR.
+3. Keep `scripts/ci/rt-effects.sh` clean for anything reachable from the callback.
+4. Update `site/parity.json` only with a test, self-test or benchmark behind the claim.

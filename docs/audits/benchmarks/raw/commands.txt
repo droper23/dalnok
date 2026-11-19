@@ -1,0 +1,70 @@
+track.add          New Track                {name?}
+track.remove       Delete Track             {track}
+track.rename       Rename Track             {track, name}
+track.setVolume    Set Track Volume         {track, db}
+track.setPan       Set Track Pan            {track, pan: -1..1}
+track.setMute      Mute or Unmute Track     {track, muted}
+track.setSolo      Solo or Unsolo Track     {track, solo}
+track.setColor     Set Track Color          {track, color: "#rrggbb" | "auto"}
+tracks.recolorGrad Recolor Tracks as Gradie {}
+track.move         Move Track               {track, index}
+track.addInstrumen New Instrument Track     {name?}
+track.addBus       New Bus                  {name?}
+track.setOutput    Set Track Output         {track, bus (0 = master)}
+track.setSend      Send                     {track, bus, db?, pre?}
+track.removeSend   Remove Send              {track, bus}
+track.setAutomatio Set Automation           {track, target ("volume" | "pan"), points: [[frame, value], ...]}
+track.makeStack    Create Track Stack       {tracks: [track, ...], name?}
+track.ungroupStack Ungroup Track Stack      {track}
+plugin.setSidechai Sidechain                {track, slot, source (track, 0 = none)}
+marker.add         Add Marker               {frame, name?}
+marker.remove      Delete Marker            {id}
+marker.move        Move Marker              {id, frame}
+marker.rename      Rename Marker            {id, name}
+track.setHidden    Hide Track               {track (0 = all, with hidden false), hidden}
+track.setHeight    Track Height             {track (0 = all), height (points, 0 = default)}
+track.duplicate    Duplicate Track          {track}
+plugin.move        Move Plug-in             {track, slot, index}
+plugin.setBypassed Bypass Plug-in           {track, slot, bypassed}
+plugin.setAutomati Plug-in Automation       {track, slot, param, points: [[frame, value 0-1], ...]}
+launcher.copyClip  Copy to Launcher Slot    {clip, slot}
+launcher.launch    Launch Slot              {track, slot (-1 = back to the arrangement)}
+launcher.setFollow Follow Action            {clip, action (0 none, 1 next, 2 stop), loops?}
+launcher.launchSce Launch Scene             {slot}
+master.setGain     Master Volume            {db}
+takes.makeFolder   Make Take Folder         {track, clips: [clip, ...]}
+takes.setComp      Comp                     {folder, comp: [[from, to, take], ...]}
+track.setArmed     Record Enable Track      {track, armed}
+track.setInput     Set Track Input          {track, channel (zero-based)}
+project.setTempo   Set Tempo and Meter      {bpm, numerator?, denominator?}
+project.setTempoMa Set Tempo and Meter Map  {tempo: [[beat, bpm], ...] (first at beat 0), meter?: [[bar (zero-based), numerator, denominator], ...]}
+transport.setPunch Punch In/Out             {on, in?, out? (frames)}
+launcher.setRecord Record Into Launcher Slo {slot (-1 = arrangement)}
+transport.setCycle Cycle                    {on, start?, end? (frames)}
+transport.setMetro Metronome                {on, level? (0-1)}
+plugin.add         Add Plug-in              {track, path (VST3 bundle), class? (hex id)}
+plugin.remove      Remove Plug-in           {track, slot}
+midi.addClip       New MIDI Clip            {track, start, length}
+midi.setNotes      Edit Notes               {clip, notes: [[start, length, pitch, velocity], ...]}
+midi.quantize      Quantize Notes           {clip, grid (beats, e.g. 0.25 = 16ths), strength? (0-1)}
+clip.setFades      Set Clip Fades           {clip, fadeIn, fadeOut, curve?: linear|equalPower}
+clip.setGain       Set Clip Gain            {clip, db}
+clip.setMuted      Mute or Unmute Clip      {clip, muted}
+clip.setStretch    Time Stretch Clip        {clip, length?, rate?, pitch?, preservePitch?}
+clip.add           Add Clip                 {track, media, start?, offset?, length?}
+clip.remove        Delete Clip              {clip}
+clips.remove       Delete Clips             {clips: [id, ...]}
+clip.move          Move Clip                {clip, start, track?}
+clips.copy         Paste Clips              {clips: [id, ...], start: frame, trackShift?: places}
+clipboard.copy     Copy Clips               {clips: [id, ...]}
+clipboard.paste    Paste Clips              {track, start: frame}
+clips.nudge        Nudge Clips              {clips: [id, ...], delta: frames}
+clip.setRegion     Trim Clip                {clip, start, offset, length}
+clip.split         Split Clip               {clip, at}
+edit.undo          Undo                     {}
+edit.redo          Redo                     {}
+transport.play     Play                     {}
+transport.pause    Pause                    {}
+transport.toggle   Play / Pause             {}
+transport.seek     Go to Position           {frame} or {seconds}
+session.describe   Describe Session         {}

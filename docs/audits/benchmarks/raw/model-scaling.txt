@@ -1,0 +1,28 @@
+## audit-scale --tracks 8 --clips 8
+model: 8 tracks x 8 clips = 64 clips, built in 1 ms
+model read (one Session.refresh pass): n=30 p50=0.004 ms p95=0.005 ms p99=0.007 ms max=0.007 ms
+structural edit (nudge one clip, recompile): n=30 p50=0.009 ms p95=0.027 ms p99=0.028 ms max=0.028 ms
+parameter edit (track gain, undoable): n=30 p50=0.002 ms p95=0.006 ms p99=0.011 ms max=0.011 ms
+undo (whole-model restore + recompile): n=30 p50=0.007 ms p95=0.012 ms p99=0.013 ms max=0.013 ms
+
+## audit-scale --tracks 32 --clips 32
+model: 32 tracks x 32 clips = 1024 clips, built in 49 ms
+model read (one Session.refresh pass): n=30 p50=0.674 ms p95=0.682 ms p99=0.697 ms max=0.697 ms
+structural edit (nudge one clip, recompile): n=30 p50=0.094 ms p95=0.109 ms p99=0.132 ms max=0.132 ms
+parameter edit (track gain, undoable): n=30 p50=0.026 ms p95=0.038 ms p99=0.039 ms max=0.039 ms
+undo (whole-model restore + recompile): n=30 p50=0.084 ms p95=0.093 ms p99=0.098 ms max=0.098 ms
+
+## audit-scale --tracks 64 --clips 32
+model: 64 tracks x 32 clips = 2048 clips, built in 224 ms
+model read (one Session.refresh pass): n=30 p50=3.402 ms p95=3.466 ms p99=3.516 ms max=3.516 ms
+structural edit (nudge one clip, recompile): n=30 p50=0.251 ms p95=0.295 ms p99=0.320 ms max=0.320 ms
+parameter edit (track gain, undoable): n=30 p50=0.042 ms p95=0.052 ms p99=0.060 ms max=0.060 ms
+undo (whole-model restore + recompile): n=30 p50=0.235 ms p95=0.250 ms p99=0.305 ms max=0.305 ms
+
+## audit-scale --tracks 128 --clips 32
+model: 128 tracks x 32 clips = 4096 clips, built in 1256 ms
+model read (one Session.refresh pass): n=30 p50=16.028 ms p95=16.189 ms p99=16.200 ms max=16.200 ms
+structural edit (nudge one clip, recompile): n=30 p50=0.757 ms p95=0.781 ms p99=0.852 ms max=0.852 ms
+parameter edit (track gain, undoable): n=30 p50=0.079 ms p95=0.105 ms p99=0.105 ms max=0.105 ms
+undo (whole-model restore + recompile): n=30 p50=0.745 ms p95=0.771 ms p99=0.797 ms max=0.797 ms
+
