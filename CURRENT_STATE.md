@@ -5,6 +5,12 @@ milestone: M11 VST3 hosting (ADR-0009 stage 3) done; editors, parameters and AU 
 ---
 # Current State
 
+## Current priorities (2026-11-18)
+- Owner's goal: Logic projects should sound the same in both DAWs, including plug-ins. Import, routing, automation and native processor parity need measured verification; this is not yet achieved.
+- Owner reports crashes opening multiple Logic projects. Headless import alone does not reproduce every app crash; isolate the app path and preserve project privacy when building generated regression fixtures.
+- Guitar Rig crash and 44.1 kHz timing remain open. The display floors ticks after converting integer frames to beats; some self-test expectations also multiply rounded beat lengths, so diagnose those separately from quantization.
+- Verification: `swift test --disable-sandbox` outside the sandbox: 188 tests pass; `scripts/ci/plugin-host.sh` and `scripts/ci/rt-effects.sh` pass. Both theme self-tests pass, with hosted plug-in UI checks skipped (test plug-in not configured).
+
 ## Latest session (0.1.0 follow-ups; 2026-11-18, later)
 - Bypass is animated and configurable (explicit CA animations on the unit layer plus a veil; light levels driven by a 60 Hz fade in `DeviceView`). `PlateButton` keys track their own presses so they work while the unit is drawn shrunk.
 - Self-test note: when the owner uses the Mac during a run, focus- and timing-sensitive checks can fail; the LCD check now waits for the next frame.

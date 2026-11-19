@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Investigating Logic project opening crashes and audio parity; no compatibility fix is claimed yet.
+
 ## [0.1.0] - 2026-11-18
 First preview release (pre-alpha): recording and editing, MIDI, mixing, VST3/CLAP/AU hosting, project import from
 Logic, Ableton, REAPER and Final Cut, the clip launcher, and the Graphite and Warm Analog appearances. The entries below
