@@ -517,6 +517,7 @@ final class SelfTest {
         await tapeMachine()
         await markersAndTrackTools()
         await deferredPluginLoading()
+        await slowIsolatedPluginLoading()
         try? w.snapshot(to: workdir.appendingPathComponent("selftest.png"))
         await migrationSteps()
         // Settings: exercise the menu, appearance selection, and project preference.
@@ -816,6 +817,84 @@ final class SelfTest {
             check(!menu.items.contains { $0.title == "Load \(plugins[0].name)" && $0.representedObject as? Int32 == plugins[0].id },
                   "no Load item for a loaded plug-in")
         }
+        _ = await withCheckedContinuation { cont in w.openProject(restore) { cont.resume(returning: $0) } }
+    }
+
+    /// ADR-0014 stage 2 (closes the A-08 gap): with Safety on, plug-ins whose own initialization blocks for seconds load
+    /// in their hosts while the window keeps running, and Stop ends the load at once. Needs DALNOK_TEST_VST3 (the
+    /// test plug-in from scripts/ci/plugin-isolation.sh, whose "slow" mode sleeps in initialize) and dalnok-plughost.
+    private func slowIsolatedPluginLoading() async {
+        guard let bundle = ProcessInfo.processInfo.environment["DALNOK_TEST_VST3"], !bundle.isEmpty, Engine.pluginHostAvailable else {
+            return print("SKIP  slow isolated plug-in loading (set DALNOK_TEST_VST3; dalnok-plughost next to the app)")
+        }
+        let e = s.engine
+        e.pause()
+        let restore = workdir.appendingPathComponent("before-slow.dalnok")
+        check(w.saveProject(to: restore), "save before the slow-loading check")
+        e.newProject(); s.refresh()
+        dalnok_plugins_set_host(e.handle, nil)
+        let t = dalnok_track_add(e.handle, "Slow")
+        for _ in 0..<3 { _ = dalnok_plugin_add(e.handle, t, bundle, "44616C6E6F6B546573744761696E3031", nil, 0) }
+        let project = workdir.appendingPathComponent("slow.dalnok")
+        check(w.saveProject(to: project), "save a project with three test plug-ins")
+        e.newProject(); s.refresh()
+        dalnok_plugins_set_host(e.handle, Engine.pluginHostPath)
+        setenv("DALNOK_TEST_INIT_FAILURE", "slow", 1); setenv("DALNOK_TEST_INIT_SLOW_MS", "4000", 1)
+        // The main thread's longest stall while loading, measured by a 5 ms timer.
+        final class Probe: @unchecked Sendable {
+            var last: UInt64 = 0, started: UInt64 = 0, clicked: UInt64 = 0, worstAt: UInt64 = 0
+            var worst = 0.0, first = 0.0, ticks = 0
+        }
+        let m = Probe()
+        let timer = Timer(timeInterval: 0.005, repeats: true) { _ in
+            let now = DispatchTime.now().uptimeNanoseconds
+            // Until Stop, after the first tick: that one also waits for the window to draw the newly opened project
+            // (no plug-in code runs in this process), which is the open's cost, not loading's.
+            if m.clicked == 0 && m.started > 0 {
+                let gap = Double(now - m.last) / 1e6
+                if m.ticks == 0 { m.first = gap } else if gap > m.worst { m.worst = gap; m.worstAt = now }
+                m.ticks += 1
+            }
+            m.last = now
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        let previous = s.onPluginLoadProgress
+        var stopVisible = false, statusText = ""
+        s.onPluginLoadProgress = { [weak self] p in
+            previous?(p)
+            guard let self, let p, p.done == 0 else { return }
+            stopVisible = !self.w.transport.stopLoadingButton.isHidden
+            statusText = self.w.transport.statusLabel.stringValue
+            m.last = DispatchTime.now().uptimeNanoseconds; m.started = m.last
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { // the plug-ins are 0.6 s into their 4 s initialization
+                m.clicked = DispatchTime.now().uptimeNanoseconds
+                self.w.transport.stopLoadingButton.performClick(nil)
+            }
+        }
+        let opened = await withCheckedContinuation { cont in w.openProject(project) { cont.resume(returning: $0) } }
+        let stopToDone = Double(DispatchTime.now().uptimeNanoseconds &- m.clicked) / 1e6
+        timer.invalidate()
+        s.onPluginLoadProgress = previous
+        unsetenv("DALNOK_TEST_INIT_FAILURE"); unsetenv("DALNOK_TEST_INIT_SLOW_MS")
+        print(String(format: "MEASURE slow isolated load: worst main-thread gap %.1f ms over %d ticks before Stop (at %.0f ms; first tick after the open %.1f ms); Stop to done %.1f ms",
+                     m.worst, m.ticks, Double(m.worstAt &- m.started) / 1e6, m.first, stopToDone))
+        check(opened && stopVisible && statusText == "Loading plug-ins 1 of 3…", "slow isolated plug-ins show progress with Stop (\(statusText))")
+        check(m.clicked > 0 && m.worst < 50 && m.ticks > 60, // 0.6 s of loading: ≥ 60 of 120 possible 5 ms ticks
+              "the window keeps running while plug-ins sleep 4 s in initialization (worst gap \(String(format: "%.1f", m.worst)) ms)")
+        check(stopToDone < 250, "Stop ends the load at once (\(String(format: "%.1f", stopToDone)) ms)")
+        let plugins = s.tracks.first?.plugins ?? []
+        check(plugins.count == 3 && plugins.allSatisfy { !$0.loaded && !$0.loading && $0.error.contains("cancelled") },
+              "Stop leaves all three unloaded with their settings")
+        check(w.transport.stopLoadingButton.isHidden && !e.isDirty, "Stop button hidden; loading is not an edit")
+        if let track = s.tracks.first, let first = plugins.first {
+            let menu = w.pluginsMenu(for: track)
+            if let load = menu.items.first(where: { $0.title == "Load \(first.name)" }), let action = load.action {
+                _ = NSApp.sendAction(action, to: load.target, from: load)
+                let now = s.tracks.first?.plugins.first
+                check(now?.loaded == true && now?.isolated == true, "track menu ▸ Load starts it in its own process")
+            } else { check(false, "track menu offers Load for a stopped isolated plug-in") }
+        }
+        e.applyPluginIsolation()
         _ = await withCheckedContinuation { cont in w.openProject(restore) { cont.resume(returning: $0) } }
     }
 

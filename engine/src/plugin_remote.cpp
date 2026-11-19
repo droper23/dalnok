@@ -89,8 +89,11 @@ bool waitChange(std::atomic<uint32_t> &a, uint32_t old, uint64_t timeoutNs) noex
 
 enum Op : uint8_t {
     opHello = 1, opGetState, opSetState, opSetStateDocument, opStateError, opParameterCount, opParameter,
-    opParameterText, opSetParameter, opTouched, opEditCount, opAutomationRange, opResponse, opLatency, opQuit
+    opParameterText, opSetParameter, opTouched, opEditCount, opAutomationRange, opResponse, opLatency, opQuit,
+    opInit // engine → host once after starting: [u8 has state][u8 from document][str state]
 };
+// Reply heads: 0 = refused (payload: reason), 1 = done, 2 = the host is crashing (payload: str reason; see onCrash).
+constexpr uint8_t kCrashed = 2;
 
 struct Writer {
     std::string b;
@@ -193,6 +196,7 @@ public:
             (void)sendMessage(fd_, opQuit, {});
             ::close(fd_);
         }
+        if (pid_ > 0 && !launched_) killAndReap(); // still loading (cancelled or failed): nothing to shut down cleanly
         if (pid_ > 0) {
             int status = 0;
             const uint64_t deadline = nowNs() + 500'000'000;
@@ -202,10 +206,16 @@ public:
             }
         }
         if (shared_) ::munmap(shared_, sizeof(Shared));
+        unlinkName();
     }
 
-    bool start(const std::string &host, const std::string &format, const std::string &path, const std::string &classId,
-               double sampleRate, int maxBlock, bool offline, int loadTimeoutMs, std::string &err) {
+    // Starts the host without waiting for it (ADR-0014 stage 2). `state` (may be null) is sent with the start request and
+    // applied by the host before it answers, so neither loading nor restoring ever blocks the caller; pollLaunch
+    // reports the outcome.
+    bool launch(const std::string &host, const std::string &format, const std::string &path, const std::string &classId,
+                double sampleRate, int maxBlock, bool offline, int loadTimeoutMs, const std::string *state, bool document,
+                std::string &err) {
+        loadTimeoutMs_ = loadTimeoutMs;
         offline_ = offline;
         sampleRate_ = sampleRate;
         if (maxBlock > kMaxFrames) { err = "block too large for an isolated plug-in"; return false; }
@@ -247,16 +257,50 @@ public:
             err = "cannot start the plug-in host: " + std::string(std::strerror(spawned));
             return false;
         }
+        shmName_ = name;
+        launchDeadline_ = nowNs() + uint64_t(loadTimeoutMs) * 1'000'000;
+        Writer init;
+        init.u8(state != nullptr);
+        init.u8(document);
+        init.str(state ? *state : std::string());
+        Writer framed;
+        framed.u32(static_cast<uint32_t>(init.b.size() + 1));
+        framed.u8(opInit);
+        outbox_ = framed.b + init.b;
+        return true;
+    }
+
+    enum class Launch { loading, ready, failed };
+    // Never blocks for long: sends what the socket takes of the start request and reads the host's answer if it is
+    // there. A host that crashes, exits or outlives the load timeout fails the launch.
+    Launch pollLaunch(std::string &err) {
+        if (launched_) return Launch::ready;
+        while (outboxSent_ < outbox_.size()) {
+            const ssize_t n = ::send(fd_, outbox_.data() + outboxSent_, outbox_.size() - outboxSent_, MSG_DONTWAIT);
+            if (n > 0) { outboxSent_ += static_cast<size_t>(n); continue; }
+            if (n < 0 && errno == EINTR) continue;
+            break; // full (the host is still loading) or closed (reported below)
+        }
+        pollfd p{fd_, POLLIN, 0};
+        const bool readable = ::poll(&p, 1, 0) > 0;
+        if (!readable) {
+            if (nowNs() < launchDeadline_) return Launch::loading;
+            unlinkName();
+            reapForError(err, loadTimeoutMs_);
+            return Launch::failed;
+        }
+        unlinkName(); // both processes have it mapped (or the host is gone); the name is no longer needed
         uint8_t status = 0;
         std::string reply;
-        const bool answered = receiveMessage(fd_, status, reply, nowNs() + uint64_t(loadTimeoutMs) * 1'000'000);
-        ::shm_unlink(name.c_str()); // both processes have it mapped; the name is no longer needed
-        if (!answered) {
-            reapForError(err, loadTimeoutMs);
-            return false;
+        if (!receiveMessage(fd_, status, reply, nowNs() + 1'000'000'000ull)) {
+            const std::string why = exitReason();
+            if (why.empty()) reapForError(err, loadTimeoutMs_);
+            else err = "the plug-in host failed while loading: " + why;
+            return Launch::failed;
         }
         Reader r{reply};
-        if (status != 1) { err = r.str(); return false; }
+        if (status == kCrashed) { err = "the plug-in " + r.str() + " while loading"; killAndReap(); return Launch::failed; }
+        if (status != 1) { err = r.str(); return Launch::failed; }
         instrument_ = r.u8();
         sidechain_ = r.u8();
         latency_.store(r.u32());
@@ -264,8 +308,29 @@ public:
         vendor_ = r.str();
         classId_ = r.str();
         categories_ = r.str();
-        if (!r.ok) { err = "the plug-in host sent a damaged reply"; return false; }
-        return true;
+        stateAccepted_ = r.u8();
+        launchStateError_ = r.str();
+        if (!r.ok) { err = "the plug-in host sent a damaged reply"; return Launch::failed; }
+        launched_ = true;
+        outbox_.clear();
+        return Launch::ready;
+    }
+    bool stateAccepted() const { return stateAccepted_; }
+    const std::string &launchStateError() const { return launchStateError_; }
+    pid_t pid() const { return pid_; }
+
+    bool start(const std::string &host, const std::string &format, const std::string &path, const std::string &classId,
+               double sampleRate, int maxBlock, bool offline, int loadTimeoutMs, std::string &err) {
+        if (!launch(host, format, path, classId, sampleRate, maxBlock, offline, loadTimeoutMs, nullptr, false, err)) return false;
+        while (true) {
+            switch (pollLaunch(err)) {
+                case Launch::ready: return true;
+                case Launch::failed: return false;
+                case Launch::loading: break;
+            }
+            pollfd p{fd_, POLLIN, 0};
+            (void)::poll(&p, 1, 20);
+        }
     }
 
     bool instrument() const override { return instrument_; }
@@ -448,6 +513,17 @@ public:
     }
 
 private:
+    // The crash reporter can hold a dying process for seconds; its report comes from a copy, so end it now.
+    void killAndReap() const {
+        if (pid_ <= 0) return;
+        int status = 0;
+        ::kill(pid_, SIGKILL);
+        ::waitpid(pid_, &status, 0);
+        pid_ = 0;
+    }
+    void unlinkName() {
+        if (!shmName_.empty()) { ::shm_unlink(shmName_.c_str()); shmName_.clear(); }
+    }
     void silenceIfInstrument(float *left, float *right, int frames) DALNOK_NONBLOCKING {
         if (!instrument_) return; // effects pass the dry signal through
         for (int i = 0; i < frames; ++i) left[i] = right[i] = 0.0f;
@@ -483,6 +559,7 @@ private:
             fail(reason.empty() ? "stopped responding" : reason);
             return false;
         }
+        if (status == kCrashed) { Reader r{reply}; fail(r.str()); killAndReap(); return false; }
         return status == 1;
     }
     // Why the host process ended, if it did within a moment (a closed socket usually means it just died).
@@ -513,6 +590,11 @@ private:
     }
 
     Shared *shared_ = nullptr;
+    std::string shmName_, outbox_, launchStateError_;
+    size_t outboxSent_ = 0;
+    uint64_t launchDeadline_ = 0;
+    int loadTimeoutMs_ = 60'000;
+    bool launched_ = false, stateAccepted_ = true;
     mutable pid_t pid_ = 0;
     int fd_ = -1;
     bool offline_ = false, instrument_ = false, sidechain_ = false;
@@ -572,6 +654,41 @@ void audioLoop(Host *h) {
 }
 
 void reply(int fd, bool ok, const std::string &payload = {}) { (void)sendMessage(fd, ok ? 1 : 0, payload); }
+
+// A crashing host tells the engine at once, before the system's crash reporter holds the dying process for seconds:
+// the signal handler writes a prepared kCrashed message and re-raises the signal.
+char gCrashMessage[6][64];
+size_t gCrashLength[6];
+constexpr int kCrashSignals[6] = {SIGSEGV, SIGBUS, SIGABRT, SIGILL, SIGFPE, SIGTRAP};
+
+void onCrash(int sig) {
+    for (int i = 0; i < 6; ++i)
+        if (kCrashSignals[i] == sig) { (void)!::write(3, gCrashMessage[i], gCrashLength[i]); break; }
+    ::signal(sig, SIG_DFL);
+    ::raise(sig);
+}
+
+void installCrashReporter() {
+    static char altStack[64 * 1024]; // a stack overflow still reports
+    stack_t ss{};
+    ss.ss_sp = altStack;
+    ss.ss_size = sizeof altStack;
+    ::sigaltstack(&ss, nullptr);
+    for (int i = 0; i < 6; ++i) {
+        Writer payload;
+        payload.str(std::string("crashed (") + strsignal(kCrashSignals[i]) + ")");
+        Writer framed;
+        framed.u32(static_cast<uint32_t>(payload.b.size() + 1));
+        framed.u8(kCrashed);
+        framed.b += payload.b;
+        std::memcpy(gCrashMessage[i], framed.b.data(), std::min(framed.b.size(), sizeof gCrashMessage[i]));
+        gCrashLength[i] = std::min(framed.b.size(), sizeof gCrashMessage[i]);
+        struct sigaction sa{};
+        sa.sa_handler = onCrash;
+        sa.sa_flags = SA_ONSTACK | SA_RESETHAND;
+        ::sigaction(kCrashSignals[i], &sa, nullptr);
+    }
+}
 
 void serve(Host *h, uint8_t op, const std::string &payload) {
     PluginProcessor &p = *h->plugin;
@@ -640,6 +757,34 @@ void onControl(CFFileDescriptorRef ref, CFOptionFlags, void *) {
 
 } // namespace
 
+namespace {
+class Launch final : public RemotePluginLaunch {
+public:
+    std::unique_ptr<RemotePluginProcessor> p = std::make_unique<RemotePluginProcessor>();
+    Status poll(std::string &err) override {
+        if (!p) return Status::failed;
+        switch (p->pollLaunch(err)) {
+            case RemotePluginProcessor::Launch::ready: return Status::ready;
+            case RemotePluginProcessor::Launch::failed: return Status::failed;
+            default: return Status::loading;
+        }
+    }
+    std::unique_ptr<PluginProcessor> take() override { return std::move(p); }
+    bool stateAccepted() const override { return p && p->stateAccepted(); }
+    std::string stateError() const override { return p ? p->launchStateError() : std::string(); }
+};
+} // namespace
+
+std::unique_ptr<RemotePluginLaunch> launchRemotePlugin(const std::string &hostPath, const std::string &format,
+                                                       const std::string &path, const std::string &classId,
+                                                       double sampleRate, int maxBlock, int loadTimeoutMs,
+                                                       const std::string *state, bool document, std::string &err) {
+    auto l = std::make_unique<Launch>();
+    if (!l->p->launch(hostPath, format, path, classId, sampleRate, maxBlock, false, loadTimeoutMs, state, document, err))
+        return nullptr;
+    return l;
+}
+
 std::unique_ptr<PluginProcessor> loadRemotePlugin(const std::string &hostPath, const std::string &format,
                                                   const std::string &path, const std::string &classId,
                                                   double sampleRate, int maxBlock, bool offline, int loadTimeoutMs,
@@ -678,12 +823,26 @@ int plughostMain(int argc, char **argv) {
         return 2;
     }
     host.shared = static_cast<Shared *>(mem);
+    installCrashReporter();
     std::string why;
     host.plugin = loadPlugin(format, path, classId, rate, block, offline, why);
     if (!host.plugin) {
         err.str(why);
         reply(host.fd, false, err.b);
         return 2;
+    }
+    // The start request carries the saved state, so restoring it is part of loading and never blocks the engine.
+    uint8_t op = 0;
+    std::string init;
+    if (!receiveMessage(host.fd, op, init, 0) || op != opInit) return 0; // the engine gave up on us
+    Reader ir{init};
+    const bool hasState = ir.u8(), document = ir.u8();
+    const std::string state = ir.str();
+    bool stateAccepted = true;
+    std::string stateError;
+    if (hasState && ir.ok) {
+        stateAccepted = document ? host.plugin->setStateFromDocument(state) : host.plugin->setState(state);
+        if (!stateAccepted) stateError = host.plugin->stateError();
     }
     std::thread(audioLoop, &host).detach();
     Writer hello;
@@ -694,6 +853,8 @@ int plughostMain(int argc, char **argv) {
     hello.str(host.plugin->vendor());
     hello.str(host.plugin->classId());
     hello.str(host.plugin->categories());
+    hello.u8(stateAccepted);
+    hello.str(stateError);
     reply(host.fd, true, hello.b);
     // Control requests are served on the main thread inside its run loop, as the plug-in formats expect.
     CFFileDescriptorRef ref = CFFileDescriptorCreate(nullptr, host.fd, false, onControl, nullptr);

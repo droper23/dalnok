@@ -501,6 +501,7 @@ void Engine::resetModel() {
     plugins_.clear(); // snapshots still holding instances release them on this thread
     pluginErrors_.clear();
     pendingPlugins_.clear();
+    launching_.clear();
     pool_.clear();
     cache_.clear();
     undo_.clear();
@@ -1019,14 +1020,17 @@ void Engine::instantiatePlugins() {
         }
 }
 
+std::string Engine::stateRejected(const std::string &detail) {
+    return "the saved state was not accepted" + (detail.empty() ? std::string{} : ": " + detail) + "; the original state was preserved";
+}
+
 bool Engine::instantiateSlot(const PluginSlot &slot) {
     std::string err;
     std::shared_ptr<PluginProcessor> p(createPlugin(slot.format, slot.path, slot.classId, false, err));
     if (!p) { pluginErrors_[slot.id] = err; return false; }
     if (!slot.state.empty() && !p->setStateFromDocument(slot.state.str())) {
         // Keep the original state intact instead of running and later saving a default instance.
-        const auto detail = p->stateError();
-        pluginErrors_[slot.id] = "the saved state was not accepted" + (detail.empty() ? std::string{} : ": " + detail) + "; the original state was preserved";
+        pluginErrors_[slot.id] = stateRejected(p->stateError());
         return false;
     }
     pluginErrors_.erase(slot.id);
@@ -1052,29 +1056,64 @@ const PluginSlot *Engine::findSlot(int32_t id) const {
 int32_t Engine::activateNextPlugin(int32_t &slot, double &seconds) {
     slot = 0;
     seconds = 0;
-    while (!pendingPlugins_.empty()) {
-        const int32_t id = pendingPlugins_.front();
-        pendingPlugins_.erase(pendingPlugins_.begin());
-        const PluginSlot *s = findSlot(id);
-        if (!s || plugins_.count(id)) continue; // removed or already loaded meanwhile
-        pluginErrors_.erase(id);
-        const auto t0 = std::chrono::steady_clock::now();
-        instantiateSlot(*s); // third-party code runs here, on the caller's (main) thread
+    const auto remaining = [&] { return static_cast<int32_t>(pendingPlugins_.size() + launching_.size()); };
+    const auto finished = [&](int32_t id, std::chrono::steady_clock::time_point t0) {
         seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
         slot = id;
         bumpRevisionKeepingSaved(); // loaded state and latency are visible to the UI; not an edit
         commit();
-        return static_cast<int32_t>(pendingPlugins_.size());
+        return remaining();
+    };
+    // Isolated plug-ins load in their own processes (ADR-0014 stage 2): first collect one whose host has answered.
+    for (auto it = launching_.begin(); it != launching_.end(); ++it) {
+        std::string err;
+        const auto status = it->launch->poll(err);
+        if (status == RemotePluginLaunch::Status::loading) continue;
+        const int32_t id = it->slot;
+        const auto t0 = it->started;
+        auto launch = std::move(it->launch);
+        launching_.erase(it);
+        if (!findSlot(id)) return finished(0, t0); // removed while loading
+        if (status == RemotePluginLaunch::Status::failed) pluginErrors_[id] = err;
+        else if (!launch->stateAccepted()) pluginErrors_[id] = stateRejected(launch->stateError());
+        else { pluginErrors_.erase(id); plugins_[id] = std::shared_ptr<PluginProcessor>(launch->take()); }
+        return finished(id, t0);
     }
-    return -1;
+    if (pendingPlugins_.empty() && launching_.empty()) return -1;
+    while (!pendingPlugins_.empty()) {
+        const int32_t id = pendingPlugins_.front();
+        const PluginSlot *s = findSlot(id);
+        if (!s || plugins_.count(id)) { pendingPlugins_.erase(pendingPlugins_.begin()); continue; } // removed or loaded meanwhile
+        const auto t0 = std::chrono::steady_clock::now();
+        if (isolates(*s)) {
+            if (launching_.size() >= kMaxParallelLaunches) break;
+            pendingPlugins_.erase(pendingPlugins_.begin());
+            pluginErrors_.erase(id);
+            std::string err;
+            const std::string state = s->state.str();
+            auto launch = launchRemotePlugin(pluginHostPath_, s->format, s->path, s->classId, sampleRate_, kMaxBlock,
+                                             pluginLoadTimeoutMs_, s->state.empty() ? nullptr : &state, true, err);
+            if (!launch) { pluginErrors_[id] = err; return finished(id, t0); }
+            launching_.push_back({id, std::move(launch), t0});
+            continue; // start the next one too; none of them blocks this thread
+        }
+        pendingPlugins_.erase(pendingPlugins_.begin());
+        pluginErrors_.erase(id);
+        instantiateSlot(*s); // third-party code runs here, on the caller's (main) thread
+        return finished(id, t0);
+    }
+    return remaining() > 0 ? remaining() : -1; // slot 0: hosts are still loading
 }
 
 bool Engine::pluginLoading(int32_t slot) const {
-    return std::find(pendingPlugins_.begin(), pendingPlugins_.end(), slot) != pendingPlugins_.end();
+    return std::find(pendingPlugins_.begin(), pendingPlugins_.end(), slot) != pendingPlugins_.end() ||
+           std::any_of(launching_.begin(), launching_.end(), [&](const Launching &l) { return l.slot == slot; });
 }
 
 void Engine::cancelPendingPlugins() {
-    if (pendingPlugins_.empty()) return;
+    if (pendingPlugins_.empty() && launching_.empty()) return;
+    for (const auto &l : launching_) pendingPlugins_.push_back(l.slot);
+    launching_.clear(); // kills hosts still loading
     for (int32_t id : pendingPlugins_)
         if (!plugins_.count(id)) pluginErrors_[id] = "Not loaded: loading was cancelled; saved state preserved";
     pendingPlugins_.clear();
@@ -1096,6 +1135,7 @@ bool Engine::reloadPlugin(int32_t id, std::string &err) {
         failedPlugins_.erase(id);
     }
     pendingPlugins_.erase(std::remove(pendingPlugins_.begin(), pendingPlugins_.end(), id), pendingPlugins_.end());
+    std::erase_if(launching_, [&](const Launching &l) { return l.slot == id; });
     const bool ok = instantiateSlot(*s);
     if (!ok) err = pluginErrors_[id];
     bumpRevisionKeepingSaved();

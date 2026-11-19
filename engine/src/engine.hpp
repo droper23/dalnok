@@ -8,6 +8,7 @@
 #include "json.hpp"
 #include "midi_parser.hpp"
 #include "plugin_host.hpp"
+#include "plugin_remote.hpp"
 #include "render.hpp"
 #include "stretch_cache.hpp"
 #include "tempo_map.hpp"
@@ -15,6 +16,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <filesystem>
 #include <map>
@@ -439,10 +441,12 @@ public:
     // plug-ins for activateNextPlugin (ADR-0013).
     enum class ApplyMode { load, recover, defer };
     bool applyProject(std::unique_ptr<PreparedProject> p, ApplyMode mode = ApplyMode::load);
-    // Deferred activation (control/main thread). Loads the next queued plug-in and returns how many remain, or -1
-    // if none were queued; `slot` and `seconds` report the one just handled.
+    // Deferred activation (control/main thread). Handles the next queued plug-in and returns how many remain (queued
+    // or loading), or -1 if none were; `slot` and `seconds` report the one finished in this call. Isolated plug-ins
+    // load in their own processes without blocking: the call starts their hosts and returns, `slot` is 0 until one
+    // finishes (ADR-0014 stage 2).
     int32_t activateNextPlugin(int32_t &slot, double &seconds);
-    int32_t pendingPluginCount() const { return static_cast<int32_t>(pendingPlugins_.size()); }
+    int32_t pendingPluginCount() const { return static_cast<int32_t>(pendingPlugins_.size() + launching_.size()); }
     bool pluginLoading(int32_t slot) const;
     void cancelPendingPlugins();
     bool reloadPlugin(int32_t slot, std::string &err); // an unloaded or failed slot, from its saved state
@@ -503,6 +507,7 @@ private:
     PluginMap offlinePlugins() const; // fresh instances with the live state, for offline renders
     void instantiatePlugins();        // creates missing instances for every slot in the model
     bool instantiateSlot(const PluginSlot &slot); // false: not loaded (reason in pluginErrors_)
+    static std::string stateRejected(const std::string &detail);
     std::shared_ptr<PluginProcessor> createPlugin(const std::string &format, const std::string &path,
                                                   const std::string &classId, bool offline, std::string &err) const;
     const PluginSlot *findSlot(int32_t id) const;
@@ -597,6 +602,14 @@ private:
     PluginMap plugins_;                       // live instances by slot id
     std::map<int32_t, std::string> pluginErrors_;
     std::vector<int32_t> pendingPlugins_; // slots queued for deferred activation, in track order
+    struct Launching {                     // isolated slots whose hosts are loading (ADR-0014 stage 2)
+        int32_t slot;
+        std::unique_ptr<RemotePluginLaunch> launch;
+        std::chrono::steady_clock::time_point started;
+    };
+    std::vector<Launching> launching_;
+    static constexpr size_t kMaxParallelLaunches = 4;
+    bool isolates(const PluginSlot &slot) const { return !pluginHostPath_.empty() && slot.format != "dalnok"; }
     std::string pluginHostPath_;          // dalnok-plughost; empty = plug-ins run in this process (ADR-0014)
     std::set<int32_t> failedPlugins_;     // isolated instances whose failure has been reported
     int pluginLoadTimeoutMs_ = 60'000;    // an isolated plug-in that takes longer to load is killed

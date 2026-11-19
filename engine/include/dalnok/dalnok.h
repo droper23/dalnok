@@ -28,7 +28,7 @@
 extern "C" {
 #endif
 
-#define DALNOK_API_VERSION 34
+#define DALNOK_API_VERSION 35
 
 typedef enum {
     DALNOK_OK = 0,
@@ -697,10 +697,12 @@ DalnokStatus dalnok_project_apply_recovery(DalnokEngine *engine, DalnokProjectDa
  * on the main thread, returning to the run loop between calls. [control thread] */
 DalnokStatus dalnok_project_apply_deferred(DalnokEngine *engine, DalnokProjectData *data);
 int32_t dalnok_plugins_pending(const DalnokEngine *engine);
-/* Loads the next queued plug-in; returns how many remain, or -1 if none was queued. `slot_out` and `seconds_out`
- * (optional) report the slot handled and how long its initialization took. */
+/* Loads the next queued plug-in; returns how many remain (queued or loading), or -1 if none was. `slot_out` and
+ * `seconds_out` (optional) report the slot finished in this call and how long its initialization took. Isolated
+ * plug-ins (dalnok_plugins_set_host) load in their own processes without blocking: the call starts up to four hosts
+ * and returns at once with *slot_out = 0 until one finishes; keep calling from the run loop (API 35). */
 int32_t dalnok_plugins_activate_next(DalnokEngine *engine, int32_t *slot_out, double *seconds_out);
-/* Leaves the remaining queued plug-ins unloaded with their saved state (reloadable). */
+/* Leaves the remaining queued plug-ins unloaded with their saved state (reloadable); hosts still loading are killed. */
 void dalnok_plugins_cancel_pending(DalnokEngine *engine);
 /* Out-of-process hosting (ADR-0014): plug-ins loaded from now on run in their own `host` process (dalnok-plughost);
  * NULL or "" runs them in this process. Built-in plug-ins always run here. A crashed or unresponsive isolated

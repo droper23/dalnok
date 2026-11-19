@@ -86,6 +86,11 @@ public:
             }
             if (std::strcmp(mode, "crash") == 0) std::abort();
             if (std::strcmp(mode, "hang") == 0) for (;;) ::sleep(1);
+            // A plug-in that blocks its own initialization for a while (license checks, sample loading): A-08.
+            if (std::strcmp(mode, "slow") == 0) {
+                const char *ms = std::getenv("DALNOK_TEST_INIT_SLOW_MS");
+                ::usleep(static_cast<useconds_t>((ms ? std::atoi(ms) : 3000) * 1000));
+            }
         }
         IHostApplication *host = nullptr;
         if (!context || context->queryInterface(IHostApplication::iid, reinterpret_cast<void **>(&host)) != kResultOk || !host) return kResultFalse;

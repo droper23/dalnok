@@ -31,3 +31,10 @@ library so it reuses the VST3, Audio Unit and CLAP hosts unchanged. Built-in plu
 **Consequences.** A crash or hang in an isolated plug-in costs that plug-in, not the session. Each instance costs
 a process (tens of MB) and two context switches per block. Measured overhead is recorded in the audit benchmarks.
 Plug-ins whose editors are needed run in-process until editor hosting lands.
+
+**Stage 2 amendment (2026-11-19).** Deferred activation (ADR-0013) no longer waits for an isolated plug-in: each
+`dalnok_plugins_activate_next` call collects one host that has answered, or starts up to four hosts and returns. The
+saved state travels with the start request and the host restores it before answering, so neither initialization nor
+restoring runs on the engine's thread. Stop kills hosts still loading. A host's crash handler reports the signal over
+the control socket at once, because the system crash reporter can hold a dying process for seconds. With isolation
+on, a plug-in that blocks its own initialization no longer blocks the window (A-08 closed for isolated plug-ins).

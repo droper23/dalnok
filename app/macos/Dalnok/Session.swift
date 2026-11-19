@@ -46,7 +46,7 @@ struct TrackView {
     var isInstrument = false
     var armed = false
     var inputChannel: Int32 = 0
-    struct Plugin { let id: Int32; let name: String; let vendor: String; let instrument: Bool; let loaded: Bool; let error: String; let latency: UInt32; let bypassed: Bool; var path = ""; var loading = false }
+    struct Plugin { let id: Int32; let name: String; let vendor: String; let instrument: Bool; let loaded: Bool; let error: String; let latency: UInt32; let bypassed: Bool; var path = ""; var loading = false; var isolated = false }
     var plugins: [Plugin] = []
     var isBus = false
     var output: DalnokTrackId = 0 // 0 = master
@@ -176,7 +176,7 @@ final class Session {
                 guard dalnok_track_plugin_info(h, tid, k, &pi) == DALNOK_OK else { continue }
                 plugins.append(.init(id: pi.id, name: fixedString(pi.name), vendor: fixedString(pi.vendor), instrument: pi.instrument, loaded: pi.loaded,
                                      error: pi.loading ? "Loading…" : fixedString(pi.error), latency: pi.latency, bypassed: dalnok_plugin_bypassed(h, tid, pi.id),
-                                     path: fixedString(pi.path), loading: pi.loading))
+                                     path: fixedString(pi.path), loading: pi.loading, isolated: pi.isolated))
             }
             var sends = [DalnokSend](repeating: DalnokSend(), count: 16)
             let sendCount = Int(dalnok_track_sends(h, tid, &sends, 16))
@@ -604,7 +604,9 @@ final class Session {
     static let slowPluginSeconds = 2.0
 
     /// Loads queued plug-ins one at a time on the main thread, returning to the run loop between them so the
-    /// window draws and Stop works. Returns the slow ones ("Name (3.1 s), …"), empty if none.
+    /// window draws and Stop works. Isolated plug-ins load in their own processes: the engine starts their hosts and
+    /// returns at once, so a slow plug-in never holds the main thread (ADR-0014 stage 2).
+    /// Returns the slow ones ("Name (3.1 s), …"), empty if none.
     func activatePendingPlugins() async -> String {
         let total = Int(dalnok_plugins_pending(h))
         guard total > 0 else { return "" }
@@ -618,6 +620,11 @@ final class Session {
             var slot: Int32 = 0, seconds = 0.0
             let left = dalnok_plugins_activate_next(h, &slot, &seconds)
             if left < 0 { break }
+            if slot == 0 { // isolated hosts still loading: check again shortly
+                if left == 0 { break }
+                try? await Task.sleep(nanoseconds: 10_000_000)
+                continue
+            }
             done += 1
             if seconds >= Self.slowPluginSeconds, let p = allTracks.lazy.flatMap(\.plugins).first(where: { $0.id == slot }) {
                 slow.append("\(p.name) (\(String(format: "%.1f", seconds)) s)")

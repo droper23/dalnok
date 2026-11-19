@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ADR-0014 / audit A-01: builds the test VST3 and CLAP plug-ins, runs the existing hosting, latency-compensation and
 # CLAP suites with every plug-in isolated in dalnok-plughost, then the isolation failure suite (crash and hang
-# during processing and while loading).
+# during processing and while loading, slow initialization loading in the background).
 # SPDX-License-Identifier: GPL-3.0-or-later
 set -euo pipefail
 cd "$(dirname "$0")/../.."
@@ -30,4 +30,15 @@ echo 'isolated hosting suites: PASS'
 DALNOK_PLUGIN_HOST="$host" swift test --disable-sandbox --skip-build --filter 'PluginIsolation' > "$work/isolation.log" 2>&1 \
   || { grep -E "✘|↳|error" "$work/isolation.log" | head -30; echo 'plugin isolation: FAIL' >&2; exit 1; }
 grep -E "Test run with" "$work/isolation.log" | tail -1
+grep -E "SLOWLOAD" "$work/isolation.log" || true
 echo 'plugin isolation: PASS'
+# DALNOK_ISOLATION_SELFTEST=1: also run the app self-test with these fixtures (slow isolated loading with Stop; needs
+# a logged-in GUI session).
+if [[ "${DALNOK_ISOLATION_SELFTEST:-0}" == "1" ]]; then
+  swift build --product Dalnok >/dev/null
+  DALNOK_TEST_VST3="$dir" DALNOK_RECOVERY_DIR="$work/recovery" .build/debug/Dalnok /System/Library/Sounds/Submarine.aiff \
+    /System/Library/Sounds/Glass.aiff --selftest "$work/selftest" > "$work/selftest.log" 2>&1 && status=0 || status=$?
+  grep -E '^FAIL|MEASURE slow' "$work/selftest.log" || true
+  tail -1 "$work/selftest.log"
+  [[ $status -eq 0 ]] || exit $status
+fi
