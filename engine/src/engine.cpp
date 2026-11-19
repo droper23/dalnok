@@ -1915,6 +1915,169 @@ bool Engine::clipProcessing(const ClipState &c) const {
     return pe && pe->handle->impl && !cache_.find(stretchKey(c));
 }
 
+const Media *Engine::resolvedMedia(const ClipState &c) const {
+    if (c.midi()) return nullptr;
+    const PoolEntry *pe = poolEntry(c.media);
+    return pe && pe->handle->impl ? pe->handle->impl.get() : nullptr;
+}
+
+std::shared_ptr<const Media> Engine::resolvedStretch(const ClipState &c, const Media *media) const {
+    return media && c.stretched() ? cache_.find(stretchKey(c)) : nullptr;
+}
+
+bool Engine::sameInputs(const ClipKey &k, const ClipState &c) const {
+    if (k.id != c.id || k.slot != c.slot || k.follow != c.follow || k.followLoops != c.followLoops ||
+        k.fadeCurve != c.fadeCurve || k.muted != c.muted || k.alt != c.alt || k.preservePitch != c.preservePitch ||
+        k.notes != c.notes || k.mediaId != c.media || k.start != c.start || k.offset != c.offset ||
+        k.length != c.length || k.fadeIn != c.fadeIn || k.fadeOut != c.fadeOut || k.gainDb != c.gainDb ||
+        k.pitch != c.pitch || k.rate != c.rate)
+        return false;
+    const Media *media = resolvedMedia(c);
+    if (media != k.media.get()) return false;
+    return !media || !c.stretched() || resolvedStretch(c, media).get() == k.derived.get();
+}
+
+std::shared_ptr<const TrackContent> Engine::buildContent(const std::vector<const ClipState *> &clips, bool instrument,
+                                                         std::vector<StretchJob> &needed) const {
+    auto out = std::make_shared<TrackContent>();
+    for (const ClipState *cp : clips) {
+        const ClipState &c = *cp;
+        if (c.alt) continue; // takes in a folder don't play; the comp's pieces do
+        if (c.muted) {
+            if (c.midi()) out->mutedMidiSignature = (out->mutedMidiSignature * 1099511628211ULL) ^ static_cast<uint64_t>(c.id);
+            if (c.slot >= 0) {
+                RenderSlot sl; sl.slot = c.slot; sl.follow = c.follow; sl.followLoops = std::max(1, c.followLoops);
+                sl.length = c.length; sl.muted = true; out->slots.push_back(std::move(sl));
+            }
+            continue;
+        }
+        if (c.slot >= 0 && c.midi()) { // launcher slot: notes relative to the loop start
+            if (!instrument) continue;
+            RenderSlot sl;
+            sl.slot = c.slot;
+            sl.follow = c.follow;
+            sl.followLoops = std::max(1, c.followLoops);
+            sl.length = c.length;
+            for (const auto &n : *c.notes) {
+                if (n.start < c.offset || n.start >= c.offset + c.length) continue;
+                const int64_t at = n.start - c.offset;
+                sl.notes.push_back({at, std::min(at + n.length, c.length), n.pitch, n.velocity});
+            }
+            std::stable_sort(sl.notes.begin(), sl.notes.end(), [](const RenderNote &a, const RenderNote &b) { return a.start < b.start; });
+            sl.noteEnds = sl.notes;
+            std::stable_sort(sl.noteEnds.begin(), sl.noteEnds.end(), [](const RenderNote &a, const RenderNote &b) { return a.end < b.end; });
+            out->slots.push_back(std::move(sl));
+            continue;
+        }
+        if (c.midi()) {
+            if (!instrument) continue;
+            for (const auto &n : *c.notes) {
+                if (n.start < c.offset || n.start >= c.offset + c.length) continue; // outside the clip window
+                const int64_t at = c.start + (n.start - c.offset);
+                int64_t sourceEnd = c.offset + c.length;
+                int64_t timelineEnd = c.start + c.length;
+                // A split shares its note list and has contiguous source and timeline ranges.
+                // Extend a crossing note through those pieces without retriggering it.
+                while (timelineEnd - at < n.length) {
+                    // Same first match as scanning the whole model: `clips` is this track's clips in model order.
+                    const auto next = std::find_if(clips.begin(), clips.end(), [&](const ClipState *part) {
+                        return !part->muted && part->notes == c.notes && part->start == timelineEnd &&
+                               std::abs(part->offset - sourceEnd) <= 1;
+                    });
+                    if (next == clips.end() || (*next)->length <= 0) break;
+                    sourceEnd = (*next)->offset + (*next)->length;
+                    timelineEnd += (*next)->length;
+                }
+                const int64_t end = at + std::min(n.length, timelineEnd - at);
+                out->notes.push_back({at, end, n.pitch, n.velocity});
+            }
+            continue;
+        }
+        const PoolEntry *pe = poolEntry(c.media);
+        if (!pe || !pe->handle->impl) continue; // offline media renders silence
+        std::shared_ptr<const Media> media = pe->handle->impl;
+        int64_t offset = c.offset, len = std::min(c.length, media->frames() - c.offset);
+        if (c.stretched()) {
+            // Stretched audio is rendered off the audio thread; until it's ready the clip is silent.
+            const StretchKey key = stretchKey(c);
+            auto derived = cache_.find(key);
+            if (!derived) {
+                needed.push_back({key, media});
+                continue;
+            }
+            media = derived;
+            offset = 0;
+            len = std::min(c.length, media->frames());
+        }
+        if (len <= 0) continue;
+        // Fades longer than the clip are scaled down proportionally.
+        int64_t fi = std::min(c.fadeIn, len), fo = std::min(c.fadeOut, len);
+        if (fi + fo > len) {
+            const double k = static_cast<double>(len) / static_cast<double>(fi + fo);
+            fi = static_cast<int64_t>(static_cast<double>(fi) * k);
+            fo = len - fi;
+        }
+        if (c.slot >= 0) { // launcher slot: one loop of the clip window
+            RenderSlot sl;
+            sl.slot = c.slot;
+            sl.follow = c.follow;
+            sl.followLoops = std::max(1, c.followLoops);
+            sl.length = len;
+            sl.hasAudio = true;
+            sl.clip = {media, 0, offset, len, fi, fo, c.fadeCurve, dbToGain(c.gainDb)};
+            out->slots.push_back(std::move(sl));
+            continue;
+        }
+        out->clips.push_back({media, c.start, offset, len, fi, fo, c.fadeCurve, dbToGain(c.gainDb)});
+        if (media->channelCount() > 1) out->stereoClip = true;
+    }
+    std::stable_sort(out->notes.begin(), out->notes.end(),
+                     [](const RenderNote &a, const RenderNote &b) { return a.start < b.start; });
+    out->noteEnds = out->notes;
+    std::stable_sort(out->noteEnds.begin(), out->noteEnds.end(),
+                     [](const RenderNote &a, const RenderNote &b) { return a.end < b.end; });
+    // Launcher "next" follow action: the next filled slot on this track, wrapping.
+    std::sort(out->slots.begin(), out->slots.end(), [](const RenderSlot &a, const RenderSlot &b) { return a.slot < b.slot; });
+    for (size_t k = 0; k < out->slots.size(); ++k) out->slots[k].nextSlot = out->slots[(k + 1) % out->slots.size()].slot;
+    return out;
+}
+
+namespace {
+bool sameClip(const RenderClip &a, const RenderClip &b) {
+    return a.media == b.media && a.start == b.start && a.offset == b.offset && a.length == b.length &&
+           a.fadeIn == b.fadeIn && a.fadeOut == b.fadeOut && a.curve == b.curve && a.gain == b.gain;
+}
+bool sameNotes(const std::vector<RenderNote> &a, const std::vector<RenderNote> &b) {
+    return std::equal(a.begin(), a.end(), b.begin(), b.end(), [](const RenderNote &x, const RenderNote &y) {
+        return x.start == y.start && x.end == y.end && x.pitch == y.pitch && x.velocity == y.velocity;
+    });
+}
+bool sameContent(const TrackContent &a, const TrackContent &b) {
+    return a.stereoClip == b.stereoClip && a.mutedMidiSignature == b.mutedMidiSignature &&
+           sameNotes(a.notes, b.notes) && sameNotes(a.noteEnds, b.noteEnds) &&
+           std::equal(a.clips.begin(), a.clips.end(), b.clips.begin(), b.clips.end(), sameClip) &&
+           std::equal(a.slots.begin(), a.slots.end(), b.slots.begin(), b.slots.end(), [](const RenderSlot &x, const RenderSlot &y) {
+               return x.slot == y.slot && x.follow == y.follow && x.followLoops == y.followLoops && x.nextSlot == y.nextSlot &&
+                      x.length == y.length && x.hasAudio == y.hasAudio && x.muted == y.muted && sameClip(x.clip, y.clip) &&
+                      sameNotes(x.notes, y.notes) && sameNotes(x.noteEnds, y.noteEnds);
+           });
+}
+} // namespace
+
+int32_t Engine::snapshotMismatches() const {
+    std::vector<StretchJob> jobs;
+    const auto state = compile(&jobs); // live: reuses cached content exactly as commit() does
+    std::map<DalnokTrackId, std::vector<const ClipState *>> clipsByTrack;
+    for (const auto &c : model_.clips) clipsByTrack[c.track].push_back(&c);
+    int32_t mismatches = 0;
+    for (const auto &rt : state->tracks) {
+        std::vector<StretchJob> fresh;
+        const auto expected = buildContent(clipsByTrack[rt.id], rt.instrument, fresh);
+        if (!rt.content || !sameContent(*rt.content, *expected)) ++mismatches;
+    }
+    return mismatches;
+}
+
 std::unique_ptr<RenderState> Engine::compile(std::vector<StretchJob> *needed, const PluginMap *pluginMap) const {
     const PluginMap &instances = pluginMap ? *pluginMap : plugins_;
     auto s = std::make_unique<RenderState>();
@@ -1950,10 +2113,12 @@ std::unique_ptr<RenderState> Engine::compile(std::vector<StretchJob> *needed, co
         }
     }
     // Clips bucketed by track once, so building each RenderTrack is linear in the project's clips instead of
-    // scanning every clip once per track (the audit's O(tracks x clips) finding, A-04).
+    // scanning every clip once per track (the audit's O(tracks x clips) finding, A-04). Takes in a folder (alt)
+    // are bucketed too: they don't play, but the split-note extension sees them and the content key records them.
     std::map<DalnokTrackId, std::vector<const ClipState *>> clipsByTrack;
-    for (const auto &c : model_.clips)
-        if (!c.alt) clipsByTrack[c.track].push_back(&c); // takes in a folder don't play; the comp's pieces do
+    for (const auto &c : model_.clips) clipsByTrack[c.track].push_back(&c);
+    const bool live = pluginMap == nullptr;
+    std::set<DalnokTrackId> seen;
     std::map<DalnokTrackId, int32_t> indexOf;
     for (const TrackState *tp : order) {
         const TrackState &t = *tp;
@@ -1990,105 +2155,50 @@ std::unique_ptr<RenderState> Engine::compile(std::vector<StretchJob> *needed, co
         // A missing or bypassed instrument must not silently substitute the built-in synth.
         if (rt.instrument && !rt.instrumentPlugin && std::any_of(t.plugins.begin(), t.plugins.end(), [](const PluginSlot &p) { return p.instrument; }))
             rt.instrument = false;
-        for (const ClipState *cp : clipsByTrack[t.id]) {
-            const ClipState &c = *cp;
-            if (c.muted) {
-                if (c.midi()) rt.mutedMidiSignature = (rt.mutedMidiSignature * 1099511628211ULL) ^ static_cast<uint64_t>(c.id);
-                if (c.slot >= 0) {
-                    RenderSlot sl; sl.slot = c.slot; sl.follow = c.follow; sl.followLoops = std::max(1, c.followLoops);
-                    sl.length = c.length; sl.muted = true; rt.slots.push_back(std::move(sl));
-                }
-                continue;
-            }
-            if (c.slot >= 0 && c.midi()) { // launcher slot: notes relative to the loop start
-                if (!rt.instrument) continue;
-                RenderSlot sl;
-                sl.slot = c.slot;
-                sl.follow = c.follow;
-                sl.followLoops = std::max(1, c.followLoops);
-                sl.length = c.length;
-                for (const auto &n : *c.notes) {
-                    if (n.start < c.offset || n.start >= c.offset + c.length) continue;
-                    const int64_t at = n.start - c.offset;
-                    sl.notes.push_back({at, std::min(at + n.length, c.length), n.pitch, n.velocity});
-                }
-                std::stable_sort(sl.notes.begin(), sl.notes.end(), [](const RenderNote &a, const RenderNote &b) { return a.start < b.start; });
-                sl.noteEnds = sl.notes;
-                std::stable_sort(sl.noteEnds.begin(), sl.noteEnds.end(), [](const RenderNote &a, const RenderNote &b) { return a.end < b.end; });
-                rt.slots.push_back(std::move(sl));
-                continue;
-            }
-            if (c.midi()) {
-                if (!rt.instrument) continue;
-                for (const auto &n : *c.notes) {
-                    if (n.start < c.offset || n.start >= c.offset + c.length) continue; // outside the clip window
-                    const int64_t at = c.start + (n.start - c.offset);
-                    int64_t sourceEnd = c.offset + c.length;
-                    int64_t timelineEnd = c.start + c.length;
-                    // A split shares its note list and has contiguous source and timeline ranges.
-                    // Extend a crossing note through those pieces without retriggering it.
-                    while (timelineEnd - at < n.length) {
-                        const auto next = std::find_if(model_.clips.begin(), model_.clips.end(), [&](const ClipState &part) {
-                            return part.track == c.track && !part.muted && part.notes == c.notes && part.start == timelineEnd &&
-                                   std::abs(part.offset - sourceEnd) <= 1;
-                        });
-                        if (next == model_.clips.end() || next->length <= 0) break;
-                        sourceEnd = next->offset + next->length;
-                        timelineEnd += next->length;
+        // Clip-derived content: reused from the previous live snapshot when none of the track's clip inputs
+        // changed (A-04); offline renders always build fresh.
+        const auto &trackClips = clipsByTrack[t.id];
+        std::shared_ptr<const TrackContent> content;
+        if (live) {
+            seen.insert(t.id);
+            ContentEntry &entry = contentCache_[t.id];
+            bool hit = entry.content && entry.instrument == rt.instrument && entry.clips.size() == trackClips.size();
+            for (size_t k = 0; hit && k < trackClips.size(); ++k) hit = sameInputs(entry.clips[k], *trackClips[k]);
+            if (!hit) {
+                entry.instrument = rt.instrument;
+                entry.clips.clear();
+                entry.clips.reserve(trackClips.size());
+                for (const ClipState *cp : trackClips) {
+                    const ClipState &c = *cp;
+                    ClipKey k;
+                    k.id = c.id; k.slot = c.slot; k.follow = c.follow; k.followLoops = c.followLoops; k.fadeCurve = c.fadeCurve;
+                    k.muted = c.muted; k.alt = c.alt; k.preservePitch = c.preservePitch; k.notes = c.notes; k.mediaId = c.media;
+                    k.start = c.start; k.offset = c.offset; k.length = c.length; k.fadeIn = c.fadeIn; k.fadeOut = c.fadeOut;
+                    k.gainDb = c.gainDb; k.pitch = c.pitch; k.rate = c.rate;
+                    if (const PoolEntry *pe = c.midi() ? nullptr : poolEntry(c.media); pe && pe->handle->impl) {
+                        k.media = pe->handle->impl;
+                        k.derived = resolvedStretch(c, k.media.get());
                     }
-                    const int64_t end = at + std::min(n.length, timelineEnd - at);
-                    rt.notes.push_back({at, end, n.pitch, n.velocity});
+                    entry.clips.push_back(std::move(k));
                 }
-                continue;
+                entry.needed.clear();
+                entry.content = buildContent(trackClips, rt.instrument, entry.needed);
             }
-            const PoolEntry *pe = poolEntry(c.media);
-            if (!pe || !pe->handle->impl) continue; // offline media renders silence
-            std::shared_ptr<const Media> media = pe->handle->impl;
-            int64_t offset = c.offset, len = std::min(c.length, media->frames() - c.offset);
-            if (c.stretched()) {
-                // Stretched audio is rendered off the audio thread; until it's ready the clip is silent.
-                const StretchKey key = stretchKey(c);
-                auto derived = cache_.find(key);
-                if (!derived) {
-                    if (needed) needed->push_back({key, media});
-                    continue;
-                }
-                media = derived;
-                offset = 0;
-                len = std::min(c.length, media->frames());
-            }
-            if (len <= 0) continue;
-            // Fades longer than the clip are scaled down proportionally.
-            int64_t fi = std::min(c.fadeIn, len), fo = std::min(c.fadeOut, len);
-            if (fi + fo > len) {
-                const double k = static_cast<double>(len) / static_cast<double>(fi + fo);
-                fi = static_cast<int64_t>(static_cast<double>(fi) * k);
-                fo = len - fi;
-            }
-            if (c.slot >= 0) { // launcher slot: one loop of the clip window
-                RenderSlot sl;
-                sl.slot = c.slot;
-                sl.follow = c.follow;
-                sl.followLoops = std::max(1, c.followLoops);
-                sl.length = len;
-                sl.hasAudio = true;
-                sl.clip = {media, 0, offset, len, fi, fo, c.fadeCurve, dbToGain(c.gainDb)};
-                rt.slots.push_back(std::move(sl));
-                continue;
-            }
-            rt.clips.push_back({media, c.start, offset, len, fi, fo, c.fadeCurve, dbToGain(c.gainDb)});
-            if (media->channelCount() > 1) rt.monoSource = false;
+            if (needed) needed->insert(needed->end(), entry.needed.begin(), entry.needed.end());
+            content = entry.content;
+        } else {
+            std::vector<StretchJob> jobs;
+            content = buildContent(trackClips, rt.instrument, jobs);
+            if (needed) needed->insert(needed->end(), jobs.begin(), jobs.end());
         }
-        std::stable_sort(rt.notes.begin(), rt.notes.end(),
-                         [](const RenderNote &a, const RenderNote &b) { return a.start < b.start; });
-        rt.noteEnds = rt.notes;
-        std::stable_sort(rt.noteEnds.begin(), rt.noteEnds.end(),
-                         [](const RenderNote &a, const RenderNote &b) { return a.end < b.end; });
-        // Launcher "next" follow action: the next filled slot on this track, wrapping.
-        std::sort(rt.slots.begin(), rt.slots.end(), [](const RenderSlot &a, const RenderSlot &b) { return a.slot < b.slot; });
-        for (size_t k = 0; k < rt.slots.size(); ++k) rt.slots[k].nextSlot = rt.slots[(k + 1) % rt.slots.size()].slot;
+        rt.mutedMidiSignature = content->mutedMidiSignature;
+        if (content->stereoClip) rt.monoSource = false;
+        rt.content = std::move(content);
         s->tracks.push_back(std::move(rt));
     }
+    if (live) // forget content for tracks that no longer exist
+        for (auto it = contentCache_.begin(); it != contentCache_.end();)
+            it = seen.count(it->first) ? std::next(it) : contentCache_.erase(it);
     // Sidechains: number the source tracks and point listening plug-ins at their buffers.
     {
         std::map<DalnokTrackId, int32_t> scIndex;
@@ -2411,7 +2521,7 @@ void Engine::process(float *left, float *right, int frames) DALNOK_NONBLOCKING {
                 }
                 const int32_t ps = rt.playingSlot.load(std::memory_order_relaxed);
                 if (ps < 0) continue;
-                for (const RenderSlot &sl : t.slots) {
+                for (const RenderSlot &sl : t.content->slots) {
                     if (sl.slot != ps || sl.length <= 0) continue;
                     const int64_t start = rt.slotStart.load(std::memory_order_relaxed);
                     const int64_t rel = ((rp - start) % sl.length + sl.length) % sl.length;

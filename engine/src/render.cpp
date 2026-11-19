@@ -282,9 +282,9 @@ void renderBlock(const RenderState &state, int64_t pos, int frames, float *left,
         bool any = false;
         // Clip launcher (live only): a playing slot replaces this track's timeline clips and notes.
         const RenderSlot *slot = nullptr;
-        if (!synths && !t.slots.empty()) {
+        if (!synths && !t.content->slots.empty()) {
             const int32_t ps = rt.playingSlot.load(std::memory_order_relaxed);
-            for (const RenderSlot &sl : t.slots) if (sl.slot == ps && sl.length > 0) slot = &sl;
+            for (const RenderSlot &sl : t.content->slots) if (sl.slot == ps && sl.length > 0) slot = &sl;
         }
         if (slot) {
             const int64_t start0 = rt.slotStart.load(std::memory_order_relaxed);
@@ -323,15 +323,15 @@ void renderBlock(const RenderState &state, int64_t pos, int frames, float *left,
             const PluginNote *live = s.liveNotes;
             const int liveCount = s.liveNoteCount;
             if (!liveHere) { s.liveNotes = nullptr; s.liveNoteCount = 0; }
-            renderPluginNotes(t.instrumentPlugin, t.notes.data(), t.noteEnds.data(), t.notes.size(), synth, pos, frames, s);
+            renderPluginNotes(t.instrumentPlugin, t.content->notes.data(), t.content->noteEnds.data(), t.content->notes.size(), synth, pos, frames, s);
             s.liveNotes = live;
             s.liveNoteCount = liveCount;
             any = true;
-        } else if (t.instrument && renderNotes(t.notes, state.synth, synth, pos, frames, s.trackL)) {
+        } else if (t.instrument && renderNotes(t.content->notes, state.synth, synth, pos, frames, s.trackL)) {
             for (int i = 0; i < frames; ++i) s.trackR[i] = s.trackL[i];
             any = true;
         }
-        for (const RenderClip &c : t.clips) {
+        for (const RenderClip &c : t.content->clips) {
             if (slot) break; // the launcher clip plays instead of the arrangement
             if (c.start >= pos + frames || c.start + c.length <= pos) continue;
             if (!any) {

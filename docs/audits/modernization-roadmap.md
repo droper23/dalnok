@@ -145,6 +145,7 @@ Rules the roadmap enforces:
 | A-14 handoff health | **Done** | Instrumented 100-callback test reaches depth 64 and 36 skips, verifies reset and adoption after collection; audible edit in one callback. A full queue has no finite adoption bound without collection |
 | A-02 autosave + recovery | **Already implemented** (audit misread the timer) | `MainWindow.tick` snapshot every 30 s, launch prompt, `scripts/ci/recovery-smoke.sh`, self-test |
 | A-04a linear compile | **Done** | 4,096 clips: structural 0.770 -> 0.255 ms, build 1,272 -> 527 ms, undo 0.745 -> 0.238 ms; 191 tests |
+| A-04 incremental compile | **Done** | Per-track `TrackContent` reused when clip inputs are unchanged; random-edit equivalence test (4 seeds × 300 steps) via `dalnok_engine_snapshot_mismatches`. 4,096 clips: structural p50 0.238 → 0.163 ms, compile alone ≈0.149 → 0.098 ms, undo 0.257 → 0.173 ms |
 | A-07 shared plug-in state | **Done** | `SharedPluginState` blob; state round-trip and missing-plug-in suites pass |
 | A-12 denormal guard | **Done** | FPCR.FZ / MXCSR FTZ|DAZ around live and offline render; subnormal test requires exact silence |
 | A-10 fuzz/property tests | **Partial** | randomised save/load/save and 120 mutated/truncated files; libFuzzer and nightly corpus still open |

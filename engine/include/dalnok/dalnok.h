@@ -28,7 +28,7 @@
 extern "C" {
 #endif
 
-#define DALNOK_API_VERSION 30
+#define DALNOK_API_VERSION 31
 
 typedef enum {
     DALNOK_OK = 0,
@@ -764,6 +764,10 @@ typedef struct {
 
 void dalnok_engine_stats(const DalnokEngine *engine, DalnokStats *out); /* [any thread] */
 void dalnok_engine_reset_stats(DalnokEngine *engine);
+
+/* Diagnostics (tests): compiles the live snapshot, which reuses unchanged per-track content, and returns how
+ * many tracks' reused content differs from a fresh build. 0 means incremental compilation matches. [control] */
+int32_t dalnok_engine_snapshot_mismatches(DalnokEngine *engine);
 
 #ifdef __cplusplus
 }

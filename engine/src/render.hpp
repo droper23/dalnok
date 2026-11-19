@@ -145,10 +145,21 @@ struct RenderSlot {
     std::vector<RenderNote> notes, noteEnds; // MIDI, relative to the loop start, sorted by start / by end
 };
 
+// Everything a track plays that is derived from its clips. Immutable once built, so snapshots share it: a
+// structural edit rebuilds only the tracks whose clips changed (A-04).
+struct TrackContent {
+    std::vector<RenderSlot> slots;    // launcher clips, sorted by slot
+    std::vector<RenderClip> clips;    // z-order: later clips overwrite earlier ones
+    std::vector<RenderNote> notes;    // sorted by start
+    std::vector<RenderNote> noteEnds; // the same notes sorted by end (plugin note-offs)
+    bool stereoClip = false;          // some audio clip has more than one channel
+    uint64_t mutedMidiSignature = 0;
+};
+
 struct RenderTrack {
     int32_t id = 0; // DalnokTrackId
     std::shared_ptr<TrackRuntime> runtime;
-    std::vector<RenderSlot> slots; // launcher clips on this track
+    std::shared_ptr<const TrackContent> content; // never null in a compiled snapshot
     bool bus = false;      // mixes its input slot instead of clips
     int32_t busSlot = -1;  // this bus's input slot
     int32_t output = -1;   // destination bus slot, -1 = master
@@ -163,12 +174,9 @@ struct RenderTrack {
     // Plug-in parameter automation, applied once per block (block-rate) before the plug-in runs.
     struct PluginLane { PluginProcessor *plugin = nullptr; uint32_t param = 0; double lo = 0, hi = 1; std::vector<std::pair<int64_t, float>> pts; };
     std::vector<PluginLane> pluginAuto;
-    std::vector<RenderClip> clips; // z-order: later clips overwrite earlier ones
     bool monoSource = true;        // every clip is mono -> constant-power pan law
     uint64_t mutedMidiSignature = 0;
     bool instrument = false;       // MIDI track (built-in synth unless instrumentPlugin is set)
-    std::vector<RenderNote> notes; // sorted by start
-    std::vector<RenderNote> noteEnds; // the same notes sorted by end (plugin note-offs)
     PluginProcessor *instrumentPlugin = nullptr;
     std::vector<PluginProcessor *> inserts;               // processing order
     std::vector<std::shared_ptr<PluginProcessor>> keep;   // keeps instances alive while this snapshot exists

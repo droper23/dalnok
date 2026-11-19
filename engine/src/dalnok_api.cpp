@@ -1293,5 +1293,8 @@ void dalnok_engine_stats(const DalnokEngine *e, DalnokStats *out) {
 void dalnok_engine_reset_stats(DalnokEngine *e) {
     if (e) e->impl.resetStats();
 }
+int32_t dalnok_engine_snapshot_mismatches(DalnokEngine *e) {
+    return e ? e->impl.snapshotMismatches() : -1;
+}
 
 } // extern "C"

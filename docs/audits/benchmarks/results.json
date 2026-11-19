@@ -167,5 +167,6 @@
       },
       "note": "audit-scale gain edits evict structural snapshots already in the 500-step history; do not compare directly with audit-bench compact-only history."
     }
-  }
+  },
+  "a04Incremental": {"fixture": "generated, 16 tracks x 256 clips, 48000 Hz", "command": ".build/release/dalnok-cli audit-bench /tmp/dalnok-a03-fixture/scale.dalnok --edits 500", "structuralEditP50MsBefore": 0.238, "structuralEditP50MsAfter": [0.163, 0.163, 0.164], "undoP50MsBefore": 0.257, "undoP50MsAfter": [0.174, 0.173, 0.172], "compileOnlyMsBefore": {"mean": 0.149}, "compileOnlyMsAfter": {"p50": 0.098, "p95": 0.103}, "note": "Compile-only figures come from a temporary timer around compile() in commit(), removed after measuring. Structural edit includes the whole-model undo copy (about 0.06 ms)."}
 }

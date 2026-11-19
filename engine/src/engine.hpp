@@ -444,6 +444,7 @@ public:
 
     void stats(DalnokStats &out) const;
     void resetStats();
+    int32_t snapshotMismatches() const; // tracks whose reused content differs from a fresh build (tests)
 
 private:
 #ifdef DALNOK_TEST_HOOKS
@@ -477,6 +478,30 @@ private:
     void instantiatePlugins();        // creates missing instances for every slot in the model
     void captureLiveState(Model &m) const;
     StretchKey stretchKey(const ClipState &c) const;
+    // Per-track content cache for incremental compilation (A-04). A key records every clip input the content
+    // build reads; it holds the media and note lists strongly, so a pointer match can never be a reused address.
+    struct ClipKey {
+        DalnokClipId id = 0;
+        int32_t slot = -1, follow = 0, followLoops = 1, fadeCurve = 0;
+        bool muted = false, alt = false, preservePitch = true;
+        NoteList notes;
+        DalnokMediaId mediaId = 0;
+        std::shared_ptr<const Media> media, derived; // resolved pool media; finished stretch (stretched clips)
+        int64_t start = 0, offset = 0, length = 0, fadeIn = 0, fadeOut = 0;
+        float gainDb = 0, pitch = 0;
+        double rate = 1.0;
+    };
+    struct ContentEntry {
+        bool instrument = false;
+        std::vector<ClipKey> clips;
+        std::shared_ptr<const TrackContent> content;
+        std::vector<StretchJob> needed; // stretch jobs this content is waiting for
+    };
+    const Media *resolvedMedia(const ClipState &c) const;
+    std::shared_ptr<const Media> resolvedStretch(const ClipState &c, const Media *media) const;
+    bool sameInputs(const ClipKey &k, const ClipState &c) const;
+    std::shared_ptr<const TrackContent> buildContent(const std::vector<const ClipState *> &clips, bool instrument,
+                                                     std::vector<StretchJob> &needed) const;
     void renderPendingStretchesNow();
     void commit();
     void resetModel();
@@ -499,6 +524,7 @@ private:
     std::shared_ptr<TrackRuntime> masterRuntime_ = std::make_shared<TrackRuntime>(); // master fader target + smoothing
     // Live delay-compensation lines by connection and length; shared by snapshots (audio thread only processes them).
     mutable std::map<std::string, std::shared_ptr<DelayLine>> delayCache_;
+    mutable std::map<DalnokTrackId, ContentEntry> contentCache_; // live compiles only (control thread)
     std::map<DalnokMediaId, PoolEntry> pool_;
     std::vector<UndoStep> undo_, redo_;
     int groupDepth_ = 0;
