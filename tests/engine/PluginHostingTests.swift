@@ -299,6 +299,46 @@ struct PluginHosting {
         #expect(renderStereo(e, 4_800).0 != two.0, "changing the copy's plug-in leaves the original alone")
     }
 
+    /// A VST3 that reports a value through performEdit from its own thread a moment after loading, with no editor
+    /// open (seen on the owner's library: a sampler finishing its background load), must not make the project look
+    /// edited. An edit made in its open editor still does (`isolatedVst3EditorOpensInTheHostsWindow`, editor tests).
+    @Test func performEditWithoutAnOpenEditorIsNotAProjectChange() throws {
+        let (e, t) = audioSession(); defer { dalnok_engine_destroy(e) }
+        let slot = dalnok_plugin_add(e, t, testVst3, gainClass, nil, 0)
+        #expect(slot != 0)
+        dalnok_plugin_set_state(e, slot, floatState(0.25))
+        let path = tempDir().appendingPathComponent("late-edit-\(UUID().uuidString).dalnok").path
+        #expect(dalnok_project_save(e, path, nil, 0) == DALNOK_OK && !dalnok_project_dirty(e))
+        setenv("DALNOK_TEST_LATE_EDIT", "300", 1); defer { unsetenv("DALNOK_TEST_LATE_EDIT") }
+        let a = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(a) }
+        var missing: Int32 = -1
+        #expect(dalnok_project_load(a, path, &missing, nil, 0) == DALNOK_OK && missing == 0)
+        var l = [Float](repeating: 0, count: 512), r = l
+        #expect(!dalnok_project_dirty(a), "clean right after opening")
+        let until = Date().addingTimeInterval(0.8) // the fixture reports 300 ms after loading
+        while Date() < until { _ = dalnok_engine_pump(a, &l, &r, 512); dalnok_engine_collect_garbage(a); usleep(10_000) }
+        #expect(!dalnok_project_dirty(a), "a value the plug-in reported on its own, editor closed, is not an edit")
+    }
+
+    /// The same for IComponentHandler2::setDirty: a plug-in that finishes loading in the background more than 2 s after
+    /// opening (14 plug-ins loading in-process) and reports its now different state, with no editor open.
+    @Test func setDirtyWithoutAnOpenEditorIsNotAProjectChange() throws {
+        let (e, t) = audioSession(); defer { dalnok_engine_destroy(e) }
+        let slot = dalnok_plugin_add(e, t, testVst3, gainClass, nil, 0)
+        #expect(slot != 0)
+        dalnok_plugin_set_state(e, slot, floatState(0.25))
+        let path = tempDir().appendingPathComponent("late-dirty-\(UUID().uuidString).dalnok").path
+        #expect(dalnok_project_save(e, path, nil, 0) == DALNOK_OK && !dalnok_project_dirty(e))
+        setenv("DALNOK_TEST_LATE_DIRTY", "2300", 1); defer { unsetenv("DALNOK_TEST_LATE_DIRTY") }
+        let a = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(a) }
+        var missing: Int32 = -1
+        #expect(dalnok_project_load(a, path, &missing, nil, 0) == DALNOK_OK && missing == 0)
+        var l = [Float](repeating: 0, count: 512), r = l
+        let until = Date().addingTimeInterval(2.8) // reported 2.3 s after loading, after the 2 s settling window
+        while Date() < until { _ = dalnok_engine_pump(a, &l, &r, 512); dalnok_engine_collect_garbage(a); usleep(10_000) }
+        #expect(!dalnok_project_dirty(a), "a state the plug-in changed on its own, editor closed, is not an edit")
+    }
+
     /// A VST3 that reports its restored values through performEdit while loading (common in commercial plug-ins)
     /// must not make a freshly opened project look edited, in-process or isolated, synchronous or deferred.
     @Test func editsReportedWhileLoadingAreNotProjectChanges() throws {

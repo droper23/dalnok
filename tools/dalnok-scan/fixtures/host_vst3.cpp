@@ -24,6 +24,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <unistd.h>
+#include <thread>
 #include <dlfcn.h>
 #include "pluginterfaces/gui/iplugview.h"
 #include "pluginterfaces/vst/ivsteditcontroller.h"
@@ -293,7 +294,26 @@ public:
     ParamValue PLUGIN_API plainParamToNormalized(ParamID, ParamValue v) override { return v; }
     ParamValue PLUGIN_API getParamNormalized(ParamID id) override { return id == 1 ? shown_ : 0; }
     tresult PLUGIN_API setParamNormalized(ParamID id, ParamValue v) override { if (id == 1) shown_ = v; return kResultOk; }
-    tresult PLUGIN_API setComponentHandler(IComponentHandler *h) override { handler_ = h; return kResultOk; }
+    tresult PLUGIN_API setComponentHandler(IComponentHandler *h) override {
+        handler_ = h;
+        // DALNOK_TEST_LATE_EDIT=ms: reports its value through performEdit that long after loading, from its own thread
+        // and with no editor open (as plug-ins that finish loading sounds in the background do). Not a user edit.
+        if (const char *ms = std::getenv("DALNOK_TEST_LATE_EDIT"); ms && h) {
+            const float g = gain_;
+            std::thread([h, g, ms = std::atoi(ms)] { usleep(ms * 1000); h->performEdit(1, g); }).detach();
+        }
+        // DALNOK_TEST_LATE_DIRTY=ms: that long after loading, changes its state (a background load finishing) and
+        // reports it with IComponentHandler2::setDirty, from its own thread, with no editor open. Not a user edit.
+        if (const char *ms = std::getenv("DALNOK_TEST_LATE_DIRTY"); ms && h) {
+            std::thread([this, h, ms = std::atoi(ms)] {
+                usleep(ms * 1000);
+                gain_ = 0.3f;
+                IComponentHandler2 *h2 = nullptr;
+                if (h->queryInterface(IComponentHandler2::iid, reinterpret_cast<void **>(&h2)) == kResultOk && h2) h2->setDirty(true);
+            }).detach();
+        }
+        return kResultOk;
+    }
     IPlugView *PLUGIN_API createView(FIDString name) override {
         const char *on = std::getenv("DALNOK_TEST_EDITOR");
         if (!on || std::strcmp(on, "1") != 0 || !name || std::strcmp(name, ViewType::kEditor) != 0) return nullptr;
