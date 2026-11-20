@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Long audio files now play from disk instead of being held in memory (ADR-0016). Files over a minute are decoded once into a cache and played from a bounded memory cache. An hour of stereo audio used 1.39 GB of memory and now uses under 50 MB, with nothing dropped in testing. Reopening a project reuses the cache, so it opens instantly.
+- Time-stretched clips now render identically every time. The stretcher used a random seed, so the last few milliseconds of a stretched clip could differ between renders.
 - Internal: the engine's 3,000-line implementation is split by concern. Plug-in hosting (`PluginHostService`) and undo (`UndoStack`) are now their own classes, and the remaining code is in eight files of at most about 1,000 lines. No behaviour change.
 - Undo history for structural edits is about 80 times smaller: steps keep only the clips they changed. On a 4,096-clip project, 500 clip moves used to add 269 MB of memory and now add about 3 MB. Edits and undo take about the same time (0.30 ms and 0.36 ms).
 - Isolated plug-ins now share one time budget per audio callback, so several plug-ins stalling at once can no longer make the callback overrun. With three hung plug-ins the worst callback fell from 13.1 ms, longer than its 10.7 ms period, to 4.5 ms. Plug-ins skipped because others used the budget are not reported as unresponsive. Each plug-in process's audio thread also joins the output device's audio workgroup, so macOS schedules it with Dalnok's audio thread (C API 37).

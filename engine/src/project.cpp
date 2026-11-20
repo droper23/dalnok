@@ -471,11 +471,10 @@ std::unique_ptr<Engine::PreparedProject> Engine::prepareDocument(const json::Val
             if (const auto rel = m.getString("relativePath", ""); !rel.empty())
                 candidates.push_back((projectDir / rel).lexically_normal().string());
             if (!e.path.empty()) candidates.push_back(e.path);
-            std::vector<std::vector<float>> ch;
             std::string decodeErr;
             for (const auto &cand : candidates) {
-                if (fs::exists(cand) && decodeAudioFile(cand, sampleRate, ch, decodeErr)) {
-                    auto decoded = std::make_shared<const Media>(std::move(ch), sampleRate);
+                std::shared_ptr<const Media> decoded;
+                if (fs::exists(cand) && (decoded = Media::loadFile(cand, sampleRate, decodeErr))) {
                     e.path = cand;
                     e.frames = decoded->frames();
                     e.channels = decoded->channelCount();

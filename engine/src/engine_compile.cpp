@@ -424,10 +424,41 @@ void Engine::commit() {
     std::vector<StretchJob> needed;
     auto state = compile(&needed);
     cache_.setNeeded(std::move(needed));
+    updateStreamPlan(*state);
     // A snapshot replaced here was never observed by the audio thread, so it
     // is safe to delete immediately.
     delete pending_.exchange(state.release(), std::memory_order_acq_rel);
     collectGarbage();
+}
+
+void Engine::updateStreamPlan(const RenderState &state) {
+    std::vector<StreamPlan::Segment> segments;
+    for (const auto &t : state.tracks) {
+        if (!t.content) continue;
+        for (const auto &c : t.content->clips)
+            if (c.media && c.media->streamed()) segments.push_back({c.media, c.start, c.offset, c.length});
+        // Launcher clips start whenever they are launched: their first blocks are kept resident (start at frame 0).
+        for (const auto &slot : t.content->slots)
+            if (slot.clip.media && slot.clip.media->streamed()) segments.push_back({slot.clip.media, INT64_MIN / 4, slot.clip.offset, slot.clip.length});
+    }
+    if (segments.empty() && streamPlan_->segments.empty()) return;
+    {
+        std::lock_guard lock(streamPlan_->mu);
+        streamPlan_->segments = std::move(segments);
+        streamPlan_->lookahead = state.compensation;
+    }
+    StreamCache::shared().wake();
+}
+
+void Engine::leaseStreams(StreamCache::Lease &lease, const RenderState &state, int64_t from, int64_t n) {
+    for (const auto &t : state.tracks) {
+        if (!t.content) continue;
+        for (const auto &c : t.content->clips) {
+            if (!c.media || !c.media->streamed()) continue;
+            const int64_t a = std::max(from, c.start), e = std::min(from + n, c.start + c.length);
+            if (a < e) lease.need(c.media, c.offset + (a - c.start), e - a);
+        }
+    }
 }
 
 bool Engine::pollJobs() {

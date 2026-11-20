@@ -51,8 +51,17 @@ void mixClip(const RenderClip &clip, int64_t pos, int frames, float *l, float *r
     const int64_t src = clip.offset + (a - clip.start);
     const int n = static_cast<int>(e - a);
     const int o = static_cast<int>(a - pos);
-    const float *sl = m.channel(0) + src;
-    const float *sr = m.channelCount() > 1 ? m.channel(1) + src : sl;
+    // Streamed media (A-09): copy from the stream cache's resident blocks; a block not loaded in time plays silence.
+    float streamL[kMaxBlock], streamR[kMaxBlock];
+    const float *sl, *sr;
+    if (m.streamed()) {
+        m.readResident(src, n, streamL, streamR);
+        sl = streamL;
+        sr = streamR;
+    } else {
+        sl = m.channel(0) + src;
+        sr = m.channelCount() > 1 ? m.channel(1) + src : sl;
+    }
     const int64_t t0 = a - clip.start, len = clip.length;
     const bool faded = t0 < clip.fadeIn || t0 + n > len - clip.fadeOut;
     const float g = clip.gain;

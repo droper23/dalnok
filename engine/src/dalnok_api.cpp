@@ -4,6 +4,7 @@
 #include "commands.hpp"
 #include "capture_recovery.hpp"
 #include "engine.hpp"
+#include "stream_cache.hpp"
 #include "fx/builtin.hpp"
 #include "midi.hpp"
 #include "record.hpp"
@@ -835,13 +836,13 @@ void dalnok_meter_master(DalnokEngine *e, float *l, float *r) {
 DalnokStatus dalnok_media_load(const char *path, double sample_rate, DalnokMedia **out, char *err, size_t err_len) {
     if (!path || !out) return DALNOK_ERR_INVALID_ARG;
     *out = nullptr;
-    std::vector<std::vector<float>> ch;
     std::string msg;
-    if (!decodeAudioFile(path, sample_rate, ch, msg)) {
+    auto media = Media::loadFile(path, sample_rate, msg); // long files stream from a cache file (A-09)
+    if (!media) {
         copyOut(err, err_len, msg);
         return DALNOK_ERR_IO;
     }
-    *out = new DalnokMedia{std::make_shared<const Media>(std::move(ch), sample_rate)};
+    *out = new DalnokMedia{std::move(media)};
     return DALNOK_OK;
 }
 
@@ -853,6 +854,13 @@ DalnokMedia *dalnok_media_from_samples(const float *const *channels, int32_t cou
 }
 
 void dalnok_media_release(DalnokMedia *m) { delete m; }
+void dalnok_stream_set_limits(double seconds, int32_t mb) { dalnok::StreamCache::shared().setLimits(seconds, mb); }
+void dalnok_stream_stats(DalnokStreamStats *out) {
+    if (!out) return;
+    const auto s = dalnok::StreamCache::shared().stats();
+    *out = DalnokStreamStats{s.residentBytes, s.budgetBytes, s.blocksLoaded, s.blocksEvicted, s.missedFrames, s.residentBlocks};
+}
+bool dalnok_media_streamed(const DalnokMedia *m) { return m && m->impl && m->impl->streamed(); }
 int64_t dalnok_media_frames(const DalnokMedia *m) { return m && m->impl ? m->impl->frames() : 0; }
 int32_t dalnok_media_channels(const DalnokMedia *m) { return m && m->impl ? m->impl->channelCount() : 0; }
 double dalnok_media_sample_rate(const DalnokMedia *m) { return m && m->impl ? m->impl->sampleRate() : 0; }

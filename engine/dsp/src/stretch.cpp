@@ -32,7 +32,9 @@ extern "C" int dalnok_dsp_render_stretch(const float *const *in, int32_t channel
         for (int c = 0; c < channels; ++c) varispeed(in[c], inFrames, out[c], outFrames);
         return 0;
     }
-    signalsmith::stretch::SignalsmithStretch<float> st;
+    // A fixed seed: by default the stretcher seeds its phase randomisation from std::random_device, which made two
+    // renders of the same stretched clip differ in their last output-latency frames.
+    signalsmith::stretch::SignalsmithStretch<float> st(0x44616C6E);
     st.presetDefault(channels, static_cast<float>(sampleRate));
     st.setTransposeSemitones(static_cast<float>(semitones));
     const int64_t inLat = st.inputLatency(), outLat = st.outputLatency();

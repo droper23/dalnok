@@ -14,8 +14,14 @@ std::shared_ptr<const Media> renderStretch(const StretchJob &job) {
     std::vector<const float *> in(static_cast<size_t>(ch));
     std::vector<std::vector<float>> out(static_cast<size_t>(ch), std::vector<float>(static_cast<size_t>(k.outLength)));
     std::vector<float *> op(static_cast<size_t>(ch));
+    std::vector<float> streamedL, streamedR; // a streamed source is read from its cache file (worker thread)
+    if (src.streamed()) {
+        streamedL.resize(static_cast<size_t>(n));
+        streamedR.resize(static_cast<size_t>(n));
+        src.read(k.offset, n, streamedL.data(), streamedR.data());
+    }
     for (int32_t c = 0; c < ch; ++c) {
-        in[static_cast<size_t>(c)] = src.channel(c) + k.offset;
+        in[static_cast<size_t>(c)] = src.streamed() ? (c == 0 ? streamedL.data() : streamedR.data()) : src.channel(c) + k.offset;
         op[static_cast<size_t>(c)] = out[static_cast<size_t>(c)].data();
     }
     if (dalnok_dsp_render_stretch(in.data(), ch, n, op.data(), k.outLength, src.sampleRate(), k.pitchCents / 100.0,

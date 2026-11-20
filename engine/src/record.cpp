@@ -233,11 +233,10 @@ bool Engine::stopRecording(RecordResult &r, std::string &err) {
         }
         if (converted) syncDirectory(fs::path(recordAudio_.front().wav).parent_path().string());
         for (size_t i = 0; audioOK && i < recordAudio_.size(); ++i) {
-            std::vector<std::vector<float>> ch;
             std::string decodeErr;
-            if (decodeAudioFile(recordAudio_[i].wav, sampleRate_, ch, decodeErr) && !ch.empty() &&
-                static_cast<uint64_t>(ch[0].size()) == frames)
-                takes.push_back(std::make_shared<const Media>(std::move(ch), sampleRate_));
+            auto take = Media::loadFile(recordAudio_[i].wav, sampleRate_, decodeErr); // long takes stream (A-09)
+            if (take && static_cast<uint64_t>(take->frames()) == frames)
+                takes.push_back(std::move(take));
             else {
                 audioOK = false;
                 problems.push_back("the finished take could not be read back");

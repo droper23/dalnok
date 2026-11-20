@@ -28,7 +28,7 @@
 extern "C" {
 #endif
 
-#define DALNOK_API_VERSION 37
+#define DALNOK_API_VERSION 38
 
 typedef enum {
     DALNOK_OK = 0,
@@ -242,6 +242,21 @@ DalnokStatus dalnok_media_load(const char *path, double sample_rate,
 DalnokMedia *dalnok_media_from_samples(const float *const *channels, int32_t channel_count,
                                        int64_t frames, double sample_rate);
 void dalnok_media_release(DalnokMedia *media);   /* [any thread] */
+/* Streaming from disk (A-09, API 38). Audio files longer than `stream_after_seconds` (default 60) are decoded once into
+ * a cache file at the engine rate and played from a process-wide block cache of at most `cache_mb` (default 256).
+ * The audio thread only reads blocks already in memory; a block not loaded in time plays silence and is counted.
+ * Applies to media loaded afterwards. DALNOK_STREAM_SECONDS, DALNOK_STREAM_CACHE_MB and DALNOK_STREAM_DIR (cache
+ * folder; default the user's cache directory) set the defaults. [any thread] */
+void dalnok_stream_set_limits(double stream_after_seconds, int32_t cache_mb);
+typedef struct {
+    uint64_t resident_bytes;  /* block memory held by the cache */
+    uint64_t budget_bytes;
+    uint64_t blocks_loaded, blocks_evicted;
+    uint64_t missed_frames;   /* frames played as silence because their block was not resident */
+    uint32_t resident_blocks;
+} DalnokStreamStats;
+void dalnok_stream_stats(DalnokStreamStats *out);
+bool dalnok_media_streamed(const DalnokMedia *media);
 int64_t dalnok_media_frames(const DalnokMedia *media);
 int32_t dalnok_media_channels(const DalnokMedia *media);
 double dalnok_media_sample_rate(const DalnokMedia *media);

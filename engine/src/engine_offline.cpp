@@ -28,14 +28,26 @@ bool Engine::renderOffline(int64_t start, int64_t frames, float *left, float *ri
     // Delay compensation: render the timeline ahead by the compensation and pre-roll that much first, so
     // output frame j is timeline frame start + j exactly as heard live.
     const int64_t m = state->compensation;
+    // Streamed media (A-09): pin the blocks each second needs before rendering it.
+    StreamCache::Lease lease;
+    const int64_t window = static_cast<int64_t>(sampleRate_);
+    int64_t leasedTo = start;
+    const auto lease_ = [&](int64_t pos, int n) {
+        if (pos + n <= leasedTo) return;
+        lease.clear();
+        leaseStreams(lease, *state, pos, window + n);
+        leasedTo = pos + window + n;
+    };
     float discardL[kMaxBlock], discardR[kMaxBlock];
     for (int64_t done = 0; done < m;) {
         const int n = static_cast<int>(std::min<int64_t>(kMaxBlock, m - done));
+        lease_(start + done, n);
         renderBlock(*state, start + done, n, discardL, discardR, *scratch, false, anySolo, synths.data());
         done += n;
     }
     for (int64_t done = 0; done < frames;) {
         const int n = static_cast<int>(std::min<int64_t>(kMaxBlock, frames - done));
+        lease_(start + m + done, n);
         renderBlock(*state, start + m + done, n, left + done, right + done, *scratch, false, anySolo, synths.data());
         done += n;
     }
@@ -61,8 +73,18 @@ bool Engine::renderToWav(const std::string &path, int64_t start, int64_t frames,
     std::vector<SynthState> synths(state->tracks.size());
     std::vector<float> l(kMaxBlock * 64), r(kMaxBlock * 64);
     const int64_t m = state->compensation; // pre-roll, as in renderOffline
+    StreamCache::Lease lease; // streamed media (A-09), as in renderOffline
+    const int64_t window = static_cast<int64_t>(sampleRate_);
+    int64_t leasedTo = start;
+    const auto lease_ = [&](int64_t pos, int64_t n) {
+        if (pos + n <= leasedTo) return;
+        lease.clear();
+        leaseStreams(lease, *state, pos, window + n);
+        leasedTo = pos + window + n;
+    };
     for (int64_t done = 0; done < m;) {
         const int n = static_cast<int>(std::min<int64_t>(kMaxBlock, m - done));
+        lease_(start + done, n);
         renderBlock(*state, start + done, n, l.data(), r.data(), *scratch, false, soloCount_.load() > 0, synths.data());
         done += n;
     }
@@ -70,6 +92,7 @@ bool Engine::renderToWav(const std::string &path, int64_t start, int64_t frames,
         const auto chunk = std::min<int64_t>(static_cast<int64_t>(l.size()), frames - done);
         for (int64_t o = 0; o < chunk;) {
             const int n = static_cast<int>(std::min<int64_t>(kMaxBlock, chunk - o));
+            lease_(start + m + done + o, n);
             renderBlock(*state, start + m + done + o, n, l.data() + o, r.data() + o, *scratch, false, soloCount_.load() > 0,
                         synths.data());
             o += n;

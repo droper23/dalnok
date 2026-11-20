@@ -42,6 +42,9 @@ Engine::Engine(double sampleRate) : sampleRate_(sampleRate) {
     if (sampleRate_ <= 0) sampleRate_ = defaultOutputSampleRate();
     if (sampleRate_ <= 0) sampleRate_ = 48000.0;
     pluginHost_.setSampleRate(sampleRate_);
+    streamPlan_ = std::make_shared<StreamPlan>();
+    streamPlan_->position = &position_;
+    StreamCache::shared().addPlan(streamPlan_);
     midiParsers_[0] = std::make_unique<MidiParser>();
     midiInputs_[0].store(midiParsers_[0].get(), std::memory_order_release);
     syncRuntimes(); // builds the tempo map: the first snapshot needs the metronome schedule
@@ -49,6 +52,7 @@ Engine::Engine(double sampleRate) : sampleRate_(sampleRate) {
 }
 
 Engine::~Engine() {
+    StreamCache::shared().removePlan(streamPlan_.get());
     if (recording_) { RecordResult ignored; std::string err; stopRecording(ignored, err); }
     stopDevice();
     midiClient_.reset(); // closes Core MIDI ports before the parsers go away

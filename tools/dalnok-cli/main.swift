@@ -42,6 +42,7 @@ usage:
   dalnok-cli bench [--tracks N] [--seconds S]                          render-cost benchmark (no device)
   dalnok-cli audit-bench <project.dalnok> [--edits N]                   audit-only: model-read, edit and undo cost
   dalnok-cli audit-ui <project.dalnok>                               audit-only: AppKit drag and refresh timings
+  dalnok-cli stream-bench <file.wav> --mode memory|stream [--seconds S]  audit-only: RSS and misses playing one long file
   dalnok-cli audit-scale [--tracks N] [--clips N]                       audit-only: edit cost vs model size
   dalnok-cli import <project.rpp|.als|.logicx|.fcpxml|stems-folder> [--save out.dalnok] [--render out.wav] [--quiet]
 """
@@ -538,6 +539,53 @@ case "audit-bench":
         undo.append(Double(DispatchTime.now().uptimeNanoseconds - t0) / 1e6)
     }
     summarize("undo (whole-model restore + recompile)", undo)
+    dalnok_engine_destroy(engine)
+
+case "stream-bench":
+    // A-09 measurement: dalnok-cli stream-bench <file.wav> --mode memory|stream [--seconds S]. Loads one long file into a
+    // track (in memory, or streamed through the block cache) and plays S seconds of it through the live path at about 4x
+    // real time, reporting resident memory, load time and frames missed. Run once per mode, in separate processes.
+    guard args.count > 1 else { print("usage: dalnok-cli stream-bench <file.wav> --mode memory|stream [--seconds S]"); exit(2) }
+    func rss() -> Double {
+        var info = mach_task_basic_info()
+        var count = mach_msg_type_number_t(MemoryLayout<mach_task_basic_info>.size / MemoryLayout<natural_t>.size)
+        let kr = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { task_info(mach_task_self_, task_flavor_t(MACH_TASK_BASIC_INFO), $0, &count) }
+        }
+        return kr == KERN_SUCCESS ? Double(info.resident_size) / 1_048_576 : -1
+    }
+    let streamMode = opt("--mode") == "stream"
+    let seconds = Double(opt("--seconds") ?? "60") ?? 60
+    dalnok_stream_set_limits(streamMode ? 60 : 1e9, 256)
+    let rssStart = rss()
+    let t0 = DispatchTime.now().uptimeNanoseconds
+    var media: OpaquePointer?
+    var err = [CChar](repeating: 0, count: 512)
+    guard dalnok_media_load(args[1], 48_000, &media, &err, 512) == DALNOK_OK, let media else { print("load failed: \(String(cString: err))"); exit(1) }
+    let loadSeconds = Double(DispatchTime.now().uptimeNanoseconds - t0) / 1e9
+    let engine = dalnok_engine_create(48_000)!
+    let track = dalnok_track_add(engine, "Long")
+    _ = dalnok_clip_add(engine, track, dalnok_pool_add(engine, media, args[1]), 0, 0, 0)
+    let mediaFrames = dalnok_media_frames(media)
+    dalnok_media_release(media)
+    let rssLoaded = rss()
+    var s0 = DalnokStreamStats(); dalnok_stream_stats(&s0)
+    dalnok_transport_play(engine)
+    var l = [Float](repeating: 0, count: 512), r = l, peak = rssLoaded
+    let blocks = Int(seconds * 48_000 / 512)
+    for i in 0..<blocks {
+        _ = dalnok_engine_pump(engine, &l, &r, 512)
+        if i % 4 == 0 { usleep(10_000) } // 4 blocks (42.7 ms of audio) per 10 ms: about 4x real time
+        if i % 200 == 0 { peak = max(peak, rss()) }
+    }
+    // Then a jump to the middle of the file and another 10 s.
+    dalnok_transport_seek(engine, mediaFrames / 2)
+    for i in 0..<(48_000 * 10 / 512) { _ = dalnok_engine_pump(engine, &l, &r, 512); if i % 4 == 0 { usleep(10_000) } }
+    peak = max(peak, rss())
+    var s1 = DalnokStreamStats(); dalnok_stream_stats(&s1)
+    print(String(format: "stream-bench %@: %.1f min file, load %.2f s, RSS start %.1f MB, after load %.1f MB, peak while playing %.1f MB; stream cache %.1f MB, missed %llu frames, blocks loaded %llu",
+                 streamMode ? "stream" : "memory", Double(mediaFrames) / 48_000 / 60, loadSeconds, rssStart, rssLoaded, peak,
+                 Double(s1.resident_bytes) / 1_048_576, s1.missed_frames - s0.missed_frames, s1.blocks_loaded - s0.blocks_loaded))
     dalnok_engine_destroy(engine)
 
 case "audit-scale":

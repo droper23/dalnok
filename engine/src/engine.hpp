@@ -11,6 +11,7 @@
 #include "plugin_remote.hpp"
 #include "plugin_service.hpp"
 #include "undo_stack.hpp"
+#include "stream_cache.hpp"
 #include "render.hpp"
 #include "stretch_cache.hpp"
 #include "tempo_map.hpp"
@@ -582,6 +583,10 @@ private:
     std::unique_ptr<AudioDevice> device_;
     std::string outputUid_;
     PluginHostService pluginHost_;        // plug-in instances, loading and isolation (A-06)
+    std::shared_ptr<StreamPlan> streamPlan_; // streamed clips and the playhead, for the stream cache (A-09)
+    void updateStreamPlan(const RenderState &state);
+    // Offline renders: pin the streamed blocks [from, from + n) of `state` needs before rendering it.
+    static void leaseStreams(StreamCache::Lease &lease, const RenderState &state, int64_t from, int64_t n);
     void updateWorkgroup();               // after the device starts, changes or stops: tell isolated hosts
     int32_t nextPlugin_ = 1;
     int32_t nextMarker_ = 1;

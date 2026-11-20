@@ -35,8 +35,9 @@ AudioStreamBasicDescription planarFloat(double sr, UInt32 channels) {
 
 } // namespace
 
-bool decodeAudioFile(const std::string &path, double sampleRate, std::vector<std::vector<float>> &out,
-                     std::string &err) {
+bool decodeAudioFileChunked(const std::string &path, double sampleRate,
+                            const std::function<bool(const float *const *, int32_t, int64_t)> &sink,
+                            int32_t &channelCount, std::string &err) {
     CFURLRef url = makeURL(path);
     if (!url) {
         err = "invalid path";
@@ -57,6 +58,7 @@ bool decodeAudioFile(const std::string &path, double sampleRate, std::vector<std
     const UInt32 fileChannels = std::max<UInt32>(1, fileFmt.mChannelsPerFrame);
     const UInt32 channels = std::min<UInt32>(2, fileChannels);
     const double rate = sampleRate > 0 ? sampleRate : fileFmt.mSampleRate;
+    channelCount = static_cast<int32_t>(channels);
 
     AudioStreamBasicDescription client = planarFloat(rate, fileChannels);
     s = ExtAudioFileSetProperty(file, kExtAudioFileProperty_ClientDataFormat, sizeof(client), &client);
@@ -66,19 +68,12 @@ bool decodeAudioFile(const std::string &path, double sampleRate, std::vector<std
         return false;
     }
 
-    SInt64 fileFrames = 0;
-    size = sizeof(fileFrames);
-    ExtAudioFileGetProperty(file, kExtAudioFileProperty_FileLengthFrames, &size, &fileFrames);
-    const double ratio = fileFmt.mSampleRate > 0 ? rate / fileFmt.mSampleRate : 1.0;
-    const auto estimate = static_cast<size_t>(static_cast<double>(std::max<SInt64>(fileFrames, 0)) * ratio) + 4096;
-
-    std::vector<std::vector<float>> all(fileChannels);
-    for (auto &c : all) c.reserve(estimate);
-
     constexpr UInt32 kChunk = 32768;
     std::vector<std::vector<float>> tmp(fileChannels, std::vector<float>(kChunk));
     std::vector<char> ablStorage(offsetof(AudioBufferList, mBuffers) + sizeof(AudioBuffer) * fileChannels);
     auto *abl = reinterpret_cast<AudioBufferList *>(ablStorage.data());
+    const float *planes[2] = {tmp[0].data(), tmp[channels > 1 ? 1 : 0].data()};
+    int64_t total = 0;
     for (;;) {
         abl->mNumberBuffers = fileChannels;
         for (UInt32 c = 0; c < fileChannels; ++c) {
@@ -94,15 +89,27 @@ bool decodeAudioFile(const std::string &path, double sampleRate, std::vector<std
             return false;
         }
         if (frames == 0) break;
-        for (UInt32 c = 0; c < fileChannels; ++c) all[c].insert(all[c].end(), tmp[c].begin(), tmp[c].begin() + frames);
+        total += frames;
+        if (!sink(planes, static_cast<int32_t>(channels), frames)) break;
     }
     ExtAudioFileDispose(file);
-
-    all.resize(channels);
-    if (all.empty() || all[0].empty()) {
+    if (total == 0) {
         err = "file contains no audio";
         return false;
     }
+    return true;
+}
+
+bool decodeAudioFile(const std::string &path, double sampleRate, std::vector<std::vector<float>> &out,
+                     std::string &err) {
+    std::vector<std::vector<float>> all;
+    int32_t channels = 0;
+    const bool ok = decodeAudioFileChunked(path, sampleRate, [&](const float *const *ch, int32_t n, int64_t frames) {
+        if (all.empty()) all.resize(static_cast<size_t>(n));
+        for (int32_t c = 0; c < n; ++c) all[static_cast<size_t>(c)].insert(all[static_cast<size_t>(c)].end(), ch[c], ch[c] + frames);
+        return true;
+    }, channels, err);
+    if (!ok) return false;
     out = std::move(all);
     return true;
 }

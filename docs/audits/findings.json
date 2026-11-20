@@ -508,7 +508,7 @@
       "priority": "P1",
       "category": "Performance",
       "subsystem": "Media",
-      "status": "open",
+      "status": "fixed",
       "summary": "Every audio file is decoded to float32 in memory at load, plus a peak pyramid. Long recordings and large sessions scale memory linearly with total audio duration, and project open pays the full decode before the model is applied.",
       "evidence": [
         "engine/src/media.hpp: 'Decoded, immutable audio held in memory, plus a min/max peak pyramid.'",
@@ -542,7 +542,8 @@
         "reliability": 3,
         "value": 4
       },
-      "measured": true
+      "measured": true,
+      "resolution": "Fixed (2026-11-19, ADR-0016, C API 38). Files longer than 60 s are decoded once, in chunks, into a block-structured cache file (peaks built during decode) and play from a process-wide block cache (256 MB default). A disk thread prefetches six seconds after each engine's playhead and keeps every clip's first blocks; the audio thread copies resident blocks only (missing ones play silence and are counted), and blocks are reused only after unpublishing and a reader-count check. Offline renders lease their blocks. Evidence: Streaming tests: offline render bit-exact against the same file in memory at three positions; close-up peaks equal and coarse peaks bound the samples; 20 s of live playback through a 2 MB budget (eight blocks, under a third of the file) with 0 missed frames, every block equal to the in-memory engine, evictions, resident memory never above the budget, and a far seek exact again afterwards; a stretched streamed clip matches; the cache file is reused (second load 0.4 ms); a saved project reopens streamed and renders identically. 223 engine tests; TSan and ASan clean on the streaming, stretch, model and live suites; rt-effects.sh clean. Release dalnok-cli stream-bench with a generated 60-minute stereo WAV, 60 s of playback at about 4x real time plus a seek: in memory 1,389.9 MB RSS after load; streamed 19.1 MB after load and 48.6 MB peak while playing (30.5 MB cache), 0 missed frames; reopening reused the cache (load 0.01 s). Found and fixed: the time stretcher seeded its phase randomisation from std::random_device, so renders of a stretched clip differed in their last output-latency frames (now a fixed seed). Not covered: long clips started from the launcher keep only their first blocks resident; cache files are not cleaned up automatically."
     },
     {
       "id": "A-10",

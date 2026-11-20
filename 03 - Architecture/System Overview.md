@@ -46,3 +46,4 @@ headers out of Swift compilation, and it forces a deliberate, small surface.
   `engine_launcher.cpp`, `engine_device.cpp` (devices, capture, workgroup), `engine_compile.cpp` (RenderState snapshots),
   `engine_audio.cpp` (the real-time path), `engine_offline.cpp` (offline render, export, stats).
 - `engine_internal.hpp`: helpers shared by those files, and the `edit()` template every edit goes through.
+- `stream_cache.*` and `media.*`: long files stream from disk through a bounded block cache (ADR-0016).
