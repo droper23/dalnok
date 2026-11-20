@@ -49,8 +49,9 @@ final class ValueBubble {
 @MainActor
 final class FaderControl: NSControl {
     static let maxDb: Float = 6
-    var db: Float = 0 { didSet { needsDisplay = true; setAccessibilityValue(Self.format(db)) } }
-    var tint: NSColor = Theme.textDim { didSet { needsDisplay = true } }
+    // Refreshes assign every strip's values; repaint only when one changed (all faders redrew on any edit).
+    var db: Float = 0 { didSet { guard db != oldValue || db.isNaN else { return }; needsDisplay = true; setAccessibilityValue(Self.format(db)) } }
+    var tint: NSColor = Theme.textDim { didSet { if tint != oldValue { needsDisplay = true } } }
     var onBegin: (() -> Void)?
     var onChange: ((Float) -> Void)?
     var onEnd: (() -> Void)?
@@ -59,7 +60,7 @@ final class FaderControl: NSControl {
     /// Vertical (mixer strip): unity near the top, drag up to raise.
     var vertical = false { didSet { invalidateIntrinsicContentSize(); needsDisplay = true } }
     /// The cap takes the channel colour (mixer strips).
-    var colorCap = false { didSet { needsDisplay = true } }
+    var colorCap = false { didSet { if colorCap != oldValue { needsDisplay = true } } }
 
     override init(frame: NSRect) {
         super.init(frame: frame)

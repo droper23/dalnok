@@ -89,30 +89,37 @@ final class UIWalk {
         func drawn() { win.displayIfNeeded(); CATransaction.flush() }
         drawn()
         var dragDraw: [Double] = [], refreshDraw: [Double] = [], oneTrackDraw: [Double] = []
+        // Main-thread CPU time per tick: what is left of the wall time is waiting (mostly on the window server).
+        func cpuMs() -> Double { var t = timespec(); clock_gettime(CLOCK_THREAD_CPUTIME_ID, &t); return Double(t.tv_sec) * 1e3 + Double(t.tv_nsec) / 1e6 }
+        var dragCPU: [Double] = [], refreshCPU: [Double] = [], oneTrackCPU: [Double] = []
         mouse(.leftMouseDown, win, start)
+        let timelineCallsBefore = w.timeline.drawCalls, timelineSecondsBefore = w.timeline.drawSeconds
         for i in 0..<130 {
             let p = CGPoint(x: start.x, y: start.y + CGFloat((i % 80) - 40))
-            let t = DispatchTime.now().uptimeNanoseconds
+            let t = DispatchTime.now().uptimeNanoseconds, c = cpuMs()
             mouse(.leftMouseDragged, win, p)
             s.refresh(onDisplayTick: true) // what the display tick does with the drag's edit
             drawn()
-            if i >= 30 { dragDraw.append(Double(DispatchTime.now().uptimeNanoseconds - t) / 1e6) }
+            if i >= 30 { dragDraw.append(Double(DispatchTime.now().uptimeNanoseconds - t) / 1e6); dragCPU.append(cpuMs() - c) }
         }
         mouse(.leftMouseUp, win, start)
+        // A volume drag must not redraw the arrangement.
+        print(String(format: "AUDIT fader drag + draw: the timeline drew %d times (%.1f ms) in 130 ticks",
+                     w.timeline.drawCalls - timelineCallsBefore, (w.timeline.drawSeconds - timelineSecondsBefore) * 1000))
         for i in 0..<130 {
             _ = dalnok_track_set_gain_db(s.h, track.id, Float(-(i % 20)))
-            let t = DispatchTime.now().uptimeNanoseconds
+            let t = DispatchTime.now().uptimeNanoseconds, c = cpuMs()
             s.refresh(onDisplayTick: true)
             drawn()
-            if i >= 30 { refreshDraw.append(Double(DispatchTime.now().uptimeNanoseconds - t) / 1e6) }
+            if i >= 30 { refreshDraw.append(Double(DispatchTime.now().uptimeNanoseconds - t) / 1e6); refreshCPU.append(cpuMs() - c) }
         }
         for i in 0..<130 {
             var ids = [clip]
             _ = dalnok_clips_nudge(s.h, &ids, 1, i % 2 == 0 ? 480 : -480)
-            let t = DispatchTime.now().uptimeNanoseconds
+            let t = DispatchTime.now().uptimeNanoseconds, c = cpuMs()
             s.refresh()
             drawn()
-            if i >= 30 { oneTrackDraw.append(Double(DispatchTime.now().uptimeNanoseconds - t) / 1e6) }
+            if i >= 30 { oneTrackDraw.append(Double(DispatchTime.now().uptimeNanoseconds - t) / 1e6); oneTrackCPU.append(cpuMs() - c) }
         }
         // Where the structural case's drawing goes: layout, view drawing and the layer commit, timed separately.
         do {
@@ -217,6 +224,9 @@ final class UIWalk {
         show("AppKit drag event + display-tick refresh + drawing", dragDraw)
         show("AppKit parameter refresh + drawing", refreshDraw)
         show("AppKit structural refresh (one track) + drawing", oneTrackDraw)
+        func med(_ v: [Double]) -> Double { v.sorted()[v.count / 2] }
+        print(String(format: "AUDIT main-thread CPU p50 of those wall times: drag %.3f of %.3f ms, parameter %.3f of %.3f ms, structural %.3f of %.3f ms (the rest is waiting, mostly on the window server)",
+                     med(dragCPU), med(dragDraw), med(refreshCPU), med(refreshDraw), med(oneTrackCPU), med(oneTrackDraw)))
         fflush(stdout)
         return true
     }

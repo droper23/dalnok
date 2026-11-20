@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+- Faster redraw after edits:
+  - Clip names are no longer re-typeset every time a lane redraws.
+  - Faders only repaint when their value actually changes; before, every fader repainted on any edit.
+  - On a 4,096-clip project, a one-track edit including drawing went from 12.4 to 10.1 ms, which fits in one 60 Hz frame. Snapshots are pixel-identical.
+  - The UI audit now reports main-thread CPU time per tick, so the time spent waiting on the window server is separated out.
+
 - Long audio clips played from the clip launcher no longer drop out. Previously only their first 1.4 s was guaranteed to be ready in memory; now Dalnok loads the audio ahead of where the playing clip is in its loop. In a test with a small cache, a 12 s clip looped for 26 s went from 13.8 s of silence to none.
 
 - The streaming cache folder no longer grows without limit. It stays under 8 GiB (`DALNOK_STREAM_DISK_MB`) by deleting the least recently used files, and partial files left by a crash are removed. A file still in use keeps playing even after it's deleted.

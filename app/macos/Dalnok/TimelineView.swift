@@ -826,8 +826,6 @@ final class TimelineView: NSView {
 
         // Title: name in a contrast-picked color; tags (speed, pitch, gain, state) quieter.
         let fg = TrackTint.textColor(on: titleBg)
-        let nameAttrs: [NSAttributedString.Key: Any] = [.font: Theme.ui(10.5, .semibold), .foregroundColor: fg]
-        let tagAttrs: [NSAttributedString.Key: Any] = [.font: Theme.ui(10, .regular), .foregroundColor: fg.withAlphaComponent(0.7)]
         var tags: [String] = []
         if clip.offline { tags.append("offline") }
         if clip.muted { tags.append("muted") }
@@ -840,9 +838,8 @@ final class TimelineView: NSView {
         if clip.gainDb != 0 { tags.append(clip.gainDb.isFinite ? String(format: "%+.1f dB", clip.gainDb) : "−∞ dB") }
         // Older projects named every MIDI clip "MIDI"; show the track's name instead, as new clips are named.
         let name = clip.isMidi && clip.name == "MIDI" ? track.name : clip.name
-        let title = NSMutableAttributedString(string: name, attributes: nameAttrs)
-        if !tags.isEmpty { title.append(NSAttributedString(string: "   " + tags.joined(separator: "   "), attributes: tagAttrs)) }
-        title.draw(at: CGPoint(x: max(rect.minX, 0) + 6, y: rect.minY + 1.5))
+        drawTitle(ctx, name, tags: tags.isEmpty ? "" : "   " + tags.joined(separator: "   "), fg: fg,
+                  at: CGPoint(x: max(rect.minX, 0) + 6, y: rect.minY + 1.5))
         ctx.restoreGState()
         if selected || clip.id == hoveredClip { drawFadeHandles(ctx, clip, rect: rect) }
 
@@ -850,6 +847,38 @@ final class TimelineView: NSView {
         ctx.setStrokeColor((selected ? Theme.selection : tint.border).cgColor)
         ctx.setLineWidth(selected ? 1.5 : 1)
         ctx.strokePath()
+    }
+
+    /// Typeset clip titles, kept across redraws: shaping the same names again was about a third of drawing a lane.
+    private var titleLines: [String: (line: CTLine, ascent: CGFloat)] = [:]
+
+    /// Draws a clip title (name semibold, tags quieter) with its line box's top-left at `p`, like NSAttributedString.draw(at:).
+    private func drawTitle(_ ctx: CGContext, _ name: String, tags: String, fg: NSColor, at p: CGPoint) {
+        let rgb = fg.usingColorSpace(.sRGB) ?? fg
+        let key = String(format: "%.4f %.4f %.4f %.4f|", rgb.redComponent, rgb.greenComponent, rgb.blueComponent, rgb.alphaComponent) + name + "|" + tags
+        let entry: (line: CTLine, ascent: CGFloat)
+        if let cached = titleLines[key] {
+            entry = cached
+        } else {
+            let title = NSMutableAttributedString(string: name, attributes: [
+                .font: Theme.ui(10.5, .semibold), NSAttributedString.Key(kCTForegroundColorAttributeName as String): fg.cgColor])
+            if !tags.isEmpty {
+                title.append(NSAttributedString(string: tags, attributes: [
+                    .font: Theme.ui(10, .regular),
+                    NSAttributedString.Key(kCTForegroundColorAttributeName as String): fg.withAlphaComponent(0.7).cgColor]))
+            }
+            let line = CTLineCreateWithAttributedString(title)
+            var ascent: CGFloat = 0
+            _ = CTLineGetTypographicBounds(line, &ascent, nil, nil)
+            entry = (line, ascent)
+            if titleLines.count > 4_096 { titleLines.removeAll(keepingCapacity: true) }
+            titleLines[key] = entry
+        }
+        let matrix = ctx.textMatrix
+        ctx.textMatrix = CGAffineTransform(scaleX: 1, y: isFlipped ? -1 : 1)
+        ctx.textPosition = CGPoint(x: p.x, y: isFlipped ? p.y + entry.ascent : p.y - entry.ascent)
+        CTLineDraw(entry.line, ctx)
+        ctx.textMatrix = matrix
     }
 
     /// Diagonal hatch for muted/offline clips (state shown by form, not only color).
