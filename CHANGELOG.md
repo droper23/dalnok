@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+- Plug-ins fold, like Ableton's devices, so a long chain fits the panel (fold chevron, unit menu, or click the strip to unfold; saved with the project and undoable; C API 40). Graphite folds a unit to a slim rack blank with its name, power key and output level column. Warm Analog stands the pedal on its side edge: seen from above, the box tips over (its face foreshortens and darkens while its side panel comes up beside it), the patch cables stay plugged into its sides throughout, and the folded edge keeps its LED, a working footswitch and jack sockets. On/off works while folded.
+- More motion in the device chain: an added plug-in opens its place and settles in (Warm Analog: set down on the board with a small bounce, then its cables are plugged in); a removed one lifts off while the gap closes and the neighbours are re-patched. Units that didn't change are no longer rebuilt. All of it follows Reduce Motion.
+- Each unit has one Open button for the plug-in's own window. That window's title bar has Controls, which shows Dalnok's view of every parameter (searchable, automatable). For an isolated plug-in, Open shows only its own window; before, Dalnok's parameter window opened beside it. Edit Controls… (which parameters the unit shows) is in the unit's menu.
+- Warm Analog pedals show as much as a Graphite faceplate: a backlit readout window in the pedal's LED colour shows the control being turned (name and value), otherwise a gain-reduction LED ladder, the frequency response or the output trace with a one-line reading, and IN/OUT signal LEDs sit by the jacks.
+- Fixed: switching between Graphite and Warm Analog squeezed the arrangement into a few hundred points (the rebuilt window zoomed to fit before it had a width). The zoom and scroll position now carry over.
+- Safety (isolated plug-ins), verified on the owner's plug-in library and 24 real projects; it stays opt-in for now (ADR-0014): isolated loading never blocks the window for more than a few milliseconds and is faster in 20 of 24 projects, but 7 projects whose plug-ins need more than 40 % of each audio block would drop plug-ins until isolated plug-ins on independent tracks process in parallel. Fixed on the way, each with a test:
+  - An isolated plug-in's editor could open on another Space and stay invisible.
+  - Opening an Apple sampler's editor isolated crashed its host (a re-entrant resize), and its editor grew to 3,937 pt wide.
+  - Loading a plug-in with a multi-megabyte saved state blocked the main thread for up to 1.2 s (macOS ignores MSG_DONTWAIT on the socket pair).
+  - Projects opened marked Edited when a VST3, Audio Unit or CLAP plug-in reported values on its own after loading (only an open editor's changes count now).
+  - A plug-in crashing during playback marked the project edited.
+- New: `dalnok-cli load-bench <project> [--play S]` opens a project as the app does and reports load time, the worst main-thread block, failures, memory, block cost and isolated misses.
+
 - Internal: the transport state (play, playhead, cycle, punch, metronome, count-in) is now its own type, `Transport`, outside the engine class. Recording state is likewise grouped as `RecordingState`. No behaviour change: all 225 engine tests pass and the real-time checks are clean.
 
 - Faster redraw after edits:

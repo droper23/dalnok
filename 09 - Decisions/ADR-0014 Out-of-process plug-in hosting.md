@@ -52,3 +52,36 @@ The host answers with its own port. On every device start, change or stop, the e
 (`os_workgroup_copy_port`), and the processing thread leaves the old workgroup and joins the new one
 (`os_workgroup_create_with_port`, `os_workgroup_join`) before its next block. The host answers the rendezvous only when
 told to (`--rendezvous`), because otherwise it would hold ports inherited from the engine's own process.
+
+**Default-on decision (2026-11-20): Safety stays opt-in.** Verified on the owner's plug-in library with real OS input
+and on 24 of the owner's Logic projects (imported from clones; nothing derived from them is in the repository).
+`dalnok-cli load-bench` opens a project as the app does and then plays 5 s of live blocks paced at the device period.
+
+- *What isolation already does better.* All 24 projects load every plug-in in both modes, and none opens marked edited.
+  The worst single call on the main thread while loading: in-process 281–1,903 ms (median ≈1.1 s, the plug-ins'
+  own initialization); isolated 0.7–16 ms in 23 projects and 95 ms in one. Loading is faster isolated in 20 of 24
+  (hosts start in parallel). Renders isolated and in-process are bit-identical, or differ only within a plug-in's own
+  run-to-run nondeterminism. Editor windows, keys, save prompts, crashes and hangs behave as designed.
+- *What blocks the default.* Isolated plug-ins run one after another inside a single budget of 40 % of the callback
+  period (4.27 ms at 512 frames, 48 kHz). In 7 of the 24 projects the plug-ins' own processing in series costs more
+  than that (in-process mean block cost 3.8–16.5 ms), and isolated, 29–97 % of blocks were missed by at least one
+  plug-in, which then passes dry or silent; 2 more projects missed 1–6 %. Those projects would audibly drop plug-ins. Raising the budget only moves the line: it must also leave the
+  rest of the graph its time.
+- *Required before default-on.* (1) Process isolated plug-ins on independent tracks concurrently: issue every request
+  whose inputs are ready, then wait, so the budget covers the longest chain rather than the sum (hosts already run on
+  their own cores and join the device's workgroup). Measure with `load-bench` on the same 24 projects: 0 budget skips
+  where in-process keeps up. (2) Re-check the one project with a 95 ms load call.
+- *Migration note for when it is on by default.* Existing projects need no change: the saved state is the same in
+  both modes. Settings ▸ Plug-ins ▸ Safety stays as the off switch, and a plug-in that fails isolated keeps its state
+  and can be reloaded in-process.
+
+Stress (release build): 64 isolated instances of one effect load in 2.5 s (worst call 6.4 ms), take 22.6 MB per host
+(1.45 GB in all) and cost about 54 µs per instance per block (mean block 4.11 ms vs 0.66 ms in-process; 0 misses, one
+block over the period), so the per-block overhead alone also approaches the shared budget at that count. A real project
+opened and closed 10 times isolated: all 33 plug-ins every time, 3.3–3.5 s, worst call 4–9 ms, never edited, no host left
+running. A host killed during playback: reported as crashed with Load to restart it, playback continued, no host left.
+
+Found and fixed during this verification (each with a test): isolated editors stayed on another Space; a re-entrant
+fit crashed a host on an Apple sampler's editor; sending multi-megabyte saved states blocked the main thread for up to
+1.2 s (macOS ignores MSG_DONTWAIT on the socket pair); VST3, AU and CLAP reports made with no editor open marked
+projects edited; a host crashing during playback marked the project edited.
