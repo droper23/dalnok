@@ -11,6 +11,8 @@ import AppKit
 
 final class FoldStrip: NSView {
     static var width: CGFloat { Analog.on ? 44 : 34 }
+    /// Warm Analog: the edge's box is inset this far from the strip's sides; the cables plug into its sides.
+    static let boxInset: CGFloat = 3
     var name: String { didSet { needsDisplay = true; setAccessibilityLabel("\(name), folded") } }
     var engaged = true { didSet { if engaged != oldValue { needsDisplay = true; power.setAccessibilityValue(engaged ? "on" : "bypassed") } } }
     var loaded = true { didSet { needsDisplay = true; power.isEnabled = onToggle != nil && loaded } }
@@ -130,7 +132,7 @@ final class FoldStrip: NSView {
 
     private func drawPedalEdge(_ ctx: CGContext, _ look: PedalLook) {
         // The enclosure's edge: a narrow box whose face catches the light along its top bevel.
-        let r = bounds.insetBy(dx: 3, dy: 2)
+        let r = bounds.insetBy(dx: Self.boxInset, dy: 2)
         let path = CGPath(roundedRect: r, cornerWidth: 4, cornerHeight: 4, transform: nil)
         ctx.saveGState()
         ctx.setShadow(offset: CGSize(width: 2, height: -3), blur: 6, color: NSColor.black.withAlphaComponent(0.55).cgColor)
@@ -179,7 +181,16 @@ final class FoldStrip: NSView {
         ctx.drawRadialGradient(chrome, startCenter: CGPoint(x: cap.midX - 3, y: cap.midY + 3), startRadius: 0,
                                endCenter: CGPoint(x: cap.midX, y: cap.midY), endRadius: cap.width / 2, options: [])
         ctx.restoreGState()
+        // The power socket on this end, and the input and output jacks' nuts on the sides, where the cables plug in.
         Analog.jack(ctx, at: CGPoint(x: r.midX, y: r.minY + 14), radius: 6)
+        let socketY = bounds.height / 2 + 10 // the cables' height: the unit's middle (the strip starts 20 pt below its top)
+        for x in [r.minX, r.maxX] {
+            let nut = CGRect(x: x - 3, y: socketY - 6, width: 6, height: 12)
+            ctx.setFillColor(NSColor(white: 0.72, alpha: 1).cgColor)
+            ctx.fill(nut)
+            ctx.setFillColor(NSColor(white: 0.35, alpha: 1).cgColor)
+            ctx.fill(nut.insetBy(dx: 1.5, dy: 2))
+        }
         let attrs: [NSAttributedString.Key: Any] = [.font: look.letterFont(12), .foregroundColor: loaded ? look.ink : look.ink.withAlphaComponent(0.4),
                                                     .kern: 1.2]
         drawUpright(ctx, text: name.uppercased(), attrs: attrs, centerX: r.midX, from: r.minY + 28, to: cap.minY - 6)

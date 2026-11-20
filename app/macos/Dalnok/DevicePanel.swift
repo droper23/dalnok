@@ -281,22 +281,67 @@ final class DevicePanel: NSView {
         guard Analog.on, let doc = scroll.documentView else { return }
         doc.wantsLayer = true
         doc.layoutSubtreeIfNeeded()
-        let frames = devices.map { $0.convert($0.bounds, to: doc) }
-        let slots = devices.map(\.slot)
-        if frames == cableFrames && slots == cableSlots && track == cableTrack { return }
+        cablesFollow()
+    }
+    private var cableShapes: [(cable: CAShapeLayer, plug: CAShapeLayer, key: String)] = []
+    private var jackLayers: [(jack: CALayer, text: CATextLayer)] = []
+    private var cableKeys: [String] = []
+    /// Patches the chain as it stands now: track IN → each unit → track OUT, through every unit on the board (one still
+    /// leaving keeps its cables until it is gone). A unit being set down is plugged in when it lands. Cables between
+    /// the same units are moved in place, so they follow units that are opening, closing or tipping, frame by frame;
+    /// a new connection is plugged in with its animation.
+    func cablesFollow() {
+        guard Analog.on, let doc = scroll.documentView else { return }
+        let chain = stack.arrangedSubviews.compactMap { $0 as? DeviceView }
+        let frames = chain.map { $0.convert($0.bounds, to: doc) }
+        let slots = chain.map(\.slot)
+        let sides = chain.map { [$0.boxSides.left, $0.boxSides.right] }
+        if frames == cableFrames && slots == cableSlots && track == cableTrack && sides == cableSides
+            && chain.allSatisfy({ !$0.arriving }) == cableComplete { return }
+        cableSides = sides
         cableFrames = frames
         cableSlots = slots
         cableTrack = track
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        cableLayers.forEach { $0.removeFromSuperlayer() }
-        cableLayers = []
-        CATransaction.commit()
-        guard !devices.isEmpty else { knownCables = []; return }
-        var links: [(CGPoint, CGPoint, String)] = []
-        let first = frames[0], last = frames[frames.count - 1]
+        cableComplete = chain.allSatisfy { !$0.arriving }
+        guard let first = frames.first, let last = frames.last else {
+            CATransaction.begin(); CATransaction.setDisableActions(true)
+            cableLayers.forEach { $0.removeFromSuperlayer() }
+            CATransaction.commit()
+            cableLayers = []; cableShapes = []; jackLayers = []; cableKeys = []; knownCables = []
+            return
+        }
         // The track's patch points: IN (left of the chain) and OUT (right of it).
         let trackIn = CGPoint(x: 26, y: first.midY), trackOut = CGPoint(x: last.maxX + 38, y: last.midY)
+        var links: [(CGPoint, CGPoint, String)] = []
+        func plugs(_ i: Int) -> Bool { !chain[i].arriving }
+        // Each cable ends just outside the side of the unit's box (the pedal, its folded edge, or the box as it tips),
+        // where a plug sits in a side-mounted jack.
+        let gap: CGFloat = 6
+        func input(_ i: Int) -> CGPoint { CGPoint(x: frames[i].minX + chain[i].boxSides.left - gap, y: frames[i].midY) }
+        func output(_ i: Int) -> CGPoint { CGPoint(x: frames[i].minX + chain[i].boxSides.right + gap, y: frames[i].midY) }
+        if plugs(0) { links.append((trackIn, input(0), "in-\(slots[0])")) }
+        for i in 1..<max(1, frames.count) where frames.count > 1 && plugs(i - 1) && plugs(i) {
+            links.append((output(i - 1), input(i), "\(slots[i - 1])-\(slots[i])"))
+        }
+        if plugs(frames.count - 1) { links.append((output(frames.count - 1), trackOut, "\(slots[slots.count - 1])-out")) }
+        func plugPath(_ b: CGPoint) -> CGPath { CGPath(roundedRect: CGRect(x: b.x - 9, y: b.y - 3.5, width: 9, height: 7), cornerWidth: 2, cornerHeight: 2, transform: nil) }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
+        // Same connections: move them.
+        if links.map(\.2) == cableKeys, jackLayers.count == 2 {
+            for (i, p) in [trackIn, trackOut].enumerated() {
+                jackLayers[i].jack.frame = CGRect(x: p.x - 9, y: p.y - 9, width: 18, height: 18)
+                jackLayers[i].text.frame = CGRect(x: p.x - 16, y: p.y - 24, width: 32, height: 12)
+            }
+            for (i, (a, b, _)) in links.enumerated() {
+                cableShapes[i].cable.path = Analog.cablePath(from: a, to: b, sag: 30)
+                cableShapes[i].plug.path = plugPath(b)
+            }
+            return
+        }
+        cableLayers.forEach { $0.removeFromSuperlayer() }
+        cableLayers = []; cableShapes = []; jackLayers = []
         for (p, label) in [(trackIn, "IN"), (trackOut, "OUT")] {
             let jack = CALayer()
             jack.frame = CGRect(x: p.x - 9, y: p.y - 9, width: 18, height: 18)
@@ -313,13 +358,8 @@ final class DevicePanel: NSView {
             doc.layer?.addSublayer(jack)
             doc.layer?.addSublayer(text)
             cableLayers += [jack, text]
+            jackLayers.append((jack, text))
         }
-        links.append((trackIn, CGPoint(x: first.minX + DeviceView.ear / 2, y: first.midY), "in-\(devices[0].slot)"))
-        for i in 1..<max(1, frames.count) where frames.count > 1 {
-            links.append((CGPoint(x: frames[i - 1].maxX - DeviceView.ear / 2, y: frames[i - 1].midY),
-                          CGPoint(x: frames[i].minX + DeviceView.ear / 2, y: frames[i].midY), "\(devices[i - 1].slot)-\(devices[i].slot)"))
-        }
-        links.append((CGPoint(x: last.maxX - DeviceView.ear / 2, y: last.midY), trackOut, "\(devices[devices.count - 1].slot)-out"))
         for (i, (a, b, key)) in links.enumerated() {
             let color = Analog.cableColors[i % Analog.cableColors.count]
             let cable = CAShapeLayer()
@@ -334,21 +374,25 @@ final class DevicePanel: NSView {
             cable.shadowOffset = CGSize(width: 0, height: 2)
             cable.zPosition = 20
             let plug = CAShapeLayer() // the plug barrel seated in the input jack
-            plug.path = CGPath(roundedRect: CGRect(x: b.x - 9, y: b.y - 3.5, width: 9, height: 7), cornerWidth: 2, cornerHeight: 2, transform: nil)
+            plug.path = plugPath(b)
             plug.fillColor = color.blended(withFraction: 0.35, of: .black)?.cgColor
             plug.strokeColor = NSColor(white: 0, alpha: 0.6).cgColor
             plug.zPosition = 21
             doc.layer?.addSublayer(cable)
             doc.layer?.addSublayer(plug)
             cableLayers += [cable, plug]
+            cableShapes.append((cable, plug, key))
             if !knownCables.contains(key) && !Motion.reduced && window != nil {
                 Motion.connectCable(cable, plug: plug, paths: [12, 37, 27, 31, 30].map {
                     Analog.cablePath(from: a, to: b, sag: CGFloat($0))
                 })
             }
         }
-        knownCables = Set(links.map { $0.2 })
+        cableKeys = links.map(\.2)
+        knownCables = Set(cableKeys)
     }
+    private var cableComplete = true
+    private var cableSides: [[CGFloat]] = []
 }
 
 /// Reports every primary press in its view (including on controls inside it) without taking the event.
@@ -1153,7 +1197,7 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         return max(fittingSize.width, minWidth.constant)
     }
     /// Animates the unit's width from `from` to `to` with a temporary constraint, then hands layout back.
-    private func transition(from: CGFloat, to: CGFloat, duration: Double = 0.34, done: @escaping () -> Void) {
+    private func transition(from: CGFloat, to: CGFloat, duration: Double = 0.34, clip: Bool = true, done: @escaping () -> Void) {
         transitionWidth?.isActive = false
         minWidth.isActive = false
         let c = widthAnchor.constraint(equalToConstant: from)
@@ -1163,14 +1207,40 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         transitionToken += 1
         let token = transitionToken
         transitioning = true
-        layer?.masksToBounds = true
+        layer?.masksToBounds = clip
         superview?.layoutSubtreeIfNeeded()
-        Motion.views(duration, {
-            c.animator().constant = to
+        // Stepped frame by frame (not the layout animator, which reports only the final frames): the views' frames are
+        // real throughout, so the patch cables can follow them.
+        let start = CACurrentMediaTime()
+        tipTimer?.invalidate()
+        tipStep = { [weak self] in
+            guard let self else { return }
+            let t = min(1, (CACurrentMediaTime() - start) / max(0.01, duration))
+            let e = 1 - pow(1 - t, 3) // ease out
+            c.constant = from + (to - from) * CGFloat(e)
             self.superview?.layoutSubtreeIfNeeded()
-        }, completion: { [weak self] in
-            MainActor.assumeIsolated { self?.finishTransition(token) }
-        })
+            self.panel?.cablesFollow()
+            if t >= 1 { self.tipTimer?.invalidate(); self.tipTimer = nil; self.tipStep = nil; self.finishTransition(token) }
+        }
+        let timer = Timer(timeInterval: 1 / 120, repeats: true) { [weak self] _ in MainActor.assumeIsolated { self?.tipStep?() } }
+        RunLoop.main.add(timer, forMode: .common)
+        tipTimer = timer
+    }
+    /// The device panel this unit is in.
+    var panel: DevicePanel? {
+        var v = superview
+        while let s = v, !(s is DevicePanel) { v = s.superview }
+        return v as? DevicePanel
+    }
+    /// Being set down in the chain (its cables are plugged in when it lands).
+    private(set) var arriving = false
+    /// Where the pedal's box is, left and right side, in this unit's coordinates (Warm Analog): the cables plug into
+    /// its sides. Set every frame while it tips; otherwise the full pedal or the folded edge.
+    var tipEdges: (left: CGFloat, right: CGFloat)?
+    var boxSides: (left: CGFloat, right: CGFloat) {
+        if let tipEdges { return tipEdges }
+        if folded { return (FoldStrip.boxInset, bounds.width - FoldStrip.boxInset) }
+        return (Self.ear, bounds.width - Self.ear)
     }
     private var transitionDone: (() -> Void)?
     private var transitionToken = 0
@@ -1184,7 +1254,9 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         applySelection() // restores masksToBounds = false and the glow
         let done = transitionDone
         transitionDone = nil
+        arriving = false
         done?()
+        panel?.cablesFollow()
         var v: NSView? = superview
         while let s = v, !(s is DevicePanel) { v = s.superview }
         v?.needsLayout = true
@@ -1203,6 +1275,21 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         foldButton.setAccessibilityLabel(f ? "Unfold" : "Fold")
         let animate = animated && !Motion.reduced && window != nil
         let from = bounds.width
+        // Warm Analog: the pedal tips onto its side like the box it is (see tipPedal).
+        if animate, Analog.on, let pedal, layer != nil {
+            let face = f ? snapshot(pedal) : nil
+            let faceFrame = f ? pedal.convert(pedal.bounds, to: self) : .zero
+            if f {
+                bodyStack.removeFromSuperview(); bodyConstraints = []
+                minWidth.isActive = false
+                attachStrip()
+            } else {
+                strip.removeFromSuperview(); stripConstraints = []
+                attachBody()
+                minWidth.isActive = true
+            }
+            return tipPedal(folding: f, from: from, face: face, faceFrame: faceFrame)
+        }
         let outgoing = animate ? snapshot(f ? bodyStack : strip) : nil
         if f {
             bodyStack.removeFromSuperview()
@@ -1253,12 +1340,120 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         }
     }
 
+    /// Folding a stomp box the way a real one is stood on its edge, seen from above as the pedalboard is: the box tips
+    /// about its long edge, so its top face foreshortens (width × cos θ) while its side panel comes up beside it
+    /// (width × sin θ), the two joined at a lit edge. The face darkens as it turns from the light and the side brightens
+    /// as it turns to it. No perspective, no flat card: each frame sets the unit's width to exactly what the tipping box
+    /// covers, so the neighbours close up against it and never pass over it, and the last frame is the strip itself.
+    /// Unfolding runs the same motion backwards.
+    private var tipTimer: Timer?
+    private var tipStep: (() -> Void)?
+    private func tipPedal(folding: Bool, from: CGFloat, face: CALayer?, faceFrame: CGRect) {
+        guard let layer, let pedal else { return }
+        tipTimer?.invalidate()
+        let to = naturalWidth
+        let stripHeight = bounds.height - 20 // the strip sits level with the pedals, below the header row
+        var faceShot = face, measured = faceFrame
+        if !folding { // the face as it will look, laid out at full width
+            attachBody(width: to)
+            layoutSubtreeIfNeeded()
+            measured = pedal.convert(pedal.bounds, to: self)
+            faceShot = snapshot(pedal)
+        }
+        let frame = measured
+        let side = FoldStrip(name: strip.name)
+        side.look = pedal.look; side.engaged = !bypassed; side.loaded = loaded
+        side.frame = CGRect(x: 0, y: 0, width: FoldStrip.width, height: stripHeight)
+        guard let faceShot, let sideShot = snapshot(side) else {
+            return transition(from: from, to: to) { [weak self] in if let self, !self.folded { self.attachBody() } }
+        }
+        let W = frame.width, S = FoldStrip.width, margin = frame.minX
+        let trailing = max(0, (folding ? from : to) - frame.maxX) // the body's right margin at full width
+        let stage = CALayer()
+        stage.frame = layer.bounds
+        stage.zPosition = 200
+        layer.addSublayer(stage)
+        // Under the box, a contact shadow that is widest mid-tip (the box up on its edge).
+        let shadow = CALayer()
+        shadow.backgroundColor = NSColor.black.cgColor
+        shadow.cornerRadius = 4
+        shadow.shadowColor = NSColor.black.cgColor; shadow.shadowRadius = 8; shadow.shadowOffset = CGSize(width: 0, height: -3)
+        for (l, img) in [(faceShot, faceShot), (sideShot, sideShot)] { _ = img; l.contentsGravity = .resize; l.masksToBounds = true }
+        let faceShade = CALayer(), sideShade = CALayer(), edge = CALayer()
+        for sh in [faceShade, sideShade] { sh.backgroundColor = NSColor.black.cgColor }
+        edge.backgroundColor = NSColor.white.cgColor
+        faceShot.addSublayer(faceShade); sideShot.addSublayer(sideShade)
+        for l in [shadow, faceShot, sideShot, edge] { stage.addSublayer(l) }
+        // Hand the width to this motion (no other animation runs on it).
+        transitionWidth?.isActive = false
+        minWidth.isActive = false
+        let c = widthAnchor.constraint(equalToConstant: from)
+        c.isActive = true
+        transitionWidth = c
+        transitionToken += 1
+        let token = transitionToken
+        transitioning = true
+        layer.masksToBounds = false
+        layer.borderWidth = 0; layer.shadowOpacity = 0 // the selection outline returns when it lands
+        let real: NSView = folding ? strip : bodyStack
+        real.alphaValue = 0
+        transitionDone = { [weak self, weak real] in
+            stage.removeFromSuperlayer()
+            real?.alphaValue = 1
+            if let self, !self.folded { self.attachBody() }
+        }
+        // DALNOK_MOTION_SCALE slows it down for frame-by-frame review.
+        let duration = 0.42 * (ProcessInfo.processInfo.environment["DALNOK_MOTION_SCALE"].flatMap(Double.init) ?? 1), start = CACurrentMediaTime()
+        let y = folding ? frame.minY : bounds.height - 20 - stripHeight
+        let step = { [weak self] in
+            guard let self else { return }
+            let t = min(1, (CACurrentMediaTime() - start) / duration)
+            let e = t < 0.5 ? 2 * t * t : 1 - pow(-2 * t + 2, 2) / 2 // ease in and out, like a box going over
+            let p = folding ? e : 1 - e                                 // 0: flat on the board, 1: on its side
+            let theta = CGFloat(p) * .pi / 2
+            let sideW = S * sin(theta), faceW = W * cos(theta), lead = margin * (1 - CGFloat(p))
+            let h = frame.height + (stripHeight - frame.height) * CGFloat(p)
+            let top = y + (frame.minY - y) * (1 - CGFloat(p))
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            sideShot.frame = CGRect(x: lead, y: top, width: sideW, height: h)
+            faceShot.frame = CGRect(x: lead + sideW, y: top, width: faceW, height: h)
+            faceShade.frame = faceShot.bounds; sideShade.frame = sideShot.bounds
+            faceShade.opacity = Float(0.55 * sin(theta))
+            sideShade.opacity = Float(0.45 * cos(theta))
+            edge.frame = CGRect(x: lead + sideW - 0.5, y: top + 2, width: 1, height: h - 4)
+            edge.opacity = Float(0.55 * sin(2 * theta))
+            shadow.frame = CGRect(x: lead + 2, y: top + 2, width: sideW + faceW - 4, height: h - 4)
+            shadow.shadowOpacity = Float(0.25 + 0.35 * sin(2 * theta))
+            shadow.opacity = Float(0.35 * sin(2 * theta))
+            CATransaction.commit()
+            c.constant = max(S, lead + sideW + faceW + trailing * (1 - CGFloat(p)))
+            // The box's sides for the cables: the edge strip's box is inset like the folded one.
+            let inset = FoldStrip.boxInset * CGFloat(p)
+            self.tipEdges = (lead + inset, lead + sideW + faceW - inset)
+            self.superview?.layoutSubtreeIfNeeded()
+            self.panel?.cablesFollow()
+            if t >= 1 {
+                self.tipTimer?.invalidate(); self.tipTimer = nil; self.tipStep = nil
+                self.tipEdges = nil
+                c.constant = to
+                self.finishTransition(token)
+            }
+        }
+        tipStep = step
+        step()
+        let timer = Timer(timeInterval: 1 / 120, repeats: true) { [weak self] _ in MainActor.assumeIsolated { self?.tipStep?() } }
+        RunLoop.main.add(timer, forMode: .common)
+        tipTimer = timer
+    }
+
     /// A unit just added to the chain: it opens up its place (the neighbours make room) and settles in. Warm Analog:
     /// the pedal is set down on the board with a small bounce; Graphite: the faceplate slides in and fades up.
     func animateArrival() {
         guard !Motion.reduced, window != nil, let layer else { return }
         let to = naturalWidth
         if !folded { attachBody(width: to) }
+        arriving = true
         let drop = CAKeyframeAnimation(keyPath: Analog.on ? "transform.translation.y" : "transform.translation.x")
         drop.values = Analog.on ? [36, 0, 5, 0] : [-18, 0]
         drop.keyTimes = Analog.on ? [0, 0.62, 0.82, 1] : [0, 1]
