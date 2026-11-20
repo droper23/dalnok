@@ -743,7 +743,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         }
         if tickCount % 30 == 0 && !e.deviceAlive { deviceLost() }
         if tickCount % 15 == 0 && !devicePanel.isHidden { devicePanel.refreshValues() }
-        if !devicePanel.isHidden && !Analog.on { devicePanel.pollMeters() }
+        if !devicePanel.isHidden { devicePanel.pollMeters() } // Graphite faceplates and Warm Analog pedals
         if transientMessageUntil < Date(), transientMessageUntil != .distantPast {
             transientMessageUntil = .distantPast
             updateStatus()

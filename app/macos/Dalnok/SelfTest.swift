@@ -2278,6 +2278,20 @@ final class SelfTest {
                 check(lim.controls.count < pedal.controls.count ? lim.frame.width < pedal.frame.width : lim.frame.width >= pedal.frame.width,
                       "pedal size follows the number of controls (\(lim.controls.count): \(lim.frame.width) pt, \(pedal.controls.count): \(pedal.frame.width) pt)")
             }
+            // The readout window: under the controls, clear of the name and footswitch; it shows a turned control's
+            // name and value, and the trace or reduction otherwise.
+            pedal.layoutSubtreeIfNeeded()
+            check(!pedal.screen.isHidden && pedal.screen.frame.minY >= (pedal.controls.map(\.frame.maxY).max() ?? 0)
+                  && pedal.screen.frame.maxY < pedal.footswitch.frame.minY - 14 && pedal.screen.frame.width > 60,
+                  "the pedal has a readout window under its controls (\(pedal.screen.frame))")
+            delay.pollMeters(); delay.pollMeters()
+            check(pedal.screen.mode == .scope, "AUDelay's window shows its output trace (\(pedal.screen.mode))")
+            if let knob = pedal.controls.first {
+                knob.onChange?(0.3)
+                check(pedal.screen.showingValue && pedal.screen.text.lowercased().contains("dry/wet") && pedal.screen.text.contains("30"),
+                      "turning a control shows its name and value in the window (\(pedal.screen.text))")
+                _ = perform("Undo"); panel.rebuild()
+            }
             let up = mouse(.leftMouseUp, pedal.footswitch.convert(CGPoint(x: pedal.footswitch.bounds.midX, y: pedal.footswitch.bounds.midY), to: nil))
             pedal.footswitch.mouseDown(with: mouse(.leftMouseDown, up.locationInWindow)); pedal.footswitch.mouseUp(with: up)
             check(s.pluginBypassed(track, slot) && !pedal.engaged && s.engine.undoName == "Bypass Plug-in", "stomping the footswitch bypasses AUDelay (LED off, undoable)")

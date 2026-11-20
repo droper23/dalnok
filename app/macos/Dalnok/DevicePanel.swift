@@ -810,7 +810,8 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
 
     /// Graphite: reads this unit's levels and feeds its meters and display (called every frame while the panel shows).
     func pollMeters() {
-        guard pedal == nil, loaded else { return }
+        if let pedal { return pollPedal(pedal) }
+        guard loaded else { return }
         var il: Float = 0, ir: Float = 0, ol: Float = 0, orr: Float = 0
         guard dalnok_meter_plugin(session.engine.handle, slot, &il, &ir, &ol, &orr) == DALNOK_OK else { return }
         if folded { // the strip's level column: −48…0 dBFS, falling back slowly
@@ -822,6 +823,64 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         if !inMeter.isHidden { inMeter.push(il, ir); outMeter.push(ol, orr) }
         tick += 1
         updateDisplay()
+    }
+
+    /// Warm Analog: the pedal's signal LEDs and readout window (the same data a Graphite faceplate shows).
+    private func pollPedal(_ pedal: PedalBody) {
+        guard loaded, !folded, !pedal.screen.isHidden else { return }
+        let h = session.engine.handle
+        var il: Float = 0, ir: Float = 0, ol: Float = 0, orr: Float = 0
+        if dalnok_meter_plugin(h, slot, &il, &ir, &ol, &orr) == DALNOK_OK {
+            pedal.inLevel = CGFloat(min(1, max(il, ir))); pedal.outLevel = CGFloat(min(1, max(ol, orr)))
+        }
+        tick += 1
+        let screen = pedal.screen
+        if screen.showingValue { screen.needsDisplay = true; return } // let it time out
+        guard tick % 2 == 0, !bypassed else { return }
+        switch automaticKind() {
+        case .vu: // a level meter: the output level on the ladder, −48…0 dBFS
+            screen.mode = .ladder
+            let peak = Double(max(ol, orr)), db = peak > 0 ? 20 * log10(peak) : -96
+            screen.reduction += ((max(-48, db) + 48) / 2 - screen.reduction) * 0.35 // 0…24 on the ladder's scale
+            screen.reading = peak > 1e-5 ? String(format: "%.0f dBFS", db) : "NO SIGNAL"
+        case .gainReduction:
+            screen.mode = .ladder
+            var inBuf = [Float](repeating: 0, count: 1_024), outBuf = inBuf
+            let n = Int(dalnok_plugin_tap(h, slot, &inBuf, &outBuf, 1_024))
+            var ri: Float = 0, ro: Float = 0
+            if n > 0 { vDSP_rmsqv(inBuf, 1, &ri, vDSP_Length(n)); vDSP_rmsqv(outBuf, 1, &ro, vDSP_Length(n)) }
+            let measured = ri > 1e-4 && ro > 0 ? max(0, Double(20 * log10(ri / max(ro, 1e-9)))) : 0
+            let gr = reportedReduction() ?? measured
+            screen.reduction += (gr - screen.reduction) * 0.35
+            screen.reading = String(format: "-%.1f dB GR", screen.reduction)
+        case .response, .analyzer:
+            screen.mode = .curve
+            guard tick % 6 == 0 else { return }
+            let freqs = (0..<48).map { 20 * pow(1000, Double($0) / 47) }
+            var db = [Double](repeating: 0, count: freqs.count)
+            if dalnok_plugin_response(h, slot, freqs, Int32(freqs.count), &db) == DALNOK_OK {
+                screen.curve = db
+                let peak = db.max(by: { abs($0) < abs($1) }) ?? 0
+                screen.reading = String(format: "%+.1f dB", peak)
+            } else {
+                var inBuf = [Float](repeating: 0, count: SpectrumAnalyzer.n), outBuf = inBuf
+                guard dalnok_plugin_tap(h, slot, &inBuf, &outBuf, Int32(SpectrumAnalyzer.n)) == Int32(SpectrumAnalyzer.n) else { return }
+                let a = analyzer ?? SpectrumAnalyzer()
+                analyzer = a
+                a.push(input: inBuf, output: outBuf)
+                let rate = Double(dalnok_engine_sample_rate(h))
+                screen.curve = freqs.map { Double(a.outputDb(at: $0, rate: rate)) / 3 + 12 } // spectrum, scaled into view
+                screen.reading = "SPECTRUM"
+            }
+        case .scope, .goniometer, .history, .transfer:
+            screen.mode = .scope
+            var outBuf = [Float](repeating: 0, count: 1_024)
+            let n = Int(dalnok_plugin_tap(h, slot, nil, &outBuf, 1_024))
+            guard n == 1_024 else { return }
+            screen.trace = stride(from: 0, to: n, by: 8).map { outBuf[$0] }
+            let peak = outBuf.map(abs).max() ?? 0
+            screen.reading = peak > 1e-5 ? String(format: "%.0f dBFS", 20 * log10(peak)) : "NO SIGNAL"
+        }
     }
 
     /// The display's data: gain reduction (reported or measured), the response curve and spectrum, or the scope trace.
@@ -1068,7 +1127,8 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         let w = strip.widthAnchor.constraint(equalToConstant: FoldStrip.width)
         w.priority = .defaultHigh // a transition's width wins while it runs
         stripConstraints = [strip.leadingAnchor.constraint(equalTo: leadingAnchor), strip.trailingAnchor.constraint(equalTo: trailingAnchor),
-                            strip.topAnchor.constraint(equalTo: topAnchor), strip.bottomAnchor.constraint(equalTo: bottomAnchor), w]
+                            // Warm Analog: level with the pedals, below the units' header row.
+                            strip.topAnchor.constraint(equalTo: topAnchor, constant: Analog.on ? 20 : 0), strip.bottomAnchor.constraint(equalTo: bottomAnchor), w]
         NSLayoutConstraint.activate(stripConstraints)
         refreshStrip()
     }
@@ -1274,7 +1334,12 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
             c.value = p.value
             c.defaultValue = p.default_value
             c.format = { [weak self] _ in self?.current(id).map { self?.display($0) ?? "" } ?? "" }
-            c.onChange = { [weak self] v in self?.set(id, v); c.toolTip = self?.current(id).map { "\(fixedString($0.title)): \(self?.display($0) ?? "")" } }
+            c.onChange = { [weak self, weak pedal] v in
+                self?.set(id, v)
+                guard let self, let now = self.current(id) else { return }
+                c.toolTip = "\(fixedString(now.title)): \(self.display(now))"
+                pedal?.screen.showValue(fixedString(now.title), self.display(now))
+            }
             c.onKindChange = { [weak pedal] k in if let pedal { PedalStore.setKind(pedal.name, id, k) } }
             c.setAccessibilityLabel(fixedString(p.title))
             c.toolTip = "\(fixedString(p.title)): \(display(p)). Drag up or down (⇧ fine), double-click for the default; right-click to change the control."
