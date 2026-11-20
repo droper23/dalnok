@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Tests: `DALNOK_REAL_INPUT=1` now drives this release's changes with real mouse and keyboard input in the self-test. It drags a clip, undoes and redoes with ⌘Z / ⇧⌘Z, plays a streamed 90 s file with Space, seeks with a ruler click and clicks Stop during slow isolated loading. It checks the screen is unlocked and Dalnok is in front first. The timeline redraw check now ignores the playhead overlay, which `draw` never paints, so it compares exactly (0 differing bytes).
+
 - Editing a clip no longer repaints the whole arrangement and mixer: only the changed tracks redraw. On a 4,096-clip project, an edit including drawing went from about 54 ms to 22 ms. The UI timing audit now includes drawing time.
 - Long audio files now play from disk instead of being held in memory (ADR-0016). Files over a minute are decoded once into a cache and played from a bounded memory cache. An hour of stereo audio used 1.39 GB of memory and now uses under 50 MB, with nothing dropped in testing. Reopening a project reuses the cache, so it opens instantly.
 - Time-stretched clips now render identically every time. The stretcher used a random seed, so the last few milliseconds of a stretched clip could differ between renders.

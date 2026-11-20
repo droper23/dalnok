@@ -38,7 +38,7 @@ if [[ "${DALNOK_ISOLATION_SELFTEST:-0}" == "1" ]]; then
   swift build --product Dalnok >/dev/null
   DALNOK_TEST_VST3="$dir" DALNOK_RECOVERY_DIR="$work/recovery" .build/debug/Dalnok /System/Library/Sounds/Submarine.aiff \
     /System/Library/Sounds/Glass.aiff --selftest "$work/selftest" > "$work/selftest.log" 2>&1 && status=0 || status=$?
-  grep -E '^FAIL|MEASURE slow' "$work/selftest.log" || true
+  grep -E '^FAIL|^SKIP|MEASURE (slow|real)' "$work/selftest.log" || true
   tail -1 "$work/selftest.log"
   [[ $status -eq 0 ]] || exit $status
 fi

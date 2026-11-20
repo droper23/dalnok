@@ -517,6 +517,7 @@ final class SelfTest {
         await tapeMachine()
         await markersAndTrackTools()
         await partialTimelineRedraw()
+        await realInputChecks()
         await deferredPluginLoading()
         await slowIsolatedPluginLoading()
         await isolatedPluginEditors()
@@ -841,6 +842,7 @@ final class SelfTest {
         check(w.saveProject(to: project), "save a project with three test plug-ins")
         e.newProject(); s.refresh()
         dalnok_plugins_set_host(e.handle, Engine.pluginHostPath)
+        let realStop = await realInputReady("Stop during slow isolated loading")
         setenv("DALNOK_TEST_INIT_FAILURE", "slow", 1); setenv("DALNOK_TEST_INIT_SLOW_MS", "4000", 1)
         // The main thread's longest stall while loading, measured by a 5 ms timer.
         final class Probe: @unchecked Sendable {
@@ -870,7 +872,8 @@ final class SelfTest {
             m.last = DispatchTime.now().uptimeNanoseconds; m.started = m.last
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { // the plug-ins are 0.6 s into their 4 s initialization
                 m.clicked = DispatchTime.now().uptimeNanoseconds
-                self.w.transport.stopLoadingButton.performClick(nil)
+                let b = self.w.transport.stopLoadingButton
+                if realStop { RealInput.click(self.screenPoint(b, NSPoint(x: b.bounds.midX, y: b.bounds.midY))) } else { b.performClick(nil) }
             }
         }
         let opened = await withCheckedContinuation { cont in w.openProject(project) { cont.resume(returning: $0) } }
@@ -883,7 +886,7 @@ final class SelfTest {
         check(opened && stopVisible && statusText == "Loading plug-ins 1 of 3…", "slow isolated plug-ins show progress with Stop (\(statusText))")
         check(m.clicked > 0 && m.worst < 50 && m.ticks > 60, // 0.6 s of loading: ≥ 60 of 120 possible 5 ms ticks
               "the window keeps running while plug-ins sleep 4 s in initialization (worst gap \(String(format: "%.1f", m.worst)) ms)")
-        check(stopToDone < 250, "Stop ends the load at once (\(String(format: "%.1f", stopToDone)) ms)")
+        check(stopToDone < 250, "\(realStop ? "a real click on " : "")Stop ends the load at once (\(String(format: "%.1f", stopToDone)) ms)")
         let plugins = s.tracks.first?.plugins ?? []
         check(plugins.count == 3 && plugins.allSatisfy { !$0.loaded && !$0.loading && $0.error.contains("cancelled") },
               "Stop leaves all three unloaded with their settings")
@@ -1001,14 +1004,180 @@ final class SelfTest {
         check(front == getpid(), "typing into the editor leaves Dalnok the active application")
     }
 
-    /// A structural edit on one track redraws only that track's lane, and the result matches drawing everything.
-    /// The reference draws the whole view into an identical offscreen context; even a full redraw differs from it by a
-    /// few rasterized text bytes, so a partial redraw must differ by no more than a full one does.
-    private func partialTimelineRedraw() async {
-        let tl = w.timeline
-        guard s.tracks.count >= 2, let clip = s.tracks[1].clips.first, let win = tl.window else {
-            return check(false, "partial redraw check needs two tracks with clips")
+    // ---- Real OS-level input (DALNOK_REAL_INPUT=1) ------------------------------------------------------------
+
+    /// True when real input may be posted: asked for, the screen unlocked, and Dalnok frontmost (input goes to
+    /// whatever application is in front, so a missed target lands in Dalnok, never another app).
+    private func realInputReady(_ what: String) async -> Bool {
+        guard ProcessInfo.processInfo.environment["DALNOK_REAL_INPUT"] == "1" else { return false }
+        if let session = CGSessionCopyCurrentDictionary() as? [String: Any], session["CGSSessionScreenIsLocked"] as? Bool == true {
+            print("SKIP  \(what) with real input (the screen is locked)"); return false
         }
+        NSApp.activate(ignoringOtherApps: true); w.window?.makeKeyAndOrderFront(nil); await wait(0.5)
+        guard NSWorkspace.shared.frontmostApplication?.processIdentifier == getpid() else {
+            print("SKIP  \(what) with real input (Dalnok could not be made frontmost)"); return false
+        }
+        return true
+    }
+
+    /// A point in `view` as a global screen point (top-left origin), where CGEvents are posted.
+    private func screenPoint(_ view: NSView, _ p: NSPoint) -> CGPoint {
+        guard let win = view.window else { return .zero }
+        let q = win.convertPoint(toScreen: view.convert(p, to: nil))
+        return CGPoint(x: q.x, y: (NSScreen.screens.first?.frame.height ?? 0) - q.y)
+    }
+
+    private enum RealInput {
+        static var src: CGEventSource? { CGEventSource(stateID: .hidSystemState) }
+        static func post(_ e: CGEvent?) { e?.post(tap: .cghidEventTap); usleep(12_000) }
+        static func mouse(_ t: CGEventType, _ p: CGPoint) {
+            post(CGEvent(mouseEventSource: src, mouseType: t, mouseCursorPosition: p, mouseButton: .left))
+        }
+        static func click(_ p: CGPoint) { mouse(.mouseMoved, p); mouse(.leftMouseDown, p); mouse(.leftMouseUp, p) }
+        static func drag(_ a: CGPoint, _ b: CGPoint) {
+            mouse(.mouseMoved, a); mouse(.leftMouseDown, a)
+            for k in 1...20 {
+                let t = Double(k) / 20
+                mouse(.leftMouseDragged, CGPoint(x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t))
+            }
+            mouse(.leftMouseUp, b)
+        }
+        /// Presses and releases the modifiers around the key, like a hand on the keyboard, so none stays latched.
+        static func key(_ code: CGKeyCode, _ flags: CGEventFlags = []) {
+            let mods: [(CGEventFlags, CGKeyCode)] = [(.maskShift, 56), (.maskCommand, 55)]
+            var held: CGEventFlags = []
+            for (m, c) in mods where flags.contains(m) {
+                held.insert(m)
+                let e = CGEvent(keyboardEventSource: src, virtualKey: c, keyDown: true); e?.type = .flagsChanged; e?.flags = held; post(e)
+            }
+            for down in [true, false] {
+                let e = CGEvent(keyboardEventSource: src, virtualKey: code, keyDown: down); e?.flags = flags; post(e)
+            }
+            for (m, c) in mods.reversed() where flags.contains(m) {
+                held.remove(m)
+                let e = CGEvent(keyboardEventSource: src, virtualKey: c, keyDown: false); e?.type = .flagsChanged; e?.flags = held; post(e)
+            }
+        }
+    }
+
+    /// This branch's work driven by real mouse and keyboard events: a clip drag redraws one lane correctly and ⌘Z / ⇧⌘Z
+    /// move it back and forth (A-03 deltas); Space plays a streamed file and a ruler click seeks into blocks that were
+    /// never resident (A-09).
+    private func realInputChecks() async {
+        guard await realInputReady("timeline drag, undo and streamed playback") else { return }
+        let tl = w.timeline, e = s.engine
+        e.pause()
+        if s.tracks.count >= 2, let clip = s.tracks[1].clips.first, let win = tl.window {
+            for _ in 0..<2 { tl.needsDisplay = true; win.displayIfNeeded(); CATransaction.flush(); await wait(0.05) }
+            let baseline = timelineMismatch()
+            let r = tl.clipRect(clip, laneY: tl.laneY(1)), visible = tl.visibleRect
+            let x0 = max(r.minX, visible.minX) + 10, x1 = min(r.maxX, visible.maxX) - 10
+            guard x1 > x0 + 4 else { return check(false, "real drag: the second track's clip is on screen") }
+            let from = screenPoint(tl, NSPoint(x: (x0 + x1) / 2, y: r.midY + 4))
+            RealInput.drag(from, CGPoint(x: from.x + 60, y: from.y))
+            await wait(0.4)
+            let moved = s.tracks[1].clips.first { $0.id == clip.id }?.start ?? clip.start
+            win.displayIfNeeded(); CATransaction.flush()
+            let lanes = tl.lanesDrawn, partial = timelineMismatch()
+            if partial > baseline { dumpTimeline("real-drag") }
+            print("MEASURE real clip drag: start \(clip.start) → \(moved); \(lanes) lane(s) redrawn; \(partial) vs \(baseline) differing bytes")
+            check(moved > clip.start && s.tracks[1].clips.count == s.tracks[1].clips.count, "a real mouse drag moves the clip right (\(clip.start) → \(moved))")
+            check(partial <= baseline, "after the real drag the timeline matches a full redraw (\(partial) vs \(baseline) differing bytes)")
+            guard await realInputReady("⌘Z / ⇧⌘Z") else { return }
+            RealInput.key(6, .maskCommand); await wait(0.4) // ⌘Z
+            let undone = s.tracks[1].clips.first { $0.id == clip.id }?.start
+            RealInput.key(6, [.maskCommand, .maskShift]); await wait(0.4) // ⇧⌘Z
+            let redone = s.tracks[1].clips.first { $0.id == clip.id }?.start
+            check(undone == clip.start && redone == moved, "real ⌘Z / ⇧⌘Z undo and redo the drag exactly (\(undone ?? -1), \(redone ?? -1))")
+            RealInput.key(6, .maskCommand); await wait(0.4)
+            check(s.tracks[1].clips.first { $0.id == clip.id }?.start == clip.start, "and ⌘Z restores it")
+        } else { check(false, "real drag needs two tracks with clips") }
+
+        // A-09: a 90 s file (streamed above 30 s here) played with Space; a ruler click seeks far into it.
+        let rate = 48_000, seconds = 90, wav = workdir.appendingPathComponent("long-tone.wav")
+        var data = Data()
+        func le<T: FixedWidthInteger>(_ v: T) { withUnsafeBytes(of: v.littleEndian) { data.append(contentsOf: $0) } }
+        let bytes = rate * seconds * 2
+        data.append(contentsOf: Array("RIFF".utf8)); le(UInt32(36 + bytes)); data.append(contentsOf: Array("WAVEfmt ".utf8))
+        le(UInt32(16)); le(UInt16(1)); le(UInt16(1)); le(UInt32(rate)); le(UInt32(rate * 2)); le(UInt16(2)); le(UInt16(16))
+        data.append(contentsOf: Array("data".utf8)); le(UInt32(bytes))
+        data.reserveCapacity(44 + bytes)
+        for i in 0..<(rate * seconds) { le(Int16(sin(Double(i) * 2 * .pi * 220 / Double(rate)) * 8_000)) }
+        try? data.write(to: wav)
+        let streamDir = workdir.appendingPathComponent("stream")
+        setenv("DALNOK_STREAM_DIR", streamDir.path, 1)
+        dalnok_stream_set_limits(30, 64)
+        defer { dalnok_stream_set_limits(60, 256); unsetenv("DALNOK_STREAM_DIR") }
+        let before = s.tracks.count
+        await withCheckedContinuation { cont in s.importFiles([wav]) { cont.resume() } }
+        s.refresh()
+        guard s.tracks.count == before + 1, let clip = s.tracks.last?.clips.first, let media = dalnok_pool_media(s.h, clip.media) else {
+            return check(false, "the 90 s file imports as a new track")
+        }
+        check(dalnok_media_streamed(media), "a 90 s file above the 30 s limit is streamed from disk")
+        func stats() -> DalnokStreamStats { var o = DalnokStreamStats(); dalnok_stream_stats(&o); return o }
+        e.seek(0); await wait(0.3)
+        guard await realInputReady("streamed playback") else { return }
+        let s0 = stats()
+        RealInput.key(49); await wait(3.0) // Space
+        let playing = e.isPlaying, p1 = e.position, s1 = stats()
+        check(playing && Double(p1) > 2.5 * e.sampleRate, "real Space plays the streamed file (\(String(format: "%.2f", Double(p1) / e.sampleRate)) s)")
+        check(s1.missed_frames == s0.missed_frames && s1.blocks_loaded > s0.blocks_loaded,
+              "3 s of streamed playback misses no frames (missed \(s1.missed_frames - s0.missed_frames), blocks loaded \(s1.blocks_loaded - s0.blocks_loaded))")
+        // The ruler's lower half seeks; aim as far right as the view shows, capped at 80 s.
+        let visible = tl.visibleRect
+        let x = min(tl.xPos(forFrame: 80 * e.sampleRate), visible.maxX - 20)
+        RealInput.click(screenPoint(tl, NSPoint(x: x, y: Theme.rulerHeight * 0.75)))
+        await wait(0.3)
+        let landed = e.position
+        let s2 = stats()
+        await wait(2.0)
+        let s3 = stats(), p3 = e.position
+        print(String(format: "MEASURE real seek into streamed audio: landed %.2f s; missed %llu frames while the seek settled, then %llu in 2 s; resident %.1f of %.1f MB",
+                     Double(landed) / e.sampleRate, s2.missed_frames - s1.missed_frames, s3.missed_frames - s2.missed_frames,
+                     Double(s3.resident_bytes) / 1_048_576, Double(s3.budget_bytes) / 1_048_576))
+        check(Double(landed) > 10 * e.sampleRate && p3 > landed, "a real ruler click seeks deep into the file and playback continues")
+        check(s3.missed_frames == s2.missed_frames, "after the seek settles, streamed playback misses nothing")
+        check(s3.resident_bytes <= s3.budget_bytes, "the block cache stays within its budget")
+        RealInput.key(49); await wait(0.3)
+        check(!e.isPlaying, "real Space stops playback")
+        _ = perform("Undo")
+        check(s.tracks.count == before, "undo removes the imported track")
+    }
+
+    /// Writes the timeline's committed layer and a fresh full draw as PNGs (diagnosing a redraw mismatch).
+    private func dumpTimeline(_ name: String) {
+        let tl = w.timeline
+        guard let win = tl.window else { return }
+        let scale = win.backingScaleFactor, pw = Int(tl.bounds.width * scale), ph = Int(tl.bounds.height * scale)
+        func ctx() -> CGContext? {
+            let c = CGContext(data: nil, width: pw, height: ph, bitsPerComponent: 8, bytesPerRow: pw * 4, space: CGColorSpaceCreateDeviceRGB(),
+                              bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+            c?.scaleBy(x: scale, y: scale); return c
+        }
+        func write(_ c: CGContext?, _ suffix: String) {
+            guard let img = c?.makeImage() else { return }
+            let rep = NSBitmapImageRep(cgImage: img)
+            try? rep.representation(using: .png, properties: [:])?.write(to: workdir.appendingPathComponent("\(name)-\(suffix).png"))
+        }
+        let a = ctx()
+        if let a, let layer = tl.layer {
+            let overlays = (layer.sublayers ?? []).filter { !$0.isHidden }
+            overlays.forEach { $0.isHidden = true }; layer.render(in: a); overlays.forEach { $0.isHidden = false }
+        }
+        write(a, "committed")
+        let b = ctx()
+        if let b {
+            NSGraphicsContext.saveGraphicsState(); NSGraphicsContext.current = NSGraphicsContext(cgContext: b, flipped: tl.isFlipped)
+            tl.draw(tl.bounds); NSGraphicsContext.restoreGraphicsState()
+        }
+        write(b, "fresh")
+    }
+
+    /// Bytes by which the timeline's committed layer differs from drawing the whole view afresh (see partialTimelineRedraw).
+    private func timelineMismatch() -> Int {
+        let tl = w.timeline
+        guard let win = tl.window else { return Int.max }
         func context() -> CGContext? {
             let scale = win.backingScaleFactor, pw = Int(tl.bounds.width * scale), ph = Int(tl.bounds.height * scale)
             guard pw > 0, ph > 0, let ctx = CGContext(data: nil, width: pw, height: ph, bitsPerComponent: 8, bytesPerRow: pw * 4,
@@ -1018,7 +1187,15 @@ final class SelfTest {
             return ctx
         }
         func bytes(_ ctx: CGContext) -> Data { Data(bytes: ctx.data!, count: ctx.bytesPerRow * ctx.height) }
-        func committed() -> Data? { guard let layer = tl.layer, let ctx = context() else { return nil }; layer.render(in: ctx); return bytes(ctx) }
+        func committed() -> Data? {
+            guard let layer = tl.layer, let ctx = context() else { return nil }
+            // The playhead and selection glow are sublayers that draw(_:) never paints; compare the drawn content only.
+            let overlays = (layer.sublayers ?? []).filter { !$0.isHidden }
+            overlays.forEach { $0.isHidden = true }
+            layer.render(in: ctx)
+            overlays.forEach { $0.isHidden = false }
+            return bytes(ctx)
+        }
         func drawnFresh() -> Data? {
             guard let ctx = context() else { return nil }
             NSGraphicsContext.saveGraphicsState()
@@ -1033,14 +1210,25 @@ final class SelfTest {
             a.withUnsafeBytes { x in b.withUnsafeBytes { y in for k in 0..<x.count where abs(Int(x[k]) - Int(y[k])) > 2 { n += 1 } } }
             return n
         }
+        return differing(committed(), drawnFresh())
+    }
+
+    /// A structural edit on one track redraws only that track's lane, and the result matches drawing everything.
+    /// The reference draws the whole view into an identical offscreen context; even a full redraw differs from it by a
+    /// few rasterized text bytes, so a partial redraw must differ by no more than a full one does.
+    private func partialTimelineRedraw() async {
+        let tl = w.timeline
+        guard s.tracks.count >= 2, let clip = s.tracks[1].clips.first, let win = tl.window else {
+            return check(false, "partial redraw check needs two tracks with clips")
+        }
         for _ in 0..<2 { tl.needsDisplay = true; win.displayIfNeeded(); CATransaction.flush(); await wait(0.05) }
-        let baseline = differing(committed(), drawnFresh())
+        let baseline = timelineMismatch()
         var ids = [clip.id]
         _ = dalnok_clips_nudge(s.h, &ids, 1, 4_800)
         s.refresh()
         win.displayIfNeeded(); CATransaction.flush() // the partial redraw, as the run loop would draw it
         let lanes = tl.lanesDrawn, reread = s.rereadTracks
-        let partial = differing(committed(), drawnFresh())
+        let partial = timelineMismatch()
         check(reread == [s.tracks[1].id] && lanes == 1,
               "a structural edit on one track redraws only its lane (\(lanes) lane drawn; tracks read \(reread.count))")
         check(partial <= baseline, "the partially redrawn timeline matches a full redraw (\(partial) vs \(baseline) differing bytes)")
