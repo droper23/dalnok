@@ -533,6 +533,17 @@ DalnokStatus dalnok_plugin_move(DalnokEngine *e, DalnokTrackId t, int32_t slot, 
     std::string err;
     return e ? statusFor(e->impl.movePlugin(t, slot, index, err), err) : DALNOK_ERR_INVALID_ARG;
 }
+DalnokStatus dalnok_plugin_set_folded(DalnokEngine *e, DalnokTrackId t, int32_t slot, bool folded) {
+    std::string err;
+    return e ? statusFor(e->impl.setPluginFolded(t, slot, folded, err), err) : DALNOK_ERR_INVALID_ARG;
+}
+bool dalnok_plugin_folded(const DalnokEngine *e, DalnokTrackId t, int32_t slot) {
+    if (!e) return false;
+    const auto *tr = e->impl.model().track(t);
+    if (!tr) return false;
+    for (const auto &p : tr->plugins) if (p.id == slot) return p.folded;
+    return false;
+}
 DalnokStatus dalnok_plugin_set_bypassed(DalnokEngine *e, DalnokTrackId t, int32_t slot, bool bypassed) {
     std::string err;
     return e ? statusFor(e->impl.setPluginBypassed(t, slot, bypassed, err), err) : DALNOK_ERR_INVALID_ARG;

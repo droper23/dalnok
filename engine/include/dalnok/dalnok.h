@@ -28,7 +28,7 @@
 extern "C" {
 #endif
 
-#define DALNOK_API_VERSION 39
+#define DALNOK_API_VERSION 40
 
 typedef enum {
     DALNOK_OK = 0,
@@ -406,6 +406,10 @@ DalnokTrackId dalnok_track_duplicate(DalnokEngine *engine, DalnokTrackId track);
 /* Reorders a track's plug-ins (API 26): moves `slot` to `index` (0 = first in the chain). Undoable. */
 DalnokStatus dalnok_plugin_move(DalnokEngine *engine, DalnokTrackId track, int32_t slot, int32_t index);
 bool dalnok_plugin_bypassed(const DalnokEngine *engine, DalnokTrackId track, int32_t slot);
+/* Folding (API 40): the device chain shows a folded plug-in as a narrow strip (name, bypass, meter). Saved with
+ * the project; undoable; no effect on audio. */
+DalnokStatus dalnok_plugin_set_folded(DalnokEngine *engine, DalnokTrackId track, int32_t slot, bool folded);
+bool dalnok_plugin_folded(const DalnokEngine *engine, DalnokTrackId track, int32_t slot);
 
 /* ---- Automation -------------------------------------------------------
  * Breakpoints in timeline frames, linear between points and held before the first and after the last.

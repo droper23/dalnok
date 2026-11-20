@@ -154,16 +154,34 @@ final class DevicePanel: NSView {
     @objc private func addTapped() { onAdd?() }
 
     /// Rebuilds the device list when the track or its plug-ins change.
+    /// Units animating out of the chain (removed plug-ins); no longer in `devices`.
+    private(set) var leaving: [DeviceView] = []
+
     func rebuild() {
         let t = track.flatMap { session.track($0) }
         let plugins = t?.plugins ?? []
-        if devices.map(\.slot) == plugins.map(\.id), devices.map(\.loaded) == plugins.map(\.loaded),
-           devices.map(\.error) == plugins.map(\.error), devices.allSatisfy({ $0.trackId == t?.id }) {
+        func matches(_ d: DeviceView, _ p: TrackView.Plugin) -> Bool {
+            d.slot == p.id && d.loaded == p.loaded && d.error == p.error && d.trackId == t?.id
+        }
+        if devices.count == plugins.count, zip(devices, plugins).allSatisfy({ matches($0, $1) }) {
             devices.forEach { $0.refreshControls() }
+            for (d, p) in zip(devices, plugins) { d.setFolded(p.folded, animated: true) }
         } else {
-            devices.forEach { $0.removeFromSuperview() }
-            if devices.first?.trackId != t?.id { knownCables = [] } // a different track: draw its cables fresh
-            devices = plugins.map { p in
+            // Units still leaving from an earlier change go at once.
+            leaving.forEach { $0.finishTransition(); $0.removeFromSuperview() }
+            leaving = []
+            let old = devices
+            let sameTrack = !old.isEmpty && old.allSatisfy { $0.trackId == t?.id }
+            if !sameTrack { knownCables = [] } // a different track: draw its cables fresh
+            // The same track keeps the units whose plug-in is unchanged; only arrivals and departures animate.
+            var next: [DeviceView] = [], arrived: [DeviceView] = []
+            for p in plugins {
+                if sameTrack, let d = old.first(where: { matches($0, p) }) {
+                    d.refreshControls()
+                    d.setFolded(p.folded, animated: true)
+                    next.append(d)
+                    continue
+                }
                 let d = DeviceView(session: session, track: t!.id, slot: p.id, name: p.name, loaded: p.loaded, color: t!.color, vendor: p.vendor, instrument: p.instrument, error: p.error, path: p.path)
                 d.onOpen = { [weak self] in self?.onOpen?(t!.id, p.id) }
                 d.onSelect = { [weak self] in self?.selectedSlot = p.id }
@@ -171,19 +189,45 @@ final class DevicePanel: NSView {
                     guard let self, let from = self.devices.firstIndex(where: { $0.slot == p.id }) else { return }
                     self.move(p.id, toDropIndex: delta > 0 ? from + 2 : from - 1)
                 }
-                return d
+                d.setFolded(p.folded, animated: false)
+                next.append(d)
+                arrived.append(d)
             }
-            devices.forEach { stack.addArrangedSubview($0) }
+            let departed = sameTrack ? old.filter { o in !next.contains { $0 === o } } : []
+            if !sameTrack { old.forEach { $0.removeFromSuperview() } }
+            // Arrange: the new chain, with departing units kept at their old place while they leave.
+            var arranged = next
+            for d in departed {
+                let at = min(old.firstIndex { $0 === d } ?? arranged.count, arranged.count)
+                arranged.insert(d, at: at)
+            }
+            for v in stack.arrangedSubviews { stack.removeArrangedSubview(v); v.removeFromSuperview() }
+            arranged.forEach { stack.addArrangedSubview($0) }
+            devices = next
+            leaving = departed
             if let s = selectedSlot, !devices.contains(where: { $0.slot == s }) { selectedSlot = nil }
             devices.forEach { $0.isSelected = $0.slot == selectedSlot }
-            addTile.removeFromSuperview()
-            if let last = devices.last {
+            if let last = arranged.last {
                 stack.addArrangedSubview(addTile)
                 stack.setCustomSpacing(Analog.on ? 96 : 10, after: last) // analog: past the OUT jack
             }
-            for d in devices where !Motion.reduced {
-                d.alphaValue = 0
-                Motion.views(Motion.gentle) { d.animator().alphaValue = 1 }
+            if sameTrack {
+                arrived.forEach { $0.animateArrival() }
+                for d in departed {
+                    d.animateDeparture { [weak self, weak d] in
+                        MainActor.assumeIsolated {
+                            guard let self, let d else { return }
+                            d.removeFromSuperview()
+                            self.leaving.removeAll { $0 === d }
+                            self.needsLayout = true
+                        }
+                    }
+                }
+            } else {
+                for d in devices where !Motion.reduced {
+                    d.alphaValue = 0
+                    Motion.views(Motion.gentle) { d.animator().alphaValue = 1 }
+                }
             }
         }
         needsLayout = true
@@ -362,6 +406,26 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
     private var recessed = false
     static let defaultCount = 8
     static var ear: CGFloat { Analog.on ? 12 : 0 } // rack ear width
+    // Folding (dalnok_plugin_set_folded): the unit holds either its full body or a narrow FoldStrip.
+    private var bodyStack: NSStackView!
+    private var minWidth: NSLayoutConstraint!
+    private var bodyConstraints: [NSLayoutConstraint] = []
+    private var stripConstraints: [NSLayoutConstraint] = []
+    private var transitionWidth: NSLayoutConstraint?
+    let foldButton = NSButton(title: "", target: nil, action: nil)
+    /// Shown folded (the engine's state, applied by DevicePanel.rebuild).
+    private(set) var folded = false
+    /// Running a fold, unfold, arrival or departure animation.
+    private(set) var transitioning = false
+    private(set) lazy var strip: FoldStrip = {
+        let s = FoldStrip(name: etchedTitle.text.isEmpty ? title.stringValue : etchedTitle.text)
+        s.translatesAutoresizingMaskIntoConstraints = false
+        s.look = pedal?.look
+        s.onUnfold = { [weak self] in guard let self else { return }; self.session.setPluginFolded(self.trackId, self.slot, false) }
+        s.menuProvider = { [weak self] in self?.deviceMenu() }
+        s.onToggle = { [weak self] in self?.toggleBypass() }
+        return s
+    }()
 
     init(session: Session, track: DalnokTrackId, slot: Int32, name: String, loaded: Bool, color: NSColor, vendor: String = "", instrument: Bool = false, error: String = "", path: String = "") {
         self.session = session
@@ -422,7 +486,15 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
             power.style = .powerIcon
             power.lit = color.blended(withFraction: 0.25, of: .white) ?? color
         } else { etchedTitle.isHidden = true }
-        let header = NSStackView(views: [power, title, etchedTitle, NSView(), sidechain, editButton, openButton])
+        foldButton.bezelStyle = .inline
+        foldButton.isBordered = false
+        foldButton.image = NSImage(systemSymbolName: "chevron.compact.left", accessibilityDescription: "Fold")
+        foldButton.contentTintColor = Theme.textDim
+        foldButton.target = self
+        foldButton.action = #selector(foldTapped)
+        foldButton.toolTip = "Fold \(name) to a narrow strip (click the strip to unfold)"
+        foldButton.setAccessibilityLabel("Fold \(name)")
+        let header = NSStackView(views: [foldButton, power, title, etchedTitle, NSView(), sidechain, editButton, openButton])
         header.spacing = 6
         header.setContentHuggingPriority(.required, for: .vertical) // stays at the top whatever the controls' height
         if Analog.on {
@@ -463,26 +535,22 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         body.edgeInsets = pedal == nil ? NSEdgeInsets(top: 12, left: 16 + Self.ear, bottom: 10, right: 16 + Self.ear)
                                        : NSEdgeInsets(top: 0, left: Self.ear, bottom: 2, right: Self.ear)
         body.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(body)
-        NSLayoutConstraint.activate([
-            body.leadingAnchor.constraint(equalTo: leadingAnchor), body.trailingAnchor.constraint(equalTo: trailingAnchor),
-            body.topAnchor.constraint(equalTo: topAnchor), body.bottomAnchor.constraint(equalTo: bottomAnchor),
-            heightAnchor.constraint(equalToConstant: DevicePanel.height - 20),
-        ])
+        bodyStack = body
+        attachBody()
+        heightAnchor.constraint(equalToConstant: DevicePanel.height - 20).isActive = true
         if let pedal {
-            NSLayoutConstraint.activate([
-                header.widthAnchor.constraint(equalTo: pedal.widthAnchor),
-                widthAnchor.constraint(greaterThanOrEqualToConstant: 150),
-            ])
+            header.widthAnchor.constraint(equalTo: pedal.widthAnchor).isActive = true
+            minWidth = widthAnchor.constraint(greaterThanOrEqualToConstant: 150)
             pedal.setContentHuggingPriority(.defaultLow, for: .vertical)
         } else {
             NSLayoutConstraint.activate([
                 above.heightAnchor.constraint(equalTo: below.heightAnchor),
                 header.widthAnchor.constraint(equalTo: body.widthAnchor, constant: -28 - 2 * Self.ear),
                 faceRow.widthAnchor.constraint(equalTo: header.widthAnchor),
-                widthAnchor.constraint(greaterThanOrEqualToConstant: 220),
             ])
+            minWidth = widthAnchor.constraint(greaterThanOrEqualToConstant: 220)
         }
+        minWidth.isActive = true
         loadParameters()
         refreshControls()
         setAccessibilityElement(true)
@@ -741,6 +809,12 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         guard pedal == nil, loaded else { return }
         var il: Float = 0, ir: Float = 0, ol: Float = 0, orr: Float = 0
         guard dalnok_meter_plugin(session.engine.handle, slot, &il, &ir, &ol, &orr) == DALNOK_OK else { return }
+        if folded { // the strip's level column: −48…0 dBFS, falling back slowly
+            let peak = max(ol, orr), db = peak > 0 ? 20 * log10(peak) : -96
+            let target = CGFloat(max(0, min(1, (db + 48) / 48)))
+            strip.level = target >= strip.level ? target : max(target, strip.level - 0.04)
+            return
+        }
         if !inMeter.isHidden { inMeter.push(il, ir); outMeter.push(ol, orr) }
         tick += 1
         updateDisplay()
@@ -970,6 +1044,193 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
 
     // MARK: Bypass and the pedal (Warm Analog)
 
+    @objc private func foldTapped() { session.setPluginFolded(trackId, slot, true) }
+
+    // MARK: Folding and arrival/departure animations
+
+    /// Puts the body in the unit: pinned on every side, or (during a transition) at a fixed width, clipped by the unit.
+    private func attachBody(width: CGFloat? = nil) {
+        if bodyStack.superview !== self { addSubview(bodyStack, positioned: .below, relativeTo: nil) }
+        NSLayoutConstraint.deactivate(bodyConstraints)
+        var cs = [bodyStack.leadingAnchor.constraint(equalTo: leadingAnchor),
+                  bodyStack.topAnchor.constraint(equalTo: topAnchor), bodyStack.bottomAnchor.constraint(equalTo: bottomAnchor)]
+        cs.append(width.map { bodyStack.widthAnchor.constraint(equalToConstant: $0) } ?? bodyStack.trailingAnchor.constraint(equalTo: trailingAnchor))
+        bodyConstraints = cs
+        NSLayoutConstraint.activate(cs)
+    }
+    private func attachStrip() {
+        if strip.superview !== self { addSubview(strip) }
+        NSLayoutConstraint.deactivate(stripConstraints)
+        let w = strip.widthAnchor.constraint(equalToConstant: FoldStrip.width)
+        w.priority = .defaultHigh // a transition's width wins while it runs
+        stripConstraints = [strip.leadingAnchor.constraint(equalTo: leadingAnchor), strip.trailingAnchor.constraint(equalTo: trailingAnchor),
+                            strip.topAnchor.constraint(equalTo: topAnchor), strip.bottomAnchor.constraint(equalTo: bottomAnchor), w]
+        NSLayoutConstraint.activate(stripConstraints)
+        refreshStrip()
+    }
+    private func refreshStrip() {
+        strip.engaged = !bypassed
+        strip.loaded = loaded
+        strip.look = pedal?.look
+    }
+    /// A picture of a view's current pixels on a layer (the face that rotates or fades away while the new one arrives).
+    private func snapshot(_ v: NSView) -> CALayer? {
+        guard v.bounds.width > 0, let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { return nil }
+        v.cacheDisplay(in: v.bounds, to: rep)
+        let l = CALayer()
+        l.contents = rep.cgImage
+        l.frame = v.frame
+        l.zPosition = 200
+        return l
+    }
+    /// The width this unit takes when laid out normally.
+    private var naturalWidth: CGFloat {
+        if folded { return FoldStrip.width }
+        return max(fittingSize.width, minWidth.constant)
+    }
+    /// Animates the unit's width from `from` to `to` with a temporary constraint, then hands layout back.
+    private func transition(from: CGFloat, to: CGFloat, duration: Double = 0.34, done: @escaping () -> Void) {
+        transitionWidth?.isActive = false
+        minWidth.isActive = false
+        let c = widthAnchor.constraint(equalToConstant: from)
+        c.isActive = true
+        transitionWidth = c
+        transitionDone = done
+        transitionToken += 1
+        let token = transitionToken
+        transitioning = true
+        layer?.masksToBounds = true
+        superview?.layoutSubtreeIfNeeded()
+        Motion.views(duration, {
+            c.animator().constant = to
+            self.superview?.layoutSubtreeIfNeeded()
+        }, completion: { [weak self] in
+            MainActor.assumeIsolated { self?.finishTransition(token) }
+        })
+    }
+    private var transitionDone: (() -> Void)?
+    private var transitionToken = 0
+    /// Ends the running transition (its animation finished, or a newer change needs the unit settled now).
+    func finishTransition(_ token: Int? = nil) {
+        guard transitioning, token == nil || token == transitionToken, let c = transitionWidth else { return }
+        c.isActive = false
+        transitionWidth = nil
+        transitioning = false
+        minWidth.isActive = !folded
+        applySelection() // restores masksToBounds = false and the glow
+        let done = transitionDone
+        transitionDone = nil
+        done?()
+        var v: NSView? = superview
+        while let s = v, !(s is DevicePanel) { v = s.superview }
+        v?.needsLayout = true
+    }
+    private static func perspective(_ angle: CGFloat) -> CATransform3D {
+        var t = CATransform3DIdentity
+        t.m34 = -1 / 420
+        return CATransform3DRotate(t, angle, 0, 1, 0)
+    }
+
+    /// Folds or unfolds. Warm Analog turns the stomp box onto its side edge (a quarter turn about its upright axis, in
+    /// perspective) while the space it took closes up; Graphite slides the faceplate shut onto a slim rack blank.
+    func setFolded(_ f: Bool, animated: Bool) {
+        guard f != folded else { return }
+        folded = f
+        foldButton.setAccessibilityLabel(f ? "Unfold" : "Fold")
+        let animate = animated && !Motion.reduced && window != nil
+        let from = bounds.width
+        let outgoing = animate ? snapshot(f ? bodyStack : strip) : nil
+        if f {
+            bodyStack.removeFromSuperview()
+            bodyConstraints = []
+            minWidth.isActive = false
+            attachStrip()
+        } else {
+            strip.removeFromSuperview()
+            stripConstraints = []
+            attachBody()
+            minWidth.isActive = true
+        }
+        guard animate, let layer else { return }
+        let to = naturalWidth
+        if !f { attachBody(width: to) } // full width inside the narrow unit while it opens
+        let incoming: NSView = f ? strip : bodyStack
+        incoming.wantsLayer = true
+        if let outgoing {
+            layer.addSublayer(outgoing)
+            Motion.centerAnchor(outgoing)
+            let away = CABasicAnimation(keyPath: Analog.on ? "transform" : "opacity")
+            if Analog.on {
+                away.fromValue = CATransform3DIdentity
+                away.toValue = Self.perspective(f ? .pi / 2 : -.pi / 2)
+            } else { away.fromValue = 1; away.toValue = 0 }
+            away.duration = 0.2
+            away.timingFunction = CAMediaTimingFunction(name: .easeIn)
+            away.fillMode = .forwards
+            away.isRemovedOnCompletion = false
+            outgoing.add(away, forKey: "fold")
+        }
+        if let l = incoming.layer {
+            Motion.centerAnchor(l)
+            let arrive = CABasicAnimation(keyPath: Analog.on ? "transform" : "opacity")
+            if Analog.on {
+                arrive.fromValue = Self.perspective(f ? -.pi / 2 : .pi / 2)
+                arrive.toValue = CATransform3DIdentity
+            } else { arrive.fromValue = 0; arrive.toValue = 1 }
+            arrive.beginTime = CACurrentMediaTime() + 0.14
+            arrive.duration = 0.22
+            arrive.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            arrive.fillMode = .backwards
+            l.add(arrive, forKey: "fold")
+        }
+        transition(from: from, to: to) { [weak self] in
+            outgoing?.removeFromSuperlayer()
+            if let self, !self.folded { self.attachBody() }
+        }
+    }
+
+    /// A unit just added to the chain: it opens up its place (the neighbours make room) and settles in. Warm Analog:
+    /// the pedal is set down on the board with a small bounce; Graphite: the faceplate slides in and fades up.
+    func animateArrival() {
+        guard !Motion.reduced, window != nil, let layer else { return }
+        let to = naturalWidth
+        if !folded { attachBody(width: to) }
+        let drop = CAKeyframeAnimation(keyPath: Analog.on ? "transform.translation.y" : "transform.translation.x")
+        drop.values = Analog.on ? [36, 0, 5, 0] : [-18, 0]
+        drop.keyTimes = Analog.on ? [0, 0.62, 0.82, 1] : [0, 1]
+        drop.duration = Analog.on ? 0.42 : 0.3
+        drop.timingFunctions = Analog.on ? [CAMediaTimingFunction(name: .easeIn), CAMediaTimingFunction(name: .easeOut), CAMediaTimingFunction(name: .easeIn)]
+                                         : [CAMediaTimingFunction(name: .easeOut)]
+        layer.add(drop, forKey: "arrive")
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.fromValue = 0; fade.toValue = 1; fade.duration = 0.25
+        layer.add(fade, forKey: "arriveFade")
+        transition(from: 0, to: to, duration: 0.3) { [weak self] in
+            if let self, !self.folded { self.attachBody() }
+        }
+    }
+
+    /// A unit removed from the chain: it lifts off (Warm Analog) or fades back (Graphite) while its neighbours close the
+    /// gap, then leaves the panel. `done` runs once it has gone (at once with Reduce Motion).
+    func animateDeparture(_ done: @escaping () -> Void) {
+        guard !Motion.reduced, window != nil, let layer else { done(); return }
+        let from = bounds.width
+        if !folded { attachBody(width: from) }
+        let lift = CABasicAnimation(keyPath: Analog.on ? "transform.translation.y" : "transform.scale")
+        lift.fromValue = Analog.on ? 0 : 1
+        lift.toValue = Analog.on ? 40 : 0.9
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.fromValue = 1; fade.toValue = 0
+        for a in [lift, fade] {
+            a.duration = 0.26
+            a.timingFunction = CAMediaTimingFunction(name: .easeIn)
+            a.fillMode = .forwards
+            a.isRemovedOnCompletion = false
+            layer.add(a, forKey: a.keyPath)
+        }
+        transition(from: from, to: 0, duration: 0.3) { done() }
+    }
+
     @objc func toggleBypass() {
         guard loaded else { return }
         session.setPluginBypassed(trackId, slot, !bypassed)
@@ -983,6 +1244,7 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         title.textColor = !loaded || off ? Theme.textFaint : (Analog.on ? Theme.text : Faceplate.engraving)
         etchedTitle.dimmed = !loaded // lettering is cut into the metal: bypass doesn't change it
         pedal?.engaged = loaded && !off
+        if folded { refreshStrip() }
         if pedal == nil {
             // Graphite: bypass turns the unit's lights off (LEDs, screens, meter lamps) and sets it back slightly.
             for k in knobs { (k.knob as? FaceplateControl)?.dimmed = off }
@@ -1036,6 +1298,9 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         m.addItem(item(bypassed ? "Turn On" : "Bypass", { [weak self] in self?.toggleBypass() }, enabled: loaded))
         m.addItem(item("Open Plug-in Window", { [weak self] in self?.onOpen?() }, enabled: loaded))
         m.addItem(item("Edit Controls…", { [weak self] in self?.editTapped(self?.editButton) }, enabled: loaded))
+        m.addItem(item(folded ? "Unfold" : "Fold", { [weak self] in
+            guard let self else { return }; self.session.setPluginFolded(self.trackId, self.slot, !self.folded)
+        }))
         m.addItem(.separator())
         m.addItem(item("Move Left (Earlier in Chain)", { [weak self] in self?.onMove?(-1) }, enabled: i > 0))
         m.addItem(item("Move Right (Later in Chain)", { [weak self] in self?.onMove?(1) }, enabled: i < chain.count - 1))

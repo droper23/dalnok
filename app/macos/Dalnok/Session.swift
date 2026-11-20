@@ -46,7 +46,7 @@ struct TrackView {
     var isInstrument = false
     var armed = false
     var inputChannel: Int32 = 0
-    struct Plugin { let id: Int32; let name: String; let vendor: String; let instrument: Bool; let loaded: Bool; let error: String; let latency: UInt32; let bypassed: Bool; var path = ""; var loading = false; var isolated = false }
+    struct Plugin { let id: Int32; let name: String; let vendor: String; let instrument: Bool; let loaded: Bool; let error: String; let latency: UInt32; let bypassed: Bool; var path = ""; var loading = false; var isolated = false; var folded = false }
     var plugins: [Plugin] = []
     var isBus = false
     var output: DalnokTrackId = 0 // 0 = master
@@ -180,7 +180,8 @@ final class Session {
                 guard dalnok_track_plugin_info(h, tid, k, &pi) == DALNOK_OK else { continue }
                 plugins.append(.init(id: pi.id, name: fixedString(pi.name), vendor: fixedString(pi.vendor), instrument: pi.instrument, loaded: pi.loaded,
                                      error: pi.loading ? "Loading…" : fixedString(pi.error), latency: pi.latency, bypassed: dalnok_plugin_bypassed(h, tid, pi.id),
-                                     path: fixedString(pi.path), loading: pi.loading, isolated: pi.isolated))
+                                     path: fixedString(pi.path), loading: pi.loading, isolated: pi.isolated,
+                                     folded: dalnok_plugin_folded(h, tid, pi.id)))
             }
             var sends = [DalnokSend](repeating: DalnokSend(), count: 16)
             let sendCount = Int(dalnok_track_sends(h, tid, &sends, 16))
@@ -393,6 +394,9 @@ final class Session {
         refresh()
         return ok
     }
+    /// Folding (the unit shown as a narrow strip): one undo step.
+    func setPluginFolded(_ t: DalnokTrackId, _ slot: Int32, _ folded: Bool) { dalnok_plugin_set_folded(h, t, slot, folded); refresh() }
+    func pluginFolded(_ t: DalnokTrackId, _ slot: Int32) -> Bool { dalnok_plugin_folded(h, t, slot) }
     /// Bypass (footswitch / power button): one undo step.
     func setPluginBypassed(_ t: DalnokTrackId, _ slot: Int32, _ bypassed: Bool) { dalnok_plugin_set_bypassed(h, t, slot, bypassed); refresh() }
     func setPluginControls(_ t: DalnokTrackId, _ slot: Int32, _ ids: [UInt32]) {

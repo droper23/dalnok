@@ -1596,6 +1596,7 @@ final class SelfTest {
         pluginManager()
         hostedPlugins()
         devicePanel()
+        await deviceFolding()
 
         // Import a REAPER project end to end (fixture built from this run's audio files).
         let media = workdir.appendingPathComponent("Media")
@@ -2117,6 +2118,71 @@ final class SelfTest {
     }
 
     /// Device panel with Apple's built-in Audio Units (present on every Mac): controller knobs, Edit Controls, undo.
+    /// Folding a unit (API 40) and the chain's arrival, departure and fold animations, with motion on.
+    private func deviceFolding() async {
+        guard let track = s.tracks.first(where: { !$0.isInstrument })?.id else { return check(false, "an audio track exists") }
+        let saved = Motion.override; Motion.override = true; defer { Motion.override = saved }
+        w.headers.select(track)
+        let panel = w.devicePanel
+        let delay = (try? s.addPlugin(track, path: "au:aufx:dely:appl")) ?? 0
+        panel.rebuild()
+        await wait(0.6)
+        let before = panel.devices.first { $0.slot == delay }?.frame.width ?? 0
+        let limiter = (try? s.addPlugin(track, path: "au:aufx:lmtr:appl")) ?? 0
+        panel.rebuild()
+        let arriving = panel.devices.first { $0.slot == limiter }
+        check(arriving?.transitioning == true, "an added plug-in animates into the chain")
+        check(panel.devices.first { $0.slot == delay }?.transitioning == false, "units already in the chain are kept, not rebuilt")
+        await wait(0.6)
+        check(arriving?.transitioning == false && (arriving?.frame.width ?? 0) >= 150, "it settles at full width (\(arriving?.frame.width ?? 0))")
+        // Fold from the unit's menu: one undo step, a narrow strip, no change to the audio graph.
+        guard let unit = panel.devices.first(where: { $0.slot == delay }) else { return check(false, "AUDelay's unit") }
+        if let item = unit.deviceMenu().items.first(where: { $0.title == "Fold" }), let action = item.action { _ = (item.target as? NSObject)?.perform(action, with: item) }
+        panel.rebuild()
+        check(s.pluginFolded(track, delay) && s.engine.undoName == "Fold Plug-in", "Fold folds the plug-in as one undo step")
+        check(unit.folded && unit.transitioning, "the unit animates to its folded strip")
+        await wait(0.6)
+        check(abs(unit.frame.width - FoldStrip.width) < 1 && unit.strip.superview === unit && !unit.transitioning,
+              "folded, the unit is a \(FoldStrip.width) pt strip (\(unit.frame.width))")
+        check(unit.strip.name == "AUDelay", "the strip keeps the plug-in's name")
+        // On/off stays available folded: the strip's switch bypasses (one undo step) without unfolding, and back on.
+        unit.strip.layoutSubtreeIfNeeded()
+        check(!unit.strip.power.isHidden && unit.strip.power.isEnabled && unit.strip.power.superview === unit.strip,
+              "the folded strip has an on/off switch")
+        unit.strip.power.performClick(nil)
+        panel.rebuild()
+        check(s.pluginBypassed(track, delay) && s.engine.undoName == "Bypass Plug-in" && unit.folded && !unit.strip.engaged,
+              "the strip's switch bypasses the plug-in and it stays folded")
+        unit.strip.power.performClick(nil)
+        panel.rebuild()
+        check(!s.pluginBypassed(track, delay) && unit.folded && unit.strip.engaged, "pressing it again turns it back on")
+        // A real click on the switch (not elsewhere on the strip) toggles rather than unfolds.
+        let sw = unit.strip.convert(CGPoint(x: unit.strip.powerRect.midX, y: unit.strip.powerRect.midY), to: nil)
+        check(unit.strip.hitTest(unit.strip.superview!.convert(sw, from: nil)) === unit.strip.power, "the switch takes clicks on it")
+        unit.strip.power.performClick(nil); panel.rebuild(); _ = perform("Undo"); panel.rebuild()
+        check(!s.pluginBypassed(track, delay) && unit.folded, "undo turns it back on, still folded")
+        // Clicking the strip unfolds it; undo folds it again.
+        let mid = unit.strip.convert(CGPoint(x: unit.strip.bounds.midX, y: unit.strip.bounds.midY), to: nil)
+        unit.strip.mouseDown(with: mouse(.leftMouseDown, mid)); unit.strip.mouseUp(with: mouse(.leftMouseUp, mid))
+        panel.rebuild()
+        await wait(0.6)
+        check(!s.pluginFolded(track, delay) && !unit.folded && abs(unit.frame.width - before) < 2,
+              "clicking the strip unfolds it to its width (\(unit.frame.width) vs \(before))")
+        check(perform("Undo") && s.pluginFolded(track, delay), "undo folds it again")
+        panel.rebuild(); await wait(0.6)
+        check(unit.folded && abs(unit.frame.width - FoldStrip.width) < 1, "the panel follows undo")
+        _ = perform("Undo"); panel.rebuild(); await wait(0.6)
+        // Removing a plug-in: its unit leaves with an animation while the chain closes up.
+        s.removePlugin(track, limiter)
+        panel.rebuild()
+        check(panel.devices.map(\.slot) == [delay] && panel.leaving.count == 1, "a removed unit leaves the chain at once and animates out")
+        await wait(0.7)
+        check(panel.leaving.isEmpty && arriving?.superview == nil, "it is gone once its animation ends")
+        s.removePlugin(track, delay)
+        panel.rebuild(); await wait(0.5)
+        check(panel.devices.isEmpty && panel.leaving.isEmpty, "the chain is empty again")
+    }
+
     private func devicePanel() {
         guard let track = s.tracks.first(where: { !$0.isInstrument })?.id else { return check(false, "an audio track exists") }
         w.headers.select(track)

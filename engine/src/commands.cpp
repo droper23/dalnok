@@ -217,6 +217,11 @@ const CommandDef kCommands[] = {
          if (!needInt(a, "track", t, err) || !needInt(a, "slot", slot, err)) return DALNOK_ERR_INVALID_ARG;
          return status(e.setPluginBypassed(t, slot, a.getBool("bypassed", true), err), err);
      }},
+    {"plugin.setFolded", "Fold Plug-in", "{track, slot, folded}", [](ARGS) {
+         DalnokTrackId t; int32_t slot;
+         if (!needInt(a, "track", t, err) || !needInt(a, "slot", slot, err)) return DALNOK_ERR_INVALID_ARG;
+         return status(e.setPluginFolded(t, slot, a.getBool("folded", true), err), err);
+     }},
     {"plugin.setAutomation", "Plug-in Automation", "{track, slot, param, points: [[frame, value 0-1], ...]}", [](ARGS) {
          DalnokTrackId t; int32_t slot; double param;
          if (!needInt(a, "track", t, err) || !needInt(a, "slot", slot, err) || !needNumber(a, "param", param, err)) return DALNOK_ERR_INVALID_ARG;

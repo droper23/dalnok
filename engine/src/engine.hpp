@@ -66,6 +66,7 @@ struct PluginSlot {
     bool instrument = false;
     std::vector<uint32_t> controls; // parameters on the device panel's controller (empty = the first automatable ones)
     bool bypassed = false;          // footswitch/bypass: effects pass audio through, instruments go silent (undoable)
+    bool folded = false;            // shown folded (a narrow strip) in the device chain; no effect on audio (undoable)
     int32_t sidechain = 0;          // DalnokTrackId whose pre-fader signal feeds this plug-in's sidechain input (0 = none)
     SharedPluginState state; // last known plugin state (used when the plugin is missing, and for saving)
     bool operator==(const PluginSlot &) const = default;
@@ -319,6 +320,8 @@ public:
     bool setSidechain(DalnokTrackId track, int32_t slot, DalnokTrackId source, std::string &err);
     // Bypass: a bypassed effect is left out of the insert chain (and its latency); a bypassed instrument is silent.
     bool setPluginBypassed(DalnokTrackId track, int32_t slot, bool bypassed, std::string &err);
+    // Folding: how the device chain shows the unit (a narrow strip); saved with the project, undoable, no audio change.
+    bool setPluginFolded(DalnokTrackId track, int32_t slot, bool folded, std::string &err);
     // Moves a plug-in to `index` in the track's list (insert order = processing order). Undoable.
     bool movePlugin(DalnokTrackId track, int32_t slot, int32_t index, std::string &err);
     // Duplicates a track right below it: settings, routing, sends, automation, clips (new ids) and plug-ins (new

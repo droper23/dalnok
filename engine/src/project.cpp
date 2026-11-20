@@ -226,6 +226,7 @@ json::Value Engine::describe() const {
                 if (slot.instrument) pv.set("instrument", true);
                 if (slot.sidechain) pv.set("sidechain", slot.sidechain);
                 if (slot.bypassed) pv.set("bypassed", true);
+                if (slot.folded) pv.set("folded", true);
                 if (!slot.controls.empty()) {
                     Value ids = Value::makeArray();
                     for (auto c : slot.controls) ids.push(static_cast<int64_t>(c));
@@ -563,6 +564,7 @@ std::unique_ptr<Engine::PreparedProject> Engine::prepareDocument(const json::Val
                     slot.instrument = pv.getBool("instrument", false);
                     slot.sidechain = static_cast<int32_t>(std::max<int64_t>(0, toInt(pv, "sidechain")));
                     slot.bypassed = pv.getBool("bypassed", false);
+                    slot.folded = pv.getBool("folded", false);
                     if (const json::Value *ids = pv.get("controls"); ids && ids->isArray())
                         for (const auto &c : ids->array)
                             if (c.isNumber() && c.number >= 0 && c.number <= 4294967295.0) slot.controls.push_back(static_cast<uint32_t>(c.number));
