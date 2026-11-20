@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Long audio clips played from the clip launcher no longer drop out. Previously only their first 1.4 s was guaranteed to be ready in memory; now Dalnok loads the audio ahead of where the playing clip is in its loop. In a test with a small cache, a 12 s clip looped for 26 s went from 13.8 s of silence to none.
+
 - The streaming cache folder no longer grows without limit. It stays under 8 GiB (`DALNOK_STREAM_DISK_MB`) by deleting the least recently used files, and partial files left by a crash are removed. A file still in use keeps playing even after it's deleted.
 - Fixed: `scripts/ci/plugin-recovery.sh` left one stuck test process running after every run (from the plug-in that hangs while loading).
 

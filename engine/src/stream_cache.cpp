@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "stream_cache.hpp"
 #include "media.hpp"
+#include "render.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -215,13 +216,29 @@ void StreamCache::run() {
                 if (!s) continue;
                 keep.push_back(seg.media);
                 const int64_t window = static_cast<int64_t>(6 * s->rate_) + plan->lookahead;
-                const int64_t a = std::max(pos, seg.start), e = std::min(pos + window, seg.start + seg.length);
-                if (a < e) {
-                    const int64_t from = seg.offset + (a - seg.start), to = seg.offset + (e - seg.start);
+                // The blocks the next `window` frames need if this segment's audio starts at timeline frame `start`.
+                const auto ahead = [&](int64_t start) {
+                    const int64_t a = std::max(pos, start), e = std::min(pos + window, start + seg.length);
+                    if (a >= e) return;
+                    const int64_t from = seg.offset + (a - start), to = seg.offset + (e - start);
                     for (int64_t i = from / kStreamBlockFrames; i <= (to - 1) / kStreamBlockFrames && i < s->blocks_; ++i)
                         wants.push_back({s, i, std::max<int64_t>(0, i * kStreamBlockFrames - from) + (a - pos)});
+                };
+                if (!seg.runtime) {
+                    ahead(seg.start);
+                } else if (seg.loop > 0) {
+                    // A launched slot: this loop and the next, counted from its launch, exactly as render.cpp places it.
+                    const TrackRuntime &rt = *seg.runtime;
+                    if (rt.playingSlot.load(std::memory_order_relaxed) == seg.slot) {
+                        const int64_t s0 = rt.slotStart.load(std::memory_order_relaxed);
+                        const int64_t base = pos - ((pos - s0) % seg.loop + seg.loop) % seg.loop;
+                        ahead(base);
+                        ahead(base + seg.loop);
+                    }
+                    const int64_t at = rt.launchAt.load(std::memory_order_relaxed);
+                    if (at >= 0 && rt.launchTarget.load(std::memory_order_relaxed) == seg.slot) ahead(at);
                 }
-                const int64_t head = seg.offset / kStreamBlockFrames, distance = std::llabs(seg.start - pos);
+                const int64_t head = seg.offset / kStreamBlockFrames, distance = seg.runtime ? window : std::llabs(seg.start - pos);
                 for (int64_t i = head; i <= head + 1 && i < s->blocks_; ++i) wants.push_back({s, i, window + distance});
             }
         }

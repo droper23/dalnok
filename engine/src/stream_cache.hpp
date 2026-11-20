@@ -58,10 +58,17 @@ struct StreamStats {
 };
 
 // What one engine is about to play: its streamed clip segments and its playhead (registered by the Engine).
+struct TrackRuntime;
+
 struct StreamPlan {
     struct Segment {
         std::shared_ptr<const Media> media;
         int64_t start, offset, length; // timeline frame, frame within media, frames
+        // Launcher slots: the track's launcher state. The slot loops every `loop` frames from where it was launched,
+        // so its blocks are prefetched along its own position (`start` is unused).
+        std::shared_ptr<const TrackRuntime> runtime;
+        int32_t slot = -1;
+        int64_t loop = 0;
     };
     std::mutex mu;                 // guards segments (control thread writes, disk thread reads)
     std::vector<Segment> segments;

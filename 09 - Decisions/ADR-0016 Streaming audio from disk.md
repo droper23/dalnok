@@ -29,8 +29,13 @@ Processing), so streaming cannot simply read on demand.
 **Consequences.** Memory for audio is bounded by the budget plus peaks: one hour of stereo audio went from 1,390 MB
 to under 50 MB peak RSS while playing. Streamed files need disk space for their decoded cache (about 690 MB per stereo
 hour at 48 kHz) and take one decode pass to prepare. A seek far from the playhead can play up to a few milliseconds
-of silence until its blocks arrive (none were missed in the tests). Launcher clips keep only their first blocks
-resident ahead of a launch, so a long launched clip could miss blocks after its first 1.4 s.
+of silence until its blocks arrive (none were missed in the tests). Launcher clips originally kept only their first blocks
+resident ahead of a launch, so a long launched clip could miss blocks after its first 1.4 s; see the amendment below.
+
+**Amendment (2026-11-19): launched clips.** A slot's segment in the stream plan now carries its track's launcher state.
+- While a slot plays, the disk thread prefetches its current loop and the next one from the slot's own start frame, the same position the renderer uses.
+- A pending launch is prefetched from its launch frame.
+- Test `Streaming/launchedStreamedSlotIsPrefetchedAlongItsLoop`: with a 2 MB budget, a 12 s streamed slot over 26 s of looping missed 660,480 frames before this change and 0 after, and is bit-exact against memory.
 
 **Amendment (2026-11-19): cache-file cleanup.**
 - Each long-file load keeps the cache directory within `DALNOK_STREAM_DISK_MB` (default 8 GiB, about 12 stereo hours) by deleting the least recently used cache files.

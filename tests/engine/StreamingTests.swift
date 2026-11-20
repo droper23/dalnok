@@ -216,4 +216,41 @@ import Testing
         #expect(dalnok_render_offline(e2, 100_000, 96_000, &l2, &r2) == DALNOK_OK)
         #expect(l1 == l2 && r1 == r2 && l1.contains { $0 != 0 }, "a pruned file's open media still plays")
     }
+
+    /// A long streamed clip launched from a slot plays from blocks the disk thread prefetched for the slot's own position
+    /// (it loops from its launch, not from the timeline): no missed frames over two loops with a 2 MB budget, and the
+    /// output equals the same clip held in memory.
+    @Test func launchedStreamedSlotIsPrefetchedAlongItsLoop() throws {
+        let url = stereoWav(seconds: 12, name: "long-slot.wav")
+        let mem = load(url, streamed: false), str = load(url, streamed: true)
+        defer { dalnok_media_release(mem); dalnok_media_release(str) }
+        func slotEngine(_ m: OpaquePointer) -> OpaquePointer {
+            let (e, c) = engine(m, path: url.path)
+            #expect(dalnok_launcher_copy_clip(e, c, 0) != 0 && dalnok_clip_remove(e, c) == DALNOK_OK)
+            return e
+        }
+        let ref = slotEngine(mem), e = slotEngine(str)
+        defer { dalnok_engine_destroy(ref); dalnok_engine_destroy(e) }
+        dalnok_stream_set_limits(60, 2) // eight blocks (5.5 s), under half the clip
+        defer { dalnok_stream_set_limits(60, 256) }
+        usleep(100_000)
+        let before = stats()
+        for x in [e, ref] { #expect(dalnok_launcher_launch(x, dalnok_track_at(x, 0), 0) == DALNOK_OK) }
+        var l = [Float](repeating: 0, count: 512), r = l, rl = l, rr = l
+        var mismatched = 0, audible = 0
+        // 26 s (two loops and more) at about 5x real time.
+        for _ in 0..<2_440 {
+            _ = dalnok_engine_pump(e, &l, &r, 512)
+            _ = dalnok_engine_pump(ref, &rl, &rr, 512)
+            if l != rl || r != rr { mismatched += 1 }
+            if rl.contains(where: { $0 != 0 }) { audible += 1 }
+            usleep(2_000)
+        }
+        let after = stats()
+        #expect(dalnok_launcher_playing(e, dalnok_track_at(e, 0)) == 0)
+        print("STREAM launched slot 26 s: missed \(after.missed_frames - before.missed_frames) frames, \(mismatched) of 2440 blocks differ, \(audible) audible")
+        #expect(audible > 2_000, "the slot plays")
+        #expect(after.missed_frames == before.missed_frames, "every block of the launched clip was resident in time")
+        #expect(mismatched == 0, "the launched streamed clip equals the in-memory one")
+    }
 }

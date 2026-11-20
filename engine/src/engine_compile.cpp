@@ -437,9 +437,11 @@ void Engine::updateStreamPlan(const RenderState &state) {
         if (!t.content) continue;
         for (const auto &c : t.content->clips)
             if (c.media && c.media->streamed()) segments.push_back({c.media, c.start, c.offset, c.length});
-        // Launcher clips start whenever they are launched: their first blocks are kept resident (start at frame 0).
+        // Launcher clips: their first blocks stay resident for a launch, and the disk thread follows a launched slot's
+        // own loop position through the track's launcher state.
         for (const auto &slot : t.content->slots)
-            if (slot.clip.media && slot.clip.media->streamed()) segments.push_back({slot.clip.media, INT64_MIN / 4, slot.clip.offset, slot.clip.length});
+            if (slot.clip.media && slot.clip.media->streamed())
+                segments.push_back({slot.clip.media, 0, slot.clip.offset, slot.clip.length, t.runtime, slot.slot, slot.length});
     }
     if (segments.empty() && streamPlan_->segments.empty()) return;
     {
