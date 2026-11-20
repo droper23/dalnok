@@ -24,30 +24,30 @@ void Engine::duplexCallback(void *ctx, float *left, float *right, const float *c
                             int frames) DALNOK_NONBLOCKING {
     auto *self = static_cast<Engine *>(ctx);
     audioCallback(ctx, left, right, frames);
-    const int n = self->captureChannels_;
+    const int n = self->rec_.captureChannels;
     bool ok = inputs != nullptr && frames <= kMaxCaptureBlock;
     for (int c = 0; ok && c < n; ++c) {
-        const int ch = self->captureMap_[static_cast<size_t>(c)];
+        const int ch = self->rec_.captureMap[static_cast<size_t>(c)];
         ok = ch < inputCount && inputs[ch] != nullptr;
     }
     if (!ok) {
-        self->captureMissingFrames_.fetch_add(static_cast<uint64_t>(frames), std::memory_order_relaxed);
-        self->captureInputFailed_.store(true, std::memory_order_release);
+        self->rec_.captureMissingFrames.fetch_add(static_cast<uint64_t>(frames), std::memory_order_relaxed);
+        self->rec_.captureInputFailed.store(true, std::memory_order_release);
         return;
     }
     // Outside a recording session every frame is captured; in one, only the part of the block inside the
     // punch window, and only where the transport rolled continuously.
-    const bool session = self->recordSession_.load(std::memory_order_acquire);
-    if (self->captureRT_ && n > 0 && (!session || self->rtRecordingBlock_)) {
-        const int from = session ? self->rtRecordOffset_ : 0, count = session ? self->rtRecordCount_ : frames;
-        float *out = self->captureScratch_.data();
+    const bool session = self->rec_.recordSession.load(std::memory_order_acquire);
+    if (self->rec_.captureRT && n > 0 && (!session || self->rec_.rtRecordingBlock)) {
+        const int from = session ? self->rec_.rtRecordOffset : 0, count = session ? self->rec_.rtRecordCount : frames;
+        float *out = self->rec_.captureScratch.data();
         for (int i = 0; i < count; ++i)
-            for (int c = 0; c < n; ++c) out[i * n + c] = inputs[self->captureMap_[static_cast<size_t>(c)]][from + i];
-        self->captureRT_->push(out, static_cast<uint32_t>(count));
+            for (int c = 0; c < n; ++c) out[i * n + c] = inputs[self->rec_.captureMap[static_cast<size_t>(c)]][from + i];
+        self->rec_.captureRT->push(out, static_cast<uint32_t>(count));
     }
-    if (self->monitoring_.load(std::memory_order_relaxed))
+    if (self->rec_.monitoring.load(std::memory_order_relaxed))
         for (int c = 0; c < n; ++c) {
-            const float *in = inputs[self->captureMap_[static_cast<size_t>(c)]];
+            const float *in = inputs[self->rec_.captureMap[static_cast<size_t>(c)]];
             for (int i = 0; i < frames; ++i) { left[i] += in[i]; right[i] += in[i]; }
         }
 }
@@ -101,7 +101,7 @@ void Engine::handleMidiInput(int64_t pos) DALNOK_NONBLOCKING {
             else if (synth && type == 0xb0 && (m.data1 == 120 || m.data1 == 123)) synth->reset();
             if (!on && !off) continue;
             if (count < kMaxEvents) events[count++] = {pos, m.status, m.data1, m.data2};
-            else midiRecordDropped_.fetch_add(1, std::memory_order_relaxed);
+            else rec_.midiRecordDropped.fetch_add(1, std::memory_order_relaxed);
         }
     }
     // Record after the block decided whether the transport rolled (see process).
@@ -154,9 +154,9 @@ void Engine::process(float *left, float *right, int frames) DALNOK_NONBLOCKING {
     const float step = static_cast<float>(1.0 / (kTransportFadeSeconds * sampleRate_));
 
     // Cycle: read once per callback (the control thread writes start/end before enabling).
-    // Recording plays straight through, except a cycle take (recordCycle_), which loops and becomes takes.
-    const bool cycleTake = recordCycle_.load(std::memory_order_acquire) && recordArmed_.load(std::memory_order_relaxed);
-    const bool cycling = transport_.cycleOn.load(std::memory_order_acquire) && (!recordArmed_.load(std::memory_order_relaxed) || cycleTake);
+    // Recording plays straight through, except a cycle take (rec_.recordCycle), which loops and becomes takes.
+    const bool cycleTake = rec_.recordCycle.load(std::memory_order_acquire) && rec_.recordArmed.load(std::memory_order_relaxed);
+    const bool cycling = transport_.cycleOn.load(std::memory_order_acquire) && (!rec_.recordArmed.load(std::memory_order_relaxed) || cycleTake);
     int64_t advanced = 0; // frames the transport advanced in this callback (cycle wraps included)
     bool jumped = false;  // a seek landed in this callback
     const int64_t cycleStart = transport_.cycleStart.load(std::memory_order_relaxed), cycleEnd = transport_.cycleEnd.load(std::memory_order_relaxed);
@@ -259,25 +259,25 @@ void Engine::process(float *left, float *right, int frames) DALNOK_NONBLOCKING {
     transport_.position.store(pendingSeek_ >= 0 ? pendingSeek_ : rtPosition_, std::memory_order_relaxed);
 
     // Recording: a take covers the blocks where the transport advanced continuously.
-    const uint32_t take = recordTake_.load(std::memory_order_acquire);
-    if (take != rtTake_) { rtTake_ = take; rtRecordNext_ = -1; }
-    rtRecordingBlock_ = false;
-    rtRecordOffset_ = 0;
-    rtRecordCount_ = frames;
-    if (recordArmed_.load(std::memory_order_acquire) && !recordBroken_.load(std::memory_order_relaxed)) {
+    const uint32_t take = rec_.recordTake.load(std::memory_order_acquire);
+    if (take != rtTake_) { rtTake_ = take; rec_.rtRecordNext = -1; }
+    rec_.rtRecordingBlock = false;
+    rec_.rtRecordOffset = 0;
+    rec_.rtRecordCount = frames;
+    if (rec_.recordArmed.load(std::memory_order_acquire) && !rec_.recordBroken.load(std::memory_order_relaxed)) {
         // Punch window: only frames in [in, out) belong to the take (whole blocks without punch).
         const int64_t in = transport_.punchIn.load(std::memory_order_relaxed), out = transport_.punchOut.load(std::memory_order_relaxed);
-        const bool finished = rtRecordNext_ >= 0 && rtRecordNext_ >= out; // past punch-out: nothing more to check
+        const bool finished = rec_.rtRecordNext >= 0 && rec_.rtRecordNext >= out; // past punch-out: nothing more to check
         if (cycleTake) {
             // Cycle take: every frame while the transport rolls continuously, across wraps. The control
             // thread cuts the capture into one take per pass when recording stops.
             if (advanced == frames && !jumped && pendingSeek_ < 0) {
-                if (rtRecordNext_ < 0) recordStart_.store(before, std::memory_order_release);
-                rtRecordingBlock_ = true;
-                rtRecordNext_ = 0; // started
-                recordEnd_.store(rtPosition_, std::memory_order_release);
-            } else if (rtRecordNext_ >= 0) {
-                recordBroken_.store(true, std::memory_order_release);
+                if (rec_.rtRecordNext < 0) rec_.recordStart.store(before, std::memory_order_release);
+                rec_.rtRecordingBlock = true;
+                rec_.rtRecordNext = 0; // started
+                rec_.recordEnd.store(rtPosition_, std::memory_order_release);
+            } else if (rec_.rtRecordNext >= 0) {
+                rec_.recordBroken.store(true, std::memory_order_release);
             }
         }
         // A block that ends with a seek still pending is a fade-out before a jump (e.g. count-in pre-roll
@@ -286,25 +286,25 @@ void Engine::process(float *left, float *right, int frames) DALNOK_NONBLOCKING {
             const int64_t blockStart = rtPosition_ - frames;
             const int64_t from = std::max(blockStart, in), to = std::min(rtPosition_, out);
             if (to > from) {
-                if (rtRecordNext_ < 0) recordStart_.store(from, std::memory_order_release);
-                if (rtRecordNext_ >= 0 && from != rtRecordNext_) recordBroken_.store(true, std::memory_order_release);
+                if (rec_.rtRecordNext < 0) rec_.recordStart.store(from, std::memory_order_release);
+                if (rec_.rtRecordNext >= 0 && from != rec_.rtRecordNext) rec_.recordBroken.store(true, std::memory_order_release);
                 else {
-                    rtRecordingBlock_ = true;
-                    rtRecordOffset_ = static_cast<int>(from - blockStart);
-                    rtRecordCount_ = static_cast<int>(to - from);
-                    recordEnd_.store(to, std::memory_order_release);
+                    rec_.rtRecordingBlock = true;
+                    rec_.rtRecordOffset = static_cast<int>(from - blockStart);
+                    rec_.rtRecordCount = static_cast<int>(to - from);
+                    rec_.recordEnd.store(to, std::memory_order_release);
                 }
-                rtRecordNext_ = to;
+                rec_.rtRecordNext = to;
             }
-        } else if (!finished && rtRecordNext_ >= 0) {
-            recordBroken_.store(true, std::memory_order_release); // paused or sought during the take
+        } else if (!finished && rec_.rtRecordNext >= 0) {
+            rec_.recordBroken.store(true, std::memory_order_release); // paused or sought during the take
         }
     }
-    if (rtRecordingBlock_ && recordMidi_.load(std::memory_order_acquire)) {
+    if (rec_.rtRecordingBlock && rec_.recordMidi.load(std::memory_order_acquire)) {
         for (int i = 0; i < rtMidiCount_; ++i) {
             RecordedMidi e = rtMidiEvents_[i];
-            e.pos = rtPosition_ - frames + rtRecordOffset_; // block-accurate, clamped into the punch window
-            if (!midiRecordQueue_.push(e)) midiRecordDropped_.fetch_add(1, std::memory_order_relaxed);
+            e.pos = rtPosition_ - frames + rec_.rtRecordOffset; // block-accurate, clamped into the punch window
+            if (!rec_.midiRecordQueue.push(e)) rec_.midiRecordDropped.fetch_add(1, std::memory_order_relaxed);
         }
     }
     rtMidiCount_ = 0;

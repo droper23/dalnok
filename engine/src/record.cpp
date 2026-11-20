@@ -63,11 +63,11 @@ bool writeJournal(const std::string &path, const json::Value &j, std::string &er
 // ---- Sessions ---------------------------------------------------------------
 
 int64_t Engine::recordLatency() const {
-    return (duplex_ ? duplex_->roundTripLatency() : 0) + latencyOffset_;
+    return (duplex_ ? duplex_->roundTripLatency() : 0) + rec_.latencyOffset;
 }
 
 bool Engine::startRecording(const std::string &inputUid, const std::string &directory, std::string &err) {
-    if (recording_ || duplex_) return fail(err, "already recording");
+    if (rec_.active || duplex_) return fail(err, "already recording");
     const TrackState *audio = nullptr, *midi = nullptr;
     std::vector<const TrackState *> audioTracks;
     for (const auto &t : model_.tracks) {
@@ -79,10 +79,10 @@ bool Engine::startRecording(const std::string &inputUid, const std::string &dire
     if (!audio && !midi) return fail(err, "arm a track to record");
     if (audio && inputUid.empty()) return fail(err, "choose an audio input device to record an audio track");
 
-    recordAudioTrack_ = audio ? audio->id : 0;
-    recordMidiTrack_ = midi ? midi->id : 0;
-    recordAudio_.clear();
-    recordSpool_.clear(); recordWav_.clear(); recordJournal_.clear();
+    rec_.recordAudioTrack = audio ? audio->id : 0;
+    rec_.recordMidiTrack = midi ? midi->id : 0;
+    rec_.recordAudio.clear();
+    rec_.recordSpool.clear(); rec_.recordWav.clear(); rec_.recordJournal.clear();
     if (audio) {
         std::error_code ec;
         fs::create_directories(directory, ec);
@@ -106,26 +106,26 @@ bool Engine::startRecording(const std::string &inputUid, const std::string &dire
         for (const auto *t : audioTracks) {
             std::string wav = (dir / (safeName(t->name) + " Take " + std::to_string(take))).string() + ".wav";
             // Two armed tracks with the same name: keep their files apart.
-            for (int k = 2; std::any_of(recordAudio_.begin(), recordAudio_.end(), [&](const RecordAudio &r) { return r.wav == wav; }); ++k)
+            for (int k = 2; std::any_of(rec_.recordAudio.begin(), rec_.recordAudio.end(), [&](const RecordAudio &r) { return r.wav == wav; }); ++k)
                 wav = (dir / (safeName(t->name) + " Take " + std::to_string(take) + " (" + std::to_string(k) + ")")).string() + ".wav";
-            recordAudio_.push_back({t->id, t->name, t->inputChannel, wav});
+            rec_.recordAudio.push_back({t->id, t->name, t->inputChannel, wav});
         }
-        recordSpool_ = base + ".dlncap";
-        recordWav_ = recordAudio_.front().wav;
-        recordJournal_ = base + ".dlntake";
+        rec_.recordSpool = base + ".dlncap";
+        rec_.recordWav = rec_.recordAudio.front().wav;
+        rec_.recordJournal = base + ".dlntake";
         json::Value j = json::Value::makeObject();
         j.set("format", "dalnok-take");
         j.set("version", 1);
         j.set("state", "recording");
-        j.set("spool", fs::path(recordSpool_).filename().string());
-        j.set("wav", fs::path(recordWav_).filename().string());
+        j.set("spool", fs::path(rec_.recordSpool).filename().string());
+        j.set("wav", fs::path(rec_.recordWav).filename().string());
         j.set("track", audio->id);
         j.set("trackName", audio->name);
         j.set("inputChannel", audio->inputChannel);
         j.set("sampleRate", sampleRate_);
-        j.set("channels", static_cast<int64_t>(recordAudio_.size()));
+        j.set("channels", static_cast<int64_t>(rec_.recordAudio.size()));
         json::Value tracks = json::Value::makeArray(); // spool channel i → tracks[i]
-        for (const auto &r : recordAudio_) {
+        for (const auto &r : rec_.recordAudio) {
             json::Value t = json::Value::makeObject();
             t.set("track", r.track);
             t.set("trackName", r.name);
@@ -136,44 +136,44 @@ bool Engine::startRecording(const std::string &inputUid, const std::string &dire
         j.set("tracks", std::move(tracks));
         j.set("requestedStart", position());
         j.set("created", static_cast<int64_t>(std::time(nullptr)));
-        if (!writeJournal(recordJournal_, j, err)) return false;
+        if (!writeJournal(rec_.recordJournal, j, err)) return false;
         std::vector<int> channels;
-        for (const auto &r : recordAudio_) channels.push_back(r.channel);
-        if (!startCapture(inputUid, channels, recordSpool_, err)) {
-            ::unlink(recordJournal_.c_str()); // nothing was captured; the spool was never created or is empty
+        for (const auto &r : rec_.recordAudio) channels.push_back(r.channel);
+        if (!startCapture(inputUid, channels, rec_.recordSpool, err)) {
+            ::unlink(rec_.recordJournal.c_str()); // nothing was captured; the spool was never created or is empty
             std::error_code ignored;
-            if (fs::exists(recordSpool_) && fs::file_size(recordSpool_, ignored) <= 16) ::unlink(recordSpool_.c_str());
+            if (fs::exists(rec_.recordSpool) && fs::file_size(rec_.recordSpool, ignored) <= 16) ::unlink(rec_.recordSpool.c_str());
             return false;
         }
     }
-    midiTake_.clear();
+    rec_.midiTake.clear();
     RecordedMidi discard;
-    while (midiRecordQueue_.pop(discard)) {}
-    midiRecordDropped_.store(0, std::memory_order_relaxed);
-    recordStart_.store(-1, std::memory_order_relaxed);
-    recordEnd_.store(-1, std::memory_order_relaxed);
-    recordBroken_.store(false, std::memory_order_relaxed);
-    recordMidi_.store(midi != nullptr, std::memory_order_relaxed);
+    while (rec_.midiRecordQueue.pop(discard)) {}
+    rec_.midiRecordDropped.store(0, std::memory_order_relaxed);
+    rec_.recordStart.store(-1, std::memory_order_relaxed);
+    rec_.recordEnd.store(-1, std::memory_order_relaxed);
+    rec_.recordBroken.store(false, std::memory_order_relaxed);
+    rec_.recordMidi.store(midi != nullptr, std::memory_order_relaxed);
     // With cycle on (and no punch), the take loops the cycle and becomes one take per pass.
-    recordCycleStart_ = transport_.cycleStart.load();
-    recordCycleEnd_ = transport_.cycleEnd.load();
-    recordCycle_.store(transport_.cycleOn.load() && transport_.punchIn.load() == INT64_MIN && recordCycleEnd_ - recordCycleStart_ >= 64,
+    rec_.recordCycleStart = transport_.cycleStart.load();
+    rec_.recordCycleEnd = transport_.cycleEnd.load();
+    rec_.recordCycle.store(transport_.cycleOn.load() && transport_.punchIn.load() == INT64_MIN && rec_.recordCycleEnd - rec_.recordCycleStart >= 64,
                        std::memory_order_release);
-    recordTake_.fetch_add(1, std::memory_order_acq_rel);
-    recordSession_.store(audio != nullptr, std::memory_order_release);
-    recordArmed_.store(true, std::memory_order_release);
-    recording_ = true;
+    rec_.recordTake.fetch_add(1, std::memory_order_acq_rel);
+    rec_.recordSession.store(audio != nullptr, std::memory_order_release);
+    rec_.recordArmed.store(true, std::memory_order_release);
+    rec_.active = true;
     play();
     return true;
 }
 
 void Engine::drainRecordedMidi() {
     RecordedMidi e;
-    while (midiRecordQueue_.pop(e)) midiTake_.push_back(e);
+    while (rec_.midiRecordQueue.pop(e)) rec_.midiTake.push_back(e);
 }
 
 void Engine::waitForAudioCycles() {
-    // The audio thread checks recordArmed_ once per cycle; two full cycles guarantee
+    // The audio thread checks rec_.recordArmed once per cycle; two full cycles guarantee
     // that no in-flight cycle can still record after this returns.
     if (!device_ && !(duplex_ && !simulatedInput_)) return;
     const auto target = callbacks_.load(std::memory_order_acquire) + 2;
@@ -184,42 +184,42 @@ void Engine::waitForAudioCycles() {
 
 bool Engine::stopRecording(RecordResult &r, std::string &err) {
     r = RecordResult{};
-    if (!recording_) return fail(err, "not recording");
-    recordArmed_.store(false, std::memory_order_release);
+    if (!rec_.active) return fail(err, "not recording");
+    rec_.recordArmed.store(false, std::memory_order_release);
     waitForAudioCycles();
-    const bool broken = recordBroken_.load(std::memory_order_acquire);
-    r.start = recordStart_.load(std::memory_order_acquire);
-    const int64_t end = recordEnd_.load(std::memory_order_acquire);
-    r.latency = recordAudioTrack_ ? recordLatency() : 0;
+    const bool broken = rec_.recordBroken.load(std::memory_order_acquire);
+    r.start = rec_.recordStart.load(std::memory_order_acquire);
+    const int64_t end = rec_.recordEnd.load(std::memory_order_acquire);
+    r.latency = rec_.recordAudioTrack ? recordLatency() : 0;
     std::vector<std::string> problems;
     if (broken) problems.push_back("the transport stopped or jumped during the take");
-    if (midiRecordDropped_.load(std::memory_order_relaxed)) problems.push_back("MIDI events were dropped");
+    if (rec_.midiRecordDropped.load(std::memory_order_relaxed)) problems.push_back("MIDI events were dropped");
 
     // ---- Audio: stop capture, finalize, verify ----
     bool audioOK = true;
     std::shared_ptr<const Media> media;
-    std::vector<std::shared_ptr<const Media>> takes; // one per armed audio track, in recordAudio_ order
-    if (recordAudioTrack_) {
+    std::vector<std::shared_ptr<const Media>> takes; // one per armed audio track, in rec_.recordAudio order
+    if (rec_.recordAudioTrack) {
         std::string captureErr;
         const bool captureOK = stopCapture(r.stats, captureErr);
-        recordSession_.store(false, std::memory_order_release);
-        r.journal = recordJournal_;
+        rec_.recordSession.store(false, std::memory_order_release);
+        r.journal = rec_.recordJournal;
         audioOK = captureOK && !broken && r.start >= 0;
         if (!captureOK) problems.push_back(captureErr);
         if (r.start < 0)
             problems.push_back(transport_.punchIn.load() != INT64_MIN ? "playback never reached the punch-in point, so nothing was recorded"
                                                             : "the transport never started, so nothing was recorded");
-        // One mono WAV per armed track (spool channel i → recordAudio_[i]); each is verified independently.
+        // One mono WAV per armed track (spool channel i → rec_.recordAudio[i]); each is verified independently.
         uint64_t frames = 0;
         uint32_t trailing = 0;
         bool converted = r.stats.written_frames > 0;
-        for (size_t i = 0; i < recordAudio_.size(); ++i) {
+        for (size_t i = 0; i < rec_.recordAudio.size(); ++i) {
             std::string convertErr;
-            const std::string target = audioOK ? recordAudio_[i].wav : recoveredPath(recordAudio_[i].wav);
+            const std::string target = audioOK ? rec_.recordAudio[i].wav : recoveredPath(rec_.recordAudio[i].wav);
             uint64_t f = 0;
             uint32_t t = 0;
-            const bool ok = converted && recoverCapture(recordSpool_, target, f, t, convertErr, static_cast<int>(i));
-            if (ok) { recordAudio_[i].wav = target; frames = f; trailing = t; }
+            const bool ok = converted && recoverCapture(rec_.recordSpool, target, f, t, convertErr, static_cast<int>(i));
+            if (ok) { rec_.recordAudio[i].wav = target; frames = f; trailing = t; }
             if (!ok) {
                 converted = false;
                 if (audioOK) problems.push_back("could not finalize the take: " + convertErr);
@@ -231,10 +231,10 @@ bool Engine::stopRecording(RecordResult &r, std::string &err) {
                 problems.push_back("the finished file does not match the captured frame count");
             }
         }
-        if (converted) syncDirectory(fs::path(recordAudio_.front().wav).parent_path().string());
-        for (size_t i = 0; audioOK && i < recordAudio_.size(); ++i) {
+        if (converted) syncDirectory(fs::path(rec_.recordAudio.front().wav).parent_path().string());
+        for (size_t i = 0; audioOK && i < rec_.recordAudio.size(); ++i) {
             std::string decodeErr;
-            auto take = Media::loadFile(recordAudio_[i].wav, sampleRate_, decodeErr); // long takes stream (A-09)
+            auto take = Media::loadFile(rec_.recordAudio[i].wav, sampleRate_, decodeErr); // long takes stream (A-09)
             if (take && static_cast<uint64_t>(take->frames()) == frames)
                 takes.push_back(std::move(take));
             else {
@@ -243,48 +243,48 @@ bool Engine::stopRecording(RecordResult &r, std::string &err) {
             }
         }
         if (audioOK) media = takes.front();
-        const std::string target = recordAudio_.front().wav;
+        const std::string target = rec_.recordAudio.front().wav;
         r.frames = converted ? frames : 0;
         r.path = converted ? target : "";
         // Journal: complete takes keep only the WAV; anything else keeps spool + journal.
         if (audioOK) {
-            ::unlink(recordSpool_.c_str());
-            ::unlink(recordJournal_.c_str());
-            syncDirectory(fs::path(recordJournal_).parent_path().string());
+            ::unlink(rec_.recordSpool.c_str());
+            ::unlink(rec_.recordJournal.c_str());
+            syncDirectory(fs::path(rec_.recordJournal).parent_path().string());
             r.journal.clear();
         } else {
             r.recovered = converted;
             std::string text;
             json::Value j;
             std::string parseErr, writeErr;
-            if (readText(recordJournal_, text) && json::parse(text, j, parseErr) && j.isObject()) {
+            if (readText(rec_.recordJournal, text) && json::parse(text, j, parseErr) && j.isObject()) {
                 j.set("state", converted ? "recovered" : "failed");
                 j.set("frames", static_cast<int64_t>(r.frames));
                 j.set("start", r.start);
                 if (converted) j.set("recoveredWav", fs::path(target).filename().string());
                 if (converted)
                     if (json::Value *tracks = j.get("tracks"); tracks && tracks->isArray())
-                        for (size_t i = 0; i < tracks->array.size() && i < recordAudio_.size(); ++i)
-                            tracks->array[i].set("recoveredWav", fs::path(recordAudio_[i].wav).filename().string());
+                        for (size_t i = 0; i < tracks->array.size() && i < rec_.recordAudio.size(); ++i)
+                            tracks->array[i].set("recoveredWav", fs::path(rec_.recordAudio[i].wav).filename().string());
                 std::string all;
                 for (const auto &p : problems) all += (all.empty() ? "" : "; ") + p;
                 j.set("error", all);
-                writeJournal(recordJournal_, j, writeErr);
+                writeJournal(rec_.recordJournal, j, writeErr);
             }
         }
     }
-    recordSession_.store(false, std::memory_order_release);
+    rec_.recordSession.store(false, std::memory_order_release);
     pause();
-    recording_ = false;
+    rec_.active = false;
     drainRecordedMidi();
-    recordMidi_.store(false, std::memory_order_relaxed);
+    rec_.recordMidi.store(false, std::memory_order_relaxed);
 
     // ---- MIDI: pair note-on/off into notes ----
     std::vector<MidiNote> notes;
-    if (recordMidiTrack_ && r.start >= 0 && end > r.start) {
+    if (rec_.recordMidiTrack && r.start >= 0 && end > r.start) {
         struct Held { int64_t at = -1; uint8_t velocity = 0; };
         Held held[16][128];
-        for (const auto &e : midiTake_) {
+        for (const auto &e : rec_.midiTake) {
             const uint8_t type = e.status & 0xf0, ch = e.status & 0x0f, pitch = e.data1 & 0x7f;
             Held &h = held[ch][pitch];
             const bool on = type == 0x90 && e.data2 > 0;
@@ -300,7 +300,7 @@ bool Engine::stopRecording(RecordResult &r, std::string &err) {
                     notes.push_back({held[c][p].at - r.start, std::max<int64_t>(1, end - held[c][p].at),
                                      static_cast<uint8_t>(p), held[c][p].velocity});
     }
-    midiTake_.clear();
+    rec_.midiTake.clear();
 
     // ---- Placement: one undo step ----
     beginGroup("Record");
@@ -309,8 +309,8 @@ bool Engine::stopRecording(RecordResult &r, std::string &err) {
     // every later pass starts at the cycle start. Each pass is a take; each track's takes form a take folder.
     struct Pass { int64_t start, offset, length; };
     std::vector<Pass> passes;
-    if (media && recordCycle_.load()) {
-        const int64_t total = media->frames(), cs = recordCycleStart_, ce = recordCycleEnd_;
+    if (media && rec_.recordCycle.load()) {
+        const int64_t total = media->frames(), cs = rec_.recordCycleStart, ce = rec_.recordCycleEnd;
         int64_t pos = r.start, offset = 0;
         while (offset < total) {
             const int64_t len = pos < ce ? std::min(ce - pos, total - offset) : total - offset;
@@ -319,10 +319,10 @@ bool Engine::stopRecording(RecordResult &r, std::string &err) {
             pos = cs;
         }
     }
-    recordCycle_.store(false, std::memory_order_release);
+    rec_.recordCycle.store(false, std::memory_order_release);
     if (passes.empty()) passes.push_back({r.start, 0, media ? media->frames() : 0});
     for (size_t i = 0; media && i < takes.size(); ++i) {
-        const DalnokMediaId id = poolAdd(takes[i], recordAudio_[i].wav);
+        const DalnokMediaId id = poolAdd(takes[i], rec_.recordAudio[i].wav);
         if (i == 0) r.media = id;
         std::vector<DalnokClipId> trackTakes;
         for (const auto &p : passes) {
@@ -330,16 +330,16 @@ bool Engine::stopRecording(RecordResult &r, std::string &err) {
             if (start < 0) { offset -= start; start = 0; }
             const int64_t length = p.offset + p.length - offset;
             if (length <= 0 || offset >= takes[i]->frames()) continue;
-            const DalnokClipId clip = addClip(recordAudio_[i].track, id, start, offset, length, placeErr);
-            if (!clip) problems.push_back("could not place the take on " + recordAudio_[i].name + ": " + placeErr);
+            const DalnokClipId clip = addClip(rec_.recordAudio[i].track, id, start, offset, length, placeErr);
+            if (!clip) problems.push_back("could not place the take on " + rec_.recordAudio[i].name + ": " + placeErr);
             else trackTakes.push_back(clip);
         }
-        if (recordSlot_.load() >= 0 && !trackTakes.empty()) { // into the launcher, not the arrangement
-            const DalnokClipId clip = takeToSlot(trackTakes, recordSlot_.load(), placeErr);
+        if (rec_.recordSlot.load() >= 0 && !trackTakes.empty()) { // into the launcher, not the arrangement
+            const DalnokClipId clip = takeToSlot(trackTakes, rec_.recordSlot.load(), placeErr);
             if (!clip) problems.push_back("could not put the take in the launcher slot: " + placeErr);
             trackTakes = clip ? std::vector<DalnokClipId>{clip} : std::vector<DalnokClipId>{};
         } else if (trackTakes.size() > 1) {
-            const int32_t folder = addTakeFolder(recordAudio_[i].track, trackTakes, placeErr);
+            const int32_t folder = addTakeFolder(rec_.recordAudio[i].track, trackTakes, placeErr);
             if (!folder) problems.push_back("could not make the take folder: " + placeErr);
             r.takeFolders.push_back(folder);
             // The comp's first piece stands for the track's take in the result.
@@ -353,10 +353,10 @@ bool Engine::stopRecording(RecordResult &r, std::string &err) {
     }
     if (!notes.empty()) {
         r.notes = static_cast<int32_t>(notes.size());
-        r.midiClip = addMidiClip(recordMidiTrack_, r.start, end - r.start, placeErr, std::move(notes), "Record");
+        r.midiClip = addMidiClip(rec_.recordMidiTrack, r.start, end - r.start, placeErr, std::move(notes), "Record");
         if (!r.midiClip) problems.push_back("could not place the MIDI take: " + placeErr);
-        else if (recordSlot_.load() >= 0) {
-            r.midiClip = takeToSlot({r.midiClip}, recordSlot_.load(), placeErr);
+        else if (rec_.recordSlot.load() >= 0) {
+            r.midiClip = takeToSlot({r.midiClip}, rec_.recordSlot.load(), placeErr);
             if (!r.midiClip) problems.push_back("could not put the MIDI take in the launcher slot: " + placeErr);
         }
     }
@@ -364,7 +364,7 @@ bool Engine::stopRecording(RecordResult &r, std::string &err) {
 
     err.clear();
     for (const auto &p : problems) err += (err.empty() ? "" : "; ") + p;
-    if (!audioOK && recordAudioTrack_) {
+    if (!audioOK && rec_.recordAudioTrack) {
         if (r.recovered) err += "; the valid part was saved to " + fs::path(r.path).filename().string();
         else if (r.stats.written_frames > 0) err += "; the capture spool was kept for manual recovery";
     }
@@ -468,7 +468,7 @@ bool Engine::injectMidi(uint8_t status, uint8_t data1, uint8_t data2) {
 }
 
 uint64_t Engine::midiDropped() const {
-    uint64_t total = midiRecordDropped_.load(std::memory_order_relaxed);
+    uint64_t total = rec_.midiRecordDropped.load(std::memory_order_relaxed);
     for (const auto &p : midiParsers_)
         if (p) total += p->dropped();
     return total;

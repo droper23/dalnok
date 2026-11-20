@@ -53,7 +53,7 @@ Engine::Engine(double sampleRate) : sampleRate_(sampleRate) {
 
 Engine::~Engine() {
     StreamCache::shared().removePlan(streamPlan_.get());
-    if (recording_) { RecordResult ignored; std::string err; stopRecording(ignored, err); }
+    if (rec_.active) { RecordResult ignored; std::string err; stopRecording(ignored, err); }
     stopDevice();
     midiClient_.reset(); // closes Core MIDI ports before the parsers go away
     collectGarbage();
@@ -303,7 +303,7 @@ DalnokTrackId Engine::addInstrumentTrack(const std::string &name, std::string &e
 }
 
 bool Engine::setArmed(DalnokTrackId id, bool armed, std::string &err) {
-    if (recording_) return fail(err, "cannot change record arm while recording");
+    if (rec_.active) return fail(err, "cannot change record arm while recording");
     return edit(armed ? "Record Enable" : "Record Disable", true, [&](Model &m) {
         TrackState *t = m.track(id);
         if (!t) return fail(err, "no such track");
@@ -316,7 +316,7 @@ bool Engine::setArmed(DalnokTrackId id, bool armed, std::string &err) {
 }
 
 bool Engine::setInputChannel(DalnokTrackId id, int32_t channel, std::string &err) {
-    if (recording_) return fail(err, "cannot change input while recording");
+    if (rec_.active) return fail(err, "cannot change input while recording");
     return edit("Track Input", false, [&](Model &m) {
         TrackState *t = m.track(id);
         if (!t) return fail(err, "no such track");

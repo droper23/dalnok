@@ -1,0 +1,61 @@
+// Recording state (A-06): device capture into the spool, the take in progress, and what the audio thread shares with
+// the control thread while recording. Engine owns one `RecordingState`; record.cpp, engine_audio.cpp and
+// engine_device.cpp drive it.
+// SPDX-License-Identifier: GPL-3.0-or-later
+#pragma once
+
+#include "capture_spool.hpp"
+#include "dalnok/dalnok.h"
+#include "rt.hpp"
+
+#include <array>
+#include <atomic>
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <vector>
+
+namespace dalnok {
+
+// An armed audio track in the take: spool channel `channel` becomes `wav`.
+struct RecordAudio { DalnokTrackId track; std::string name; int channel; std::string wav; };
+// A MIDI event captured during a take, at its timeline position.
+struct RecordedMidi { int64_t pos; uint8_t status, data1, data2; };
+
+struct RecordingState {
+    // Device capture (set up before the duplex device starts; captureRT is what the audio thread writes to).
+    std::unique_ptr<CaptureSpool> captureSpool;
+    std::unique_ptr<CaptureWriter> captureWriter;
+    CaptureWriter *captureRT = nullptr; // published before start; cleared after synchronous stop
+    std::array<int, 64> captureMap{};   // device input channel for each spool channel
+    int captureChannels = 0;
+    std::vector<float> captureScratch;  // interleaving space
+    std::atomic<bool> captureInputFailed{false};
+    std::atomic<uint64_t> captureMissingFrames{0};
+
+    // The take (control thread).
+    bool active = false;
+    DalnokTrackId recordAudioTrack = 0, recordMidiTrack = 0; // audio: the first armed audio track
+    std::vector<RecordAudio> recordAudio;                    // spool channel i belongs to recordAudio[i]
+    std::string recordSpool, recordWav, recordJournal;
+    int64_t latencyOffset = 0;
+    std::vector<RecordedMidi> midiTake;
+    int64_t recordCycleStart = 0, recordCycleEnd = 0; // the cycle when the take started
+
+    // Shared with the audio thread.
+    std::atomic<bool> recordArmed{false}, recordMidi{false}, recordBroken{false}, monitoring{false};
+    std::atomic<int64_t> recordStart{-1}, recordEnd{-1};
+    std::atomic<bool> recordSession{false}; // capture is gated by the transport (audio take in progress)
+    std::atomic<uint32_t> recordTake{0};
+    std::atomic<uint64_t> midiRecordDropped{0};
+    SpscQueue<RecordedMidi, 4096> midiRecordQueue;
+    std::atomic<int32_t> recordSlot{-1};    // a take into a launcher slot
+    std::atomic<bool> recordCycle{false};   // the take loops the cycle
+
+    // Audio thread only.
+    int64_t rtRecordNext = -1;
+    bool rtRecordingBlock = false;
+    int rtRecordOffset = 0, rtRecordCount = 0; // the part of this callback's block that belongs to the take
+};
+
+} // namespace dalnok

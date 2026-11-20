@@ -3,6 +3,7 @@
 #pragma once
 
 #include "transport.hpp"
+#include "recording_state.hpp"
 #include "dalnok/dalnok.h"
 #include "device.hpp"
 #include "capture_spool.hpp"
@@ -228,16 +229,16 @@ public:
     };
     bool startRecording(const std::string &inputUid, const std::string &directory, std::string &err);
     bool stopRecording(RecordResult &result, std::string &err);
-    bool recording() const { return recording_; }
+    bool recording() const { return rec_.active; }
     // Record into a launcher slot (-1 = the arrangement): takes go to this slot on each recorded track,
     // trimmed to whole bars (the bars the take fully covers), replacing what was there. Not saved.
-    void setRecordSlot(int32_t slot) { recordSlot_.store(slot, std::memory_order_relaxed); }
-    int32_t recordSlot() const { return recordSlot_.load(std::memory_order_relaxed); }
-    int64_t recordStart() const { return recordStart_.load(std::memory_order_acquire); }
-    bool recordBroken() const { return recordBroken_.load(std::memory_order_acquire); }
-    void setRecordLatencyOffset(int64_t frames) { latencyOffset_ = frames; }
+    void setRecordSlot(int32_t slot) { rec_.recordSlot.store(slot, std::memory_order_relaxed); }
+    int32_t recordSlot() const { return rec_.recordSlot.load(std::memory_order_relaxed); }
+    int64_t recordStart() const { return rec_.recordStart.load(std::memory_order_acquire); }
+    bool recordBroken() const { return rec_.recordBroken.load(std::memory_order_acquire); }
+    void setRecordLatencyOffset(int64_t frames) { rec_.latencyOffset = frames; }
     int64_t recordLatency() const; // device-reported round trip + offset
-    void setMonitoring(bool on) { monitoring_.store(on, std::memory_order_relaxed); }
+    void setMonitoring(bool on) { rec_.monitoring.store(on, std::memory_order_relaxed); }
     // Metronome: a click on every beat (accented on the bar) while the transport rolls. Live path only;
     // offline renders and exports never contain it.
     void setMetronome(bool on, float level) { transport_.setMetronome(on, level); }
@@ -252,7 +253,7 @@ public:
     bool setPunch(bool on, int64_t in, int64_t out, std::string &err) { return transport_.setPunch(on, in, out, err); }
     void punch(bool &on, int64_t &in, int64_t &out) const { transport_.punch(on, in, out); }
     void cycle(bool &on, int64_t &start, int64_t &end) const { transport_.cycle(on, start, end); }
-    bool monitoring() const { return monitoring_.load(std::memory_order_relaxed); }
+    bool monitoring() const { return rec_.monitoring.load(std::memory_order_relaxed); }
     void setSimulatedLatency(int64_t frames) { simulatedLatency_ = frames; }
     // Runs one duplex cycle on the simulated input device (tests and simulation).
     bool pumpInput(const float *input, float *left, float *right, int frames);
@@ -261,7 +262,7 @@ public:
     bool openMidiInput(int32_t uniqueId, std::string &err);
     bool injectMidi(uint8_t status, uint8_t data1, uint8_t data2);
     uint64_t midiDropped() const;
-    int32_t recordedMidiEvents() const { return static_cast<int32_t>(midiTake_.size()); }
+    int32_t recordedMidiEvents() const { return static_cast<int32_t>(rec_.midiTake.size()); }
     bool stopCapture(DalnokCaptureStats &stats, std::string &err, bool restoreOutput = true);
     bool captureActive() const { return duplex_ != nullptr; }
     bool captureStatus(DalnokCaptureStats &stats) const;
@@ -560,17 +561,8 @@ private:
     std::vector<ClipboardEntry> clipboard_;
     DalnokMediaId nextMedia_ = 1;
     int32_t nextColor_ = 0;
-    std::unique_ptr<CaptureSpool> captureSpool_;
-    std::unique_ptr<CaptureWriter> captureWriter_;
     std::unique_ptr<AudioDuplexDevice> duplex_;
-    CaptureWriter *captureRT_ = nullptr; // published before start; cleared after synchronous stop
-    // Device input channel for each spool channel, and interleaving space (set before the device starts).
-    std::array<int, 64> captureMap_{};
-    int captureChannels_ = 0;
-    std::vector<float> captureScratch_;
     static constexpr int kMaxCaptureBlock = 8192;
-    std::atomic<bool> captureInputFailed_{false};
-    std::atomic<uint64_t> captureMissingFrames_{0};
     std::unique_ptr<AudioDevice> device_;
     std::string outputUid_;
     PluginHostService pluginHost_;        // plug-in instances, loading and isolation (A-06)
@@ -582,23 +574,10 @@ private:
     int32_t nextPlugin_ = 1;
     int32_t nextMarker_ = 1;
     // Recording (control thread)
-    bool recording_ = false;
-    DalnokTrackId recordAudioTrack_ = 0, recordMidiTrack_ = 0; // audio: the first armed audio track
-    // Every armed audio track in this take: spool channel i belongs to recordAudio_[i].
-    struct RecordAudio { DalnokTrackId track; std::string name; int channel; std::string wav; };
-    std::vector<RecordAudio> recordAudio_;
-    std::string recordSpool_, recordWav_, recordJournal_;
-    int64_t latencyOffset_ = 0, simulatedLatency_ = 0;
+    int64_t simulatedLatency_ = 0;
+    RecordingState rec_; // capture, the take in progress and its audio-thread state (A-06)
     bool simulatedInput_ = false;
-    struct RecordedMidi { int64_t pos; uint8_t status, data1, data2; };
-    std::vector<RecordedMidi> midiTake_;
     // Recording (shared with the audio thread)
-    std::atomic<bool> recordArmed_{false}, recordMidi_{false}, recordBroken_{false}, monitoring_{false};
-    std::atomic<int64_t> recordStart_{-1}, recordEnd_{-1};
-    std::atomic<bool> recordSession_{false}; // capture is gated by the transport (audio take in progress)
-    std::atomic<uint32_t> recordTake_{0};
-    std::atomic<uint64_t> midiRecordDropped_{0};
-    SpscQueue<RecordedMidi, 4096> midiRecordQueue_;
     // MIDI input: slot 0 is fed by injectMidi (control thread), others by Core MIDI ports.
     static constexpr int kMidiInputs = 8;
     std::array<std::unique_ptr<MidiParser>, kMidiInputs> midiParsers_;
@@ -617,9 +596,6 @@ private:
     float transportGain_ = 0.0f;
     int64_t pendingSeek_ = -1;
     int64_t rtPosition_ = 0;
-    int64_t rtRecordNext_ = -1;
-    bool rtRecordingBlock_ = false;
-    int rtRecordOffset_ = 0, rtRecordCount_ = 0; // the part of this callback's block that belongs to the take
     uint32_t rtTake_ = 0;
     float clickY1_ = 0, clickY2_ = 0, clickCoefNow_ = 0, clickEnv_ = 0;
     int clickLeft_ = 0;
@@ -635,16 +611,13 @@ private:
     std::atomic<int32_t> soloCount_{0};
     // Click oscillator coefficients (control thread computes them; see syncRuntimes).
     std::atomic<float> clickCoef_{0}, clickAccentCoef_{0}, clickSin_{0}, clickAccentSin_{0}, clickDecay_{0};
-    std::atomic<int32_t> recordSlot_{-1};
     // Moves a take (the last of `takes`, trimmed to whole bars) into a launcher slot; removes `takes`.
     DalnokClipId takeToSlot(const std::vector<DalnokClipId> &takes, int32_t slot, std::string &err);
-    std::atomic<bool> recordCycle_{false};
     struct LaunchEvent { DalnokTrackId track; int32_t slot; int64_t frame; };
     std::atomic<bool> launcherRecording_{false};
     SpscQueue<LaunchEvent, 4096> launchEvents_;
     std::vector<LaunchEvent> launchLog_; // control thread
     int64_t launcherRecordStart_ = 0;      // this take loops the cycle and becomes one take per pass
-    int64_t recordCycleStart_ = 0, recordCycleEnd_ = 0; // the cycle when that take started (control thread)
 
     // Diagnostics (written by the audio thread).
     std::atomic<uint64_t> callbacks_{0}, framesRendered_{0}, maxCallbackNs_{0}, lastCallbackNs_{0};

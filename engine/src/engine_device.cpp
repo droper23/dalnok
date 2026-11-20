@@ -91,7 +91,7 @@ bool Engine::pumpInputChannels(const float *const *inputs, int count, float *lef
 }
 
 bool Engine::startCapture(const std::string &uid, const std::vector<int> &channels, const std::string &path, std::string &err) {
-    if (duplex_ || captureWriter_) { err = "capture is already active"; return false; }
+    if (duplex_ || rec_.captureWriter) { err = "capture is already active"; return false; }
     if (channels.empty() || channels.size() > 64) { err = "choose 1 to 64 input channels"; return false; }
     int highest = 0;
     for (int c : channels) {
@@ -115,25 +115,25 @@ bool Engine::startCapture(const std::string &uid, const std::vector<int> &channe
     const int fd = CaptureSpool::create(path, static_cast<uint32_t>(sampleRate_), count);
     if (fd < 0) { err = "cannot create new capture spool"; return false; }
     try {
-        captureSpool_ = std::make_unique<CaptureSpool>(fd, count);
+        rec_.captureSpool = std::make_unique<CaptureSpool>(fd, count);
         // About 5.5 seconds at 48 kHz; overflow always reports an error.
-        captureWriter_ = std::make_unique<CaptureWriter>(1 << 18, count, *captureSpool_);
-        captureScratch_.assign(static_cast<size_t>(kMaxCaptureBlock) * count, 0.0f);
-        for (size_t i = 0; i < channels.size(); ++i) captureMap_[i] = channels[i];
-        captureChannels_ = static_cast<int>(count);
-        captureWriter_->start();
+        rec_.captureWriter = std::make_unique<CaptureWriter>(1 << 18, count, *rec_.captureSpool);
+        rec_.captureScratch.assign(static_cast<size_t>(kMaxCaptureBlock) * count, 0.0f);
+        for (size_t i = 0; i < channels.size(); ++i) rec_.captureMap[i] = channels[i];
+        rec_.captureChannels = static_cast<int>(count);
+        rec_.captureWriter->start();
     } catch (...) {
-        if (!captureSpool_) ::close(fd);
-        captureWriter_.reset(); captureSpool_.reset();
+        if (!rec_.captureSpool) ::close(fd);
+        rec_.captureWriter.reset(); rec_.captureSpool.reset();
         err = "cannot start capture writer; spool retained"; return false;
     }
-    captureInputFailed_.store(false, std::memory_order_relaxed);
-    captureMissingFrames_.store(0, std::memory_order_relaxed);
-    captureRT_ = captureWriter_.get();
+    rec_.captureInputFailed.store(false, std::memory_order_relaxed);
+    rec_.captureMissingFrames.store(0, std::memory_order_relaxed);
+    rec_.captureRT = rec_.captureWriter.get();
     if (device_) { device_->stop(); device_.reset(); }
     if (!duplex->start(&Engine::duplexCallback, this, err)) {
-        captureRT_ = nullptr;
-        captureWriter_->stop(); captureWriter_.reset(); captureSpool_.reset();
+        rec_.captureRT = nullptr;
+        rec_.captureWriter->stop(); rec_.captureWriter.reset(); rec_.captureSpool.reset();
         std::string restoreError;
         if (!simulated && !startDevice(restoreError)) err += "; output restart failed: " + restoreError;
         return false;
@@ -145,28 +145,28 @@ bool Engine::startCapture(const std::string &uid, const std::vector<int> &channe
 }
 
 bool Engine::captureStatus(DalnokCaptureStats &stats) const {
-    if (!duplex_ || !captureWriter_) return false;
+    if (!duplex_ || !rec_.captureWriter) return false;
     stats = {};
-    stats.captured_frames = captureWriter_->capturedFrames();
-    stats.written_frames = captureWriter_->writtenFrames();
-    stats.dropped_frames = captureWriter_->droppedFrames() + captureMissingFrames_.load(std::memory_order_relaxed);
+    stats.captured_frames = rec_.captureWriter->capturedFrames();
+    stats.written_frames = rec_.captureWriter->writtenFrames();
+    stats.dropped_frames = rec_.captureWriter->droppedFrames() + rec_.captureMissingFrames.load(std::memory_order_relaxed);
     const double hardwareRate = duplex_->hardwareSampleRate();
-    stats.input_error = captureInputFailed_.load(std::memory_order_acquire) || duplex_->captureFailed() || !duplex_->alive() ||
+    stats.input_error = rec_.captureInputFailed.load(std::memory_order_acquire) || duplex_->captureFailed() || !duplex_->alive() ||
                         hardwareRate <= 0 || std::abs(hardwareRate - sampleRate_) > 0.5;
-    stats.overflow = captureWriter_->hasError(CaptureWriter::Error::overflow);
-    stats.write_error = captureWriter_->hasError(CaptureWriter::Error::write);
-    stats.finalize_error = captureWriter_->hasError(CaptureWriter::Error::finalize);
+    stats.overflow = rec_.captureWriter->hasError(CaptureWriter::Error::overflow);
+    stats.write_error = rec_.captureWriter->hasError(CaptureWriter::Error::write);
+    stats.finalize_error = rec_.captureWriter->hasError(CaptureWriter::Error::finalize);
     return true;
 }
 
 bool Engine::stopCapture(DalnokCaptureStats &stats, std::string &err, bool restoreOutput) {
-    if (!duplex_ || !captureWriter_) { err = "capture is not active"; return false; }
-    duplex_->stop(); // callback no longer accesses captureRT_
-    captureRT_ = nullptr;
-    captureChannels_ = 0;
-    captureWriter_->stop();
+    if (!duplex_ || !rec_.captureWriter) { err = "capture is not active"; return false; }
+    duplex_->stop(); // callback no longer accesses rec_.captureRT
+    rec_.captureRT = nullptr;
+    rec_.captureChannels = 0;
+    rec_.captureWriter->stop();
     captureStatus(stats);
-    duplex_.reset(); captureWriter_.reset(); captureSpool_.reset();
+    duplex_.reset(); rec_.captureWriter.reset(); rec_.captureSpool.reset();
     updateWorkgroup();
     const bool valid = !stats.input_error && !stats.overflow && !stats.write_error && !stats.finalize_error &&
                        stats.captured_frames > 0 && stats.captured_frames == stats.written_frames;
@@ -211,7 +211,7 @@ void Engine::collectGarbage() {
         for (const auto &t : model_.tracks)
             for (const auto &slot : t.plugins) if (slot.id == id) edited.push_back(t.id);
     if (any) { ++revision_; stampTracks(edited); }
-    if (recording_) drainRecordedMidi();
+    if (rec_.active) drainRecordedMidi();
 }
 
 } // namespace dalnok
