@@ -464,15 +464,17 @@ app.run()
         // Worst main-thread gap between dumps: a 5 ms timer in the common modes notices any stall longer than that.
         lastTickNs = DispatchTime.now().uptimeNanoseconds
         let t = Timer(timeInterval: 0.005, repeats: true) { _ in
-            let now = DispatchTime.now().uptimeNanoseconds
-            worstGapNs = max(worstGapNs, now - lastTickNs); lastTickNs = now
-            // Peaks since the last dump: meter reads reset them, and the UI reads every frame, so sample them often.
-            guard let e = (NSApp.delegate as? AppDelegate)?.main?.session.engine.handle else { return }
-            var l: Float = 0, r: Float = 0
-            dalnok_meter_master(e, &l, &r); peaks[0] = max(peaks[0] ?? 0, l, r)
-            for i in 0..<dalnok_track_count(e) {
-                let id = dalnok_track_at(e, i)
-                if dalnok_meter_track(e, id, &l, &r) == DALNOK_OK { peaks[Int(id)] = max(peaks[Int(id)] ?? 0, l, r) }
+            MainActor.assumeIsolated { // the main run loop's timer
+                let now = DispatchTime.now().uptimeNanoseconds
+                worstGapNs = max(worstGapNs, now - lastTickNs); lastTickNs = now
+                // Peaks since the last dump: meter reads reset them, and the UI reads every frame, so sample them often.
+                guard let e = (NSApp.delegate as? AppDelegate)?.main?.session.engine.handle else { return }
+                var l: Float = 0, r: Float = 0
+                dalnok_meter_master(e, &l, &r); peaks[0] = max(peaks[0] ?? 0, l, r)
+                for i in 0..<dalnok_track_count(e) {
+                    let id = dalnok_track_at(e, i)
+                    if dalnok_meter_track(e, id, &l, &r) == DALNOK_OK { peaks[Int(id)] = max(peaks[Int(id)] ?? 0, l, r) }
+                }
             }
         }
         RunLoop.main.add(t, forMode: .common)
