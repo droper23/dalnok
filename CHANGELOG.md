@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- Editing a clip no longer repaints the whole arrangement and mixer: only the changed tracks redraw. On a 4,096-clip project, an edit including drawing went from about 54 ms to 22 ms. The UI timing audit now includes drawing time.
 - Long audio files now play from disk instead of being held in memory (ADR-0016). Files over a minute are decoded once into a cache and played from a bounded memory cache. An hour of stereo audio used 1.39 GB of memory and now uses under 50 MB, with nothing dropped in testing. Reopening a project reuses the cache, so it opens instantly.
 - Time-stretched clips now render identically every time. The stretcher used a random seed, so the last few milliseconds of a stretched clip could differ between renders.
 - Internal: the engine's 3,000-line implementation is split by concern. Plug-in hosting (`PluginHostService`) and undo (`UndoStack`) are now their own classes, and the remaining code is in eight files of at most about 1,000 lines. No behaviour change.

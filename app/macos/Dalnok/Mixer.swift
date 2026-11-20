@@ -94,8 +94,36 @@ final class MixerPanel: NSView {
             }
             stack.addArrangedSubview(addBusButton)
         }
-        for (s, t) in zip(strips, tracks) { s.update(t) }
+        // A strip is rebuilt only when something it shows besides its scalars changed (a clip edit changes nothing
+        // here); the rest update their faders and buttons in place. The send menus list every bus, so the
+        // session's track names and kinds are part of each strip's signature.
+        var names = Hasher()
+        for t in session.allTracks { names.combine(t.id); names.combine(t.name); names.combine(t.isBus) }
+        let shared = names.finalize()
+        var signatures: [DalnokTrackId: Int] = [:]
+        for (s, t) in zip(strips, tracks) {
+            let sig = Self.signature(t, shared)
+            signatures[t.id] = sig
+            if stripSignatures[t.id] == sig { s.updateParameters(t) } else { s.update(t) }
+        }
+        stripSignatures = signatures
         if !master.fader.tracking { master.fader.db = session.masterGainDb; master.dbLabel.stringValue = FaderControl.format(session.masterGainDb) }
+    }
+
+    private var stripSignatures: [DalnokTrackId: Int] = [:]
+    /// Everything a strip shows apart from gain, pan, mute and solo.
+    private static func signature(_ t: TrackView, _ shared: Int) -> Int {
+        var h = Hasher()
+        h.combine(shared)
+        h.combine(t.id); h.combine(t.name); h.combine(t.color.description); h.combine(t.customColor)
+        h.combine(t.isBus); h.combine(t.isInstrument); h.combine(t.output); h.combine(t.armed); h.combine(t.inputChannel)
+        h.combine(t.stack); h.combine(t.isStack); h.combine(t.collapsed)
+        for p in t.plugins {
+            h.combine(p.id); h.combine(p.name); h.combine(p.vendor); h.combine(p.loaded); h.combine(p.error)
+            h.combine(p.bypassed); h.combine(p.loading); h.combine(p.isolated); h.combine(p.latency); h.combine(p.instrument)
+        }
+        for var s in t.sends { withUnsafeBytes(of: &s) { h.combine(bytes: $0) } }
+        return h.finalize()
     }
 
     /// After a parameter-only change: update scalars in place; anything else falls back to a full rebuild.

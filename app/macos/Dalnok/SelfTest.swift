@@ -516,6 +516,7 @@ final class SelfTest {
         deadControls()
         await tapeMachine()
         await markersAndTrackTools()
+        await partialTimelineRedraw()
         await deferredPluginLoading()
         await slowIsolatedPluginLoading()
         await isolatedPluginEditors()
@@ -998,6 +999,52 @@ final class SelfTest {
         print("MEASURE real input into isolated AUDelay editor at \(field): Dry/Wet \(before) → \(after)")
         check(after.hasPrefix("25"), "real clicks and typing reach the isolated editor (Dry/Wet \(before) → \(after))")
         check(front == getpid(), "typing into the editor leaves Dalnok the active application")
+    }
+
+    /// A structural edit on one track redraws only that track's lane, and the result matches drawing everything.
+    /// The reference draws the whole view into an identical offscreen context; even a full redraw differs from it by a
+    /// few rasterized text bytes, so a partial redraw must differ by no more than a full one does.
+    private func partialTimelineRedraw() async {
+        let tl = w.timeline
+        guard s.tracks.count >= 2, let clip = s.tracks[1].clips.first, let win = tl.window else {
+            return check(false, "partial redraw check needs two tracks with clips")
+        }
+        func context() -> CGContext? {
+            let scale = win.backingScaleFactor, pw = Int(tl.bounds.width * scale), ph = Int(tl.bounds.height * scale)
+            guard pw > 0, ph > 0, let ctx = CGContext(data: nil, width: pw, height: ph, bitsPerComponent: 8, bytesPerRow: pw * 4,
+                                                     space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+            else { return nil }
+            ctx.scaleBy(x: scale, y: scale)
+            return ctx
+        }
+        func bytes(_ ctx: CGContext) -> Data { Data(bytes: ctx.data!, count: ctx.bytesPerRow * ctx.height) }
+        func committed() -> Data? { guard let layer = tl.layer, let ctx = context() else { return nil }; layer.render(in: ctx); return bytes(ctx) }
+        func drawnFresh() -> Data? {
+            guard let ctx = context() else { return nil }
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: tl.isFlipped)
+            tl.draw(tl.bounds)
+            NSGraphicsContext.restoreGraphicsState()
+            return bytes(ctx)
+        }
+        func differing(_ a: Data?, _ b: Data?) -> Int {
+            guard let a, let b, a.count == b.count else { return Int.max }
+            var n = 0
+            a.withUnsafeBytes { x in b.withUnsafeBytes { y in for k in 0..<x.count where abs(Int(x[k]) - Int(y[k])) > 2 { n += 1 } } }
+            return n
+        }
+        for _ in 0..<2 { tl.needsDisplay = true; win.displayIfNeeded(); CATransaction.flush(); await wait(0.05) }
+        let baseline = differing(committed(), drawnFresh())
+        var ids = [clip.id]
+        _ = dalnok_clips_nudge(s.h, &ids, 1, 4_800)
+        s.refresh()
+        win.displayIfNeeded(); CATransaction.flush() // the partial redraw, as the run loop would draw it
+        let lanes = tl.lanesDrawn, reread = s.rereadTracks
+        let partial = differing(committed(), drawnFresh())
+        check(reread == [s.tracks[1].id] && lanes == 1,
+              "a structural edit on one track redraws only its lane (\(lanes) lane drawn; tracks read \(reread.count))")
+        check(partial <= baseline, "the partially redrawn timeline matches a full redraw (\(partial) vs \(baseline) differing bytes)")
+        _ = perform("Undo")
     }
 
     private func markersAndTrackTools() async {

@@ -155,6 +155,7 @@ Rules the roadmap enforces:
 | A-03 structural undo | **Done** | Undo steps below the top become clip deltas against the state they will be applied to. 500 structural edits at 4,096 clips: RSS growth 268.9 → 3.3 MB; edit p50 0.274 → 0.299 ms, undo 0.27 → 0.36 ms. `UndoDeltas` random history (3 seeds) |
 | A-06 engine services | **Partial** | `PluginHostService` and `UndoStack` extracted; Engine definitions split into 8 files (engine.cpp 3,037 → 1,024 lines, none over 450 otherwise). Tests unchanged and passing. Transport, recording and compilation are still Engine members, not classes |
 | A-09 disk streaming | **Done** | ADR-0016: files over 60 s decode into a cache file and play from a bounded block cache; the audio thread copies resident blocks only. One hour of stereo: RSS 1,390 MB → 48.6 MB peak while playing, 0 missed frames; `Streaming` tests bit-exact against memory, live included, under a 2 MB budget |
+| UI drawing time | **Measured; partly fixed** | `audit-ui` includes drawing and the layer commit. One-track structural edit with drawing 53.7 → 22.2 ms (Graphite), 51.5 → 23.4 ms (Warm Analog): the timeline redraws only changed lanes and the mixer skips unchanged strips; still above one 60 Hz frame |
 | A-23 status documentation | **Done** | capability table now links tests; C API references corrected to v29 |
 
 The larger A-01 and A-03 programmes remain open; their smaller safety and performance steps do not establish crash isolation, structural sharing or incremental UI change sets. Other unfinished items remain as written above.

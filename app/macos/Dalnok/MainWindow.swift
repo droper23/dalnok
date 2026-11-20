@@ -542,7 +542,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             timeline.zoomToFit()
             fitOnNextChange = false
         }
-        timeline.needsDisplay = true
+        invalidateTimeline()
         updateTitle()
         updateTempoDisplay()
         applyCycle()
@@ -553,6 +553,30 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         if !mixer.isHidden { mixer.rebuild(); mixer.select(selectedTrack) }
         if !launcher.isHidden { launcher.needsDisplay = true }
         if transientMessageUntil < Date() { updateStatus() }
+    }
+
+    private var timelineLayout: Int?, timelineGlobals: Int?
+    /// After a structural change: redraw only the lanes of the tracks that changed, unless the lane layout or anything
+    /// drawn across every lane (markers, tempo and meter grid, cycle) changed, or no track was read again.
+    private func invalidateTimeline() {
+        var layout = Hasher()
+        for (i, t) in session.tracks.enumerated() {
+            layout.combine(t.id); layout.combine(session.laneHeight(i)); layout.combine(t.isStack); layout.combine(t.collapsed)
+        }
+        var globals = Hasher()
+        for m in session.markers { globals.combine(m.id); globals.combine(m.frame); globals.combine(fixedString(m.name)) }
+        for p in session.tempoPoints { globals.combine(p.beat); globals.combine(p.bpm) }
+        for p in session.meterPoints { globals.combine(p.bar); globals.combine(p.numerator); globals.combine(p.denominator) }
+        let c = session.cycle
+        globals.combine(c.on); globals.combine(c.start); globals.combine(c.end)
+        let l = layout.finalize(), g = globals.finalize()
+        if l != timelineLayout || g != timelineGlobals || session.rereadTracks.isEmpty {
+            timeline.needsDisplay = true
+        } else {
+            timeline.invalidateLanes(of: session.rereadTracks)
+        }
+        timelineLayout = l
+        timelineGlobals = g
     }
 
     func updateTitle() {
@@ -1282,11 +1306,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         }
         if session.setCycle(true, range.0, range.1) { flash("Cycle \(timeline.positionText(range.0)) – \(timeline.positionText(range.1))") }
     }
+    private var drawnCycle: (on: Bool, start: Int64, end: Int64)?
     func applyCycle() {
-        let on = session.cycle.on
-        transport.cycleButton.setSymbol("repeat", tint: on ? Theme.cycle : Theme.textDim)
-        transport.cycleButton.setAccessibilityValue(on ? "on" : "off")
-        timeline.needsDisplay = true
+        let cycle = session.cycle
+        transport.cycleButton.setSymbol("repeat", tint: cycle.on ? Theme.cycle : Theme.textDim)
+        transport.cycleButton.setAccessibilityValue(cycle.on ? "on" : "off")
+        // The cycle region spans every lane: redraw only when it changed (modelChanged calls this on every edit).
+        if drawnCycle.map({ $0 != cycle }) ?? true { timeline.needsDisplay = true }
+        drawnCycle = cycle
     }
 
     func applyMetronome() {

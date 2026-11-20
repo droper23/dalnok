@@ -84,6 +84,8 @@ final class Session {
     var projectURL: URL?
     /// Called after the model changed (any source: UI, undo, scripts).
     var onChange: (() -> Void)?
+    /// The tracks the last structural refresh read again (their revision changed); the others reused cached views.
+    private(set) var rereadTracks: Set<DalnokTrackId> = []
     var onParameterChange: ((Bool) -> Void)?
     var onMessage: ((String) -> Void)?
 
@@ -130,6 +132,7 @@ final class Session {
         }
         revision = rev
         var out: [TrackView] = []
+        var reread: Set<DalnokTrackId> = []
         takeClips = [:]
         slotClips = []
         var cache: [DalnokTrackId: CachedTrack] = [:]
@@ -146,6 +149,7 @@ final class Session {
             }
             var ti = DalnokTrackInfo()
             guard dalnok_track_info(h, tid, &ti) == DALNOK_OK else { continue }
+            reread.insert(tid)
             var clips: [ClipView] = [], takes: [ClipView] = [], slots: [ClipView] = []
             for k in 0..<ti.clip_count {
                 clipReads += 1
@@ -203,6 +207,7 @@ final class Session {
             return false
         }
         tracks = out.filter { !hidden($0) && !$0.hidden }
+        rereadTracks = reread
         onChange?()
         return true
     }

@@ -326,6 +326,18 @@ final class TimelineView: NSView {
     func xPos(forFrame f: Double) -> CGFloat { CGFloat((f - scrollFrame) / framesPerPoint) }
     func frame(forX x: CGFloat) -> Double { scrollFrame + Double(x) * framesPerPoint }
     func laneY(_ index: Int) -> CGFloat { Theme.rulerHeight + session.laneTop(index) - scrollY }
+
+    /// Redraws only these tracks' lanes, and the lanes of the stacks that summarize them.
+    func invalidateLanes(of ids: Set<DalnokTrackId>) {
+        var all = ids
+        for id in ids {
+            var parent = session.track(id)?.stack ?? 0
+            while parent != 0, all.insert(parent).inserted { parent = session.track(parent)?.stack ?? 0 }
+        }
+        for (i, t) in session.tracks.enumerated() where all.contains(t.id) {
+            setNeedsDisplay(NSRect(x: 0, y: laneY(i), width: bounds.width, height: session.laneHeight(i)))
+        }
+    }
     /// The height of the lane whose top is at `laneY` (view coordinates).
     func laneHeight(atLaneY laneY: CGFloat) -> CGFloat { session.laneHeight(session.laneIndex(atY: laneY - Theme.rulerHeight + scrollY + 0.5)) }
     func trackIndex(atY y: CGFloat) -> Int? {
@@ -457,14 +469,24 @@ final class TimelineView: NSView {
 
     // MARK: Drawing
 
+    /// Lanes drawn by the last draw pass (self-test evidence for partial redraws).
+    private(set) var lanesDrawn = 0
+    /// Total time spent in draw (audit instrumentation).
+    private(set) var drawSeconds = 0.0, drawCalls = 0
     override func draw(_ dirtyRect: NSRect) {
+        let started = DispatchTime.now().uptimeNanoseconds
+        defer { drawSeconds += Double(DispatchTime.now().uptimeNanoseconds - started) / 1e9; drawCalls += 1 }
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+        lanesDrawn = 0
         let scale = window?.backingScaleFactor ?? 2
         drawLanes(ctx)
         drawGrid(ctx, scale: scale)
         for (i, track) in session.tracks.enumerated() {
             let y = laneY(i)
             guard y + session.laneHeight(i) > Theme.rulerHeight, y < bounds.height else { continue }
+            // Only lanes inside the area being redrawn (a structural edit redraws just its tracks' lanes).
+            guard dirtyRect.intersects(CGRect(x: 0, y: y, width: bounds.width, height: session.laneHeight(i))) else { continue }
+            lanesDrawn += 1
             if track.isStack { drawStackSummary(ctx, track, laneY: y) }
             for clip in track.clips { drawClip(ctx, clip, track: track, laneY: y, scale: scale) }
             if let rec = recording, rec.tracks.contains(track.id) { drawRecording(ctx, rec, laneY: y) }
