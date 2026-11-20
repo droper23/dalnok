@@ -183,6 +183,11 @@ bool showEditor(PluginProcessor &plugin, const std::string &title, double x, dou
         panel.hidesOnDeactivate = NO; // the host is never the active application
         panel.floatingPanel = YES;    // above Dalnok's windows, which belong to another process
         panel.becomesKeyOnlyIfNeeded = NO;
+        // Dalnok's windows can be on another Space (or full screen) than the one the host first drew on, and ordering
+        // a window front never moves it between Spaces: it stayed "visible" but off screen. Join every Space instead;
+        // appActivated: already hides it whenever Dalnok is not the active application.
+        panel.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces |
+                                   NSWindowCollectionBehaviorFullScreenAuxiliary;
         panel.delegate = gEditor;
         panel.contentView.wantsLayer = YES;
         gEditor.panel = panel;

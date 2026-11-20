@@ -270,12 +270,12 @@ struct PluginIsolation {
     // MARK: Editors in the host's window (ADR-0015)
 
     /// The window server's record of a window: owner process and bounds (no screen-recording permission needed).
-    func windowServerEntry(_ number: Int64) -> (pid: Int32, bounds: CGRect)? {
+    func windowServerEntry(_ number: Int64) -> (pid: Int32, bounds: CGRect, onScreen: Bool)? {
         let list = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] ?? []
         guard let w = list.first(where: { ($0[kCGWindowNumber as String] as? Int64) == number }),
               let pid = w[kCGWindowOwnerPID as String] as? Int32,
               let b = w[kCGWindowBounds as String] as? NSDictionary, let rect = CGRect(dictionaryRepresentation: b) else { return nil }
-        return (pid, rect)
+        return (pid, rect, w[kCGWindowIsOnscreen as String] as? Bool == true)
     }
 
     /// Mean colour and spread of a PNG's pixels (0…1).
@@ -326,12 +326,18 @@ struct PluginIsolation {
         #expect(abs(w.x - 120) < 1 && abs(w.y + w.height - 700) < 1, "placed with its top-left where asked")
         #expect(w.level == Int64(NSWindow.Level.floating.rawValue), "floats above Dalnok's windows")
         #expect(w.process_id > 0 && w.process_id != getpid())
-        let ws = windowServerEntry(w.window_number)
+        var ws = windowServerEntry(w.window_number)
+        // A panel that joins every Space is briefly reported mid-way through its appear animation (476 × 350).
+        for _ in 0..<20 where ws?.bounds.width != 480 { usleep(50_000); ws = windowServerEntry(w.window_number) }
         #expect(ws?.pid == w.process_id, "the window server shows it owned by the host: \(String(describing: ws))")
         // The lock screen shows every window scaled to 90 % about the screen's centre, so bounds only hold unlocked.
         let locked = (CGSessionCopyCurrentDictionary() as? [String: Any])?["CGSSessionScreenIsLocked"] as? Bool == true
         if locked { print("SKIP  window-server bounds of the editor (the screen is locked)") }
-        else { #expect(ws?.bounds.width == 480, "the window server shows the resized window: \(String(describing: ws))") }
+        else {
+            #expect(ws?.bounds.width == 480, "the window server shows the resized window: \(String(describing: ws))")
+            // A panel left on another Space reports visible but is not on screen; it must join the active Space.
+            #expect(ws?.onScreen == true, "the window server shows the editor on the current Space")
+        }
         let png = tempDir().appendingPathComponent("vst3-editor-\(UUID().uuidString).png").path
         #expect(dalnok_plugin_editor_snapshot(e, slot, png) == DALNOK_OK)
         let p = pixels(png)
