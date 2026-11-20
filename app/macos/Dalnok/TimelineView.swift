@@ -346,9 +346,22 @@ final class TimelineView: NSView {
         return i >= 0 && i < session.tracks.count ? i : nil
     }
 
+    /// A fit asked for before the view had its real width (a window still being built) runs at the next layout.
+    private var fitPending = false
+    /// Shows exactly this view (a rebuilt window taking over an earlier one's zoom and scroll); cancels a pending fit.
+    func keepView(framesPerPoint fpp: Double, scrollFrame sf: Double, scrollY sy: CGFloat) {
+        fitPending = false
+        framesPerPoint = fpp
+        scrollFrame = sf
+        scrollY = sy
+    }
     func zoomToFit() {
+        // Fitting a not-yet-laid-out timeline used a 200 pt stand-in width, squeezing the song into the first 200 pt
+        // (seen after switching between Graphite and Warm Analog, which rebuilds the window).
+        guard bounds.width >= 200 else { fitPending = true; needsLayout = true; return }
+        fitPending = false
         let len = Double(max(session.length, Int64(sampleRate * 10)))
-        framesPerPoint = max(1, len * 1.05 / Double(max(bounds.width, 200)))
+        framesPerPoint = max(1, len * 1.05 / Double(bounds.width))
         scrollFrame = 0
     }
 
@@ -1280,6 +1293,7 @@ final class TimelineView: NSView {
 
     override func layout() {
         super.layout()
+        if fitPending && bounds.width >= 200 { zoomToFit() }
         clampScrollY()
         removeAllToolTips()
         addToolTip(CGRect(x: 0, y: 0, width: bounds.width, height: Theme.rulerHeight / 2),

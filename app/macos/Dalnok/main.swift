@@ -157,6 +157,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Theme.activeStyle = style
         session.forceRefresh() // track colours come from the style's palette
         let next = MainWindowController(session: session)
+        // The arrangement keeps its zoom and scroll position: the same view, drawn in the other style.
+        next.fitOnNextChange = false
+        next.timeline.keepView(framesPerPoint: old.timeline.framesPerPoint, scrollFrame: old.timeline.scrollFrame, scrollY: old.timeline.scrollY)
         next.settings = settings
         next.openedMidiSources = old.openedMidiSources
         main = next
