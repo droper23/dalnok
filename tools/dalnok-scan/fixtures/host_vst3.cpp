@@ -170,6 +170,13 @@ public:
                 ::usleep(static_cast<useconds_t>((ms ? std::atoi(ms) : 3000) * 1000));
             }
         }
+        // A plug-in whose main-thread work keeps the host's run loop busy (timers, UI refresh, locks held by its
+        // own threads): DALNOK_TEST_MAIN_BUSY=1 sleeps 200 ms in a main-thread timer every millisecond.
+        if (std::getenv("DALNOK_TEST_MAIN_BUSY")) {
+            CFRunLoopTimerRef t = CFRunLoopTimerCreateWithHandler(nullptr, CFAbsoluteTimeGetCurrent(), 0.001, 0, 0,
+                                                                  ^(CFRunLoopTimerRef) { ::usleep(200'000); });
+            CFRunLoopAddTimer(CFRunLoopGetMain(), t, kCFRunLoopCommonModes);
+        }
         IHostApplication *host = nullptr;
         if (!context || context->queryInterface(IHostApplication::iid, reinterpret_cast<void **>(&host)) != kResultOk || !host) return kResultFalse;
         TUID id;

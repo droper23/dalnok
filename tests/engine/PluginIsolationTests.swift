@@ -457,4 +457,57 @@ struct PluginIsolation {
         #expect(c.workgroup_joined && c.workgroup_joins == 2, "after the device restarts it joins the new workgroup")
         dalnok_engine_stop_device(e)
     }
+
+    /// Quitting while the device runs: the host's processing thread is in the device's workgroup when the engine goes
+    /// away. A thread that exits while still joined makes libdispatch trap (SIGTRAP), so every quit with Safety on
+    /// left a crash report per host. Hosts must exit normally.
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["CI"] == nil, "needs real audio hardware"))
+    func hostsExitCleanlyWhenTheEngineGoesAwayWhileJoined() throws {
+        // A busy host main thread answers the quit late, so the processing thread exits first (as with real plug-ins).
+        setenv("DALNOK_TEST_MAIN_BUSY", "1", 1); defer { unsetenv("DALNOK_TEST_MAIN_BUSY") }
+        let (e, t) = audioSession()
+        dalnok_plugins_set_host(e, isolationHost)
+        var err = [CChar](repeating: 0, count: 256)
+        let slot = dalnok_plugin_add(e, t, testVst3, gainClass, &err, 256)
+        #expect(slot != 0, "\(cstr(err))")
+        guard dalnok_engine_start_device(e, &err, 256) == DALNOK_OK else {
+            dalnok_engine_destroy(e); Issue.record("no output device: \(cstr(err))"); return
+        }
+        dalnok_transport_play(e)
+        usleep(400_000)
+        var s = DalnokPluginIsolationStats()
+        #expect(dalnok_plugin_isolation_stats(e, slot, &s) == DALNOK_OK && s.workgroup_joined)
+        // Watch the host's exit status (kqueue reports it for our own children) before the engine reaps it.
+        let pids = plughostPids()
+        #expect(pids.count == 1)
+        let kq = kqueue(); defer { close(kq) }
+        for pid in pids {
+            var ev = kevent(ident: UInt(pid), filter: Int16(EVFILT_PROC), flags: UInt16(EV_ADD | EV_ONESHOT),
+                            fflags: UInt32(NOTE_EXIT) | UInt32(NOTE_EXITSTATUS), data: 0, udata: nil)
+            #expect(kevent(kq, &ev, 1, nil, 0, nil) == 0)
+        }
+        // A new project drops the instance while the device (and its workgroup) keeps running, as when the app
+        // quits before the device's workgroup goes away.
+        dalnok_project_new(e)
+        for k in 0..<3 { usleep(200_000); _ = dalnok_track_add(e, "T\(k)") } // the device adopts; commits collect
+        var out = kevent(), timeout = timespec(tv_sec: 3, tv_nsec: 0)
+        var statuses: [Int32] = []
+        while statuses.count < pids.count, kevent(kq, nil, 0, &out, 1, &timeout) == 1 { statuses.append(Int32(truncatingIfNeeded: out.data)) }
+        #expect(statuses.count == pids.count)
+        for st in statuses {
+            let signal = st & 0x7f, code = (st >> 8) & 0xff
+            #expect(signal == 0 && code == 0, "host exited normally (status \(st): signal \(signal), code \(code))")
+        }
+        dalnok_engine_destroy(e)
+    }
+
+    func plughostPids() -> [Int32] {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
+        p.arguments = ["-P", "\(getpid())", "dalnok-plughost"]
+        let out = Pipe()
+        p.standardOutput = out
+        try? p.run(); p.waitUntilExit()
+        return String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self).split(separator: "\n").compactMap { Int32($0) }
+    }
 }

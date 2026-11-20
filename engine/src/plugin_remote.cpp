@@ -839,7 +839,13 @@ void audioLoop(Host *h) {
     while (true) {
         waitChange(s->request, seen, 0);
         seen = s->request.load(std::memory_order_acquire);
-        if (s->quit.load(std::memory_order_acquire)) return;
+        if (s->quit.load(std::memory_order_acquire)) {
+            // A thread that exits while still in a workgroup makes libdispatch trap (a crash report per host on every
+            // quit while the device runs), so leave it first.
+            if (workgroup) { os_workgroup_leave(workgroup, &token); os_release(workgroup); }
+            h->joined.store(false, std::memory_order_relaxed);
+            return;
+        }
         if (const uint32_t offers = h->offers.load(std::memory_order_acquire); offers != offersSeen) {
             offersSeen = offers;
             adoptWorkgroup(h, workgroup, token);
