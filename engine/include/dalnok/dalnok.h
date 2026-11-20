@@ -651,6 +651,13 @@ DalnokTrackId dalnok_track_add_instrument(DalnokEngine *engine, const char *name
 DalnokStatus dalnok_track_set_armed(DalnokEngine *engine, DalnokTrackId track, bool armed);
 DalnokStatus dalnok_track_set_input(DalnokEngine *engine, DalnokTrackId track, int32_t input_channel);
 
+/* Auditions a note on an instrument track (piano-roll edits, as other DAWs do): `on` starts it at `velocity`, and the
+ * same pitch with on = false releases it. It plays through the track's instrument (built-in or plug-in, isolated or not)
+ * and its inserts whether or not the transport plays, without arming the track, and is never recorded. While notes
+ * sound, and for 2 s after the last release, the track takes live MIDI input in place of the armed one.
+ * DALNOK_ERR_NOT_FOUND: no such instrument track. [control thread] (API 39) */
+DalnokStatus dalnok_track_preview_note(DalnokEngine *engine, DalnokTrackId track, uint8_t pitch, uint8_t velocity, bool on);
+
 /* A note in frames relative to the clip's source origin (timeline = clip start + start - clip offset). */
 typedef struct {
     int64_t start, length;

@@ -445,6 +445,7 @@ public:
     bool pluginLoading(int32_t slot) const;
     bool takeEditorKey(int32_t &slot, PluginProcessor::EditorKey &key) { return pluginHost_.takeEditorKey(slot, key); }
     void noteEditorOpened(int32_t slot) { pluginHost_.noteEditorOpened(slot); }
+    bool previewNote(DalnokTrackId track, uint8_t pitch, uint8_t velocity, bool on);
     bool pluginEditorStatesChanged() const { return pluginHost_.editorStatesChanged(); }
     void cancelPendingPlugins();
     bool reloadPlugin(int32_t slot, std::string &err); // an unloaded or failed slot, from its saved state
@@ -527,7 +528,7 @@ private:
     static void duplexCallback(void *ctx, float *left, float *right, const float *const *inputs, int inputCount,
                                int frames) DALNOK_NONBLOCKING;
     void process(float *left, float *right, int frames) DALNOK_NONBLOCKING;
-    void handleMidiInput(int64_t pos) DALNOK_NONBLOCKING;
+    void handleMidiInput(int64_t pos, int frames) DALNOK_NONBLOCKING;
     void renderClick(float *left, float *right, int frames, int64_t pos) DALNOK_NONBLOCKING;
     void drainRecordedMidi();
     void waitForAudioCycles();
@@ -606,6 +607,14 @@ private:
     int rtMidiCount_ = 0;
     PluginNote rtLiveNotes_[256]{}; // this callback's live notes for a plugin instrument
     int rtLiveNoteCount_ = 0;
+    // Auditioning from the piano roll (previewNote): notes for one track's instrument, never recorded. While any sounds,
+    // and for 2 s after the last is released (release tails), that track plays live input instead of the armed one.
+    struct PreviewNote { DalnokTrackId track; uint8_t pitch, velocity; bool on; };
+    SpscQueue<PreviewNote, 256> previewNotes_;
+    std::mutex previewProducer_; // control threads (the queue has one producer at a time)
+    DalnokTrackId rtPreviewTrack_ = 0;
+    int rtPreviewHeld_ = 0;
+    int64_t rtPreviewHoldFrames_ = 0;
     std::atomic<float> masterPeakL_{0.0f}, masterPeakR_{0.0f};
     float masterDcL_ = 0, masterDcR_ = 0; // audio thread (meterLevel)
 

@@ -185,8 +185,8 @@ void runInserts(const RenderTrack &t, int frames, Scratch &s) DALNOK_NONBLOCKING
 
 void renderLiveInput(const RenderState &state, int frames, float *left, float *right, Scratch &s,
                      bool anySolo, bool transportStopped) DALNOK_NONBLOCKING {
-    if (state.liveTrack < 0 || state.liveTrack >= static_cast<int32_t>(state.tracks.size())) return;
-    const RenderTrack &t = state.tracks[static_cast<size_t>(state.liveTrack)];
+    if (s.liveTrack < 0 || s.liveTrack >= static_cast<int32_t>(state.tracks.size())) return;
+    const RenderTrack &t = state.tracks[static_cast<size_t>(s.liveTrack)];
     TrackRuntime &rt = *t.runtime;
     if (!t.instrument && !t.instrumentPlugin) return;
     bool stereo = false;
@@ -304,7 +304,7 @@ void renderBlock(const RenderState &state, int64_t pos, int frames, float *left,
                 clear(s.trackL, frames); clear(s.trackR, frames);
                 if (t.instrumentPlugin) {
                     const PluginNote *live = s.liveNotes; const int liveCount = s.liveNoteCount;
-                    if (static_cast<int32_t>(index - 1) != state.liveTrack) { s.liveNotes = nullptr; s.liveNoteCount = 0; }
+                    if (static_cast<int32_t>(index - 1) != s.liveTrack) { s.liveNotes = nullptr; s.liveNoteCount = 0; }
                     renderPluginNotes(t.instrumentPlugin, nullptr, nullptr, 0, synth, rel, frames, s);
                     s.liveNotes = live; s.liveNoteCount = liveCount;
                 }
@@ -316,7 +316,7 @@ void renderBlock(const RenderState &state, int64_t pos, int frames, float *left,
             } else if (t.instrumentPlugin) {
                 const PluginNote *live = s.liveNotes;
                 const int liveCount = s.liveNoteCount;
-                if (static_cast<int32_t>(index - 1) != state.liveTrack) { s.liveNotes = nullptr; s.liveNoteCount = 0; }
+                if (static_cast<int32_t>(index - 1) != s.liveTrack) { s.liveNotes = nullptr; s.liveNoteCount = 0; }
                 renderPluginNotes(t.instrumentPlugin, slot->notes.data(), slot->noteEnds.data(), slot->notes.size(), synth, rel, frames, s);
                 s.liveNotes = live; s.liveNoteCount = liveCount;
                 any = true;
@@ -330,7 +330,7 @@ void renderBlock(const RenderState &state, int64_t pos, int frames, float *left,
             any = true;
         } else if (t.instrumentPlugin) {
             // Plugin instruments run every block (tails, internal state); live notes join on the live track.
-            const bool liveHere = !synths && static_cast<int32_t>(index - 1) == state.liveTrack;
+            const bool liveHere = !synths && static_cast<int32_t>(index - 1) == s.liveTrack;
             const PluginNote *live = s.liveNotes;
             const int liveCount = s.liveNoteCount;
             if (!liveHere) { s.liveNotes = nullptr; s.liveNoteCount = 0; }
@@ -355,7 +355,7 @@ void renderBlock(const RenderState &state, int64_t pos, int frames, float *left,
         if (!t.inserts.empty()) {
             if (!any) { clear(s.trackL, frames); clear(s.trackR, frames); any = true; }
             // Live input on a built-in-synth track with inserts goes through the inserts too.
-            if (!synths && static_cast<int32_t>(index - 1) == state.liveTrack && t.instrument && !t.instrumentPlugin && rt.live.active()) {
+            if (!synths && static_cast<int32_t>(index - 1) == s.liveTrack && t.instrument && !t.instrumentPlugin && rt.live.active()) {
                 clear(s.tmp, frames);
                 rt.live.render(state.synth, s.tmp, frames, -1);
                 for (int i = 0; i < frames; ++i) { s.trackL[i] += s.tmp[i]; s.trackR[i] += s.tmp[i]; }

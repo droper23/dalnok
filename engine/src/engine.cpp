@@ -543,6 +543,15 @@ int32_t Engine::addPlugin(DalnokTrackId track, const std::string &path, const st
     return id;
 }
 
+// ---- Auditioning notes (piano roll) ---------------------------------------------
+
+bool Engine::previewNote(DalnokTrackId track, uint8_t pitch, uint8_t velocity, bool on) {
+    const TrackState *t = model_.track(track);
+    if (!t || t->kind != kTrackInstrument || pitch > 127) return false;
+    std::lock_guard<std::mutex> g(previewProducer_);
+    return previewNotes_.push(PreviewNote{track, pitch, static_cast<uint8_t>(std::min<int>(velocity, 127)), on && velocity > 0});
+}
+
 // ---- Markers ----------------------------------------------------------------
 
 static void sortMarkers(std::vector<Marker> &ms) {

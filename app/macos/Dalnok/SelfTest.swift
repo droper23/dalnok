@@ -1923,6 +1923,36 @@ final class SelfTest {
                 check(v > rn.velocity && e.undoName == "Note Velocity", "velocity lane drag raises velocity (\(rn.velocity) → \(v))")
             }
         }
+        // Auditioning: holding the mouse on a note plays it through the track's instrument, unarmed and stopped, and
+        // releasing it stops the sound (dalnok_track_preview_note).
+        if dalnok_engine_device_running(e.handle), let cur = s.clip(clip), let note = cur.notes.first(where: { $0.pitch == 76 }) {
+            let track = cur.track
+            _ = dalnok_track_set_armed(e.handle, track, false)
+            if e.isPlaying { dalnok_transport_pause(e.handle) }
+            func level(over seconds: Double) async -> Float {
+                var peak: Float = 0
+                for _ in 0..<Int(seconds / 0.05) {
+                    await wait(0.05)
+                    var l: Float = 0, r: Float = 0
+                    _ = dalnok_meter_track(e.handle, track, &l, &r)
+                    peak = max(peak, l, r)
+                }
+                return peak
+            }
+            _ = await level(over: 0.6) // anything still ringing
+            let r = roll.rect(note, cur)
+            let at = CGPoint(x: r.minX + 3, y: r.midY)
+            roll.mouseDown(with: ev(.leftMouseDown, at))
+            let held = await level(over: 0.4)
+            roll.mouseUp(with: ev(.leftMouseUp, at))
+            _ = await level(over: 1.2) // the release
+            let after = await level(over: 0.3)
+            print(String(format: "MEASURE audition: held %.4f, after release %.5f", held, after))
+            check(held > 0.01 && after < held * 0.05, "holding a note in the piano roll plays it; releasing stops it (held \(held), after \(after))")
+            check(!e.isPlaying && s.clip(clip)?.notes.count == cur.notes.count, "auditioning neither starts the transport nor edits notes")
+        } else {
+            print("SKIP  piano-roll audition (no output device running)")
+        }
         // Keys: transpose down an octave, nudge right, then delete through Edit > Delete.
         key(125, "", mods: .shift)
         check(s.clip(clip)?.notes.contains { $0.pitch == 64 && $0.start == n.start + beat } == true, "⇧↓ transposes the selection down an octave")

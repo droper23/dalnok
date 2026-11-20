@@ -337,6 +337,10 @@ DalnokStatus dalnok_plugin_parameter(const DalnokEngine *e, int32_t slot, int32_
     out->hidden = pp.hidden;
     return DALNOK_OK;
 }
+DalnokStatus dalnok_track_preview_note(DalnokEngine *e, DalnokTrackId track, uint8_t pitch, uint8_t velocity, bool on) {
+    if (!e) return DALNOK_ERR_INVALID_ARG;
+    return e->impl.previewNote(track, pitch, velocity, on) ? DALNOK_OK : DALNOK_ERR_NOT_FOUND;
+}
 bool dalnok_project_plugins_changed(const DalnokEngine *e) { return e && e->impl.pluginEditorStatesChanged(); }
 bool dalnok_plugin_take_editor_key(DalnokEngine *e, DalnokEditorKey *out) {
     if (!e || !out) return false;

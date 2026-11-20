@@ -79,14 +79,38 @@ void Engine::renderClick(float *left, float *right, int frames, int64_t pos) DAL
     }
 }
 
-void Engine::handleMidiInput(int64_t pos) DALNOK_NONBLOCKING {
+void Engine::handleMidiInput(int64_t pos, int frames) DALNOK_NONBLOCKING {
     constexpr int kMaxEvents = 256;
     RecordedMidi events[kMaxEvents];
     int count = 0;
-    const int32_t live = current_ ? current_->liveTrack : -1;
+    // Auditioned notes (piano roll): they choose the track that plays live input for a while.
+    PreviewNote previews[64];
+    int previewCount = 0;
+    for (PreviewNote pn; previewCount < 64 && previewNotes_.pop(pn);) {
+        if (pn.track != rtPreviewTrack_) { rtPreviewTrack_ = pn.track; rtPreviewHeld_ = 0; }
+        rtPreviewHeld_ = pn.on ? rtPreviewHeld_ + 1 : (rtPreviewHeld_ > 0 ? rtPreviewHeld_ - 1 : 0);
+        rtPreviewHoldFrames_ = static_cast<int64_t>(2 * sampleRate_);
+        previews[previewCount++] = pn;
+    }
+    int32_t live = current_ ? current_->liveTrack : -1;
+    if (current_ && rtPreviewTrack_ && (rtPreviewHeld_ > 0 || rtPreviewHoldFrames_ > 0)) {
+        for (size_t i = 0; i < current_->tracks.size(); ++i)
+            if (current_->tracks[i].id == rtPreviewTrack_) { live = static_cast<int32_t>(i); break; }
+    }
+    if (rtPreviewHeld_ == 0 && rtPreviewHoldFrames_ > 0) rtPreviewHoldFrames_ -= frames;
+    scratch_.liveTrack = live;
+    if (live >= 0 && current_ && !(current_->tracks[static_cast<size_t>(live)].instrument || current_->tracks[static_cast<size_t>(live)].instrumentPlugin))
+        live = -1;
     const bool pluginLive = live >= 0 && current_->tracks[static_cast<size_t>(live)].instrumentPlugin;
     SynthState *synth = live >= 0 && !pluginLive ? &current_->tracks[static_cast<size_t>(live)].runtime->live : nullptr;
     rtLiveNoteCount_ = 0;
+    for (int i = 0; i < previewCount; ++i) {
+        const PreviewNote &pn = previews[i];
+        if (live < 0 || current_->tracks[static_cast<size_t>(live)].id != pn.track) continue;
+        if (pluginLive && rtLiveNoteCount_ < 256) rtLiveNotes_[rtLiveNoteCount_++] = PluginNote{0, static_cast<uint8_t>(pn.on ? 1 : 0), pn.pitch, pn.velocity};
+        if (synth && pn.on) synth->noteOn(current_->synth, pn.pitch, pn.velocity, -1);
+        else if (synth) synth->noteOff(current_->synth, pn.pitch);
+    }
     for (auto &slot : midiInputs_) {
         MidiParser *parser = slot.load(std::memory_order_acquire);
         if (!parser) continue;
@@ -146,7 +170,7 @@ void Engine::process(float *left, float *right, int frames) DALNOK_NONBLOCKING {
         adoptionSkips_.fetch_add(1, std::memory_order_relaxed);
     }
     const int64_t before = rtPosition_;
-    handleMidiInput(before);
+    handleMidiInput(before, frames);
     const bool anySolo = soloCount_.load(std::memory_order_relaxed) > 0;
     const int64_t seek = transport_.seekRequest.exchange(-1, std::memory_order_relaxed);
     if (seek >= 0) pendingSeek_ = seek;

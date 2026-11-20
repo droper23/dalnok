@@ -249,6 +249,9 @@ struct Scratch {
     // Live-input notes for the live track's plugin instrument in this block (set by the live path).
     const PluginNote *liveNotes = nullptr;
     int liveNoteCount = 0;
+    // The track playing live input in this callback: the armed instrument track, or the one being auditioned from the
+    // piano roll (Engine::previewNote). -1 = none (offline renders).
+    int32_t liveTrack = -1;
     // Live callbacks: when every isolated plug-in in this callback must have answered (one shared budget; 0 = none,
     // as for offline renders). Set once per callback by Engine::process.
     uint64_t deadlineNs = 0;
