@@ -388,6 +388,30 @@ struct PluginIsolation {
         #expect(!editorWindow(e, slot).open)
     }
 
+    /// AUSampler's editor changes its own frame while the window lays it out. The host's fit-to-editor pass re-entered
+    /// itself through the frame-change notification until AppKit aborted the host (found with real input on the
+    /// owner's library). The host must survive, show the editor, and settle on one size.
+    @Test func isolatedAuSamplerEditorDoesNotRecurseInLayout() throws {
+        let e = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(e) }
+        let t = dalnok_track_add_instrument(e, "Sampler")
+        dalnok_plugins_set_host(e, isolationHost)
+        var err = [CChar](repeating: 0, count: 256)
+        let slot = dalnok_plugin_add(e, t, "au:aumu:samp:appl", nil, &err, 256)
+        #expect(slot != 0 && info(e, t).isolated, "\(cstr(err))")
+        #expect(dalnok_plugin_show_editor_window(e, slot, "Sampler — AUSampler", .nan, .nan, &err, 256) == DALNOK_OK, "\(cstr(err))")
+        usleep(1_500_000) // the editor lays itself out over the host's next run-loop turns
+        let w1 = editorWindow(e, slot)
+        print(String(format: "EDITOR ausampler: content %.0f × %.0f, frame %.0f × %.0f", w1.content_width, w1.content_height, w1.width, w1.height))
+        #expect(info(e, t).loaded, "the host survived opening the editor")
+        #expect(w1.open && w1.visible && w1.content_width >= 200 && w1.content_height >= 100)
+        #expect(w1.content_width < 1_600, "keeps the width it asked for instead of growing with every pass")
+        usleep(500_000)
+        let w2 = editorWindow(e, slot)
+        #expect(abs(w2.width - w1.width) < 1 && abs(w2.height - w1.height) < 1, "settled on one size")
+        dalnok_plugin_close_editor(e, slot)
+        #expect(!editorWindow(e, slot).open && info(e, t).loaded)
+    }
+
     // MARK: One deadline budget per callback (A-01 stage 2)
 
     /// Three isolated plug-ins in series all hang mid-session, followed by a healthy one. Each callback waits on the

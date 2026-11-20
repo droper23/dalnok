@@ -88,9 +88,40 @@ NSRect onScreen(NSRect frame) {
     return frame;
 }
 
+// fit() resizes the window, which lays the editor out again, and an editor whose layout then changes its own frame
+// posts a frame change that calls fit() again from inside the first call. AUSampler's view recursed like that until
+// AppKit aborted ("_enumeratingSubviewsCount" overflow). A change that arrives while fitting is handled once, on the next
+// turn of the run loop, and a view that keeps changing size after kMaxFitPasses resizes in quick succession (each within
+// half a second of the last) keeps its window until it settles.
+bool gFitting = false, gFitQueued = false;
+int gFitPasses = 0;
+double gLastFitResize = 0;
+constexpr int kMaxFitPasses = 8;
+
+bool fitOnce();
 void fit() {
+    if (gFitting) {
+        if (!gFitQueued) {
+            gFitQueued = true;
+            dispatch_async(dispatch_get_main_queue(), ^{ gFitQueued = false; fit(); });
+        }
+        return;
+    }
+    const double now = NSProcessInfo.processInfo.systemUptime;
+    if (now - gLastFitResize > 0.5) gFitPasses = 0;
+    if (gFitPasses >= kMaxFitPasses) return;
+    gFitting = true;
+    const bool resizedWindow = fitOnce();
+    gFitting = false;
+    if (resizedWindow) { ++gFitPasses; gLastFitResize = now; }
+    else gFitPasses = 0;
+}
+
+// Returns true when it changed the window's frame.
+bool fitOnce() {
     NSView *view = gEditor.panel.contentView.subviews.firstObject;
-    if (!view) return;
+    if (!view) return false;
+    bool changed = false;
     const bool flexible = (view.autoresizingMask & NSViewWidthSizable) && (view.autoresizingMask & NSViewHeightSizable);
     if (flexible) {
         gEditor.panel.styleMask |= NSWindowStyleMaskResizable;
@@ -104,9 +135,14 @@ void fit() {
             frame.origin.y += frame.size.height - next.size.height; // keep the top edge
             frame.size = next.size;
             [gEditor.panel setFrame:onScreen(frame) display:YES];
+            // A view that autoresizes in one direction only (AUSampler: width) was resized along with the window by the
+            // old mismatch, so every pass made it larger again. It keeps the size it asked for.
+            if (!NSEqualSizes(view.frame.size, size)) [view setFrameSize:size];
+            changed = true;
         }
         if (!NSEqualPoints(view.frame.origin, NSZeroPoint)) view.frameOrigin = NSZeroPoint;
     }
+    return changed;
 }
 
 void resized(void *, int32_t w, int32_t h) {
@@ -197,6 +233,7 @@ bool showEditor(PluginProcessor &plugin, const std::string &title, double x, dou
     if (!gEditor.wanted) {
         int32_t w = 0, h = 0;
         if (!plugin.openEditor((__bridge void *)gEditor.panel.contentView, w, h, resized, nullptr, err)) return false;
+        gFitPasses = 0;
         if (w > 0 && h > 0) [gEditor.panel setContentSize:NSMakeSize(w, h)];
         fit();
         // Editors that settle their size after joining the window (Apple's Audio Units) do so on the next turn of the
