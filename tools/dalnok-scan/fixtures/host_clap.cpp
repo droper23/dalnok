@@ -32,10 +32,11 @@ bool portsGet(const clap_plugin_t *, uint32_t index, bool isInput, clap_audio_po
 const clap_plugin_audio_ports_t kPorts = {portsCount, portsGet};
 
 uint32_t paramsCount(const clap_plugin_t *) { return 1; }
-bool paramsInfo(const clap_plugin_t *, uint32_t index, clap_param_info_t *info) {
+bool paramsInfo(const clap_plugin_t *p, uint32_t index, clap_param_info_t *info) {
     if (index != 0) return false;
     std::memset(info, 0, sizeof *info);
     info->id = 7;
+    info->cookie = &self(p)->gain; // like plug-ins that cache their parameter objects
     info->flags = CLAP_PARAM_IS_AUTOMATABLE;
     std::snprintf(info->name, sizeof info->name, "Gain");
     info->min_value = 0;
@@ -49,7 +50,11 @@ bool paramsFromText(const clap_plugin_t *, clap_id, const char *, double *) { re
 void paramsFlush(const clap_plugin_t *p, const clap_input_events_t *in, const clap_output_events_t *) {
     for (uint32_t i = 0; in && i < in->size(in); ++i) {
         const auto *h = in->get(in, i);
-        if (h->type == CLAP_EVENT_PARAM_VALUE) self(p)->gain = reinterpret_cast<const clap_event_param_value_t *>(h)->value;
+        if (h->type != CLAP_EVENT_PARAM_VALUE) continue;
+        // Some plug-in wrappers dereference the cookie unconditionally (and crash on NULL); this one ignores
+        // events without the cookie it gave, so a host that drops cookies fails the tests instead.
+        const auto *e = reinterpret_cast<const clap_event_param_value_t *>(h);
+        if (e->cookie == &self(p)->gain) self(p)->gain = e->value;
     }
 }
 const clap_plugin_params_t kParams = {paramsCount, paramsInfo, paramsValue, paramsToText, paramsFromText, paramsFlush};

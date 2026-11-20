@@ -121,8 +121,12 @@ public:
         // Parameter ranges for automation and normalized values.
         for (uint32_t i = 0; params_ && i < params_->count(plugin_); ++i) {
             clap_param_info_t info{};
-            if (params_->get_info(plugin_, i, &info)) ranges_[info.id] = {info.min_value, info.max_value};
+            if (params_->get_info(plugin_, i, &info)) {
+                ranges_[info.id] = {info.min_value, info.max_value};
+                cookies_.push_back({info.id, info.cookie});
+            }
         }
+        std::sort(cookies_.begin(), cookies_.end(), [](const auto &a, const auto &b) { return a.first < b.first; });
         return true;
     }
 
@@ -291,12 +295,23 @@ private:
         clap_event_param_value_t param;
         const clap_event_header_t &header() const { return note.header; }
     };
+    // The cookie the plug-in gave in clap_param_info. The spec lets hosts pass NULL, but some plug-in wrappers
+    // dereference it unconditionally (a NULL cookie crashed one in its process call), so always pass it.
+    void *cookie(clap_id id) const DALNOK_NONBLOCKING {
+        size_t lo = 0, hi = cookies_.size();
+        while (lo < hi) {
+            const size_t mid = (lo + hi) / 2;
+            if (cookies_[mid].first < id) lo = mid + 1; else hi = mid;
+        }
+        return lo < cookies_.size() && cookies_[lo].first == id ? cookies_[lo].second : nullptr;
+    }
     void pushParam(clap_id id, double value, uint32_t time) DALNOK_NONBLOCKING {
         if (eventCount_ >= kMaxEvents) return;
         Event &e = events_[eventCount_++];
         e.param = clap_event_param_value_t{};
         e.param.header = {sizeof(clap_event_param_value_t), time, CLAP_CORE_EVENT_SPACE_ID, CLAP_EVENT_PARAM_VALUE, 0};
         e.param.param_id = id;
+        e.param.cookie = cookie(id);
         e.param.note_id = -1;
         e.param.port_index = -1;
         e.param.channel = -1;
@@ -328,6 +343,7 @@ private:
     std::mutex producer_;
     std::map<uint32_t, double> touched_; // plain values set from the control thread
     std::map<uint32_t, std::pair<double, double>> ranges_;
+    std::vector<std::pair<clap_id, void *>> cookies_; // sorted by id; read on the audio thread
     void (*onResize_)(void *, int32_t, int32_t) = nullptr;
     void *resizeCtx_ = nullptr;
 };
