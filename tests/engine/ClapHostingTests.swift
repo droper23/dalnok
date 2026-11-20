@@ -79,7 +79,7 @@ struct ClapHosting {
         #expect(!dalnok_project_dirty(b), "a plug-in repeating its own values after loading leaves the project clean (loaded \(info.loaded), error '\(cstr(withUnsafeBytes(of: info.error) { Array($0.bindMemory(to: CChar.self)) }))')")
     }
 
-    @MainActor @Test(.serialized, arguments: ["event", "dirty", "flush"]) func editorEditsMarkTheProjectChanged(_ how: String) async throws {
+    @MainActor @Test(.serialized, arguments: ["event", "dirty", "flush", "queued"]) func editorEditsMarkTheProjectChanged(_ how: String) async throws {
         let (e, t) = audioSession(); defer { dalnok_engine_destroy(e) }
         let slot = dalnok_plugin_add(e, t, testClap, nil, nil, 0)
         #expect(slot != 0)
@@ -91,7 +91,7 @@ struct ClapHosting {
         #expect(dalnok_project_load(b, path, &missing, nil, 0) == DALNOK_OK && missing == 0)
         var l = [Float](repeating: 0, count: 512), r = l
         // "flush": the edit arrives while the transport is stopped, through the flush the plug-in asked for.
-        if how != "flush" {
+        if how != "flush" && how != "queued" {
             dalnok_transport_play(b)
             for _ in 0..<2 { _ = dalnok_engine_pump(b, &l, &r, 512) }
             #expect(!dalnok_project_dirty(b), "clean before the edit")

@@ -201,8 +201,12 @@ public:
     // Stopped transport: a flush the plug-in asked for (its editor changed a parameter), or panel changes, without
     // audio. An active CLAP plug-in's flush belongs on the audio thread.
     void idle() DALNOK_NONBLOCKING override {
+        // Also about every 50 ms without a request: some plug-ins queue their editor's changes for the next process or
+        // flush and never ask for one, so edits made while stopped reached Dalnok only at the next Play.
         const bool wanted = flushWanted_.exchange(false, std::memory_order_acq_rel);
-        if (!params_ || !params_->flush || (!wanted && changes_.size() == 0)) return;
+        const bool due = ++idleCalls_ >= 5;
+        if (!params_ || !params_->flush || (!wanted && !due && changes_.size() == 0)) return;
+        idleCalls_ = 0;
         eventCount_ = 0;
         ParamChange c;
         while (changes_.pop(c)) pushParam(c.id, c.value, 0);
@@ -383,6 +387,7 @@ private:
     clap_host_state_t hostState_{};
     mutable std::atomic<uint64_t> edits_{0};
     std::atomic<bool> flushWanted_{false};
+    int idleCalls_ = 0; // audio thread
     mutable std::vector<std::atomic<double>> values_; // last known plain value per parameter, in cookies_ order
     std::shared_ptr<Alive> alive_;
     const clap_plugin_params_t *params_ = nullptr;

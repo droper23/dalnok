@@ -57,7 +57,8 @@ void paramsFlush(const clap_plugin_t *p, const clap_input_events_t *in, const cl
     }
     // DALNOK_TEST_CLAP_EDIT=flush: an editor edit made while the host is not processing, reported from the flush the
     // plug-in requested.
-    if (const char *edit = std::getenv("DALNOK_TEST_CLAP_EDIT"); out && edit && !std::strcmp(edit, "flush") && self(p)->blocks == 0) {
+    // "queued": the same edit, but the plug-in never asks for the flush (it waits for the host's next one).
+    if (const char *edit = std::getenv("DALNOK_TEST_CLAP_EDIT"); out && edit && (!std::strcmp(edit, "flush") || !std::strcmp(edit, "queued")) && self(p)->blocks == 0) {
         self(p)->blocks = 1;
         self(p)->gain = 0.75; // the edit
         clap_event_param_value_t v{{sizeof v, 0, CLAP_CORE_EVENT_SPACE_ID, CLAP_EVENT_PARAM_VALUE, 0}, 7, nullptr, -1, -1, -1, -1, self(p)->gain};
@@ -82,7 +83,7 @@ clap_process_status process(const clap_plugin_t *p, const clap_process_t *pr) {
     paramsFlush(p, pr->in_events, pr->out_events);
     // An edit in the plug-in's own editor, on its fourth block (DALNOK_TEST_CLAP_EDIT): "event" reports the end of a
     // parameter gesture as an output event; "dirty" asks for the main thread and marks its state dirty there.
-    if (const char *edit = std::getenv("DALNOK_TEST_CLAP_EDIT"); edit && strcmp(edit, "flush") && ++self(p)->blocks == 4) {
+    if (const char *edit = std::getenv("DALNOK_TEST_CLAP_EDIT"); edit && strcmp(edit, "flush") && strcmp(edit, "queued") && ++self(p)->blocks == 4) {
         if (!std::strcmp(edit, "event")) {
             clap_event_param_gesture_t g{{sizeof g, 0, CLAP_CORE_EVENT_SPACE_ID, CLAP_EVENT_PARAM_GESTURE_END, 0}, 7};
             pr->out_events->try_push(pr->out_events, &g.header);
