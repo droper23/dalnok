@@ -555,6 +555,8 @@ final class SelfTest {
         // Live theme switching: the window rebuilds in the other style around the same project and undo history.
         let startStyle = Theme.activeStyle, firstWindow = w.window
         let tracksBefore = s.tracks.map(\.id), undoBefore = e.undoName
+        w.timeline.framesPerPoint = 300; w.timeline.scrollFrame = 12_000
+        let zoomBefore = w.timeline.framesPerPoint, scrollBefore = w.timeline.scrollFrame
         let other = startStyle == .graphite ? 1 : 0
         w.settings.themePicker.selectItem(at: other)
         _ = NSApp.sendAction(#selector(SettingsController.themeChanged(_:)), to: w.settings, from: w.settings.themePicker)
@@ -563,6 +565,9 @@ final class SelfTest {
               "settings switches the theme live (\(Theme.activeStyle.title))")
         check(w.window !== firstWindow && w.window?.isVisible == true && firstWindow?.isVisible != true, "the main window is rebuilt and the old one closed")
         check(s.tracks.map(\.id) == tracksBefore && e.undoName == undoBefore, "the project and undo history carry over")
+        w.window?.layoutIfNeeded()
+        check(w.timeline.framesPerPoint == zoomBefore && w.timeline.scrollFrame == scrollBefore && w.timeline.bounds.width > 400,
+              "the arrangement keeps its zoom and position (\(w.timeline.framesPerPoint) vs \(zoomBefore) frames/pt, width \(w.timeline.bounds.width))")
         check((w.transport.reels.superview != nil) == Analog.on, "the rebuilt window uses the new style's parts (tape reels \(Analog.on ? "shown" : "hidden"))")
         check(w.settings.window?.isVisible == true && w.settings.relaunch.isHidden, "settings stays open, with no relaunch needed")
         try? w.snapshot(to: workdir.appendingPathComponent("theme-switched.png"))
@@ -570,6 +575,8 @@ final class SelfTest {
         _ = NSApp.sendAction(#selector(SettingsController.themeChanged(_:)), to: w.settings, from: w.settings.themePicker)
         await wait(0.2)
         check(Theme.activeStyle == startStyle, "switching back restores \(startStyle.title)")
+        w.window?.layoutIfNeeded()
+        check(w.timeline.framesPerPoint == zoomBefore, "and the zoom again (\(w.timeline.framesPerPoint) frames/pt)")
         w.settings.copyAudio.state = .off
         _ = NSApp.sendAction(#selector(SettingsController.copyChanged(_:)), to: w.settings, from: w.settings.copyAudio)
         check(!MainWindowController.copyAudioOnSave, "settings updates copy-audio preference")
@@ -921,19 +928,25 @@ final class SelfTest {
             let slot = dalnok_plugin_add(e.handle, track, path, cls.isEmpty ? nil : cls, &err, 256)
             s.refresh()
             guard slot != 0 else { check(false, "\(label) loads isolated (\(cString(err)))"); continue }
+            // The unit's one Open button shows the plug-in's own window, and only that.
             w.openPluginWindow(track: track, slot: slot)
-            guard let pw = w.pluginWindows[slot] else { check(false, "\(label): plug-in window opens"); continue }
             await wait(0.4)
             var ed = DalnokPluginEditorWindow()
             _ = dalnok_plugin_editor_window(e.handle, slot, &ed)
-            let frame = pw.window?.frame ?? .zero
-            check(pw.isolated && pw.hostEditorOpen && ed.open && ed.visible && ed.process_id != getpid() && ed.process_id > 0,
-                  "\(label): the editor opens in its host's window (pid \(ed.process_id))")
-            let roomRight = frame.maxX + 212 < (pw.window?.screen?.visibleFrame.maxX ?? 0)
-            check(!roomRight || (abs(ed.x - Double(frame.maxX + 12)) < 1 && abs(ed.y + ed.height - Double(frame.maxY)) < 1),
-                  "\(label): beside the plug-in window (editor x \(Int(ed.x)), window right \(Int(frame.maxX)))")
-            check(pw.tabs.selectedSegment == 1 && pw.tabs.isEnabled(forSegment: 0),
-                  "\(label): Dalnok's plug-in window keeps the parameter panel; its Editor tab brings the host's window forward")
+            check(ed.open && ed.visible && ed.process_id != getpid() && ed.process_id > 0 && w.pluginWindows[slot] == nil,
+                  "\(label): Open shows the plug-in's own window in its host (pid \(ed.process_id)) and no other window")
+            let screen = NSScreen.screens.first?.visibleFrame ?? .zero
+            check(screen.contains(CGRect(x: ed.x, y: ed.y, width: ed.width, height: ed.height).insetBy(dx: 1, dy: 1)),
+                  "\(label): the plug-in's window is on screen (\(Int(ed.x)), \(Int(ed.y)) \(Int(ed.width)) × \(Int(ed.height)))")
+            // Its title bar's Controls arrives as DALNOK_EDITOR_SHOW_CONTROLS through the key ring (the button itself
+            // is in the host's process; the engine test presses it there). Dalnok then shows its controls window.
+            w.openPluginControls(track: track, slot: slot)
+            guard let pw = w.pluginWindows[slot] else { check(false, "\(label): Controls opens Dalnok's controls"); continue }
+            check(pw.isolated && pw.tabs.selectedSegment == 1 && pw.tabs.isEnabled(forSegment: 0) && pw.window?.titlebarAccessoryViewControllers.isEmpty == false,
+                  "\(label): Controls shows every parameter, with Plug-in in the title bar to go back to the GUI")
+            pw.tabs.selectedSegment = 0; pw.tabChanged(pw.tabs)
+            await wait(0.2)
+            check(pw.tabs.selectedSegment == 1 && pw.hostEditorOpen, "\(label): Plug-in brings the plug-in's own window forward")
             check(NSWorkspace.shared.frontmostApplication?.processIdentifier != ed.process_id, "\(label): showing the editor does not activate the host")
             let png = workdir.appendingPathComponent("isolated-editor-\(label.replacingOccurrences(of: " ", with: "-")).png").path
             check(dalnok_plugin_editor_snapshot(e.handle, slot, png) == DALNOK_OK, "\(label): editor snapshot written (\(png))")
@@ -952,7 +965,11 @@ final class SelfTest {
             pw.window?.performClose(nil)
             await wait(0.2)
             _ = dalnok_plugin_editor_window(e.handle, slot, &ed)
-            check(!ed.open && !ed.visible && w.pluginWindows[slot] == nil, "\(label): closing the plug-in window closes the editor")
+            check(ed.open && w.pluginWindows[slot] == nil, "\(label): closing the controls leaves the plug-in's own window open")
+            dalnok_plugin_close_editor(e.handle, slot)
+            await wait(0.2)
+            _ = dalnok_plugin_editor_window(e.handle, slot, &ed)
+            check(!ed.open && !ed.visible, "\(label): its own close closes it")
             _ = dalnok_plugin_remove(e.handle, track, slot)
             s.refresh()
         }
@@ -2197,8 +2214,8 @@ final class SelfTest {
             panel.layoutCables()
             check(panel.cableCount == 3, "Warm Analog patches IN → AUDelay → AUPeakLimiter → OUT with \(panel.cableCount) cables")
         }
-        // Plug-in parameter automation: the plug-in window's Automate shows the lane; a click adds points.
-        w.openPluginWindow(track: track, slot: slot)
+        // Plug-in parameter automation: the controls' Automate shows the lane; a click adds points.
+        w.openPluginControls(track: track, slot: slot)
         if let pw = w.pluginWindows[slot], let i = s.tracks.firstIndex(where: { $0.id == track }) {
             pw.tabs.selectedSegment = 1; pw.tabChanged(nil)
             pw.table.selectRowIndexes([0], byExtendingSelection: false)

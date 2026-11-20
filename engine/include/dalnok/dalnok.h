@@ -643,6 +643,9 @@ typedef struct {
     char characters_ignoring_modifiers[16];  /* UTF-8 */
 } DalnokEditorKey;
 bool dalnok_plugin_take_editor_key(DalnokEngine *engine, DalnokEditorKey *out);
+/* Not a key: the editor window's title-bar Controls button (API 40). The front end shows the plug-in's controls
+ * (Dalnok's parameter view) for `slot` instead of replaying a key. */
+#define DALNOK_EDITOR_SHOW_CONTROLS 0xFFFF
 /* Writes the editor window's pixels to a PNG (visual checks, self-tests). */
 DalnokStatus dalnok_plugin_editor_snapshot(DalnokEngine *engine, int32_t slot, const char *png_path);
 

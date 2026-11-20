@@ -40,10 +40,32 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     var pluginWindows: [Int32: PluginWindowController] = [:]
 
     /// Opens (or brings forward) a hosted plug-in's window: its editor and the generic parameter panel.
+    /// The unit's one Open button: the plug-in's own window (its GUI). An isolated plug-in's GUI is its host's window
+    /// and opens alone; its title bar's Controls shows Dalnok's controls. A plug-in without a GUI shows its controls.
     func openPluginWindow(track: DalnokTrackId, slot: Int32) {
-        if let existing = pluginWindows[slot] { existing.window?.makeKeyAndOrderFront(nil); existing.showHostEditor(); return }
         guard let t = session.track(track), let p = t.plugins.first(where: { $0.id == slot }) else { return }
         guard p.loaded else { return flash("\(p.name) is not loaded: \(p.error)") }
+        let hasGUI = dalnok_plugin_has_editor(session.engine.handle, slot)
+        if p.isolated && hasGUI {
+            var err = [CChar](repeating: 0, count: 256)
+            if dalnok_plugin_show_editor_window(session.engine.handle, slot, "\(p.name) — \(t.name)", .nan, .nan, &err, 256) != DALNOK_OK {
+                flash("\(p.name): \(cString(err))")
+                openPluginControls(track: track, slot: slot)
+            }
+            return
+        }
+        if let existing = pluginWindows[slot] { existing.showGUI(); return }
+        makePluginWindow(t, p)?.show(controls: !hasGUI)
+    }
+    /// Dalnok's controls for a plug-in (every parameter): the GUI window's title-bar Controls, or the unit's menu.
+    func openPluginControls(track: DalnokTrackId, slot: Int32) {
+        if let existing = pluginWindows[slot] { existing.showControls(); return }
+        guard let t = session.track(track), let p = t.plugins.first(where: { $0.id == slot }) else { return }
+        guard p.loaded else { return flash("\(p.name) is not loaded: \(p.error)") }
+        makePluginWindow(t, p)?.show(controls: true)
+    }
+    private func makePluginWindow(_ t: TrackView, _ p: TrackView.Plugin) -> PluginWindowController? {
+        let track = t.id, slot = p.id
         let w = PluginWindowController(engine: session.engine, slot: slot, title: "\(p.name) — \(t.name)", isolated: p.isolated)
         w.onAutomate = { [weak self] slot, param, name in
             guard let self else { return }
@@ -53,7 +75,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         }
         w.onClose = { [weak self] in self?.pluginWindows[slot] = nil }
         pluginWindows[slot] = w
-        w.show()
+        return w
     }
     @objc func openPluginItem(_ sender: NSMenuItem) {
         guard let (track, slot) = sender.representedObject as? (DalnokTrackId, Int32) else { return }
@@ -268,6 +290,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         mixer.onOpenPlugin = { [weak self] t, slot in self?.openPluginWindow(track: t, slot: slot) }
         mixer.onAddPlugin = { [weak self] t in self?.headers.select(t); self?.showPlugins(nil) }
         devicePanel.onOpen = { [weak self] track, slot in self?.openPluginWindow(track: track, slot: slot) }
+        devicePanel.onShowControls = { [weak self] track, slot in self?.openPluginControls(track: track, slot: slot) }
         devicePanel.onAdd = { [weak self] in self?.showPlugins(nil) }
         devicePanel.onDropPlugin = { [weak self] path, track, index in
             if let err = self?.insertPlugin(path, on: track, at: index) { self?.flash("Couldn’t add the plug-in: \(err)") }
@@ -1972,6 +1995,10 @@ extension MainWindowController {
     func replayEditorKeys() {
         var k = DalnokEditorKey()
         while dalnok_plugin_take_editor_key(session.engine.handle, &k) {
+            if k.key_code == UInt16(DALNOK_EDITOR_SHOW_CONTROLS) { // the editor's title-bar Controls button
+                if let t = session.tracks.first(where: { $0.plugins.contains { $0.id == k.slot } }) { openPluginControls(track: t.id, slot: k.slot) }
+                continue
+            }
             let chars = withUnsafeBytes(of: k.characters) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }
             let bare = withUnsafeBytes(of: k.characters_ignoring_modifiers) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }
             guard let window = window, let event = NSEvent.keyEvent(with: .keyDown, location: .zero,

@@ -38,9 +38,14 @@ namespace dalnok::hostui { void forwardKey(NSEvent *event); }
 @property(nonatomic) BOOL wanted;        // the user has it open (it may be hidden while Dalnok is in the background)
 @end
 
-namespace dalnok::hostui { void fitEditor(); }
+namespace dalnok::hostui { void fitEditor(); void requestControls(); }
 
 @implementation DalnokEditorController
+// The title bar's Controls button: Dalnok shows the plug-in's controls (its parameter view) instead.
+- (void)showControls:(id)sender {
+    (void)sender;
+    dalnok::hostui::requestControls();
+}
 - (void)editorFrameChanged:(NSNotification *)note {
     (void)note;
     dalnok::hostui::fitEditor();
@@ -194,6 +199,11 @@ void runApp() { [NSApp run]; }
 
 void setKeySink(KeySink sink) { gKeySink = sink; }
 
+// Sent through the key ring as DALNOK_EDITOR_SHOW_CONTROLS (not a key code any keyboard produces).
+void requestControls() {
+    if (gKeySink) gKeySink(0xFFFF, 0, "", "");
+}
+
 void forwardKey(NSEvent *event) {
     if (!gKeySink || (event.type != NSEventTypeKeyDown)) return;
     gKeySink(event.keyCode, event.modifierFlags, event.characters.UTF8String ?: "", event.charactersIgnoringModifiers.UTF8String ?: "");
@@ -226,6 +236,19 @@ bool showEditor(PluginProcessor &plugin, const std::string &title, double x, dou
                                    NSWindowCollectionBehaviorFullScreenAuxiliary;
         panel.delegate = gEditor;
         panel.contentView.wantsLayer = YES;
+        // Title bar: Controls shows Dalnok's view of the plug-in's parameters (the unit's controller and every
+        // parameter), so the plug-in's own window is the only one its unit opens.
+        NSButton *controls = [NSButton buttonWithTitle:@"Controls" target:gEditor action:@selector(showControls:)];
+        controls.bezelStyle = NSBezelStyleRecessed;
+        controls.controlSize = NSControlSizeSmall;
+        controls.toolTip = @"Show the plug-in's controls in Dalnok (every parameter, searchable, automatable)";
+        NSView *holder = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 86, 24)];
+        controls.frame = NSMakeRect(4, 2, 78, 20);
+        [holder addSubview:controls];
+        NSTitlebarAccessoryViewController *accessory = [NSTitlebarAccessoryViewController new];
+        accessory.view = holder;
+        accessory.layoutAttribute = NSLayoutAttributeTrailing;
+        [panel addTitlebarAccessoryViewController:accessory];
         gEditor.panel = panel;
         gEditor.plugin = &plugin;
     }
@@ -250,6 +273,12 @@ bool showEditor(PluginProcessor &plugin, const std::string &title, double x, dou
         gEditor.wanted = YES;
     }
     [gEditor.panel orderFrontRegardless]; // the host is not active, so plain orderFront could leave it behind
+    // Tests: press the title bar's Controls button once the window is up (DALNOK_TEST_EDITOR_CONTROLS=1).
+    if (getenv("DALNOK_TEST_EDITOR_CONTROLS")) {
+        for (NSTitlebarAccessoryViewController *a in gEditor.panel.titlebarAccessoryViewControllers)
+            for (NSView *v in a.view.subviews)
+                if ([v isKindOfClass:NSButton.class]) dispatch_async(dispatch_get_main_queue(), ^{ [(NSButton *)v performClick:nil]; });
+    }
     if (NSApp.active) [gEditor hostBecameActive:nil];
     width = static_cast<int32_t>(gEditor.panel.contentView.frame.size.width);
     height = static_cast<int32_t>(gEditor.panel.contentView.frame.size.height);

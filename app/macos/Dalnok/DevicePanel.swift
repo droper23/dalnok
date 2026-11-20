@@ -36,6 +36,7 @@ final class DevicePanel: NSView {
         return b
     }()
     var onOpen: ((DalnokTrackId, Int32) -> Void)?
+    var onShowControls: ((DalnokTrackId, Int32) -> Void)?
     var onAdd: (() -> Void)?
     /// A plug-in dropped from the browser: (add path, track, chain position).
     var onDropPlugin: ((String, DalnokTrackId, Int) -> Void)?
@@ -184,6 +185,7 @@ final class DevicePanel: NSView {
                 }
                 let d = DeviceView(session: session, track: t!.id, slot: p.id, name: p.name, loaded: p.loaded, color: t!.color, vendor: p.vendor, instrument: p.instrument, error: p.error, path: p.path)
                 d.onOpen = { [weak self] in self?.onOpen?(t!.id, p.id) }
+                d.onShowControls = { [weak self] in self?.onShowControls?(t!.id, p.id) }
                 d.onSelect = { [weak self] in self?.selectedSlot = p.id }
                 d.onMove = { [weak self] delta in
                     guard let self, let from = self.devices.firstIndex(where: { $0.slot == p.id }) else { return }
@@ -374,7 +376,7 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
     private let unavailableMessage: String
     private let color: NSColor
     private let title = NSTextField(labelWithString: "")
-    private let openButton = PlateButton(title: "Open", label: "EDITOR")
+    private let openButton = PlateButton(title: "Open", label: "OPEN")
     private let editButton = PlateButton(title: "Edit Controls", label: "CONTROLS")
     private let etchedTitle = EtchedLabel("")
     private(set) var knobs: [(knob: any ParameterControl, label: NSTextField, value: NSTextField, id: UInt32)] = []
@@ -399,6 +401,8 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
     private(set) var allParameters: [DalnokPluginParameter] = []
     private var indexOf: [UInt32: Int32] = [:]
     var onOpen: (() -> Void)?
+    /// Dalnok's controls window for this plug-in (every parameter).
+    var onShowControls: (() -> Void)?
     /// A press anywhere on the unit (its surface or any control) selects it.
     var onSelect: (() -> Void)?
     var isSelected = false { didSet { if isSelected != oldValue { applySelection() } } }
@@ -456,7 +460,7 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
             b.target = self
         }
         openButton.action = #selector(openTapped)
-        openButton.toolTip = "Open the plug-in's window (its own editor and every parameter)"
+        openButton.toolTip = "Open the plug-in's own window (its title bar's Controls shows every parameter)"
         editButton.action = #selector(editTapped(_:))
         editButton.toolTip = "Choose which parameters this controller shows"
         openButton.isEnabled = loaded
@@ -494,13 +498,13 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         foldButton.action = #selector(foldTapped)
         foldButton.toolTip = "Fold \(name) to a narrow strip (click the strip to unfold)"
         foldButton.setAccessibilityLabel("Fold \(name)")
-        let header = NSStackView(views: [foldButton, power, title, etchedTitle, NSView(), sidechain, editButton, openButton])
+        // One button opens the plug-in; choosing the controller's parameters is in the unit's menu (Edit Controls…).
+        let header = NSStackView(views: [foldButton, power, title, etchedTitle, NSView(), sidechain, openButton])
         header.spacing = 6
         header.setContentHuggingPriority(.required, for: .vertical) // stays at the top whatever the controls' height
         if Analog.on {
             title.isHidden = true // the name is lettered on the pedal
             for b in [editButton, openButton] { b.contentTintColor = Theme.textDim; b.font = Theme.ui(9.5, .semibold) }
-            editButton.title = "Controls…"
             let p = PedalBody(name: name)
             p.vendor = vendor
             p.footswitch.onStomp = { [weak self] in self?.toggleBypass() }
@@ -1297,7 +1301,8 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         let i = chain.firstIndex(of: slot) ?? 0
         m.addItem(item(bypassed ? "Turn On" : "Bypass", { [weak self] in self?.toggleBypass() }, enabled: loaded))
         m.addItem(item("Open Plug-in Window", { [weak self] in self?.onOpen?() }, enabled: loaded))
-        m.addItem(item("Edit Controls…", { [weak self] in self?.editTapped(self?.editButton) }, enabled: loaded))
+        m.addItem(item("Show Controls", { [weak self] in self?.onShowControls?() }, enabled: loaded))
+        m.addItem(item("Edit Controls…", { [weak self] in self?.editTapped(self?.openButton) }, enabled: loaded))
         m.addItem(item(folded ? "Unfold" : "Fold", { [weak self] in
             guard let self else { return }; self.session.setPluginFolded(self.trackId, self.slot, !self.folded)
         }))

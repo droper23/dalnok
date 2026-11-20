@@ -418,6 +418,28 @@ struct PluginIsolation {
         #expect(!editorWindow(e, slot).open)
     }
 
+    /// The plug-in's own window has a Controls button in its title bar (owner: one button opens the plug-in's GUI,
+    /// and its title bar offers Dalnok's controls). Pressing it in the host reaches Dalnok as
+    /// DALNOK_EDITOR_SHOW_CONTROLS for that slot, through the editor key ring.
+    @Test func editorTitleBarControlsReachesDalnok() throws {
+        setenv("DALNOK_TEST_EDITOR", "1", 1); setenv("DALNOK_TEST_EDITOR_CONTROLS", "1", 1)
+        defer { unsetenv("DALNOK_TEST_EDITOR"); unsetenv("DALNOK_TEST_EDITOR_CONTROLS") }
+        let (e, t) = audioSession(); defer { dalnok_engine_destroy(e) }
+        dalnok_plugins_set_host(e, isolationHost)
+        let slot = dalnok_plugin_add(e, t, testVst3, gainClass, nil, 0)
+        #expect(slot != 0 && info(e, t).isolated)
+        var err = [CChar](repeating: 0, count: 256)
+        #expect(dalnok_plugin_show_editor_window(e, slot, "Audio — Dalnok Test Gain", .nan, .nan, &err, 256) == DALNOK_OK, "\(cstr(err))")
+        var k = DalnokEditorKey(), got = false
+        let deadline = Date().addingTimeInterval(3)
+        while !got && Date() < deadline {
+            while dalnok_plugin_take_editor_key(e, &k) { if k.key_code == UInt16(DALNOK_EDITOR_SHOW_CONTROLS) { got = true } }
+            usleep(20_000)
+        }
+        #expect(got && k.slot == slot, "the title bar's Controls arrives as DALNOK_EDITOR_SHOW_CONTROLS for slot \(slot) (got \(got), slot \(k.slot))")
+        dalnok_plugin_close_editor(e, slot)
+    }
+
     /// AUSampler's editor changes its own frame while the window lays it out. The host's fit-to-editor pass re-entered
     /// itself through the frame-change notification until AppKit aborted the host (found with real input on the
     /// owner's library). The host must survive, show the editor, and settle on one size.
