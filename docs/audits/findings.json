@@ -378,7 +378,7 @@
       "priority": "P1",
       "category": "Architecture",
       "subsystem": "Engine core",
-      "status": "open",
+      "status": "partial",
       "summary": "A single Engine class owns the device lifecycle, transport, recording, MIDI input, the project model, undo, plug-in instantiation, routing, launcher, stretch cache, offline rendering and statistics. Every new feature widens the same class, its header and its test surface.",
       "evidence": [
         "engine/src/engine.cpp is 2,526 lines; engine/src/engine.hpp is 598 lines; the inventory counts 117 Engine:: method definitions.",
@@ -410,7 +410,8 @@
         "reliability": 3,
         "value": 4
       },
-      "measured": true
+      "measured": true,
+      "resolution": "Partial (2026-11-19). Two services are real classes behind the Engine facade: PluginHostService (plugin_service.*: instances, errors, deferred and isolated activation, offline copies, workgroup, health) and UndoStack (undo_stack.*: stacks, groups, parameter steps, clip-delta compaction). The rest of the Engine's definitions are split by concern into engine.cpp (1,024 lines, down from 3,037), engine_clips, engine_takes, engine_launcher, engine_device, engine_compile, engine_audio and engine_offline (148-447 lines each), with shared helpers and the edit() template in engine_internal.hpp. No behaviour change: 219 engine tests, ASan over 50 tests in the touched areas, rt-effects.sh clean, plugin-isolation.sh, release build. Release audit-bench (16 x 256 clips): structural edit p50 0.299 -> 0.313 ms, undo 0.36 -> 0.384 ms, about 5 %, within what lost cross-file inlining would cost. Still open: Transport, RecordingService and RenderCompiler as classes with their own state (they are Engine members in their own files today); engine.hpp still declares everything."
     },
     {
       "id": "A-07",

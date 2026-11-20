@@ -9,6 +9,8 @@
 #include "midi_parser.hpp"
 #include "plugin_host.hpp"
 #include "plugin_remote.hpp"
+#include "plugin_service.hpp"
+#include "undo_stack.hpp"
 #include "render.hpp"
 #include "stretch_cache.hpp"
 #include "tempo_map.hpp"
@@ -54,7 +56,7 @@ struct SharedPluginState {
 };
 
 // A plugin on a track: the instrument (instrument tracks) or an insert effect. The live instance
-// lives in Engine::plugins_ by id, outside the undoable model, so undo never reloads plugin code.
+// lives in Engine::pluginHost_ (PluginHostService) by id, outside the undoable model, so undo never reloads plugin code.
 struct PluginSlot {
     int32_t id = 0;
     std::string format = "vst3", path, classId, name, vendor;
@@ -336,7 +338,7 @@ public:
     bool removeMarker(int32_t id, std::string &err);
     bool moveMarker(int32_t id, int64_t frame, std::string &err);
     bool renameMarker(int32_t id, const std::string &name, std::string &err);
-    bool pluginHasSidechain(int32_t slot) const { auto it = plugins_.find(slot); return it != plugins_.end() && it->second && it->second->hasSidechain(); }
+    bool pluginHasSidechain(int32_t slot) const { const auto *p = pluginHost_.instance(slot); return p && p->hasSidechain(); }
     // Summing stacks: a stack bus placed above its members, which are routed into it. One undo step each.
     DalnokTrackId makeStack(const std::vector<DalnokTrackId> &members, const std::string &name, std::string &err);
     bool setStackCollapsed(DalnokTrackId stack, bool collapsed, std::string &err);
@@ -417,10 +419,10 @@ public:
     // Undo
     bool undo();
     bool redo();
-    bool canUndo() const { return !undo_.empty(); }
-    bool canRedo() const { return !redo_.empty(); }
-    std::string undoName() const { return undo_.empty() ? "" : undo_.back().name; }
-    std::string redoName() const { return redo_.empty() ? "" : redo_.back().name; }
+    bool canUndo() const { return history_.canUndo(); }
+    bool canRedo() const { return history_.canRedo(); }
+    std::string undoName() const { return history_.undoName(); }
+    std::string redoName() const { return history_.redoName(); }
     void beginGroup(const std::string &name);
     void endGroup();
 
@@ -446,12 +448,12 @@ public:
     // load in their own processes without blocking: the call starts their hosts and returns, `slot` is 0 until one
     // finishes (ADR-0014 stage 2).
     int32_t activateNextPlugin(int32_t &slot, double &seconds);
-    int32_t pendingPluginCount() const { return static_cast<int32_t>(pendingPlugins_.size() + launching_.size()); }
+    int32_t pendingPluginCount() const { return static_cast<int32_t>(pluginHost_.pendingCount()); }
     bool pluginLoading(int32_t slot) const;
     void cancelPendingPlugins();
     bool reloadPlugin(int32_t slot, std::string &err); // an unloaded or failed slot, from its saved state
-    void setPluginHost(const std::string &path) { pluginHostPath_ = path; }
-    const std::string &pluginHost() const { return pluginHostPath_; }
+    void setPluginHost(const std::string &path) { pluginHost_.setHostPath(path); }
+    const std::string &pluginHost() const { return pluginHost_.hostPath(); }
     void setRecoveryDirectory(std::string directory) { recoveryDirectory_ = std::move(directory); }
     // Imports another DAW's project (see import/import.hpp) into a prepared project + JSON report.
     static std::unique_ptr<PreparedProject> prepareImport(const std::string &path, double sampleRate, int32_t &missing,
@@ -480,54 +482,22 @@ private:
 #ifdef DALNOK_TEST_HOOKS
     friend void handoffSaturationFixture(uint64_t *out);
 #endif
-    enum class ParameterField { gain, pan, mute, solo, masterGain };
-    struct ParameterValue {
-        DalnokTrackId track;
-        ParameterField field;
-        float value;
-    };
-    // A snapshot step below the top of its stack, stored against the state it will be applied to (A-03): everything
-    // but the clips, the clips that differ from that state, and the clip order if it changed. Unchanged clips are
-    // taken from the live model when the step is applied, so history no longer holds a copy of every clip per step.
-    struct ModelDelta {
-        Model rest;                      // the target model without its clips
-        bool sameOrder = true;           // target clip ids are the base's, in the same order
-        std::vector<DalnokClipId> order; // otherwise the target's clip ids in order
-        std::vector<ClipState> changed;  // target clips that are absent from or different in the base
-    };
-    struct UndoStep {
-        std::string name;
-        std::unique_ptr<Model> model; // snapshot edits (top of a stack); null for scalar edits
-        std::vector<ParameterValue> parameters;
-        std::unique_ptr<ModelDelta> delta; // a snapshot step once another step is pushed above it
-    };
-    // Compacts the current top of `stack` against `base` (the state it will be applied to) and pushes `step`.
-    static void pushStep(std::vector<UndoStep> &stack, UndoStep step, const Model &base);
-    static void compactTop(std::vector<UndoStep> &stack, const Model &base);
-    static std::unique_ptr<ModelDelta> makeDelta(Model target, const Model &base);
-    static Model applyDelta(ModelDelta delta, const Model &base);
+    using ParameterField = dalnok::ParameterField;
+    using ParameterValue = dalnok::ParameterValue;
     bool editParameter(const char *name, DalnokTrackId track, ParameterField field, float value, std::string &err);
-    static void setParameterInModel(Model &model, const ParameterValue &value);
     float parameterValue(DalnokTrackId track, ParameterField field) const;
     void applyParameter(const ParameterValue &value);
-    void applyUndo(std::vector<UndoStep> &from, std::vector<UndoStep> &to);
+    void applyUndo(bool undo); // undo (or redo) the top step of its stack
 
     // Runs `fn` against the model; on success records an undo step and publishes.
     template <typename F>
     bool edit(const char *name, bool structural, F &&fn);
     void restore(Model m);
     void syncRuntimes();
-    using PluginMap = std::map<int32_t, std::shared_ptr<PluginProcessor>>;
+    using PluginMap = PluginHostService::PluginMap;
     std::unique_ptr<RenderState> compile(std::vector<StretchJob> *needed = nullptr, const PluginMap *plugins = nullptr) const;
-    PluginMap offlinePlugins() const; // fresh instances with the live state, for offline renders
-    void instantiatePlugins();        // creates missing instances for every slot in the model
-    bool instantiateSlot(const PluginSlot &slot); // false: not loaded (reason in pluginErrors_)
-    static std::string stateRejected(const std::string &detail);
-    std::shared_ptr<PluginProcessor> createPlugin(const std::string &format, const std::string &path,
-                                                  const std::string &classId, bool offline, std::string &err) const;
-    const PluginSlot *findSlot(int32_t id) const;
+    void instantiatePlugins(); // creates missing instances for every slot in the model
     void bumpRevisionKeepingSaved(); // a UI-visible change that is not an edit (dirty state unchanged)
-    void captureLiveState(Model &m) const;
     StretchKey stretchKey(const ClipState &c) const;
     // Per-track content cache for incremental compilation (A-04). A key records every clip input the content
     // build reads; it holds the media and note lists strongly, so a pointer match can never be a reused address.
@@ -577,10 +547,7 @@ private:
     mutable std::map<std::string, std::shared_ptr<DelayLine>> delayCache_;
     mutable std::map<DalnokTrackId, ContentEntry> contentCache_; // live compiles only (control thread)
     std::map<DalnokMediaId, PoolEntry> pool_;
-    std::vector<UndoStep> undo_, redo_;
-    int groupDepth_ = 0;
-    bool groupRecorded_ = false;
-    std::string groupName_;
+    UndoStack history_; // undo and redo (A-06)
     std::string recoveryDirectory_; // control thread only; never part of the render snapshot
     uint64_t revision_ = 1, savedRevision_ = 1;
     // Per-track change tracking (A-05). Edits and undo stamp only the tracks they changed; any other revision
@@ -614,25 +581,10 @@ private:
     std::atomic<uint64_t> captureMissingFrames_{0};
     std::unique_ptr<AudioDevice> device_;
     std::string outputUid_;
-    PluginMap plugins_;                       // live instances by slot id
-    std::map<int32_t, std::string> pluginErrors_;
-    std::vector<int32_t> pendingPlugins_; // slots queued for deferred activation, in track order
-    struct Launching {                     // isolated slots whose hosts are loading (ADR-0014 stage 2)
-        int32_t slot;
-        std::unique_ptr<RemotePluginLaunch> launch;
-        std::chrono::steady_clock::time_point started;
-    };
-    std::vector<Launching> launching_;
-    static constexpr size_t kMaxParallelLaunches = 4;
-    bool isolates(const PluginSlot &slot) const { return !pluginHostPath_.empty() && slot.format != "dalnok"; }
-    std::string pluginHostPath_;          // dalnok-plughost; empty = plug-ins run in this process (ADR-0014)
-    std::set<int32_t> failedPlugins_;     // isolated instances whose failure has been reported
-    uint32_t workgroupPort_ = 0;          // send right for the running device's audio workgroup (0 = none)
+    PluginHostService pluginHost_;        // plug-in instances, loading and isolation (A-06)
     void updateWorkgroup();               // after the device starts, changes or stops: tell isolated hosts
-    int pluginLoadTimeoutMs_ = 60'000;    // an isolated plug-in that takes longer to load is killed
     int32_t nextPlugin_ = 1;
     int32_t nextMarker_ = 1;
-    std::map<int32_t, uint64_t> pluginEditCounts_; // per plug-in editor edit counts already seen
     // Recording (control thread)
     bool recording_ = false;
     DalnokTrackId recordAudioTrack_ = 0, recordMidiTrack_ = 0; // audio: the first armed audio track

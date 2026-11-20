@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "engine.hpp"
+#include "engine_internal.hpp"
 #include <unordered_map>
 #include "plugin_remote.hpp"
 
@@ -12,24 +13,12 @@
 #include <unistd.h>
 
 namespace dalnok {
+using detail::kTransportFadeSeconds;
+using detail::nowNs;
+using detail::atomicMax;
+using detail::FlushDenormals;
+using namespace detail;
 
-namespace {
-constexpr double kTransportFadeSeconds = 0.005; // de-click ramp for play/pause/seek
-
-// clock_gettime_nsec_np reads the commpage (no syscall, no locks) but is not
-// annotated by the SDK, so the effect check is suppressed for this call only.
-uint64_t nowNs() DALNOK_NONBLOCKING {
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wfunction-effects"
-    return clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
-#pragma clang diagnostic pop
-}
-
-void atomicMax(std::atomic<uint64_t> &a, uint64_t v) DALNOK_NONBLOCKING {
-    auto cur = a.load(std::memory_order_relaxed);
-    while (v > cur && !a.compare_exchange_weak(cur, v, std::memory_order_relaxed)) {}
-}
-} // namespace
 
 float dbToGain(float db) { return db <= -96.0f ? 0.0f : std::pow(10.0f, std::min(db, 12.0f) / 20.0f); }
 
@@ -48,29 +37,11 @@ const ClipState *Model::clip(DalnokClipId id) const { return const_cast<Model *>
 
 // ---- Lifecycle ------------------------------------------------------------
 
-namespace {
-// Stands in for a duplex device in tests: the caller drives each cycle through pumpInput.
-class SimulatedDuplex final : public AudioDuplexDevice {
-public:
-    SimulatedDuplex(double rate, int64_t latency) : rate_(rate), latency_(latency) {}
-    bool start(Callback, void *, std::string &) override { return true; }
-    void stop() override {}
-    bool captureFailed() const override { return false; }
-    bool alive() const override { return true; }
-    double hardwareSampleRate() const override { return rate_; }
-    int64_t roundTripLatency() const override { return latency_; }
-private:
-    double rate_;
-    int64_t latency_;
-};
-} // namespace
 
 Engine::Engine(double sampleRate) : sampleRate_(sampleRate) {
     if (sampleRate_ <= 0) sampleRate_ = defaultOutputSampleRate();
     if (sampleRate_ <= 0) sampleRate_ = 48000.0;
-    // Tests and the CLI can run every non-built-in plug-in isolated (ADR-0014); the app sets this explicitly.
-    if (const char *host = std::getenv("DALNOK_PLUGIN_HOST"); host && *host) pluginHostPath_ = host;
-    if (const char *ms = std::getenv("DALNOK_PLUGIN_LOAD_TIMEOUT_MS"); ms && std::atoi(ms) > 0) pluginLoadTimeoutMs_ = std::atoi(ms);
+    pluginHost_.setSampleRate(sampleRate_);
     midiParsers_[0] = std::make_unique<MidiParser>();
     midiInputs_[0].store(midiParsers_[0].get(), std::memory_order_release);
     syncRuntimes(); // builds the tempo map: the first snapshot needs the metronome schedule
@@ -84,204 +55,6 @@ Engine::~Engine() {
     collectGarbage();
     delete current_;
     delete pending_.exchange(nullptr);
-}
-
-// ---- Device -------------------------------------------------------------
-
-bool Engine::startDevice(std::string &err) {
-    if (device_ || duplex_) return true;
-    auto dev = createOutputDevice(outputUid_, sampleRate_, err);
-    if (!dev || !dev->start(&Engine::audioCallback, this, err)) return false;
-    device_ = std::move(dev);
-    updateWorkgroup();
-    return true;
-}
-
-void Engine::updateWorkgroup() {
-    const uint32_t port = duplex_ ? duplex_->workgroupPort() : device_ ? device_->workgroupPort() : 0;
-    if (port && port == workgroupPort_) { releaseMachSendRight(port); return; } // same workgroup (one name per port)
-    if (workgroupPort_) releaseMachSendRight(workgroupPort_);
-    workgroupPort_ = port;
-    for (const auto &[id, p] : plugins_)
-        if (p && p->isolated()) p->shareWorkgroup(workgroupPort_);
-}
-
-bool Engine::setOutputDevice(const std::string &uid, std::string &err) {
-    if (duplex_) { err = "stop capture before changing the output device"; return false; }
-    if (uid == outputUid_ && device_ && device_->alive()) return true;
-    const std::string previous = outputUid_;
-    const bool wasRunning = device_ != nullptr;
-    stopDevice();
-    outputUid_ = uid;
-    if (startDevice(err)) return true;
-    // Fall back to what was running before (or the default if that is gone).
-    outputUid_ = previous;
-    std::string ignored;
-    if (wasRunning && !startDevice(ignored)) {
-        outputUid_.clear();
-        startDevice(ignored);
-    }
-    return false;
-}
-
-bool Engine::pump(float *left, float *right, int frames) {
-    if (device_ || duplex_ || !left || !right || frames <= 0) return false;
-    process(left, right, frames);
-    collectGarbage();
-    return true;
-}
-
-bool Engine::pumpInput(const float *input, float *left, float *right, int frames) {
-    // Mono test input appears on every device channel.
-    const float *channels[64];
-    for (auto &c : channels) c = input;
-    return pumpInputChannels(input ? channels : nullptr, input ? 64 : 0, left, right, frames);
-}
-
-bool Engine::pumpInputChannels(const float *const *inputs, int count, float *left, float *right, int frames) {
-    if (!simulatedInput_ || !duplex_ || !left || !right || frames <= 0 || count < 0 || count > 64) return false;
-    duplexCallback(this, left, right, inputs, count, frames);
-    collectGarbage();
-    return true;
-}
-
-bool Engine::startCapture(const std::string &uid, const std::vector<int> &channels, const std::string &path, std::string &err) {
-    if (duplex_ || captureWriter_) { err = "capture is already active"; return false; }
-    if (channels.empty() || channels.size() > 64) { err = "choose 1 to 64 input channels"; return false; }
-    int highest = 0;
-    for (int c : channels) {
-        if (c < 0 || c > 63) { err = "input channel out of range"; return false; }
-        highest = std::max(highest, c);
-    }
-    const auto count = static_cast<uint32_t>(channels.size());
-    const bool simulated = uid == kSimulatedInput;
-    if (simulated ? device_ != nullptr : (!device_ || uid.empty() || uid != outputUid_)) {
-        err = simulated ? "the simulated input requires the output device to be stopped"
-                        : "select the same explicit input and output device before capture";
-        return false;
-    }
-    if (path.empty() || sampleRate_ != std::floor(sampleRate_) || sampleRate_ < 8000 || sampleRate_ > 384000) {
-        err = "invalid capture path or sample rate"; return false;
-    }
-    std::unique_ptr<AudioDuplexDevice> duplex;
-    if (simulated) duplex = std::make_unique<SimulatedDuplex>(sampleRate_, simulatedLatency_);
-    else duplex = createDuplexDevice(uid, sampleRate_, highest, err);
-    if (!duplex) return false;
-    const int fd = CaptureSpool::create(path, static_cast<uint32_t>(sampleRate_), count);
-    if (fd < 0) { err = "cannot create new capture spool"; return false; }
-    try {
-        captureSpool_ = std::make_unique<CaptureSpool>(fd, count);
-        // About 5.5 seconds at 48 kHz; overflow always reports an error.
-        captureWriter_ = std::make_unique<CaptureWriter>(1 << 18, count, *captureSpool_);
-        captureScratch_.assign(static_cast<size_t>(kMaxCaptureBlock) * count, 0.0f);
-        for (size_t i = 0; i < channels.size(); ++i) captureMap_[i] = channels[i];
-        captureChannels_ = static_cast<int>(count);
-        captureWriter_->start();
-    } catch (...) {
-        if (!captureSpool_) ::close(fd);
-        captureWriter_.reset(); captureSpool_.reset();
-        err = "cannot start capture writer; spool retained"; return false;
-    }
-    captureInputFailed_.store(false, std::memory_order_relaxed);
-    captureMissingFrames_.store(0, std::memory_order_relaxed);
-    captureRT_ = captureWriter_.get();
-    if (device_) { device_->stop(); device_.reset(); }
-    if (!duplex->start(&Engine::duplexCallback, this, err)) {
-        captureRT_ = nullptr;
-        captureWriter_->stop(); captureWriter_.reset(); captureSpool_.reset();
-        std::string restoreError;
-        if (!simulated && !startDevice(restoreError)) err += "; output restart failed: " + restoreError;
-        return false;
-    }
-    duplex_ = std::move(duplex);
-    simulatedInput_ = simulated;
-    updateWorkgroup();
-    return true;
-}
-
-bool Engine::captureStatus(DalnokCaptureStats &stats) const {
-    if (!duplex_ || !captureWriter_) return false;
-    stats = {};
-    stats.captured_frames = captureWriter_->capturedFrames();
-    stats.written_frames = captureWriter_->writtenFrames();
-    stats.dropped_frames = captureWriter_->droppedFrames() + captureMissingFrames_.load(std::memory_order_relaxed);
-    const double hardwareRate = duplex_->hardwareSampleRate();
-    stats.input_error = captureInputFailed_.load(std::memory_order_acquire) || duplex_->captureFailed() || !duplex_->alive() ||
-                        hardwareRate <= 0 || std::abs(hardwareRate - sampleRate_) > 0.5;
-    stats.overflow = captureWriter_->hasError(CaptureWriter::Error::overflow);
-    stats.write_error = captureWriter_->hasError(CaptureWriter::Error::write);
-    stats.finalize_error = captureWriter_->hasError(CaptureWriter::Error::finalize);
-    return true;
-}
-
-bool Engine::stopCapture(DalnokCaptureStats &stats, std::string &err, bool restoreOutput) {
-    if (!duplex_ || !captureWriter_) { err = "capture is not active"; return false; }
-    duplex_->stop(); // callback no longer accesses captureRT_
-    captureRT_ = nullptr;
-    captureChannels_ = 0;
-    captureWriter_->stop();
-    captureStatus(stats);
-    duplex_.reset(); captureWriter_.reset(); captureSpool_.reset();
-    updateWorkgroup();
-    const bool valid = !stats.input_error && !stats.overflow && !stats.write_error && !stats.finalize_error &&
-                       stats.captured_frames > 0 && stats.captured_frames == stats.written_frames;
-    std::string outputError;
-    const bool restore = restoreOutput && !simulatedInput_;
-    simulatedInput_ = false;
-    const bool outputOK = !restore || startDevice(outputError);
-    if (!valid) err = "capture failed; the original spool was retained";
-    if (!outputOK) { if (!err.empty()) err += "; "; err += "output restart failed: " + outputError; }
-    return valid && outputOK;
-}
-
-bool Engine::readTrackMeter(DalnokTrackId id, float &l, float &r) {
-    const TrackState *t = model_.track(id);
-    if (!t) return false;
-    l = t->runtime->peakL.exchange(0.0f, std::memory_order_relaxed);
-    r = t->runtime->peakR.exchange(0.0f, std::memory_order_relaxed);
-    return true;
-}
-
-void Engine::readMasterMeter(float &l, float &r) {
-    l = masterPeakL_.exchange(0.0f, std::memory_order_relaxed);
-    r = masterPeakR_.exchange(0.0f, std::memory_order_relaxed);
-}
-
-void Engine::stopDevice() {
-    if (duplex_) { DalnokCaptureStats stats{}; std::string ignored; stopCapture(stats, ignored, false); }
-    if (!device_) return;
-    device_->stop(); // synchronous: the audio thread is no longer inside process()
-    device_.reset();
-    updateWorkgroup();
-}
-
-void Engine::collectGarbage() {
-    RenderState *s = nullptr;
-    while (retired_.pop(s)) delete s;
-    // Edits made in plugin editors change what the project will save.
-    // Only the tracks owning an edited plug-in are stamped (A-05).
-    std::vector<DalnokTrackId> edited;
-    bool any = false;
-    for (const auto &[id, p] : plugins_) {
-        const uint64_t count = p ? p->editCount() : 0;
-        uint64_t &known = pluginEditCounts_[id];
-        if (count == known) continue;
-        known = count;
-        any = true;
-        for (const auto &t : model_.tracks)
-            for (const auto &slot : t.plugins) if (slot.id == id) edited.push_back(t.id);
-    }
-    // Isolated plug-ins (ADR-0014): a host that crashed or stopped answering is reported on its track.
-    for (const auto &[id, p] : plugins_) {
-        if (!p || !p->isolated()) continue;
-        p->poll();
-        if (p->failure().empty() || !failedPlugins_.insert(id).second) continue;
-        any = true;
-        for (const auto &t : model_.tracks)
-            for (const auto &slot : t.plugins) if (slot.id == id) edited.push_back(t.id);
-    }
-    if (any) { ++revision_; stampTracks(edited); }
-    if (recording_) drainRecordedMidi();
 }
 
 // ---- Media pool -----------------------------------------------------------
@@ -313,38 +86,6 @@ int64_t Engine::sessionLength() const {
 
 // ---- Edit machinery -------------------------------------------------------
 
-namespace {
-constexpr size_t kMaxUndo = 500;
-}
-
-template <typename F>
-bool Engine::edit(const char *name, bool structural, F &&fn) {
-    Model before = model_;
-    if (!fn(model_)) {
-        model_ = std::move(before);
-        return false;
-    }
-    const auto changed = changedTracks(before);
-    if (groupDepth_ == 0 || !groupRecorded_) {
-        // The previous step will next be applied to the state before this edit: compact it against that state.
-        compactTop(undo_, before);
-        undo_.push_back({groupDepth_ && !groupName_.empty() ? groupName_ : name,
-                         std::make_unique<Model>(std::move(before)), {}, nullptr});
-        if (groupDepth_) groupRecorded_ = true;
-    } else if (!undo_.back().model) {
-        // Promote the scalar group to a snapshot of its original state.
-        for (const auto &value : undo_.back().parameters) setParameterInModel(before, value);
-        undo_.back().model = std::make_unique<Model>(std::move(before));
-        undo_.back().parameters.clear();
-    }
-    if (undo_.size() > kMaxUndo) undo_.erase(undo_.begin());
-    redo_.clear();
-    ++revision_;
-    stampTracks(changed);
-    syncRuntimes();
-    if (structural) commit();
-    return true;
-}
 
 float Engine::parameterValue(DalnokTrackId id, ParameterField field) const {
     if (field == ParameterField::masterGain) return model_.masterGainDb;
@@ -357,19 +98,6 @@ float Engine::parameterValue(DalnokTrackId id, ParameterField field) const {
         case ParameterField::masterGain: break;
     }
     return 0;
-}
-
-void Engine::setParameterInModel(Model &model, const ParameterValue &v) {
-    if (v.field == ParameterField::masterGain) { model.masterGainDb = v.value; return; }
-    TrackState *track = model.track(v.track);
-    if (!track) return;
-    switch (v.field) {
-        case ParameterField::gain: track->gainDb = v.value; break;
-        case ParameterField::pan: track->pan = v.value; break;
-        case ParameterField::mute: track->muted = v.value != 0; break;
-        case ParameterField::solo: track->solo = v.value != 0; break;
-        case ParameterField::masterGain: break;
-    }
 }
 
 void Engine::applyParameter(const ParameterValue &v) {
@@ -399,16 +127,7 @@ bool Engine::editParameter(const char *name, DalnokTrackId track, ParameterField
         value = value <= -96.0f ? -INFINITY : std::min(value, 12.0f);
     if (field == ParameterField::pan) value = std::clamp(value, -1.0f, 1.0f);
     ParameterValue old{track, field, parameterValue(track, field)};
-    if (groupDepth_ == 0 || !groupRecorded_) {
-        pushStep(undo_, {groupDepth_ && !groupName_.empty() ? groupName_ : name, nullptr, {old}, nullptr}, model_);
-        if (groupDepth_) groupRecorded_ = true;
-    } else if (!undo_.back().model) {
-        auto &values = undo_.back().parameters;
-        if (std::none_of(values.begin(), values.end(), [&](const auto &v) { return v.track == track && v.field == field; }))
-            values.push_back(old);
-    }
-    if (undo_.size() > kMaxUndo) undo_.erase(undo_.begin());
-    redo_.clear();
+    history_.recordParameter(name, old, model_);
     applyParameter({track, field, value});
     ++revision_;
     if (field != ParameterField::masterGain) stampTracks({track});
@@ -466,127 +185,51 @@ std::vector<DalnokTrackId> Engine::changedTracks(const Model &before) const {
     return out;
 }
 
-void Engine::applyUndo(std::vector<UndoStep> &from, std::vector<UndoStep> &to) {
-    UndoStep step = std::move(from.back());
-    from.pop_back();
-    if (step.model || step.delta) {
-        Model target = step.model ? std::move(*step.model) : applyDelta(std::move(*step.delta), model_);
-        pushStep(to, {step.name, std::make_unique<Model>(model_), {}, nullptr}, model_);
+void Engine::applyUndo(bool undo) {
+    UndoStack::Step step = history_.take(undo);
+    if (step.snapshot()) {
+        Model target = UndoStack::target(step, model_);
+        history_.pushInverse(undo, UndoStack::Step(step.name, std::make_unique<Model>(model_), {}), model_);
         restore(std::move(target));
     } else {
-        UndoStep inverse{step.name, nullptr, {}, nullptr};
+        UndoStack::Step inverse(step.name, nullptr, {});
         inverse.parameters.reserve(step.parameters.size());
         for (const auto &v : step.parameters) {
             inverse.parameters.push_back({v.track, v.field, parameterValue(v.track, v.field)});
             applyParameter(v);
         }
-        pushStep(to, std::move(inverse), model_); // model_ already holds the parameters' undone values
+        history_.pushInverse(undo, std::move(inverse), model_); // model_ already holds the parameters' undone values
         ++revision_;
         for (const auto &v : step.parameters) if (v.field != ParameterField::masterGain) stampTracks({v.track});
         markParameterRevision();
     }
 }
 
-void Engine::compactTop(std::vector<UndoStep> &stack, const Model &base) {
-    if (stack.empty() || !stack.back().model) return;
-    stack.back().delta = makeDelta(std::move(*stack.back().model), base);
-    stack.back().model.reset();
-}
-
-void Engine::pushStep(std::vector<UndoStep> &stack, UndoStep step, const Model &base) {
-    compactTop(stack, base);
-    stack.push_back(std::move(step));
-}
-
-std::unique_ptr<Engine::ModelDelta> Engine::makeDelta(Model target, const Model &base) {
-    auto d = std::make_unique<ModelDelta>();
-    // Usually the clips line up by index (an edit changed a few in place); look ids up only when they don't.
-    std::unordered_map<DalnokClipId, size_t> at;
-    const auto find = [&](DalnokClipId id) -> const ClipState * {
-        if (at.empty() && !base.clips.empty()) {
-            at.reserve(base.clips.size());
-            for (size_t i = 0; i < base.clips.size(); ++i) at.emplace(base.clips[i].id, i);
-        }
-        const auto it = at.find(id);
-        return it == at.end() ? nullptr : &base.clips[it->second];
-    };
-    d->sameOrder = target.clips.size() == base.clips.size();
-    for (size_t i = 0; i < target.clips.size(); ++i) {
-        const ClipState &c = target.clips[i];
-        const ClipState *b = i < base.clips.size() && base.clips[i].id == c.id ? &base.clips[i] : nullptr;
-        if (!b) { d->sameOrder = false; b = find(c.id); }
-        if (!b || !(*b == c)) d->changed.push_back(c);
-    }
-    if (!d->sameOrder) {
-        d->order.reserve(target.clips.size());
-        for (const auto &c : target.clips) d->order.push_back(c.id);
-    }
-    target.clips.clear();
-    target.clips.shrink_to_fit();
-    d->rest = std::move(target);
-    return d;
-}
-
-Model Engine::applyDelta(ModelDelta d, const Model &base) {
-    Model m = std::move(d.rest);
-    std::unordered_map<DalnokClipId, ClipState *> changed;
-    changed.reserve(d.changed.size());
-    for (auto &c : d.changed) changed.emplace(c.id, &c);
-    if (d.sameOrder) {
-        m.clips = base.clips;
-        if (!changed.empty())
-            for (auto &c : m.clips)
-                if (auto it = changed.find(c.id); it != changed.end()) c = std::move(*it->second);
-        return m;
-    }
-    std::unordered_map<DalnokClipId, size_t> at;
-    at.reserve(base.clips.size());
-    for (size_t i = 0; i < base.clips.size(); ++i) at.emplace(base.clips[i].id, i);
-    m.clips.reserve(d.order.size());
-    for (DalnokClipId id : d.order) {
-        if (auto it = changed.find(id); it != changed.end()) m.clips.push_back(std::move(*it->second));
-        else if (auto b = at.find(id); b != at.end()) m.clips.push_back(base.clips[b->second]);
-    }
-    return m;
-}
-
 bool Engine::undo() {
-    groupDepth_ = 0;
-    if (undo_.empty()) return false;
-    applyUndo(undo_, redo_);
+    history_.closeGroups();
+    if (!history_.canUndo()) return false;
+    applyUndo(true);
     return true;
 }
 
 bool Engine::redo() {
-    groupDepth_ = 0;
-    if (redo_.empty()) return false;
-    applyUndo(redo_, undo_);
+    history_.closeGroups();
+    if (!history_.canRedo()) return false;
+    applyUndo(false);
     return true;
 }
 
-void Engine::beginGroup(const std::string &name) {
-    if (groupDepth_++ == 0) {
-        groupName_ = name;
-        groupRecorded_ = false;
-    }
-}
+void Engine::beginGroup(const std::string &name) { history_.beginGroup(name); }
 
-void Engine::endGroup() {
-    if (groupDepth_ > 0) --groupDepth_;
-}
+void Engine::endGroup() { history_.endGroup(); }
 
 void Engine::resetModel() {
     model_ = Model{};
     clipboard_.clear(); // clips refer to this project's media
-    plugins_.clear(); // snapshots still holding instances release them on this thread
-    pluginErrors_.clear();
-    pendingPlugins_.clear();
-    launching_.clear();
+    pluginHost_.clear(); // snapshots still holding instances release them on this thread
     pool_.clear();
     cache_.clear();
-    undo_.clear();
-    redo_.clear();
-    groupDepth_ = 0;
+    history_.clear();
     nextColor_ = 0;
     cycleOn_.store(false, std::memory_order_release);
     cycleStart_.store(0, std::memory_order_relaxed);
@@ -603,7 +246,7 @@ void Engine::newProject() {
 
 // ---- Commands -------------------------------------------------------------
 
-namespace {
+namespace detail {
 bool fail(std::string &err, const char *msg) {
     err = msg;
     return false;
@@ -614,7 +257,7 @@ std::string stem(const std::string &path) {
     const auto dot = base.find_last_of('.');
     return dot == std::string::npos || dot == 0 ? base : base.substr(0, dot);
 }
-} // namespace
+} // namespace detail
 
 DalnokTrackId Engine::addTrack(const std::string &name, std::string &err) {
     const auto id = nextTrack_;
@@ -718,7 +361,7 @@ bool Engine::nudgeClips(const std::vector<DalnokClipId> &ids, int64_t delta, std
     });
 }
 
-namespace {
+namespace detail {
 // Moves every MIDI clip and note so it keeps its beat position under `to`. Clips that share a note
 // list and a source origin (split pieces) keep sharing one remapped list.
 bool remapMidi(Model &m, const TempoMap &from, const TempoMap &to, std::string &err) {
@@ -754,7 +397,7 @@ bool remapMidi(Model &m, const TempoMap &from, const TempoMap &to, std::string &
     }
     return true;
 }
-} // namespace
+} // namespace detail
 
 bool Engine::setTempo(double bpm, int32_t num, int32_t den, std::string &err) {
     auto tempo = model_.tempo;
@@ -807,14 +450,14 @@ bool Engine::validNotes(const std::vector<MidiNote> &notes, std::string &err) co
     return true;
 }
 
-namespace {
+namespace detail {
 NoteList sortedNotes(std::vector<MidiNote> notes) {
     std::stable_sort(notes.begin(), notes.end(), [](const MidiNote &a, const MidiNote &b) {
         return a.start < b.start || (a.start == b.start && a.pitch < b.pitch);
     });
     return std::make_shared<const std::vector<MidiNote>>(std::move(notes));
 }
-} // namespace
+} // namespace detail
 
 DalnokClipId Engine::addMidiClip(DalnokTrackId track, int64_t start, int64_t length, std::string &err,
                                  std::vector<MidiNote> notes, const char *undoName) {
@@ -886,7 +529,7 @@ int32_t Engine::addPlugin(DalnokTrackId track, const std::string &path, const st
     const bool clap = !au && !builtin && path.size() > 5 && path.compare(path.size() - 5, 5, ".clap") == 0;
     const std::string format = au ? "au" : builtin ? "dalnok" : clap ? "clap" : "vst3";
     const std::string location = au ? path.substr(3) : builtin ? path.substr(7) : path;
-    std::shared_ptr<PluginProcessor> instance(createPlugin(format, location, classId, false, err));
+    std::shared_ptr<PluginProcessor> instance(pluginHost_.create(format, location, classId, false, err));
     if (!instance) return 0;
     if (instance->instrument() && t->kind != kTrackInstrument) return fail(err, "instrument plug-ins go on instrument tracks"), 0;
     const int32_t id = nextPlugin_;
@@ -901,7 +544,7 @@ int32_t Engine::addPlugin(DalnokTrackId track, const std::string &path, const st
     std::string initialState;
     instance->getState(initialState);
     slot.state.assign(std::move(initialState));
-    plugins_[id] = std::move(instance);
+    pluginHost_.insert(id, std::move(instance));
     const bool ok = edit(slot.instrument ? "Set Instrument" : "Add Plug-in", true, [&](Model &m) {
         TrackState *tr = m.track(track);
         if (!tr) return fail(err, "no such track");
@@ -913,7 +556,7 @@ int32_t Engine::addPlugin(DalnokTrackId track, const std::string &path, const st
         }
         return true;
     });
-    if (!ok) { plugins_.erase(id); return 0; }
+    if (!ok) { pluginHost_.erase(id); return 0; }
     ++nextPlugin_;
     return id;
 }
@@ -981,7 +624,7 @@ DalnokTrackId Engine::duplicateTrack(DalnokTrackId track, std::string &err) {
         s.state.assign(state);
         std::string loadErr;
         if (pluginInstance(p.id)) {
-            std::shared_ptr<PluginProcessor> inst(createPlugin(p.format, p.path, p.classId, false, loadErr));
+            std::shared_ptr<PluginProcessor> inst(pluginHost_.create(p.format, p.path, p.classId, false, loadErr));
             if (inst) { if (!state.empty()) inst->setState(state); made.emplace_back(s.id, std::move(inst)); }
         }
         slots.push_back(std::move(s));
@@ -989,7 +632,7 @@ DalnokTrackId Engine::duplicateTrack(DalnokTrackId track, std::string &err) {
     const auto id = nextTrack_;
     const auto firstClip = nextClip_;
     DalnokClipId nextClipId = firstClip;
-    for (auto &[sid, inst] : made) plugins_[sid] = inst; // before the edit: it compiles the new render state
+    for (auto &[sid, inst] : made) pluginHost_.insert(sid, inst); // before the edit: it compiles the new render state
     const bool ok = edit("Duplicate Track", true, [&](Model &m) {
         auto it = std::find_if(m.tracks.begin(), m.tracks.end(), [track](const TrackState &t) { return t.id == track; });
         if (it == m.tracks.end()) return fail(err, "no such track");
@@ -1015,7 +658,7 @@ DalnokTrackId Engine::duplicateTrack(DalnokTrackId track, std::string &err) {
         for (auto &c : copies) m.clips.push_back(std::move(c));
         return true;
     });
-    if (!ok) { for (auto &[sid, inst] : made) plugins_.erase(sid); return 0; }
+    if (!ok) { for (auto &[sid, inst] : made) pluginHost_.erase(sid); return 0; }
     nextPlugin_ = nextSlot;
     nextClip_ = nextClipId;
     ++nextTrack_;
@@ -1047,23 +690,11 @@ bool Engine::setPluginControls(DalnokTrackId track, int32_t id, std::vector<uint
     });
 }
 
-PluginProcessor *Engine::pluginInstance(int32_t id) const {
-    auto it = plugins_.find(id);
-    return it == plugins_.end() ? nullptr : it->second.get();
-}
+PluginProcessor *Engine::pluginInstance(int32_t id) const { return pluginHost_.instance(id); }
 
-std::string Engine::pluginError(int32_t id) const {
-    auto it = pluginErrors_.find(id);
-    return it == pluginErrors_.end() ? "" : it->second;
-}
+std::string Engine::pluginError(int32_t id) const { return pluginHost_.error(id); }
 
-bool Engine::pluginState(int32_t id, std::string &bytes) const {
-    if (PluginProcessor *p = pluginInstance(id)) return p->getState(bytes);
-    for (const auto &t : model_.tracks)
-        for (const auto &slot : t.plugins)
-            if (slot.id == id) { bytes = slot.state.str(); return true; } // missing plugin: keep what was saved
-    return false;
-}
+bool Engine::pluginState(int32_t id, std::string &bytes) const { return pluginHost_.state(model_, id, bytes); }
 
 bool Engine::setPluginState(int32_t id, const std::string &bytes, std::string &err) {
     PluginProcessor *p = pluginInstance(id);
@@ -1073,138 +704,26 @@ bool Engine::setPluginState(int32_t id, const std::string &bytes, std::string &e
     return true;
 }
 
-Engine::PluginMap Engine::offlinePlugins() const {
-    PluginMap out;
-    for (const auto &t : model_.tracks)
-        for (const auto &slot : t.plugins) {
-            if (!pluginInstance(slot.id) || !pluginInstance(slot.id)->failure().empty()) continue; // as heard live
-            std::string err, state;
-            std::shared_ptr<PluginProcessor> p(createPlugin(slot.format, slot.path, slot.classId, true, err));
-            if (!p) continue;
-            if (pluginState(slot.id, state)) p->setState(state);
-            // Parameters set since the state was captured may not be in it yet (the live processor applies
-            // them on its next block), so replay them; the offline instance applies them before its first block.
-            std::vector<std::pair<uint32_t, double>> touched;
-            pluginInstance(slot.id)->touchedParameters(touched);
-            for (const auto &[id, v] : touched) p->setParameter(id, v);
-            out[slot.id] = std::move(p);
-        }
-    return out;
-}
-
 void Engine::instantiatePlugins() {
     for (const auto &t : model_.tracks)
-        for (const auto &slot : t.plugins) {
-            nextPlugin_ = std::max(nextPlugin_, slot.id + 1);
-            if (!plugins_.count(slot.id)) instantiateSlot(slot);
-        }
-}
-
-std::string Engine::stateRejected(const std::string &detail) {
-    return "the saved state was not accepted" + (detail.empty() ? std::string{} : ": " + detail) + "; the original state was preserved";
-}
-
-bool Engine::instantiateSlot(const PluginSlot &slot) {
-    std::string err;
-    std::shared_ptr<PluginProcessor> p(createPlugin(slot.format, slot.path, slot.classId, false, err));
-    if (!p) { pluginErrors_[slot.id] = err; return false; }
-    if (!slot.state.empty() && !p->setStateFromDocument(slot.state.str())) {
-        // Keep the original state intact instead of running and later saving a default instance.
-        pluginErrors_[slot.id] = stateRejected(p->stateError());
-        return false;
-    }
-    pluginErrors_.erase(slot.id);
-    plugins_[slot.id] = std::move(p);
-    return true;
-}
-
-std::shared_ptr<PluginProcessor> Engine::createPlugin(const std::string &format, const std::string &path,
-                                                     const std::string &classId, bool offline, std::string &err) const {
-    // Built-in plug-ins are our own code and always run here; others run in a host process when enabled (ADR-0014).
-    if (!pluginHostPath_.empty() && format != "dalnok") {
-        auto p = loadRemotePlugin(pluginHostPath_, format, path, classId, sampleRate_, kMaxBlock, offline, pluginLoadTimeoutMs_, err);
-        if (p && !offline && workgroupPort_) p->shareWorkgroup(workgroupPort_);
-        return p;
-    }
-    return loadPlugin(format, path, classId, sampleRate_, kMaxBlock, offline, err);
-}
-
-const PluginSlot *Engine::findSlot(int32_t id) const {
-    for (const auto &t : model_.tracks)
-        for (const auto &slot : t.plugins)
-            if (slot.id == id) return &slot;
-    return nullptr;
+        for (const auto &slot : t.plugins) nextPlugin_ = std::max(nextPlugin_, slot.id + 1);
+    pluginHost_.instantiateMissing(model_);
 }
 
 int32_t Engine::activateNextPlugin(int32_t &slot, double &seconds) {
-    slot = 0;
-    seconds = 0;
-    const auto remaining = [&] { return static_cast<int32_t>(pendingPlugins_.size() + launching_.size()); };
-    const auto finished = [&](int32_t id, std::chrono::steady_clock::time_point t0) {
-        seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
-        slot = id;
+    bool changed = false;
+    const int32_t left = pluginHost_.activateNext(model_, slot, seconds, changed);
+    if (changed) {
         bumpRevisionKeepingSaved(); // loaded state and latency are visible to the UI; not an edit
         commit();
-        return remaining();
-    };
-    // Isolated plug-ins load in their own processes (ADR-0014 stage 2): first collect one whose host has answered.
-    for (auto it = launching_.begin(); it != launching_.end(); ++it) {
-        std::string err;
-        const auto status = it->launch->poll(err);
-        if (status == RemotePluginLaunch::Status::loading) continue;
-        const int32_t id = it->slot;
-        const auto t0 = it->started;
-        auto launch = std::move(it->launch);
-        launching_.erase(it);
-        if (!findSlot(id)) return finished(0, t0); // removed while loading
-        if (status == RemotePluginLaunch::Status::failed) pluginErrors_[id] = err;
-        else if (!launch->stateAccepted()) pluginErrors_[id] = stateRejected(launch->stateError());
-        else {
-            pluginErrors_.erase(id);
-            plugins_[id] = std::shared_ptr<PluginProcessor>(launch->take());
-            if (workgroupPort_) plugins_[id]->shareWorkgroup(workgroupPort_);
-        }
-        return finished(id, t0);
     }
-    if (pendingPlugins_.empty() && launching_.empty()) return -1;
-    while (!pendingPlugins_.empty()) {
-        const int32_t id = pendingPlugins_.front();
-        const PluginSlot *s = findSlot(id);
-        if (!s || plugins_.count(id)) { pendingPlugins_.erase(pendingPlugins_.begin()); continue; } // removed or loaded meanwhile
-        const auto t0 = std::chrono::steady_clock::now();
-        if (isolates(*s)) {
-            if (launching_.size() >= kMaxParallelLaunches) break;
-            pendingPlugins_.erase(pendingPlugins_.begin());
-            pluginErrors_.erase(id);
-            std::string err;
-            const std::string state = s->state.str();
-            auto launch = launchRemotePlugin(pluginHostPath_, s->format, s->path, s->classId, sampleRate_, kMaxBlock,
-                                             pluginLoadTimeoutMs_, s->state.empty() ? nullptr : &state, true, err);
-            if (!launch) { pluginErrors_[id] = err; return finished(id, t0); }
-            launching_.push_back({id, std::move(launch), t0});
-            continue; // start the next one too; none of them blocks this thread
-        }
-        pendingPlugins_.erase(pendingPlugins_.begin());
-        pluginErrors_.erase(id);
-        instantiateSlot(*s); // third-party code runs here, on the caller's (main) thread
-        return finished(id, t0);
-    }
-    return remaining() > 0 ? remaining() : -1; // slot 0: hosts are still loading
+    return left;
 }
 
-bool Engine::pluginLoading(int32_t slot) const {
-    return std::find(pendingPlugins_.begin(), pendingPlugins_.end(), slot) != pendingPlugins_.end() ||
-           std::any_of(launching_.begin(), launching_.end(), [&](const Launching &l) { return l.slot == slot; });
-}
+bool Engine::pluginLoading(int32_t slot) const { return pluginHost_.loading(slot); }
 
 void Engine::cancelPendingPlugins() {
-    if (pendingPlugins_.empty() && launching_.empty()) return;
-    for (const auto &l : launching_) pendingPlugins_.push_back(l.slot);
-    launching_.clear(); // kills hosts still loading
-    for (int32_t id : pendingPlugins_)
-        if (!plugins_.count(id)) pluginErrors_[id] = "Not loaded: loading was cancelled; saved state preserved";
-    pendingPlugins_.clear();
-    bumpRevisionKeepingSaved();
+    if (pluginHost_.cancelPending()) bumpRevisionKeepingSaved();
 }
 
 void Engine::bumpRevisionKeepingSaved() {
@@ -1214,31 +733,14 @@ void Engine::bumpRevisionKeepingSaved() {
 }
 
 bool Engine::reloadPlugin(int32_t id, std::string &err) {
-    const PluginSlot *s = findSlot(id);
-    if (!s) { err = "no such plug-in slot"; return false; }
-    if (auto it = plugins_.find(id); it != plugins_.end()) {
-        if (!it->second || it->second->failure().empty()) return true;
-        plugins_.erase(it); // a failed isolated instance restarts from the last saved state; snapshots release the old one
-        failedPlugins_.erase(id);
-    }
-    pendingPlugins_.erase(std::remove(pendingPlugins_.begin(), pendingPlugins_.end(), id), pendingPlugins_.end());
-    std::erase_if(launching_, [&](const Launching &l) { return l.slot == id; });
-    const bool ok = instantiateSlot(*s);
-    if (!ok) err = pluginErrors_[id];
+    const bool ok = pluginHost_.reload(model_, id, err);
+    if (err == "no such plug-in slot") return false;
     bumpRevisionKeepingSaved();
     commit();
     return ok;
 }
 
-void Engine::captureLiveState(Model &m) const {
-    for (auto &t : m.tracks)
-        for (auto &slot : t.plugins) {
-            std::string state;
-            if (PluginProcessor *p = pluginInstance(slot.id); p && p->getState(state)) slot.state.assign(std::move(state));
-        }
-}
-
-namespace {
+namespace detail {
 // True if routing `from` into `to` (as its output or a send) would let `to` reach `from` again.
 bool feedsBack(const Model &m, DalnokTrackId from, DalnokTrackId to) {
     std::vector<DalnokTrackId> stack{to};
@@ -1257,7 +759,7 @@ bool feedsBack(const Model &m, DalnokTrackId from, DalnokTrackId to) {
     }
     return false;
 }
-} // namespace
+} // namespace detail
 
 DalnokTrackId Engine::addBusTrack(const std::string &name, std::string &err) {
     const auto id = nextTrack_;
@@ -1313,222 +815,6 @@ bool Engine::setSend(DalnokTrackId track, DalnokTrackId bus, float db, bool pre,
     });
 }
 
-DalnokClipId Engine::copyToSlot(DalnokClipId clip, int32_t slot, std::string &err) {
-    const auto id = nextClip_;
-    const bool ok = edit("Copy to Launcher", true, [&](Model &m) {
-        const ClipState *c = m.clip(clip);
-        if (!c || c->alt) return fail(err, "no such clip");
-        if (slot < 0 || slot >= m.scenes) return fail(err, "no such launcher slot");
-        std::erase_if(m.clips, [&](const ClipState &x) { return x.track == c->track && x.slot == slot; }); // replaces the slot
-        c = m.clip(clip);
-        if (!c) return fail(err, "that clip was in the slot");
-        ClipState copy = *c;
-        copy.id = id;
-        copy.slot = slot;
-        copy.folder = 0;
-        copy.start = 0;
-        m.clips.push_back(std::move(copy));
-        return true;
-    });
-    if (!ok) return 0;
-    ++nextClip_;
-    return id;
-}
-
-DalnokClipId Engine::placeCopy(DalnokClipId clip, DalnokTrackId track, int64_t start, std::string &err) {
-    const auto id = nextClip_;
-    const bool ok = edit("Place Copy", true, [&](Model &m) {
-        const ClipState *c = m.clip(clip);
-        const TrackState *t = m.track(track);
-        if (!c || !t) return fail(err, "no such clip or track");
-        if (start < 0) return fail(err, "start must be >= 0");
-        if (t->kind == kTrackBus || (t->kind == kTrackInstrument) != c->midi()) return fail(err, "that clip can't go on that track");
-        ClipState copy = *c;
-        copy.id = id;
-        copy.track = track;
-        copy.start = start;
-        copy.slot = -1;
-        copy.follow = 0;
-        copy.folder = 0;
-        copy.alt = false;
-        m.clips.push_back(std::move(copy));
-        return true;
-    });
-    if (!ok) return 0;
-    ++nextClip_;
-    return id;
-}
-
-namespace {
-// Next bar start strictly after `frame` (or `frame` itself when it is a bar start).
-int64_t nextBar(const Model &m, const TempoMap &map, int64_t frame) {
-    double beat = 0;
-    if (!map.frameToBeat(frame, beat)) return frame;
-    int32_t bar, num, den; double inBar;
-    beatToBar(m.meters, beat, bar, inBar, num, den);
-    if (inBar < 1e-6) return frame;
-    int64_t out = frame;
-    map.beatToFrame(barToBeat(m.meters, bar + 1), out);
-    return out;
-}
-} // namespace
-
-DalnokClipId Engine::takeToSlot(const std::vector<DalnokClipId> &takes, int32_t slot, std::string &err) {
-    const auto id = nextClip_;
-    const bool ok = edit("Record to Slot", true, [&](Model &m) {
-        const ClipState *c = takes.empty() ? nullptr : m.clip(takes.back());
-        if (!c) return fail(err, "no take");
-        if (slot < 0 || slot >= m.scenes) return fail(err, "no such launcher slot");
-        ClipState copy = *c;
-        // The whole bars the take covers: from the first bar line at or after its start to the last one before its end.
-        const int64_t end = c->start + c->length;
-        const int64_t a = nextBar(m, map_, c->start);
-        double beat = 0;
-        int64_t b = a;
-        if (map_.frameToBeat(end, beat)) {
-            int32_t bar, num, den; double inBar;
-            beatToBar(m.meters, beat, bar, inBar, num, den);
-            map_.beatToFrame(barToBeat(m.meters, bar), b);
-        }
-        if (b > a && a >= c->start) {
-            if (copy.midi()) { // notes are relative to the clip start: shift them, drop what falls outside
-                const int64_t shift = a - c->start;
-                std::vector<MidiNote> notes;
-                for (MidiNote n : *c->notes)
-                    if (n.start >= shift && n.start < shift + (b - a)) { n.start -= shift; notes.push_back(n); }
-                copy.notes = std::make_shared<const std::vector<MidiNote>>(std::move(notes));
-            } else {
-                copy.offset += a - c->start;
-            }
-            copy.length = b - a;
-        }
-        copy.id = id;
-        copy.slot = slot;
-        copy.folder = 0;
-        copy.alt = false;
-        copy.start = 0;
-        const DalnokTrackId track = c->track;
-        std::erase_if(m.clips, [&](const ClipState &x) {
-            return (x.track == track && x.slot == slot) || std::find(takes.begin(), takes.end(), x.id) != takes.end();
-        });
-        m.clips.push_back(std::move(copy));
-        return true;
-    });
-    if (!ok) return 0;
-    ++nextClip_;
-    return id;
-}
-
-bool Engine::launch(DalnokTrackId track, int32_t slot, std::string &err) {
-    const TrackState *t = model_.track(track);
-    if (!t) return fail(err, "no such track");
-    if (slot >= 0 && std::none_of(model_.clips.begin(), model_.clips.end(), [&](const ClipState &c) { return c.track == track && c.slot == slot; }))
-        return fail(err, "that slot is empty");
-    // Launch times are timeline frames; the audio thread switches when the rendered position (the playhead
-    // plus delay compensation) reaches them, so the change is heard exactly on the bar.
-    const bool rolling = playing_.load();
-    const int64_t at = rolling ? nextBar(model_, map_, position() + 1) : position();
-    t->runtime->launchTarget.store(slot, std::memory_order_relaxed);
-    t->runtime->launchAt.store(at, std::memory_order_release);
-    if (!rolling && slot >= 0) play();
-    return true;
-}
-
-bool Engine::launchScene(int32_t slot, std::string &err) {
-    if (slot < 0 || slot >= model_.scenes) return fail(err, "no such scene");
-    bool any = false;
-    for (const auto &t : model_.tracks) {
-        const bool filled = std::any_of(model_.clips.begin(), model_.clips.end(), [&](const ClipState &c) { return c.track == t.id && c.slot == slot; });
-        std::string ignored;
-        if (filled) any = launch(t.id, slot, ignored) || any;
-        else if (t.runtime->playingSlot.load() >= 0) launch(t.id, -1, ignored); // empty slot in the scene: that track stops its clip
-    }
-    return any || fail(err, "that scene is empty");
-}
-
-void Engine::stopLauncher() {
-    std::string ignored;
-    for (const auto &t : model_.tracks)
-        if (t.runtime->playingSlot.load() >= 0 || t.runtime->launchAt.load() >= 0) launch(t.id, -1, ignored);
-}
-
-int64_t Engine::slotStart(DalnokTrackId track) const {
-    const TrackState *t = model_.track(track);
-    return t ? t->runtime->slotStart.load(std::memory_order_relaxed) : 0;
-}
-
-bool Engine::setFollowAction(DalnokClipId clip, int32_t action, int32_t loops, std::string &err) {
-    if (action < 0 || action > 2 || loops < 1 || loops > 1024) return fail(err, "follow action is 0 none, 1 next, 2 stop; loops 1-1024");
-    return edit("Follow Action", true, [&](Model &m) {
-        ClipState *c = m.clip(clip);
-        if (!c || c->slot < 0) return fail(err, "not a launcher clip");
-        c->follow = action;
-        c->followLoops = loops;
-        return true;
-    });
-}
-
-void Engine::setLauncherRecording(bool on) {
-    if (on == launcherRecording_.load()) return;
-    if (on) {
-        LaunchEvent e;
-        while (launchEvents_.pop(e)) {}
-        launchLog_.clear();
-        launcherRecordStart_ = position();
-        // Tracks already playing a slot start their segment where recording began.
-        for (const auto &t : model_.tracks)
-            if (int32_t ps = t.runtime->playingSlot.load(); ps >= 0) launchLog_.push_back({t.id, ps, launcherRecordStart_});
-        launcherRecording_.store(true);
-        return;
-    }
-    launcherRecording_.store(false);
-    LaunchEvent e;
-    while (launchEvents_.pop(e)) launchLog_.push_back(e);
-    const int64_t end = position();
-    // Each track's segments: from a switch to the next switch (or the end); slot -1 = arrangement.
-    struct Piece { DalnokTrackId track; int32_t slot; int64_t from, to, slotStart; };
-    std::vector<Piece> pieces;
-    std::map<DalnokTrackId, std::vector<LaunchEvent>> byTrack;
-    for (const auto &ev : launchLog_) byTrack[ev.track].push_back(ev);
-    for (auto &[track, evs] : byTrack) {
-        std::stable_sort(evs.begin(), evs.end(), [](const LaunchEvent &a, const LaunchEvent &b) { return a.frame < b.frame; });
-        for (size_t i = 0; i < evs.size(); ++i) {
-            const int64_t to = i + 1 < evs.size() ? evs[i + 1].frame : end;
-            if (evs[i].slot >= 0 && to > evs[i].frame) pieces.push_back({track, evs[i].slot, evs[i].frame, to, evs[i].frame});
-        }
-    }
-    launchLog_.clear();
-    if (pieces.empty()) return;
-    std::string err;
-    edit("Record Launcher", true, [&](Model &m) {
-        for (const auto &p : pieces) {
-            const auto src = std::find_if(m.clips.begin(), m.clips.end(), [&](const ClipState &c) { return c.track == p.track && c.slot == p.slot; });
-            if (src == m.clips.end() || src->length <= 0) continue;
-            const ClipState proto = *src;
-            // One clip per loop pass, the last one trimmed where the performance moved on.
-            for (int64_t at = p.from; at < p.to; at += proto.length) {
-                ClipState c = proto;
-                c.id = nextClip_++;
-                c.slot = -1;
-                c.follow = 0;
-                c.start = at;
-                c.length = std::min(proto.length, p.to - at);
-                // Recorded material replaces whatever the arrangement had there.
-                std::erase_if(m.clips, [&](const ClipState &x) {
-                    return x.track == p.track && x.slot < 0 && !x.alt && x.start >= c.start && x.start + x.length <= c.start + c.length && x.id != c.id;
-                });
-                m.clips.push_back(std::move(c));
-            }
-        }
-        return true;
-    });
-}
-
-int32_t Engine::playingSlot(DalnokTrackId track) const {
-    const TrackState *t = model_.track(track);
-    return t ? t->runtime->playingSlot.load(std::memory_order_relaxed) : -1;
-}
-
 bool Engine::setPluginAutomation(DalnokTrackId track, int32_t slot, uint32_t param, std::vector<AutoPoint> points, std::string &err) {
     for (const auto &p : points)
         if (p.frame < 0 || !(p.value >= 0 && p.value <= 1)) return fail(err, "plug-in automation points need frame >= 0 and a value 0-1");
@@ -1563,7 +849,7 @@ bool Engine::setAutomation(DalnokTrackId track, int32_t target, std::vector<Auto
     });
 }
 
-namespace {
+namespace detail {
 // Rebuilds the clips that play a folder's comp: one piece per segment, cut from its take. A piece that
 // follows another starts a little early and fades in over it (an equal-power crossfade, no gap or click).
 bool realizeComp(Model &m, const TakeFolder &f, DalnokClipId &nextClip, std::string &err) {
@@ -1592,172 +878,7 @@ bool realizeComp(Model &m, const TakeFolder &f, DalnokClipId &nextClip, std::str
     }
     return true;
 }
-} // namespace
-
-int32_t Engine::makeTakeFolder(Model &m, DalnokTrackId track, std::vector<DalnokClipId> takes, std::string &err) {
-    int32_t id = 1;
-    for (const auto &f : m.folders) id = std::max(id, f.id + 1);
-    TakeFolder f;
-    f.id = id;
-    f.track = track;
-    f.takes = std::move(takes);
-    // Default comp: later takes cover earlier ones (the newest pass plays wherever it was recorded).
-    std::vector<CompSegment> comp;
-    for (int32_t k = 0; k < static_cast<int32_t>(f.takes.size()); ++k) {
-        ClipState *c = m.clip(f.takes[static_cast<size_t>(k)]);
-        if (!c) return fail(err, "no such take"), 0;
-        c->folder = id;
-        c->alt = true;
-        const int64_t a = c->start, b = c->start + c->length;
-        std::vector<CompSegment> next;
-        for (const auto &s : comp) { // cut existing segments around [a, b)
-            if (s.to <= a || s.from >= b) { next.push_back(s); continue; }
-            if (s.from < a) next.push_back({s.from, a, s.take});
-            if (s.to > b) next.push_back({b, s.to, s.take});
-        }
-        next.push_back({a, b, k});
-        std::sort(next.begin(), next.end(), [](const CompSegment &x, const CompSegment &y) { return x.from < y.from; });
-        comp = std::move(next);
-    }
-    f.comp = std::move(comp);
-    if (!realizeComp(m, f, nextClip_, err)) return 0;
-    m.folders.push_back(std::move(f));
-    return id;
-}
-
-int32_t Engine::addTakeFolder(DalnokTrackId track, std::vector<DalnokClipId> takes, std::string &err) {
-    int32_t folder = 0;
-    edit("Take Folder", true, [&](Model &m) {
-        for (auto id : takes) {
-            const ClipState *c = m.clip(id);
-            if (!c || c->track != track || c->midi() || c->folder) return fail(err, "takes must be audio clips on the track, not in a folder");
-        }
-        folder = makeTakeFolder(m, track, std::move(takes), err);
-        return folder != 0;
-    });
-    return folder;
-}
-
-bool Engine::setComp(int32_t folder, std::vector<CompSegment> comp, std::string &err) {
-    std::sort(comp.begin(), comp.end(), [](const CompSegment &x, const CompSegment &y) { return x.from < y.from; });
-    return edit("Comp", true, [&](Model &m) {
-        auto it = std::find_if(m.folders.begin(), m.folders.end(), [&](const TakeFolder &f) { return f.id == folder; });
-        if (it == m.folders.end()) return fail(err, "no such take folder");
-        int64_t prev = INT64_MIN;
-        for (const auto &seg : comp) {
-            if (seg.take < 0 || seg.take >= static_cast<int32_t>(it->takes.size()) || seg.to <= seg.from || seg.from < prev)
-                return fail(err, "comp segments must be ordered, non-overlapping and name a take");
-            const ClipState *t = m.clip(it->takes[static_cast<size_t>(seg.take)]);
-            if (!t || seg.from < t->start || seg.to > t->start + t->length) return fail(err, "a comp segment lies outside its take");
-            prev = seg.to;
-        }
-        it->comp = std::move(comp);
-        return realizeComp(m, *it, nextClip_, err);
-    });
-}
-
-namespace {
-// True when `track` is inside `stack` at any depth.
-bool insideStack(const Model &m, DalnokTrackId track, DalnokTrackId stack) {
-    for (const TrackState *t = m.track(track); t && t->stack; t = m.track(t->stack))
-        if (t->stack == stack) return true;
-    return false;
-}
-} // namespace
-
-DalnokTrackId Engine::makeStack(const std::vector<DalnokTrackId> &members, const std::string &name, std::string &err) {
-    const auto id = nextTrack_;
-    const bool ok = edit("Create Track Stack", true, [&](Model &m) {
-        if (members.empty()) return fail(err, "choose tracks for the stack");
-        // Stacks nest: the members must share a parent (or none), and the new stack goes inside that parent.
-        // A member that is itself a stack brings everything inside it along.
-        const TrackState *first = m.track(members.front());
-        if (!first) return fail(err, "no such track");
-        const DalnokTrackId parent = first->stack;
-        std::vector<size_t> at; // display indices of the members and everything inside them
-        for (auto t : members) {
-            auto it = std::find_if(m.tracks.begin(), m.tracks.end(), [t](const TrackState &x) { return x.id == t; });
-            if (it == m.tracks.end()) return fail(err, "no such track");
-            if (it->stack != parent) return fail(err, "tracks in a new stack must all be in the same stack (or in none)");
-            const size_t i = static_cast<size_t>(it - m.tracks.begin());
-            at.push_back(i);
-            for (size_t j = i + 1; j < m.tracks.size() && insideStack(m, m.tracks[j].id, t); ++j) at.push_back(j);
-        }
-        std::sort(at.begin(), at.end());
-        at.erase(std::unique(at.begin(), at.end()), at.end());
-        TrackState stack;
-        stack.id = id;
-        stack.kind = kTrackBus;
-        stack.isStack = true;
-        stack.stack = parent;
-        stack.name = name.empty() ? "Stack" : name;
-        stack.color = m.tracks[at.front()].color;
-        stack.output = m.tracks[at.front()].output; // the stack goes where its first member went
-        stack.runtime = std::make_shared<TrackRuntime>();
-        // Members (in their current order, with their contents) follow the stack, which takes the first one's place.
-        std::vector<TrackState> moved;
-        for (size_t i : at) moved.push_back(m.tracks[i]);
-        for (auto it = at.rbegin(); it != at.rend(); ++it) m.tracks.erase(m.tracks.begin() + static_cast<long>(*it));
-        for (auto &t : moved)
-            if (std::find(members.begin(), members.end(), t.id) != members.end()) { t.output = id; t.stack = id; }
-        const auto insertAt = m.tracks.begin() + static_cast<long>(at.front());
-        moved.insert(moved.begin(), std::move(stack));
-        m.tracks.insert(insertAt, moved.begin(), moved.end());
-        if (m.track(id)->output && feedsBack(m, id, m.track(id)->output)) m.track(id)->output = 0;
-        return true;
-    });
-    if (!ok) return 0;
-    ++nextTrack_;
-    return id;
-}
-
-bool Engine::setStackCollapsed(DalnokTrackId stack, bool collapsed, std::string &err) {
-    return edit(collapsed ? "Close Stack" : "Open Stack", false, [&](Model &m) {
-        TrackState *t = m.track(stack);
-        if (!t || !t->isStack) return fail(err, "not a track stack");
-        t->collapsed = collapsed;
-        return true;
-    });
-}
-
-bool Engine::setTrackHeight(DalnokTrackId track, float height, std::string &err) {
-    if (!std::isfinite(height) || height < 0) return fail(err, "height must be 0 (default) or positive");
-    const float h = height == 0 ? 0.0f : std::clamp(height, kMinTrackHeight, kMaxTrackHeight);
-    if (track && !model_.track(track)) return fail(err, "no such track");
-    return edit("Track Height", false, [&](Model &m) {
-        for (auto &t : m.tracks) if (!track || t.id == track) t.height = h;
-        return true;
-    });
-}
-
-bool Engine::setTrackHidden(DalnokTrackId track, bool hidden, std::string &err) {
-    if (track == 0 && !hidden) {
-        if (std::none_of(model_.tracks.begin(), model_.tracks.end(), [](const TrackState &t) { return t.hidden; })) return fail(err, "no hidden tracks");
-        return edit("Show All Tracks", false, [&](Model &m) { for (auto &t : m.tracks) t.hidden = false; return true; });
-    }
-    return edit(hidden ? "Hide Track" : "Show Track", false, [&](Model &m) {
-        TrackState *t = m.track(track);
-        if (!t) return fail(err, "no such track");
-        if (t->hidden == hidden) return fail(err, hidden ? "already hidden" : "not hidden");
-        t->hidden = hidden;
-        return true;
-    });
-}
-
-bool Engine::ungroupStack(DalnokTrackId stack, std::string &err) {
-    return edit("Ungroup Track Stack", true, [&](Model &m) {
-        TrackState *t = m.track(stack);
-        if (!t || !t->isStack) return fail(err, "not a track stack");
-        const auto out = t->output, parent = t->stack;
-        for (auto &x : m.tracks) {
-            if (x.stack == stack) { x.stack = parent; if (x.output == stack) x.output = out; } // back to the parent stack
-            std::erase_if(x.sends, [stack](const Send &s) { return s.bus == stack; });
-            if (x.output == stack) x.output = out;
-        }
-        std::erase_if(m.tracks, [stack](const TrackState &x) { return x.id == stack; });
-        return true;
-    });
-}
+} // namespace detail
 
 bool Engine::setSidechain(DalnokTrackId track, int32_t slot, DalnokTrackId source, std::string &err) {
     return edit("Sidechain", true, [&](Model &m) {
@@ -1893,1140 +1014,6 @@ bool Engine::moveTrack(DalnokTrackId id, int32_t index, std::string &err) {
         return true;
     });
 }
-
-bool Engine::setClipFades(DalnokClipId id, int64_t fadeIn, int64_t fadeOut, int32_t curve, std::string &err) {
-    return edit("Fade", true, [&](Model &m) {
-        ClipState *c = m.clip(id);
-        if (!c) return fail(err, "no such clip");
-        if (c->midi()) return fail(err, "not available for MIDI clips");
-        if (fadeIn < 0 || fadeOut < 0) return fail(err, "fades must be >= 0");
-        if (curve != kFadeLinear && curve != kFadeEqualPower) return fail(err, "unknown fade curve");
-        c->fadeIn = fadeIn;
-        c->fadeOut = fadeOut;
-        c->fadeCurve = curve;
-        return true;
-    });
-}
-
-bool Engine::setClipStretch(DalnokClipId id, int64_t length, double rate, float pitch, bool preservePitch,
-                            std::string &err) {
-    return edit("Time Stretch", true, [&](Model &m) {
-        ClipState *c = m.clip(id);
-        if (!c) return fail(err, "no such clip");
-        if (c->midi()) return fail(err, "not available for MIDI clips");
-        if (!(rate >= 0.05 && rate <= 20) || !(pitch >= -48 && pitch <= 48) || length <= 0)
-            return fail(err, "rate must be 0.05–20, pitch −48…48 semitones, length > 0");
-        const PoolEntry *pe = poolEntry(c->media);
-        const auto span = static_cast<int64_t>(std::llround(static_cast<double>(length) * rate));
-        if (!pe || c->offset + span > pe->frames + 1) return fail(err, "stretch reads past the end of the source");
-        c->length = length;
-        c->rate = rate;
-        c->pitch = preservePitch ? pitch : 0;
-        c->preservePitch = preservePitch;
-        return true;
-    });
-}
-
-bool Engine::setClipMuted(DalnokClipId id, bool muted, std::string &err) {
-    return edit(muted ? "Mute Clip" : "Unmute Clip", true, [&](Model &m) {
-        ClipState *clip = m.clip(id);
-        if (!clip) return fail(err, "no such clip");
-        if (clip->muted == muted) return fail(err, "clip is already in that mute state");
-        clip->muted = muted;
-        return true;
-    });
-}
-
-bool Engine::setClipGain(DalnokClipId id, float gainDb, std::string &err) {
-    return edit("Clip Gain", true, [&](Model &m) {
-        ClipState *c = m.clip(id);
-        if (!c) return fail(err, "no such clip");
-        if (c->midi()) return fail(err, "not available for MIDI clips");
-        if (std::isnan(gainDb)) return fail(err, "gain is NaN");
-        c->gainDb = gainDb <= -96.0f ? -INFINITY : std::min(gainDb, 24.0f);
-        return true;
-    });
-}
-
-bool Engine::poolRelink(DalnokMediaId id, std::shared_ptr<const Media> media, const std::string &path,
-                        std::string &err) {
-    auto it = pool_.find(id);
-    if (it == pool_.end()) return fail(err, "no such media");
-    if (!media) return fail(err, "no media");
-    it->second.path = path;
-    it->second.frames = media->frames();
-    it->second.channels = media->channelCount();
-    it->second.handle = std::make_unique<DalnokMedia>(DalnokMedia{std::move(media)});
-    cache_.clear();
-    bumpRevisionAll();
-    commit();
-    return true;
-}
-
-DalnokClipId Engine::addClip(DalnokTrackId track, DalnokMediaId media, int64_t start, int64_t offset, int64_t length,
-                             std::string &err) {
-    const PoolEntry *pe = poolEntry(media);
-    const auto id = nextClip_;
-    const bool ok = edit("Add Clip", true, [&](Model &m) {
-        if (!m.track(track)) return fail(err, "no such track");
-        if (m.track(track)->kind != kTrackAudio) return fail(err, "audio clips go on audio tracks");
-        if (!pe) return fail(err, "no such media");
-        if (start < 0 || offset < 0 || offset >= pe->frames) return fail(err, "start/offset out of range");
-        const int64_t avail = pe->frames - offset;
-        ClipState c;
-        c.id = id;
-        c.track = track;
-        c.media = media;
-        c.start = start;
-        c.offset = offset;
-        c.length = length <= 0 ? avail : std::min(length, avail);
-        c.name = pe->path.empty() ? "Audio" : stem(pe->path);
-        m.clips.push_back(std::move(c));
-        return true;
-    });
-    if (!ok) return 0;
-    ++nextClip_;
-    return id;
-}
-
-bool Engine::removeClip(DalnokClipId id, std::string &err) {
-    return edit("Delete Clip", true, [&](Model &m) {
-        if (!m.clip(id)) return fail(err, "no such clip");
-        std::erase_if(m.clips, [id](const ClipState &c) { return c.id == id; });
-        return true;
-    });
-}
-
-bool Engine::moveClip(DalnokClipId id, DalnokTrackId track, int64_t start, std::string &err) {
-    return edit("Move Clip", true, [&](Model &m) {
-        auto it = std::find_if(m.clips.begin(), m.clips.end(), [id](const ClipState &c) { return c.id == id; });
-        if (it == m.clips.end()) return fail(err, "no such clip");
-        if (!m.track(track)) return fail(err, "no such track");
-        if (start < 0) return fail(err, "start must be >= 0");
-        if (m.track(track)->kind == kTrackBus) return fail(err, "buses don't hold clips");
-        if ((m.track(track)->kind == kTrackInstrument) != it->midi())
-            return fail(err, it->midi() ? "MIDI clips go on instrument tracks" : "audio clips go on audio tracks");
-        ClipState c = *it;
-        c.track = track;
-        c.start = start;
-        m.clips.erase(it);
-        m.clips.push_back(std::move(c)); // moved clips come to the top
-        return true;
-    });
-}
-
-bool Engine::setClipRegion(DalnokClipId id, int64_t start, int64_t offset, int64_t length, std::string &err) {
-    return edit("Trim Clip", true, [&](Model &m) {
-        ClipState *c = m.clip(id);
-        if (!c) return fail(err, "no such clip");
-        const PoolEntry *pe = poolEntry(c->media);
-        const int64_t frames = c->midi() ? INT64_MAX / 2 : (pe ? pe->frames : 0); // MIDI clips can extend freely
-        const auto span = static_cast<int64_t>(std::llround(static_cast<double>(length) * c->rate));
-        if (start < 0 || offset < 0 || length <= 0 || offset + span > frames)
-            return fail(err, "region out of range");
-        c->start = start;
-        c->offset = offset;
-        c->length = length;
-        return true;
-    });
-}
-
-DalnokClipId Engine::splitClip(DalnokClipId id, int64_t at, std::string &err) {
-    const auto rightId = nextClip_;
-    const bool ok = edit("Split Clip", true, [&](Model &m) {
-        auto it = std::find_if(m.clips.begin(), m.clips.end(), [id](const ClipState &c) { return c.id == id; });
-        if (it == m.clips.end()) return fail(err, "no such clip");
-        if (at <= it->start || at >= it->start + it->length) return fail(err, "split point not inside clip");
-        ClipState right = *it;
-        const int64_t leftLen = at - it->start;
-        it->length = leftLen;
-        right.id = rightId;
-        right.start = at;
-        right.offset += static_cast<int64_t>(std::llround(static_cast<double>(leftLen) * it->rate));
-        right.length -= leftLen;
-        right.fadeIn = 0;      // the right part keeps the original fade-out
-        it->fadeOut = 0;       // the left part keeps the original fade-in
-        m.clips.insert(it + 1, std::move(right)); // same z-level as the original
-        return true;
-    });
-    if (!ok) return 0;
-    ++nextClip_;
-    return rightId;
-}
-
-std::vector<DalnokClipId> Engine::copyClips(const std::vector<DalnokClipId> &ids, int64_t start, int32_t trackShift, std::string &err) {
-    if (ids.empty()) { fail(err, "no clips selected"); return {}; }
-    if (start < 0) { fail(err, "start must be >= 0"); return {}; }
-    std::set<DalnokClipId> unique;
-    int64_t earliest = INT64_MAX;
-    for (auto id : ids) {
-        const ClipState *c = model_.clip(id);
-        if (!c) { fail(err, "no such clip"); return {}; }
-        if (c->slot >= 0 || c->alt) { fail(err, "only arrangement clips can be copied"); return {}; }
-        if (!unique.insert(id).second) { fail(err, "duplicate clip id"); return {}; }
-        earliest = std::min(earliest, c->start);
-    }
-    std::vector<DalnokClipId> out;
-    const auto first = nextClip_;
-    const bool ok = edit(ids.size() == 1 ? "Paste Clip" : "Paste Clips", true, [&](Model &m) {
-        std::vector<DalnokTrackId> order;
-        for (const auto &t : m.tracks) order.push_back(t.id);
-        DalnokClipId next = first;
-        for (auto id : ids) {
-            ClipState c = *m.clip(id);
-            const auto at = std::find(order.begin(), order.end(), c.track);
-            const auto idx = static_cast<int64_t>(at - order.begin()) + trackShift;
-            if (at == order.end() || idx < 0 || idx >= static_cast<int64_t>(order.size())) return fail(err, "there is no track there to paste onto");
-            const TrackState *t = m.track(order[static_cast<size_t>(idx)]);
-            if (t->kind == kTrackBus) return fail(err, "buses don't hold clips");
-            if ((t->kind == kTrackInstrument) != c.midi())
-                return fail(err, c.midi() ? "MIDI clips go on instrument tracks" : "audio clips go on audio tracks");
-            const int64_t rel = c.start - earliest;
-            if (rel > INT64_MAX - start - c.length) return fail(err, "paste exceeds the supported timeline");
-            c.id = next++;
-            c.track = t->id;
-            c.start = start + rel;
-            c.folder = 0;
-            m.clips.push_back(std::move(c)); // copies come to the top
-        }
-        return true;
-    });
-    if (!ok) return {};
-    nextClip_ = first + static_cast<DalnokClipId>(ids.size());
-    out.clear();
-    for (size_t i = 0; i < ids.size(); ++i) out.push_back(first + static_cast<DalnokClipId>(i));
-    return out;
-}
-
-bool Engine::copyToClipboard(const std::vector<DalnokClipId> &ids, std::string &err) {
-    if (ids.empty()) return fail(err, "no clips selected");
-    std::vector<DalnokTrackId> order;
-    for (const auto &t : model_.tracks) order.push_back(t.id);
-    std::vector<ClipboardEntry> out;
-    std::set<DalnokClipId> unique;
-    int32_t top = INT32_MAX;
-    int64_t earliest = INT64_MAX;
-    for (auto id : ids) {
-        const ClipState *c = model_.clip(id);
-        if (!c) return fail(err, "no such clip");
-        if (c->slot >= 0 || c->alt) return fail(err, "only arrangement clips can be copied");
-        if (!unique.insert(id).second) return fail(err, "duplicate clip id");
-        const auto row = static_cast<int32_t>(std::find(order.begin(), order.end(), c->track) - order.begin());
-        out.push_back({*c, row});
-        top = std::min(top, row);
-        earliest = std::min(earliest, c->start);
-    }
-    for (auto &e : out) { e.row -= top; e.clip.start -= earliest; e.clip.folder = 0; }
-    clipboard_ = std::move(out);
-    return true;
-}
-
-std::vector<DalnokClipId> Engine::pasteClipboard(DalnokTrackId track, int64_t start, std::string &err) {
-    if (clipboard_.empty()) { fail(err, "nothing to paste"); return {}; }
-    if (start < 0) { fail(err, "start must be >= 0"); return {}; }
-    const auto first = nextClip_;
-    const bool ok = edit(clipboard_.size() == 1 ? "Paste Clip" : "Paste Clips", true, [&](Model &m) {
-        std::vector<DalnokTrackId> order;
-        for (const auto &t : m.tracks) order.push_back(t.id);
-        const auto base = std::find(order.begin(), order.end(), track);
-        if (base == order.end()) return fail(err, "no such track");
-        DalnokClipId next = first;
-        for (const auto &e : clipboard_) {
-            const auto idx = static_cast<size_t>(base - order.begin()) + static_cast<size_t>(e.row);
-            if (idx >= order.size()) return fail(err, "there is no track there to paste onto");
-            const TrackState *t = m.track(order[idx]);
-            if (t->kind == kTrackBus) return fail(err, "buses don't hold clips");
-            if ((t->kind == kTrackInstrument) != e.clip.midi())
-                return fail(err, e.clip.midi() ? "MIDI clips go on instrument tracks" : "audio clips go on audio tracks");
-            if (e.clip.start > INT64_MAX - start - e.clip.length) return fail(err, "paste exceeds the supported timeline");
-            ClipState c = e.clip;
-            c.id = next++;
-            c.track = t->id;
-            c.start += start;
-            m.clips.push_back(std::move(c));
-        }
-        return true;
-    });
-    if (!ok) return {};
-    nextClip_ = first + static_cast<DalnokClipId>(clipboard_.size());
-    std::vector<DalnokClipId> out;
-    for (size_t i = 0; i < clipboard_.size(); ++i) out.push_back(first + static_cast<DalnokClipId>(i));
-    return out;
-}
-
-// ---- Snapshot compilation -------------------------------------------------
-
-StretchKey Engine::stretchKey(const ClipState &c) const {
-    return {c.media, c.offset, c.sourceLength(), c.length, static_cast<int32_t>(std::lround(c.pitch * 100)), c.preservePitch};
-}
-
-bool Engine::clipProcessing(const ClipState &c) const {
-    if (!c.stretched()) return false;
-    const PoolEntry *pe = poolEntry(c.media);
-    return pe && pe->handle->impl && !cache_.find(stretchKey(c));
-}
-
-const Media *Engine::resolvedMedia(const ClipState &c) const {
-    if (c.midi()) return nullptr;
-    const PoolEntry *pe = poolEntry(c.media);
-    return pe && pe->handle->impl ? pe->handle->impl.get() : nullptr;
-}
-
-std::shared_ptr<const Media> Engine::resolvedStretch(const ClipState &c, const Media *media) const {
-    return media && c.stretched() ? cache_.find(stretchKey(c)) : nullptr;
-}
-
-bool Engine::sameInputs(const ClipKey &k, const ClipState &c) const {
-    if (k.id != c.id || k.slot != c.slot || k.follow != c.follow || k.followLoops != c.followLoops ||
-        k.fadeCurve != c.fadeCurve || k.muted != c.muted || k.alt != c.alt || k.preservePitch != c.preservePitch ||
-        k.notes != c.notes || k.mediaId != c.media || k.start != c.start || k.offset != c.offset ||
-        k.length != c.length || k.fadeIn != c.fadeIn || k.fadeOut != c.fadeOut || k.gainDb != c.gainDb ||
-        k.pitch != c.pitch || k.rate != c.rate)
-        return false;
-    const Media *media = resolvedMedia(c);
-    if (media != k.media.get()) return false;
-    return !media || !c.stretched() || resolvedStretch(c, media).get() == k.derived.get();
-}
-
-std::shared_ptr<const TrackContent> Engine::buildContent(const std::vector<const ClipState *> &clips, bool instrument,
-                                                         std::vector<StretchJob> &needed) const {
-    auto out = std::make_shared<TrackContent>();
-    for (const ClipState *cp : clips) {
-        const ClipState &c = *cp;
-        if (c.alt) continue; // takes in a folder don't play; the comp's pieces do
-        if (c.muted) {
-            if (c.midi()) out->mutedMidiSignature = (out->mutedMidiSignature * 1099511628211ULL) ^ static_cast<uint64_t>(c.id);
-            if (c.slot >= 0) {
-                RenderSlot sl; sl.slot = c.slot; sl.follow = c.follow; sl.followLoops = std::max(1, c.followLoops);
-                sl.length = c.length; sl.muted = true; out->slots.push_back(std::move(sl));
-            }
-            continue;
-        }
-        if (c.slot >= 0 && c.midi()) { // launcher slot: notes relative to the loop start
-            if (!instrument) continue;
-            RenderSlot sl;
-            sl.slot = c.slot;
-            sl.follow = c.follow;
-            sl.followLoops = std::max(1, c.followLoops);
-            sl.length = c.length;
-            for (const auto &n : *c.notes) {
-                if (n.start < c.offset || n.start >= c.offset + c.length) continue;
-                const int64_t at = n.start - c.offset;
-                sl.notes.push_back({at, std::min(at + n.length, c.length), n.pitch, n.velocity});
-            }
-            std::stable_sort(sl.notes.begin(), sl.notes.end(), [](const RenderNote &a, const RenderNote &b) { return a.start < b.start; });
-            sl.noteEnds = sl.notes;
-            std::stable_sort(sl.noteEnds.begin(), sl.noteEnds.end(), [](const RenderNote &a, const RenderNote &b) { return a.end < b.end; });
-            out->slots.push_back(std::move(sl));
-            continue;
-        }
-        if (c.midi()) {
-            if (!instrument) continue;
-            for (const auto &n : *c.notes) {
-                if (n.start < c.offset || n.start >= c.offset + c.length) continue; // outside the clip window
-                const int64_t at = c.start + (n.start - c.offset);
-                int64_t sourceEnd = c.offset + c.length;
-                int64_t timelineEnd = c.start + c.length;
-                // A split shares its note list and has contiguous source and timeline ranges.
-                // Extend a crossing note through those pieces without retriggering it.
-                while (timelineEnd - at < n.length) {
-                    // Same first match as scanning the whole model: `clips` is this track's clips in model order.
-                    const auto next = std::find_if(clips.begin(), clips.end(), [&](const ClipState *part) {
-                        return !part->muted && part->notes == c.notes && part->start == timelineEnd &&
-                               std::abs(part->offset - sourceEnd) <= 1;
-                    });
-                    if (next == clips.end() || (*next)->length <= 0) break;
-                    sourceEnd = (*next)->offset + (*next)->length;
-                    timelineEnd += (*next)->length;
-                }
-                const int64_t end = at + std::min(n.length, timelineEnd - at);
-                out->notes.push_back({at, end, n.pitch, n.velocity});
-            }
-            continue;
-        }
-        const PoolEntry *pe = poolEntry(c.media);
-        if (!pe || !pe->handle->impl) continue; // offline media renders silence
-        std::shared_ptr<const Media> media = pe->handle->impl;
-        int64_t offset = c.offset, len = std::min(c.length, media->frames() - c.offset);
-        if (c.stretched()) {
-            // Stretched audio is rendered off the audio thread; until it's ready the clip is silent.
-            const StretchKey key = stretchKey(c);
-            auto derived = cache_.find(key);
-            if (!derived) {
-                needed.push_back({key, media});
-                continue;
-            }
-            media = derived;
-            offset = 0;
-            len = std::min(c.length, media->frames());
-        }
-        if (len <= 0) continue;
-        // Fades longer than the clip are scaled down proportionally.
-        int64_t fi = std::min(c.fadeIn, len), fo = std::min(c.fadeOut, len);
-        if (fi + fo > len) {
-            const double k = static_cast<double>(len) / static_cast<double>(fi + fo);
-            fi = static_cast<int64_t>(static_cast<double>(fi) * k);
-            fo = len - fi;
-        }
-        if (c.slot >= 0) { // launcher slot: one loop of the clip window
-            RenderSlot sl;
-            sl.slot = c.slot;
-            sl.follow = c.follow;
-            sl.followLoops = std::max(1, c.followLoops);
-            sl.length = len;
-            sl.hasAudio = true;
-            sl.clip = {media, 0, offset, len, fi, fo, c.fadeCurve, dbToGain(c.gainDb)};
-            out->slots.push_back(std::move(sl));
-            continue;
-        }
-        out->clips.push_back({media, c.start, offset, len, fi, fo, c.fadeCurve, dbToGain(c.gainDb)});
-        if (media->channelCount() > 1) out->stereoClip = true;
-    }
-    std::stable_sort(out->notes.begin(), out->notes.end(),
-                     [](const RenderNote &a, const RenderNote &b) { return a.start < b.start; });
-    out->noteEnds = out->notes;
-    std::stable_sort(out->noteEnds.begin(), out->noteEnds.end(),
-                     [](const RenderNote &a, const RenderNote &b) { return a.end < b.end; });
-    // Launcher "next" follow action: the next filled slot on this track, wrapping.
-    std::sort(out->slots.begin(), out->slots.end(), [](const RenderSlot &a, const RenderSlot &b) { return a.slot < b.slot; });
-    for (size_t k = 0; k < out->slots.size(); ++k) out->slots[k].nextSlot = out->slots[(k + 1) % out->slots.size()].slot;
-    return out;
-}
-
-namespace {
-bool sameClip(const RenderClip &a, const RenderClip &b) {
-    return a.media == b.media && a.start == b.start && a.offset == b.offset && a.length == b.length &&
-           a.fadeIn == b.fadeIn && a.fadeOut == b.fadeOut && a.curve == b.curve && a.gain == b.gain;
-}
-bool sameNotes(const std::vector<RenderNote> &a, const std::vector<RenderNote> &b) {
-    return std::equal(a.begin(), a.end(), b.begin(), b.end(), [](const RenderNote &x, const RenderNote &y) {
-        return x.start == y.start && x.end == y.end && x.pitch == y.pitch && x.velocity == y.velocity;
-    });
-}
-bool sameContent(const TrackContent &a, const TrackContent &b) {
-    return a.stereoClip == b.stereoClip && a.mutedMidiSignature == b.mutedMidiSignature &&
-           sameNotes(a.notes, b.notes) && sameNotes(a.noteEnds, b.noteEnds) &&
-           std::equal(a.clips.begin(), a.clips.end(), b.clips.begin(), b.clips.end(), sameClip) &&
-           std::equal(a.slots.begin(), a.slots.end(), b.slots.begin(), b.slots.end(), [](const RenderSlot &x, const RenderSlot &y) {
-               return x.slot == y.slot && x.follow == y.follow && x.followLoops == y.followLoops && x.nextSlot == y.nextSlot &&
-                      x.length == y.length && x.hasAudio == y.hasAudio && x.muted == y.muted && sameClip(x.clip, y.clip) &&
-                      sameNotes(x.notes, y.notes) && sameNotes(x.noteEnds, y.noteEnds);
-           });
-}
-} // namespace
-
-int32_t Engine::snapshotMismatches() const {
-    std::vector<StretchJob> jobs;
-    const auto state = compile(&jobs); // live: reuses cached content exactly as commit() does
-    std::map<DalnokTrackId, std::vector<const ClipState *>> clipsByTrack;
-    for (const auto &c : model_.clips) clipsByTrack[c.track].push_back(&c);
-    int32_t mismatches = 0;
-    for (const auto &rt : state->tracks) {
-        std::vector<StretchJob> fresh;
-        const auto expected = buildContent(clipsByTrack[rt.id], rt.instrument, fresh);
-        if (!rt.content || !sameContent(*rt.content, *expected)) ++mismatches;
-    }
-    return mismatches;
-}
-
-std::unique_ptr<RenderState> Engine::compile(std::vector<StretchJob> *needed, const PluginMap *pluginMap) const {
-    const PluginMap &instances = pluginMap ? *pluginMap : plugins_;
-    auto s = std::make_unique<RenderState>();
-    s->synth = SynthParams::make(sampleRate_);
-    // Exports get their own master runtime (same gain) so they never touch the live smoothing state.
-    if (pluginMap) { s->master = std::make_shared<TrackRuntime>(); s->master->gain.store(masterRuntime_->gain.load()); }
-    else s->master = masterRuntime_;
-    for (const auto &seg : map_.segments())
-        s->clickTempo.push_back({seg.beat, static_cast<double>(seg.frame), static_cast<double>(seg.framesPerBeat)});
-    for (const auto &m : model_.meters)
-        s->clickMeter.push_back({barToBeat(model_.meters, m.bar), 4.0 / m.den, m.num});
-    // Processing order: a topological order of the signal graph (outputs and sends into buses, sidechain
-    // sources into the tracks that listen to them), sources first and otherwise in display order.
-    std::vector<const TrackState *> order;
-    {
-        auto feeds = [&](const TrackState &from, const TrackState &to) {
-            if (from.output == to.id) return true;
-            for (const auto &snd : from.sends) if (snd.bus == to.id) return true;
-            for (const auto &slot : to.plugins) if (slot.sidechain == from.id) return true;
-            return false;
-        };
-        std::vector<const TrackState *> left;
-        // Non-bus tracks are listed first so plain projects keep their familiar order.
-        for (const auto &t : model_.tracks) if (t.kind != kTrackBus) left.push_back(&t);
-        for (const auto &t : model_.tracks) if (t.kind == kTrackBus) left.push_back(&t);
-        while (!left.empty()) { // Kahn's algorithm; edits keep the graph acyclic, so this always progresses
-            auto ready = std::find_if(left.begin(), left.end(), [&](const TrackState *b) {
-                return std::none_of(left.begin(), left.end(), [&](const TrackState *o) { return o != b && feeds(*o, *b); });
-            });
-            if (ready == left.end()) ready = left.begin(); // defensive: never loop forever
-            order.push_back(*ready);
-            left.erase(ready);
-        }
-    }
-    // Clips bucketed by track once, so building each RenderTrack is linear in the project's clips instead of
-    // scanning every clip once per track (the audit's O(tracks x clips) finding, A-04). Takes in a folder (alt)
-    // are bucketed too: they don't play, but the split-note extension sees them and the content key records them.
-    std::map<DalnokTrackId, std::vector<const ClipState *>> clipsByTrack;
-    for (const auto &c : model_.clips) clipsByTrack[c.track].push_back(&c);
-    const bool live = pluginMap == nullptr;
-    std::set<DalnokTrackId> seen;
-    std::map<DalnokTrackId, int32_t> indexOf;
-    for (const TrackState *tp : order) {
-        const TrackState &t = *tp;
-        indexOf[t.id] = static_cast<int32_t>(s->tracks.size());
-        RenderTrack rt;
-        rt.id = t.id;
-        rt.runtime = t.runtime;
-        rt.bus = t.kind == kTrackBus;
-        rt.monoSource = !rt.bus; // buses are stereo (balance pan)
-        for (const auto &p : t.volumeAuto) // fader taper: amplitude^(1/4); -inf at the bottom
-            rt.volumeAuto.push_back({p.frame, p.value <= -95 ? 0.0f : std::pow(dbToGain(p.value), 0.25f)});
-        for (const auto &p : t.panAuto) rt.panAuto.push_back({p.frame, p.value});
-        for (const auto &lane : t.pluginAuto) {
-            auto it = instances.find(lane.slot);
-            if (it == instances.end() || !it->second || lane.points.empty()) continue;
-            RenderTrack::PluginLane pl;
-            pl.plugin = it->second.get();
-            pl.param = lane.param;
-            if (!pl.plugin->automationRange(lane.param, pl.lo, pl.hi)) continue;
-            for (const auto &p : lane.points) pl.pts.push_back({p.frame, p.value});
-            rt.pluginAuto.push_back(std::move(pl));
-        }
-        rt.instrument = t.kind == kTrackInstrument;
-        if (rt.instrument && t.armed) s->liveTrack = static_cast<int32_t>(s->tracks.size());
-        for (const auto &slot : t.plugins) {
-            auto it = instances.find(slot.id);
-            if (it == instances.end() || !it->second) continue; // missing plugin: insert bypassed, instrument silent
-            if (slot.bypassed) continue;                          // bypassed by the user: same as missing
-            rt.keep.push_back(it->second);
-            rt.latency += static_cast<int32_t>(std::min<uint32_t>(it->second->latency(), 1u << 20));
-            if (slot.instrument && rt.instrument) rt.instrumentPlugin = it->second.get();
-            else if (!slot.instrument) rt.inserts.push_back(it->second.get());
-        }
-        // A missing or bypassed instrument must not silently substitute the built-in synth.
-        if (rt.instrument && !rt.instrumentPlugin && std::any_of(t.plugins.begin(), t.plugins.end(), [](const PluginSlot &p) { return p.instrument; }))
-            rt.instrument = false;
-        // Clip-derived content: reused from the previous live snapshot when none of the track's clip inputs
-        // changed (A-04); offline renders always build fresh.
-        const auto &trackClips = clipsByTrack[t.id];
-        std::shared_ptr<const TrackContent> content;
-        if (live) {
-            seen.insert(t.id);
-            ContentEntry &entry = contentCache_[t.id];
-            bool hit = entry.content && entry.instrument == rt.instrument && entry.clips.size() == trackClips.size();
-            for (size_t k = 0; hit && k < trackClips.size(); ++k) hit = sameInputs(entry.clips[k], *trackClips[k]);
-            if (!hit) {
-                entry.instrument = rt.instrument;
-                entry.clips.clear();
-                entry.clips.reserve(trackClips.size());
-                for (const ClipState *cp : trackClips) {
-                    const ClipState &c = *cp;
-                    ClipKey k;
-                    k.id = c.id; k.slot = c.slot; k.follow = c.follow; k.followLoops = c.followLoops; k.fadeCurve = c.fadeCurve;
-                    k.muted = c.muted; k.alt = c.alt; k.preservePitch = c.preservePitch; k.notes = c.notes; k.mediaId = c.media;
-                    k.start = c.start; k.offset = c.offset; k.length = c.length; k.fadeIn = c.fadeIn; k.fadeOut = c.fadeOut;
-                    k.gainDb = c.gainDb; k.pitch = c.pitch; k.rate = c.rate;
-                    if (const PoolEntry *pe = c.midi() ? nullptr : poolEntry(c.media); pe && pe->handle->impl) {
-                        k.media = pe->handle->impl;
-                        k.derived = resolvedStretch(c, k.media.get());
-                    }
-                    entry.clips.push_back(std::move(k));
-                }
-                entry.needed.clear();
-                entry.content = buildContent(trackClips, rt.instrument, entry.needed);
-            }
-            if (needed) needed->insert(needed->end(), entry.needed.begin(), entry.needed.end());
-            content = entry.content;
-        } else {
-            std::vector<StretchJob> jobs;
-            content = buildContent(trackClips, rt.instrument, jobs);
-            if (needed) needed->insert(needed->end(), jobs.begin(), jobs.end());
-        }
-        rt.mutedMidiSignature = content->mutedMidiSignature;
-        if (content->stereoClip) rt.monoSource = false;
-        rt.content = std::move(content);
-        s->tracks.push_back(std::move(rt));
-    }
-    if (live) // forget content for tracks that no longer exist
-        for (auto it = contentCache_.begin(); it != contentCache_.end();)
-            it = seen.count(it->first) ? std::next(it) : contentCache_.erase(it);
-    // Sidechains: number the source tracks and point listening plug-ins at their buffers.
-    {
-        std::map<DalnokTrackId, int32_t> scIndex;
-        for (size_t i = 0; i < order.size(); ++i)
-            for (const auto &slot : order[i]->plugins) {
-                if (!slot.sidechain || slot.bypassed || !indexOf.count(slot.sidechain)) continue;
-                auto it = instances.find(slot.id);
-                if (it == instances.end() || !it->second || !it->second->hasSidechain()) continue;
-                auto [sc, fresh] = scIndex.try_emplace(slot.sidechain, static_cast<int32_t>(scIndex.size()));
-                s->tracks[static_cast<size_t>(indexOf[slot.sidechain])].scSlot = sc->second;
-                s->tracks[i].sidechainFeeds.push_back({it->second.get(), sc->second});
-                (void)fresh;
-            }
-        s->scL.assign(scIndex.size() * kMaxBlock, 0.0f);
-        s->scR.assign(scIndex.size() * kMaxBlock, 0.0f);
-    }
-    // Resolve outputs and sends to processing indices (a missing destination falls back to the master).
-    int32_t buses = 0;
-    for (size_t i = 0; i < order.size(); ++i) {
-        RenderTrack &rt = s->tracks[i];
-        const TrackState &t = *order[i];
-        if (rt.bus) rt.busSlot = buses++;
-        auto out = indexOf.find(t.output);
-        rt.output = t.output && out != indexOf.end() ? out->second : -1;
-        for (const auto &snd : t.sends)
-            if (auto d = indexOf.find(snd.bus); d != indexOf.end())
-                rt.sends.push_back({d->second, dbToGain(snd.db), snd.pre});
-    }
-    for (auto &rt : s->tracks) {
-        if (rt.output >= 0) rt.output = s->tracks[static_cast<size_t>(rt.output)].busSlot;
-        for (auto &snd : rt.sends) snd.slot = s->tracks[static_cast<size_t>(snd.slot)].busSlot;
-    }
-    // Solo links: everything reachable downstream (outputs, sends) and upstream (what feeds this track).
-    std::map<DalnokTrackId, std::vector<DalnokTrackId>> down, up;
-    for (const TrackState *tp : order) {
-        if (tp->output) { down[tp->id].push_back(tp->output); up[tp->output].push_back(tp->id); }
-        for (const auto &snd : tp->sends) { down[tp->id].push_back(snd.bus); up[snd.bus].push_back(tp->id); }
-    }
-    auto reach = [](const std::map<DalnokTrackId, std::vector<DalnokTrackId>> &g, DalnokTrackId from, std::set<DalnokTrackId> &out) {
-        std::vector<DalnokTrackId> stack{from};
-        while (!stack.empty()) {
-            const auto id = stack.back(); stack.pop_back();
-            if (auto it = g.find(id); it != g.end())
-                for (auto n : it->second) if (out.insert(n).second) stack.push_back(n);
-        }
-    };
-    for (size_t i = 0; i < order.size(); ++i) {
-        std::set<DalnokTrackId> linked;
-        reach(down, order[i]->id, linked);
-        reach(up, order[i]->id, linked);
-        linked.erase(order[i]->id);
-        for (auto id : linked)
-            if (auto it = indexOf.find(id); it != indexOf.end()) s->tracks[i].soloLinks.push_back(s->tracks[static_cast<size_t>(it->second)].runtime.get());
-    }
-    // Plug-in delay compensation. Order is topological (sources, then buses after everything feeding them):
-    // a bus starts when its latest input arrives; every connection is delayed so all inputs of a bus (and of
-    // the master) arrive together. Live delay lines persist across snapshots (keyed by connection and length);
-    // offline renders (pluginMap != nullptr) get fresh ones.
-    std::vector<int64_t> start(order.size(), 0);
-    std::vector<std::vector<std::pair<size_t, int32_t>>> into(order.size()); // dest index → (src index, send index or -1)
-    std::vector<std::pair<size_t, int32_t>> intoMaster;
-    std::vector<int32_t> slotOwner(static_cast<size_t>(buses), -1);
-    for (size_t i = 0; i < order.size(); ++i) if (s->tracks[i].bus) slotOwner[static_cast<size_t>(s->tracks[i].busSlot)] = static_cast<int32_t>(i);
-    for (size_t i = 0; i < order.size(); ++i) {
-        const RenderTrack &rt = s->tracks[i];
-        if (rt.output < 0) intoMaster.push_back({i, -1});
-        else into[static_cast<size_t>(slotOwner[static_cast<size_t>(rt.output)])].push_back({i, -1});
-        for (size_t k = 0; k < rt.sends.size(); ++k)
-            if (rt.sends[k].slot >= 0) into[static_cast<size_t>(slotOwner[static_cast<size_t>(rt.sends[k].slot)])].push_back({i, static_cast<int32_t>(k)});
-    }
-    for (size_t i = 0; i < order.size(); ++i)
-        for (const auto &[src, sendIndex] : into[i]) start[i] = std::max(start[i], start[src] + s->tracks[src].latency);
-    int64_t master = 0;
-    for (const auto &[src, sendIndex] : intoMaster) master = std::max(master, start[src] + s->tracks[src].latency);
-    s->compensation = static_cast<int32_t>(std::min<int64_t>(master, 1 << 20));
-    auto delayFor = [&](size_t src, int32_t sendIndex, int64_t arrival) -> DelayLine * {
-        const int64_t d = arrival - (start[src] + s->tracks[src].latency);
-        if (d <= 0) return nullptr;
-        std::shared_ptr<DelayLine> line;
-        const std::string key = std::to_string(order[src]->id) + (sendIndex < 0 ? ":out" : ":send" + std::to_string(sendIndex)) + ":" + std::to_string(d);
-        if (!pluginMap) {
-            auto &cached = delayCache_[key];
-            if (!cached) cached = std::make_shared<DelayLine>(static_cast<int32_t>(d));
-            line = cached;
-        } else {
-            line = std::make_shared<DelayLine>(static_cast<int32_t>(d));
-        }
-        s->delayKeep.push_back(line);
-        return line.get();
-    };
-    for (size_t i = 0; i < order.size(); ++i)
-        for (const auto &[src, sendIndex] : into[i]) {
-            DelayLine *d = delayFor(src, sendIndex, start[i]);
-            if (sendIndex < 0) s->tracks[src].outDelay = d; else s->tracks[src].sends[static_cast<size_t>(sendIndex)].delay = d;
-        }
-    for (const auto &[src, sendIndex] : intoMaster) s->tracks[src].outDelay = delayFor(src, -1, master);
-    if (!pluginMap) // forget delay lines no snapshot can use any more
-        for (auto it = delayCache_.begin(); it != delayCache_.end();)
-            it = it->second.use_count() == 1 && std::none_of(s->delayKeep.begin(), s->delayKeep.end(),
-                                                             [&](const auto &k) { return k == it->second; })
-                     ? delayCache_.erase(it) : std::next(it);
-    s->busL.assign(static_cast<size_t>(buses) * kMaxBlock, 0.0f);
-    s->busR.assign(static_cast<size_t>(buses) * kMaxBlock, 0.0f);
-    return s;
-}
-
-void Engine::commit() {
-    std::vector<StretchJob> needed;
-    auto state = compile(&needed);
-    cache_.setNeeded(std::move(needed));
-    // A snapshot replaced here was never observed by the audio thread, so it
-    // is safe to delete immediately.
-    delete pending_.exchange(state.release(), std::memory_order_acq_rel);
-    collectGarbage();
-}
-
-bool Engine::pollJobs() {
-    if (!cache_.poll()) return false;
-    commit();
-    return true;
-}
-
-void Engine::renderPendingStretchesNow() {
-    std::vector<StretchJob> needed;
-    compile(&needed);
-    if (needed.empty()) return;
-    cache_.computeNow(needed);
-    commit();
-}
-
-// ---- Audio thread -------------------------------------------------------
-
-void Engine::duplexCallback(void *ctx, float *left, float *right, const float *const *inputs, int inputCount,
-                            int frames) DALNOK_NONBLOCKING {
-    auto *self = static_cast<Engine *>(ctx);
-    audioCallback(ctx, left, right, frames);
-    const int n = self->captureChannels_;
-    bool ok = inputs != nullptr && frames <= kMaxCaptureBlock;
-    for (int c = 0; ok && c < n; ++c) {
-        const int ch = self->captureMap_[static_cast<size_t>(c)];
-        ok = ch < inputCount && inputs[ch] != nullptr;
-    }
-    if (!ok) {
-        self->captureMissingFrames_.fetch_add(static_cast<uint64_t>(frames), std::memory_order_relaxed);
-        self->captureInputFailed_.store(true, std::memory_order_release);
-        return;
-    }
-    // Outside a recording session every frame is captured; in one, only the part of the block inside the
-    // punch window, and only where the transport rolled continuously.
-    const bool session = self->recordSession_.load(std::memory_order_acquire);
-    if (self->captureRT_ && n > 0 && (!session || self->rtRecordingBlock_)) {
-        const int from = session ? self->rtRecordOffset_ : 0, count = session ? self->rtRecordCount_ : frames;
-        float *out = self->captureScratch_.data();
-        for (int i = 0; i < count; ++i)
-            for (int c = 0; c < n; ++c) out[i * n + c] = inputs[self->captureMap_[static_cast<size_t>(c)]][from + i];
-        self->captureRT_->push(out, static_cast<uint32_t>(count));
-    }
-    if (self->monitoring_.load(std::memory_order_relaxed))
-        for (int c = 0; c < n; ++c) {
-            const float *in = inputs[self->captureMap_[static_cast<size_t>(c)]];
-            for (int i = 0; i < frames; ++i) { left[i] += in[i]; right[i] += in[i]; }
-        }
-}
-
-void Engine::renderClick(float *left, float *right, int frames, int64_t pos) DALNOK_NONBLOCKING {
-    const bool on = metronome_.load(std::memory_order_relaxed);
-    const int64_t until = countInUntil_.load(std::memory_order_relaxed); // count-in clicks even with the metronome off
-    const float level = metronomeLevel_.load(std::memory_order_relaxed), decay = clickDecay_.load(std::memory_order_relaxed);
-    bool accent = false;
-    int64_t next = (on || pos < until) && current_ ? nextClick(*current_, pos, accent) : INT64_MAX;
-    for (int i = 0; i < frames; ++i) {
-        if ((on || pos + i < until) && pos + i == next) { // start a click: sine via a two-term recursion, no libm on this thread
-            clickCoefNow_ = accent ? clickAccentCoef_.load(std::memory_order_relaxed) : clickCoef_.load(std::memory_order_relaxed);
-            clickY1_ = 0;
-            clickY2_ = -(accent ? clickAccentSin_.load(std::memory_order_relaxed) : clickSin_.load(std::memory_order_relaxed));
-            clickEnv_ = level * (accent ? 1.0f : 0.6f);
-            clickLeft_ = static_cast<int>(sampleRate_ * 0.08);
-            next = nextClick(*current_, pos + i + 1, accent);
-        }
-        if (clickLeft_ <= 0) continue;
-        const float y = clickCoefNow_ * clickY1_ - clickY2_;
-        clickY2_ = clickY1_;
-        clickY1_ = y;
-        const float v = y * clickEnv_; // sin(w), sin(2w), ...: the onset sample is already non-zero
-        left[i] += v;
-        right[i] += v;
-        clickEnv_ *= decay;
-        --clickLeft_;
-    }
-}
-
-void Engine::handleMidiInput(int64_t pos) DALNOK_NONBLOCKING {
-    constexpr int kMaxEvents = 256;
-    RecordedMidi events[kMaxEvents];
-    int count = 0;
-    const int32_t live = current_ ? current_->liveTrack : -1;
-    const bool pluginLive = live >= 0 && current_->tracks[static_cast<size_t>(live)].instrumentPlugin;
-    SynthState *synth = live >= 0 && !pluginLive ? &current_->tracks[static_cast<size_t>(live)].runtime->live : nullptr;
-    rtLiveNoteCount_ = 0;
-    for (auto &slot : midiInputs_) {
-        MidiParser *parser = slot.load(std::memory_order_acquire);
-        if (!parser) continue;
-        MidiMessage m;
-        while (parser->pop(m)) {
-            const uint8_t type = m.status & 0xf0;
-            const bool on = type == 0x90 && m.data2 > 0, off = type == 0x80 || (type == 0x90 && m.data2 == 0);
-            if (pluginLive && (on || off) && rtLiveNoteCount_ < 256)
-                rtLiveNotes_[rtLiveNoteCount_++] = PluginNote{0, static_cast<uint8_t>(on ? 1 : 0), m.data1, m.data2};
-            if (synth && on) synth->noteOn(current_->synth, m.data1, m.data2, -1);
-            else if (synth && off) synth->noteOff(current_->synth, m.data1);
-            else if (synth && type == 0xb0 && (m.data1 == 120 || m.data1 == 123)) synth->reset();
-            if (!on && !off) continue;
-            if (count < kMaxEvents) events[count++] = {pos, m.status, m.data1, m.data2};
-            else midiRecordDropped_.fetch_add(1, std::memory_order_relaxed);
-        }
-    }
-    // Record after the block decided whether the transport rolled (see process).
-    rtMidiCount_ = 0;
-    for (int i = 0; i < count; ++i) rtMidiEvents_[rtMidiCount_++] = events[i];
-}
-
-void Engine::audioCallback(void *ctx, float *left, float *right, int frames) DALNOK_NONBLOCKING {
-    auto *self = static_cast<Engine *>(ctx);
-    const uint64_t t0 = nowNs();
-    self->process(left, right, frames);
-    const uint64_t dt = nowNs() - t0;
-
-    self->callbacks_.fetch_add(1, std::memory_order_relaxed);
-    self->framesRendered_.fetch_add(static_cast<uint64_t>(frames), std::memory_order_relaxed);
-    self->lastCallbackNs_.store(dt, std::memory_order_relaxed);
-    atomicMax(self->maxCallbackNs_, dt);
-    if (static_cast<uint32_t>(frames) > self->maxFrames_.load(std::memory_order_relaxed))
-        self->maxFrames_.store(static_cast<uint32_t>(frames), std::memory_order_relaxed);
-    if (static_cast<double>(dt) > static_cast<double>(frames) / self->sampleRate_ * 1e9)
-        self->overloads_.fetch_add(1, std::memory_order_relaxed);
-}
-
-namespace {
-// Denormals are dramatically slower than normal floats on some CPUs and the DSP never needs their
-// precision (audit A-12). Flush-to-zero is set while rendering and the caller's mode is restored.
-#if defined(__aarch64__)
-constexpr uint64_t kFpcrFlushZero = 1ull << 24; // FPCR.FZ
-inline uint64_t readFpcr() DALNOK_NONBLOCKING { uint64_t v; __asm__ __volatile__("mrs %0, fpcr" : "=r"(v)); return v; }
-inline void writeFpcr(uint64_t v) DALNOK_NONBLOCKING { __asm__ __volatile__("msr fpcr, %0" : : "r"(v)); }
-#elif defined(__x86_64__)
-constexpr uint32_t kMxcsrFtz = 1u << 15, kMxcsrDaz = 1u << 6;
-inline uint32_t readMxcsr() DALNOK_NONBLOCKING { uint32_t v; __asm__ __volatile__("stmxcsr %0" : "=m"(v)); return v; }
-inline void writeMxcsr(uint32_t v) DALNOK_NONBLOCKING { __asm__ __volatile__("ldmxcsr %0" : : "m"(v)); }
-#endif
-
-struct FlushDenormals {
-#if defined(__aarch64__)
-    uint64_t saved = readFpcr();
-    FlushDenormals() DALNOK_NONBLOCKING { writeFpcr(saved | kFpcrFlushZero); }
-    ~FlushDenormals() DALNOK_NONBLOCKING { writeFpcr(saved); }
-#elif defined(__x86_64__)
-    uint32_t saved = readMxcsr();
-    FlushDenormals() DALNOK_NONBLOCKING { writeMxcsr(saved | kMxcsrFtz | kMxcsrDaz); }
-    ~FlushDenormals() DALNOK_NONBLOCKING { writeMxcsr(saved); }
-#endif
-};
-} // namespace
-
-void Engine::process(float *left, float *right, int frames) DALNOK_NONBLOCKING {
-    [[maybe_unused]] const FlushDenormals flushDenormals;
-    // Isolated plug-ins (ADR-0014) share one budget per callback: together they may wait 40 % of its period.
-    scratch_.deadlineNs = nowNs() + static_cast<uint64_t>(0.4e9 * frames / sampleRate_);
-    // Adopt the newest snapshot only if the previous one can be retired.
-    if (!retired_.full()) {
-        if (RenderState *s = pending_.exchange(nullptr, std::memory_order_acq_rel)) {
-            if (current_) retired_.push(current_);
-            current_ = s;
-            swaps_.fetch_add(1, std::memory_order_relaxed);
-            pendingSnapshotCallbacks_.store(0, std::memory_order_relaxed);
-            const auto depth = static_cast<uint32_t>(retired_.size());
-            const auto high = retiredHighWater_.load(std::memory_order_relaxed);
-            if (depth > high) retiredHighWater_.store(depth, std::memory_order_relaxed);
-        }
-    } else if (pending_.load(std::memory_order_acquire)) {
-        pendingSnapshotCallbacks_.fetch_add(1, std::memory_order_relaxed);
-        adoptionSkips_.fetch_add(1, std::memory_order_relaxed);
-    }
-    const int64_t before = rtPosition_;
-    handleMidiInput(before);
-    const bool anySolo = soloCount_.load(std::memory_order_relaxed) > 0;
-    const int64_t seek = seekRequest_.exchange(-1, std::memory_order_relaxed);
-    if (seek >= 0) pendingSeek_ = seek;
-    const bool play = playing_.load(std::memory_order_relaxed);
-    const float step = static_cast<float>(1.0 / (kTransportFadeSeconds * sampleRate_));
-
-    // Cycle: read once per callback (the control thread writes start/end before enabling).
-    // Recording plays straight through, except a cycle take (recordCycle_), which loops and becomes takes.
-    const bool cycleTake = recordCycle_.load(std::memory_order_acquire) && recordArmed_.load(std::memory_order_relaxed);
-    const bool cycling = cycleOn_.load(std::memory_order_acquire) && (!recordArmed_.load(std::memory_order_relaxed) || cycleTake);
-    int64_t advanced = 0; // frames the transport advanced in this callback (cycle wraps included)
-    bool jumped = false;  // a seek landed in this callback
-    const int64_t cycleStart = cycleStart_.load(std::memory_order_relaxed), cycleEnd = cycleEnd_.load(std::memory_order_relaxed);
-    const bool cycleValid = cycling && cycleEnd - cycleStart >= 64 && cycleStart >= 0;
-
-    for (int off = 0; off < frames;) {
-        int n = std::min(kMaxBlock, frames - off);
-        // Stop the sub-block exactly at the cycle end so the jump back lands on the right sample.
-        if (cycleValid && play && pendingSeek_ < 0 && rtPosition_ < cycleEnd && rtPosition_ + n > cycleEnd)
-            n = static_cast<int>(cycleEnd - rtPosition_);
-        // Clip launcher: switch tracks exactly at their launch frame and cut blocks at loop ends, so every
-        // change lands on a block start (rendered position = playhead + compensation).
-        if (current_ && play && pendingSeek_ < 0) {
-            const int64_t rp = rtPosition_ + current_->compensation;
-            for (const RenderTrack &t : current_->tracks) {
-                TrackRuntime &rt = *t.runtime;
-                const int64_t la = rt.launchAt.load(std::memory_order_acquire);
-                const bool logging = launcherRecording_.load(std::memory_order_relaxed);
-                if (la >= 0 && la <= rp) {
-                    const int32_t target = rt.launchTarget.load(std::memory_order_relaxed);
-                    rt.playingSlot.store(target, std::memory_order_relaxed);
-                    rt.slotStart.store(la, std::memory_order_relaxed);
-                    rt.slotLoops = 0;
-                    rt.launchAt.store(-1, std::memory_order_relaxed);
-                    if (logging) launchEvents_.push(LaunchEvent{t.id, target, la});
-                } else if (la >= 0 && la < rp + n) {
-                    n = static_cast<int>(la - rp);
-                }
-                const int32_t ps = rt.playingSlot.load(std::memory_order_relaxed);
-                if (ps < 0) continue;
-                for (const RenderSlot &sl : t.content->slots) {
-                    if (sl.slot != ps || sl.length <= 0) continue;
-                    const int64_t start = rt.slotStart.load(std::memory_order_relaxed);
-                    const int64_t rel = ((rp - start) % sl.length + sl.length) % sl.length;
-                    // At a loop boundary: count it and run the follow action, exactly here.
-                    if (rel == 0 && rp > start) {
-                        ++rt.slotLoops;
-                        if (sl.follow != 0 && rt.slotLoops >= sl.followLoops && rt.launchAt.load(std::memory_order_relaxed) < 0) {
-                            const int32_t next = sl.follow == 1 ? sl.nextSlot : -1;
-                            rt.playingSlot.store(next, std::memory_order_relaxed);
-                            rt.slotStart.store(rp, std::memory_order_relaxed);
-                            rt.slotLoops = 0;
-                            if (logging) launchEvents_.push(LaunchEvent{t.id, next, rp});
-                            break;
-                        }
-                    }
-                    if (rel + n > sl.length) n = static_cast<int>(sl.length - rel);
-                }
-            }
-        }
-        float *l = left + off, *r = right + off;
-        off += n;
-
-        if (pendingSeek_ >= 0 && transportGain_ == 0.0f) {
-            rtPosition_ = pendingSeek_;
-            pendingSeek_ = -1;
-            jumped = true;
-        }
-        const float target = (play && pendingSeek_ < 0) ? 1.0f : 0.0f;
-
-        if (transportGain_ == 0.0f && target == 0.0f) {
-            for (int i = 0; i < n; ++i) l[i] = r[i] = 0.0f;
-            scratch_.liveNotes = rtLiveNotes_;
-            scratch_.liveNoteCount = off == n ? rtLiveNoteCount_ : 0; // live notes go to the first sub-block
-            if (current_) renderLiveInput(*current_, n, l, r, scratch_, anySolo, true);
-            continue;
-        }
-        scratch_.liveNotes = rtLiveNotes_;
-        scratch_.liveNoteCount = off == n ? rtLiveNoteCount_ : 0;
-        if (current_) {
-            // Rendered ahead by the delay compensation, so what is heard lines up with the playhead.
-            renderBlock(*current_, rtPosition_ + current_->compensation, n, l, r, scratch_, true, anySolo);
-        } else {
-            for (int i = 0; i < n; ++i) l[i] = r[i] = 0.0f;
-        }
-        float g = transportGain_;
-        if (g != target) {
-            for (int i = 0; i < n; ++i) {
-                g = target > g ? std::min(target, g + step) : std::max(target, g - step);
-                l[i] *= g;
-                r[i] *= g;
-            }
-            transportGain_ = g;
-        }
-        if (current_) renderLiveInput(*current_, n, l, r, scratch_, anySolo, false);
-        if (play && pendingSeek_ < 0 && (clickLeft_ > 0 || metronome_.load(std::memory_order_relaxed) ||
-                                         rtPosition_ < countInUntil_.load(std::memory_order_relaxed)))
-            renderClick(l, r, n, rtPosition_);
-        float pl = 0, pr = 0;
-        for (int i = 0; i < n; ++i) {
-            pl = std::max(pl, meterLevel(l[i], masterDcL_));
-            pr = std::max(pr, meterLevel(r[i], masterDcR_));
-        }
-        raisePeak(masterPeakL_, pl);
-        raisePeak(masterPeakR_, pr);
-        rtPosition_ += n;
-        advanced += n;
-        if (cycleValid && play && pendingSeek_ < 0 && rtPosition_ == cycleEnd) rtPosition_ = cycleStart;
-    }
-    position_.store(pendingSeek_ >= 0 ? pendingSeek_ : rtPosition_, std::memory_order_relaxed);
-
-    // Recording: a take covers the blocks where the transport advanced continuously.
-    const uint32_t take = recordTake_.load(std::memory_order_acquire);
-    if (take != rtTake_) { rtTake_ = take; rtRecordNext_ = -1; }
-    rtRecordingBlock_ = false;
-    rtRecordOffset_ = 0;
-    rtRecordCount_ = frames;
-    if (recordArmed_.load(std::memory_order_acquire) && !recordBroken_.load(std::memory_order_relaxed)) {
-        // Punch window: only frames in [in, out) belong to the take (whole blocks without punch).
-        const int64_t in = punchIn_.load(std::memory_order_relaxed), out = punchOut_.load(std::memory_order_relaxed);
-        const bool finished = rtRecordNext_ >= 0 && rtRecordNext_ >= out; // past punch-out: nothing more to check
-        if (cycleTake) {
-            // Cycle take: every frame while the transport rolls continuously, across wraps. The control
-            // thread cuts the capture into one take per pass when recording stops.
-            if (advanced == frames && !jumped && pendingSeek_ < 0) {
-                if (rtRecordNext_ < 0) recordStart_.store(before, std::memory_order_release);
-                rtRecordingBlock_ = true;
-                rtRecordNext_ = 0; // started
-                recordEnd_.store(rtPosition_, std::memory_order_release);
-            } else if (rtRecordNext_ >= 0) {
-                recordBroken_.store(true, std::memory_order_release);
-            }
-        }
-        // A block that ends with a seek still pending is a fade-out before a jump (e.g. count-in pre-roll
-        // requested while playing): it never starts a take, and during a take the jump breaks it below.
-        else if (!finished && rtPosition_ - before == frames && pendingSeek_ < 0) {
-            const int64_t blockStart = rtPosition_ - frames;
-            const int64_t from = std::max(blockStart, in), to = std::min(rtPosition_, out);
-            if (to > from) {
-                if (rtRecordNext_ < 0) recordStart_.store(from, std::memory_order_release);
-                if (rtRecordNext_ >= 0 && from != rtRecordNext_) recordBroken_.store(true, std::memory_order_release);
-                else {
-                    rtRecordingBlock_ = true;
-                    rtRecordOffset_ = static_cast<int>(from - blockStart);
-                    rtRecordCount_ = static_cast<int>(to - from);
-                    recordEnd_.store(to, std::memory_order_release);
-                }
-                rtRecordNext_ = to;
-            }
-        } else if (!finished && rtRecordNext_ >= 0) {
-            recordBroken_.store(true, std::memory_order_release); // paused or sought during the take
-        }
-    }
-    if (rtRecordingBlock_ && recordMidi_.load(std::memory_order_acquire)) {
-        for (int i = 0; i < rtMidiCount_; ++i) {
-            RecordedMidi e = rtMidiEvents_[i];
-            e.pos = rtPosition_ - frames + rtRecordOffset_; // block-accurate, clamped into the punch window
-            if (!midiRecordQueue_.push(e)) midiRecordDropped_.fetch_add(1, std::memory_order_relaxed);
-        }
-    }
-    rtMidiCount_ = 0;
-}
-
-// ---- Offline ------------------------------------------------------------
-
-bool Engine::renderOffline(int64_t start, int64_t frames, float *left, float *right) {
-    [[maybe_unused]] const FlushDenormals flushDenormals;
-    if (start < 0 || frames < 0 || !left || !right) return false;
-    renderPendingStretchesNow();
-    const auto offline = offlinePlugins();
-    const auto state = compile(nullptr, &offline);
-    const bool anySolo = soloCount_.load() > 0;
-    auto scratch = std::make_unique<Scratch>();
-    std::vector<SynthState> synths(state->tracks.size());
-    // Delay compensation: render the timeline ahead by the compensation and pre-roll that much first, so
-    // output frame j is timeline frame start + j exactly as heard live.
-    const int64_t m = state->compensation;
-    float discardL[kMaxBlock], discardR[kMaxBlock];
-    for (int64_t done = 0; done < m;) {
-        const int n = static_cast<int>(std::min<int64_t>(kMaxBlock, m - done));
-        renderBlock(*state, start + done, n, discardL, discardR, *scratch, false, anySolo, synths.data());
-        done += n;
-    }
-    for (int64_t done = 0; done < frames;) {
-        const int n = static_cast<int>(std::min<int64_t>(kMaxBlock, frames - done));
-        renderBlock(*state, start + m + done, n, left + done, right + done, *scratch, false, anySolo, synths.data());
-        done += n;
-    }
-    return true;
-}
-
-int32_t Engine::compensation() const {
-    return compile(nullptr, &plugins_)->compensation; // a throwaway snapshot with fresh delay lines (no live state touched)
-}
-
-bool Engine::renderToWav(const std::string &path, int64_t start, int64_t frames, int32_t bits, std::string &err) {
-    [[maybe_unused]] const FlushDenormals flushDenormals;
-    if (start < 0 || frames <= 0) {
-        err = "invalid range";
-        return false;
-    }
-    std::unique_ptr<WavWriter> w(openWavWriter(path, sampleRate_, bits, err));
-    if (!w) return false;
-    renderPendingStretchesNow();
-    const auto offline = offlinePlugins();
-    const auto state = compile(nullptr, &offline);
-    auto scratch = std::make_unique<Scratch>();
-    std::vector<SynthState> synths(state->tracks.size());
-    std::vector<float> l(kMaxBlock * 64), r(kMaxBlock * 64);
-    const int64_t m = state->compensation; // pre-roll, as in renderOffline
-    for (int64_t done = 0; done < m;) {
-        const int n = static_cast<int>(std::min<int64_t>(kMaxBlock, m - done));
-        renderBlock(*state, start + done, n, l.data(), r.data(), *scratch, false, soloCount_.load() > 0, synths.data());
-        done += n;
-    }
-    for (int64_t done = 0; done < frames;) {
-        const auto chunk = std::min<int64_t>(static_cast<int64_t>(l.size()), frames - done);
-        for (int64_t o = 0; o < chunk;) {
-            const int n = static_cast<int>(std::min<int64_t>(kMaxBlock, chunk - o));
-            renderBlock(*state, start + m + done + o, n, l.data() + o, r.data() + o, *scratch, false, soloCount_.load() > 0,
-                        synths.data());
-            o += n;
-        }
-        if (!w->write(l.data(), r.data(), chunk, err)) return false;
-        done += chunk;
-    }
-    return w->close(err);
-}
-
-// ---- Diagnostics --------------------------------------------------------
-
-void Engine::stats(DalnokStats &o) const {
-    o.callbacks = callbacks_.load(std::memory_order_relaxed);
-    o.frames_rendered = framesRendered_.load(std::memory_order_relaxed);
-    o.max_callback_ns = maxCallbackNs_.load(std::memory_order_relaxed);
-    o.last_callback_ns = lastCallbackNs_.load(std::memory_order_relaxed);
-    o.max_frames_per_callback = maxFrames_.load(std::memory_order_relaxed);
-    o.overloads = overloads_.load(std::memory_order_relaxed);
-    o.snapshot_swaps = swaps_.load(std::memory_order_relaxed);
-    o.retired_queue_depth = static_cast<uint32_t>(retired_.size());
-    o.retired_queue_high_water = retiredHighWater_.load(std::memory_order_relaxed);
-    o.pending_snapshot_callbacks = pendingSnapshotCallbacks_.load(std::memory_order_relaxed);
-    o.snapshot_adoption_skips = adoptionSkips_.load(std::memory_order_relaxed);
-}
-
-void Engine::resetStats() {
-    callbacks_ = 0;
-    framesRendered_ = 0;
-    maxCallbackNs_ = 0;
-    lastCallbackNs_ = 0;
-    maxFrames_ = 0;
-    overloads_ = 0;
-    swaps_ = 0;
-    retiredHighWater_ = static_cast<uint32_t>(retired_.size());
-    pendingSnapshotCallbacks_ = 0;
-    adoptionSkips_ = 0;
-}
-
-#ifdef DALNOK_TEST_HOOKS
-// Compiled only for the explicit saturation test build. Reproduce publication
-// and the device callback without the normal control-thread collection calls.
-void handoffSaturationFixture(uint64_t *out) {
-    Engine engine(48000);
-    float left[64]{}, right[64]{};
-    engine.process(left, right, 64); // adopt the constructor's initial snapshot
-    engine.resetStats();
-    for (int i = 0; i < 100; ++i) {
-        auto state = engine.compile();
-        delete engine.pending_.exchange(state.release(), std::memory_order_acq_rel);
-        engine.process(left, right, 64);
-    }
-    DalnokStats stats{};
-    auto record = [&](int offset) {
-        engine.stats(stats);
-        out[offset] = stats.retired_queue_depth;
-        out[offset + 1] = stats.retired_queue_high_water;
-        out[offset + 2] = stats.pending_snapshot_callbacks;
-        out[offset + 3] = stats.snapshot_adoption_skips;
-        out[offset + 4] = stats.snapshot_swaps;
-    };
-    record(0);
-    engine.resetStats();
-    record(5);
-    for (int i = 0; i < 3; ++i) engine.process(left, right, 64);
-    record(10);
-    engine.collectGarbage();
-    record(15);
-    engine.process(left, right, 64);
-    record(20);
-    engine.resetStats();
-    record(25);
-}
-#endif
 
 } // namespace dalnok
 
