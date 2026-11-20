@@ -168,4 +168,52 @@ import Testing
         #expect(dalnok_render_offline(e2, 100_000, 48_000, &l, &r) == DALNOK_OK)
         #expect(l == reference && r == rr, "the reopened project plays the streamed file identically")
     }
+
+    /// The cache directory stays within DALNOK_STREAM_DISK_MB: least recently used files go first, reusing a file counts
+    /// as use, media whose file was removed still plays, and partial files of dead processes are cleaned up.
+    @Test func cacheDirectoryIsPrunedLeastRecentlyUsedFirst() throws {
+        let cache = dir.appendingPathComponent("pruned-cache")
+        try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
+        let orphan = cache.appendingPathComponent("0000000000000000.dlnkstream.part.99999999") // no such process
+        try Data("partial".utf8).write(to: orphan)
+        setenv("DALNOK_STREAM_DIR", cache.path, 1); setenv("DALNOK_STREAM_DISK_MB", "7", 1) // two 8 s stereo files fit
+        dalnok_stream_set_limits(5, 256)
+        defer { dalnok_stream_set_limits(60, 256); unsetenv("DALNOK_STREAM_DISK_MB") }
+        func files() -> Set<String> {
+            Set((try? FileManager.default.contentsOfDirectory(atPath: cache.path)) ?? []).filter { $0.hasSuffix(".dlnkstream") }
+        }
+        func load(_ url: URL) -> OpaquePointer {
+            var m: OpaquePointer?
+            #expect(dalnok_media_load(url.path, 48_000, &m, nil, 0) == DALNOK_OK && dalnok_media_streamed(m))
+            Thread.sleep(forTimeInterval: 0.02) // distinct modification times
+            return m!
+        }
+        let urls = ["prune-a.wav", "prune-b.wav", "prune-c.wav", "prune-d.wav"].map { stereoWav(seconds: 8, name: $0) }
+        let a = load(urls[0])
+        let afterA = files()
+        #expect(!FileManager.default.fileExists(atPath: orphan.path), "a dead process's partial file is removed")
+        let b = load(urls[1])
+        let afterB = files()
+        #expect(afterB.count == 2)
+        let c = load(urls[2]) // over budget: A, the least recently used, goes
+        let afterC = files()
+        #expect(afterC.count == 2 && afterC.isDisjoint(with: afterA), "the oldest file is pruned (\(afterC.sorted()))")
+        dalnok_media_release(load(urls[1]))   // B used again: now C is the oldest
+        let d = load(urls[3])
+        let afterD = files()
+        #expect(afterD.count == 2 && afterD.isSuperset(of: afterB.subtracting(afterA)), "reusing a file keeps it (\(afterD.sorted()))")
+        defer { [a, b, c, d].forEach { dalnok_media_release($0) } }
+        // A's file is gone, but its media still renders exactly like the same audio held in memory.
+        setenv("DALNOK_STREAM_DIR", cache.path, 1)
+        dalnok_stream_set_limits(100_000, 256)
+        var memory: OpaquePointer?
+        #expect(dalnok_media_load(urls[0].path, 48_000, &memory, nil, 0) == DALNOK_OK && !dalnok_media_streamed(memory))
+        defer { dalnok_media_release(memory) }
+        let (e1, _) = engine(a, path: urls[0].path), (e2, _) = engine(memory!, path: urls[0].path)
+        defer { dalnok_engine_destroy(e1); dalnok_engine_destroy(e2) }
+        var l1 = [Float](repeating: 0, count: 96_000), r1 = l1, l2 = l1, r2 = l1
+        #expect(dalnok_render_offline(e1, 100_000, 96_000, &l1, &r1) == DALNOK_OK)
+        #expect(dalnok_render_offline(e2, 100_000, 96_000, &l2, &r2) == DALNOK_OK)
+        #expect(l1 == l2 && r1 == r2 && l1.contains { $0 != 0 }, "a pruned file's open media still plays")
+    }
 }

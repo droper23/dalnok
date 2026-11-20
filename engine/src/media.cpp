@@ -6,7 +6,14 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <cerrno>
+#include <csignal>
+#include <cstdlib>
+#include <dirent.h>
 #include <fcntl.h>
+#include <string>
+#include <sys/time.h>
+#include <vector>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -234,6 +241,42 @@ std::shared_ptr<const Media> openStreamFile(const std::string &file, double rate
     auto source = std::make_shared<StreamSource>(file, fd, static_cast<int32_t>(h.channels), h.frames, rate);
     return std::make_shared<const Media>(std::move(source), rate, std::move(base));
 }
+
+// Keeps the stream cache directory within its disk budget (DALNOK_STREAM_DISK_MB, default 8 GiB) by removing the least
+// recently used cache files; loading a file marks it used. `keep` is never removed, and removing a file another Media
+// still reads is safe: its open descriptor stays valid until released. Partial files of processes that no longer exist
+// (an interrupted decode) are removed too.
+void pruneStreamDirectory(const std::string &dir, const std::string &keep) {
+    uint64_t budget = 8192ull << 20;
+    if (const char *m = std::getenv("DALNOK_STREAM_DISK_MB"); m && std::atoll(m) > 0) budget = static_cast<uint64_t>(std::atoll(m)) << 20;
+    DIR *d = ::opendir(dir.c_str());
+    if (!d) return;
+    struct Entry { std::string path; uint64_t bytes; timespec used; };
+    std::vector<Entry> files;
+    uint64_t total = 0;
+    static constexpr char kExt[] = ".dlnkstream", kPart[] = ".dlnkstream.part.";
+    while (const dirent *e = ::readdir(d)) {
+        const std::string name = e->d_name, path = dir + "/" + name;
+        if (const auto at = name.find(kPart); at != std::string::npos) {
+            const long pid = std::atol(name.c_str() + at + sizeof kPart - 1);
+            if (pid > 0 && ::kill(static_cast<pid_t>(pid), 0) != 0 && errno == ESRCH) ::unlink(path.c_str());
+            continue;
+        }
+        if (name.size() <= sizeof kExt - 1 || name.compare(name.size() - (sizeof kExt - 1), sizeof kExt - 1, kExt) != 0) continue;
+        struct stat st{};
+        if (::stat(path.c_str(), &st) != 0) continue;
+        files.push_back({path, static_cast<uint64_t>(st.st_size), st.st_mtimespec});
+        total += static_cast<uint64_t>(st.st_size);
+    }
+    ::closedir(d);
+    std::sort(files.begin(), files.end(), [](const Entry &a, const Entry &b) {
+        return a.used.tv_sec != b.used.tv_sec ? a.used.tv_sec < b.used.tv_sec : a.used.tv_nsec < b.used.tv_nsec;
+    });
+    for (const auto &f : files) {
+        if (total <= budget) break;
+        if (f.path != keep && ::unlink(f.path.c_str()) == 0) total -= f.bytes;
+    }
+}
 } // namespace
 
 std::shared_ptr<const Media> Media::loadFile(const std::string &path, double sampleRate, std::string &err) {
@@ -263,7 +306,11 @@ std::shared_ptr<const Media> Media::loadFile(const std::string &path, double sam
     char name[32];
     std::snprintf(name, sizeof name, "%016llx", static_cast<unsigned long long>(key));
     const std::string file = dir + "/" + name + ".dlnkstream";
-    if (auto existing = openStreamFile(file, sampleRate)) return existing;
+    if (auto existing = openStreamFile(file, sampleRate)) {
+        ::utimes(file.c_str(), nullptr); // used now: the last to be pruned
+        pruneStreamDirectory(dir, file);
+        return existing;
+    }
 
     // Decode block by block into a temporary file, building the base peak level on the way, then publish it.
     const std::string tmp = file + ".part." + std::to_string(::getpid());
@@ -332,6 +379,7 @@ std::shared_ptr<const Media> Media::loadFile(const std::string &path, double sam
     }
     auto media = openStreamFile(file, sampleRate);
     if (!media) err = "cannot open the stream cache";
+    pruneStreamDirectory(dir, file);
     return media;
 }
 

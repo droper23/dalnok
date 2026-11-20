@@ -48,7 +48,7 @@ Swift/AppKit front end on macOS. GPL-3.0-or-later. This repo is also the project
   makes every engine isolate non-built-in plug-ins (tests, CLI); the app uses Settings ▸ Plug-ins ▸ Safety.
   `scripts/ci/plugin-isolation.sh` runs the hosting suites isolated plus crash/hang fixtures.
 - Streaming (ADR-0016): files over `DALNOK_STREAM_SECONDS` (default 60) decode into a cache file in `DALNOK_STREAM_DIR`
-  (default: the user cache directory) and play from a block cache of `DALNOK_STREAM_CACHE_MB`. The audio thread reads
+  (default: the user cache directory, kept within `DALNOK_STREAM_DISK_MB`, least recently used first) and play from a block cache of `DALNOK_STREAM_CACHE_MB`. The audio thread reads
   only resident blocks (`stream_cache.*`). `dalnok-cli stream-bench <wav> --mode memory|stream` measures RSS and misses.
 - Animations go through `app/macos/Dalnok/Motion.swift` (respects Reduce Motion; off during snapshots and tests
   unless a test turns it on).

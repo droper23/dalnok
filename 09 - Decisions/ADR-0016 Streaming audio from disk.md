@@ -30,5 +30,11 @@ Processing), so streaming cannot simply read on demand.
 to under 50 MB peak RSS while playing. Streamed files need disk space for their decoded cache (about 690 MB per stereo
 hour at 48 kHz) and take one decode pass to prepare. A seek far from the playhead can play up to a few milliseconds
 of silence until its blocks arrive (none were missed in the tests). Launcher clips keep only their first blocks
-resident ahead of a launch, so a long launched clip could miss blocks after its first 1.4 s. Cache files are not
-cleaned up automatically yet.
+resident ahead of a launch, so a long launched clip could miss blocks after its first 1.4 s.
+
+**Amendment (2026-11-19): cache-file cleanup.**
+- Each long-file load keeps the cache directory within `DALNOK_STREAM_DISK_MB` (default 8 GiB, about 12 stereo hours) by deleting the least recently used cache files.
+- Loading a cache file updates its modification time, which counts as use.
+- The file just loaded is never deleted. A deleted file that some Media still has open stays readable through its descriptor until that Media is released; a later load decodes it again.
+- Partial files left by a process that no longer exists are removed.
+- Test: `Streaming/cacheDirectoryIsPrunedLeastRecentlyUsedFirst`.

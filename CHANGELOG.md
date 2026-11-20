@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+- The streaming cache folder no longer grows without limit. It stays under 8 GiB (`DALNOK_STREAM_DISK_MB`) by deleting the least recently used files, and partial files left by a crash are removed. A file still in use keeps playing even after it's deleted.
+- Fixed: `scripts/ci/plugin-recovery.sh` left one stuck test process running after every run (from the plug-in that hangs while loading).
+
 - Tests: `DALNOK_REAL_INPUT=1` now drives this release's changes with real mouse and keyboard input in the self-test. It drags a clip, undoes and redoes with ⌘Z / ⇧⌘Z, plays a streamed 90 s file with Space, seeks with a ruler click and clicks Stop during slow isolated loading. It checks the screen is unlocked and Dalnok is in front first. The timeline redraw check now ignores the playhead overlay, which `draw` never paints, so it compares exactly (0 differing bytes).
 
 - Editing a clip no longer repaints the whole arrangement and mixer: only the changed tracks redraw. On a 4,096-clip project, an edit including drawing went from about 54 ms to 22 ms. The UI timing audit now includes drawing time.
