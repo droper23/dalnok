@@ -33,7 +33,16 @@ p = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, 
 try:
     status = p.wait(timeout=15)
 except subprocess.TimeoutExpired:
-    os.killpg(p.pid, signal.SIGKILL)
+    # swift test runs the tests in swiftpm-testing-helper, outside its process group: kill every descendant,
+    # or the hung helper outlives the script.
+    rows = [r.split() for r in subprocess.run(['ps', '-axo', 'pid=,ppid='], capture_output=True, text=True).stdout.splitlines()]
+    tree, grew = {p.pid}, True
+    while grew:
+        more = {int(c) for c, parent in rows if int(parent) in tree} - tree
+        tree |= more; grew = bool(more)
+    for pid in tree:
+        try: os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError: pass
     p.wait()
     if mode != 'hang': raise SystemExit('crash fixture timed out')
 else:
