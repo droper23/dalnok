@@ -476,6 +476,36 @@ struct PluginIsolation {
         dalnok_plugin_close_editor(e, slot)
     }
 
+    /// An editor that changes its plug-in's state without telling the host: the project is not marked dirty, but
+    /// dalnok_project_plugins_changed reports it before closing; saving takes it in. In process and isolated.
+    @MainActor @Test(arguments: [false, true]) func silentEditorChangesAreFoundBeforeClosing(_ isolated: Bool) throws {
+        setenv("DALNOK_TEST_EDITOR", "1", 1); setenv("DALNOK_TEST_EDITOR_SILENT", "1", 1)
+        defer { unsetenv("DALNOK_TEST_EDITOR"); unsetenv("DALNOK_TEST_EDITOR_SILENT") }
+        let (e, t) = audioSession(); defer { dalnok_engine_destroy(e) }
+        dalnok_plugins_set_host(e, isolated ? isolationHost : nil)
+        var err = [CChar](repeating: 0, count: 256)
+        let slot = dalnok_plugin_add(e, t, testVst3, gainClass, &err, 256)
+        let other = dalnok_plugin_add(e, t, testVst3, gainClass, &err, 256) // its editor is never opened
+        #expect(slot != 0 && other != 0, "\(cstr(err))")
+        let path = tempDir().appendingPathComponent("vst3-silent-\(UUID().uuidString).dalnok").path
+        #expect(dalnok_project_save(e, path, nil, 0) == DALNOK_OK)
+        #expect(!dalnok_project_dirty(e) && !dalnok_project_plugins_changed(e), "clean after saving")
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: 400, height: 300))
+        if isolated {
+            #expect(dalnok_plugin_show_editor_window(e, slot, "Audio — Dalnok Test Gain", 100, 600, &err, 256) == DALNOK_OK, "\(cstr(err))")
+        } else {
+            var w: Int32 = 0, h: Int32 = 0
+            #expect(dalnok_plugin_open_editor(e, slot, Unmanaged.passUnretained(view).toOpaque(), &w, &h, nil, nil, &err, 256) == DALNOK_OK, "\(cstr(err))")
+        }
+        var l = [Float](repeating: 0, count: 512), r = l
+        for _ in 0..<4 { _ = dalnok_engine_pump(e, &l, &r, 512) }
+        #expect(!dalnok_project_dirty(e), "the plug-in told nobody")
+        #expect(dalnok_project_plugins_changed(e), "its changed state is found before closing (isolated \(isolated))")
+        #expect(dalnok_project_save(e, path, nil, 0) == DALNOK_OK)
+        #expect(!dalnok_project_plugins_changed(e), "saving takes the change in")
+        dalnok_plugin_close_editor(e, slot)
+    }
+
     // MARK: Audio workgroup (A-01 stage 2)
 
     /// With a real output device running, the isolated host's processing thread joins the device's audio workgroup.

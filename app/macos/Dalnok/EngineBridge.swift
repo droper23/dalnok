@@ -115,6 +115,8 @@ final class Engine {
         else { dalnok_project_set_recovery_directory(handle, nil) }
     }
     var isDirty: Bool { dalnok_project_dirty(handle) }
+    /// Before closing: also plug-ins whose editors changed their state without telling (asks them; not per frame).
+    var hasUnsavedChanges: Bool { isDirty || dalnok_project_plugins_changed(handle) }
     func newProject() { dalnok_project_new(handle) }
     func save(to url: URL, copyAudio: Bool = false) throws {
         var err = [CChar](repeating: 0, count: 512)

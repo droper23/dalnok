@@ -26,6 +26,7 @@ std::string PluginHostService::error(int32_t id) const {
 }
 
 void PluginHostService::clear() {
+    editorStates_.clear();
     instances_.clear();
     errors_.clear();
     pending_.clear();
@@ -228,6 +229,25 @@ std::vector<int32_t> PluginHostService::poll() {
 bool PluginHostService::takeEditorKey(int32_t &slot, PluginProcessor::EditorKey &key) {
     for (const auto &[id, p] : instances_)
         if (p && p->isolated() && p->takeEditorKey(key)) { slot = id; return true; }
+    return false;
+}
+
+static size_t stateHash(PluginProcessor *p) {
+    std::string bytes;
+    return p && p->getState(bytes) ? std::hash<std::string>{}(bytes) : 0;
+}
+
+void PluginHostService::noteEditorOpened(int32_t id) {
+    if (!editorStates_.count(id)) editorStates_[id] = stateHash(instance(id));
+}
+
+void PluginHostService::rememberEditorStates() {
+    for (auto &[id, hash] : editorStates_) hash = stateHash(instance(id));
+}
+
+bool PluginHostService::editorStatesChanged() const {
+    for (const auto &[id, hash] : editorStates_)
+        if (PluginProcessor *p = instance(id); p && stateHash(p) != hash) return true;
     return false;
 }
 

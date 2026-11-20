@@ -416,7 +416,7 @@ bool Engine::saveProject(const std::string &path, std::string &err, bool copyMed
     }
     for (auto &kv : body.object) doc.set(kv.first, std::move(kv.second));
     if (!writeFileAtomically(path, json::serialize(doc, true), err)) return false;
-    if (markSaved) savedRevision_ = revision_;
+    if (markSaved) { savedRevision_ = revision_; pluginHost_.rememberEditorStates(); }
     return true;
 }
 

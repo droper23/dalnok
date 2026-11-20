@@ -337,6 +337,7 @@ DalnokStatus dalnok_plugin_parameter(const DalnokEngine *e, int32_t slot, int32_
     out->hidden = pp.hidden;
     return DALNOK_OK;
 }
+bool dalnok_project_plugins_changed(const DalnokEngine *e) { return e && e->impl.pluginEditorStatesChanged(); }
 bool dalnok_plugin_take_editor_key(DalnokEngine *e, DalnokEditorKey *out) {
     if (!e || !out) return false;
     int32_t slot = 0;
@@ -382,6 +383,7 @@ DalnokStatus dalnok_plugin_open_editor(DalnokEngine *e, int32_t slot, void *pare
     if (!p || !parent) return DALNOK_ERR_INVALID_ARG;
     int32_t width = 0, height = 0;
     std::string msg;
+    e->impl.noteEditorOpened(slot); // its state before the editor can change it
     if (!p->openEditor(parent, width, height, onResize, ctx, msg)) { copyOut(err, len, msg); return DALNOK_ERR_UNSUPPORTED; }
     if (w) *w = width;
     if (h) *h = height;
@@ -395,6 +397,7 @@ DalnokStatus dalnok_plugin_show_editor_window(DalnokEngine *e, int32_t slot, con
     PluginProcessor *p = e ? e->impl.pluginInstance(slot) : nullptr;
     if (!p) return DALNOK_ERR_INVALID_ARG;
     std::string msg;
+    e->impl.noteEditorOpened(slot); // its state before the editor can change it
     if (!p->showEditorWindow(title ? title : "", x, y, msg)) { copyOut(err, len, msg); return DALNOK_ERR_UNSUPPORTED; }
     return DALNOK_OK;
 }

@@ -108,6 +108,8 @@ public:
                 }
             }
         }
+        // A change that is not a parameter, made without telling the host at all (DALNOK_TEST_EDITOR_SILENT).
+        if (std::getenv("DALNOK_TEST_EDITOR_SILENT") && gain_) *gain_ = 0.3f;
         // A change that is not a parameter (a sound picked in the editor), reported with IComponentHandler2::setDirty.
         if (std::getenv("DALNOK_TEST_EDITOR_DIRTY") && handler_) {
             if (gain_) *gain_ = 0.3f; // the change (part of the state, not a parameter)

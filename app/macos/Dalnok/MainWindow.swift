@@ -1246,7 +1246,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     /// Asks to save unsaved changes. `cancelled` runs when the person cancels (or saving fails), so callers
     /// waiting on an answer (like quitting) always get one.
     func confirmDiscard(_ proceed: @escaping () -> Void, cancelled: (() -> Void)? = nil) {
-        guard session.engine.isDirty else { proceed(); return }
+        guard session.engine.hasUnsavedChanges else { proceed(); return }
         let alert = NSAlert()
         alert.messageText = "Save changes to “\(window?.title ?? "Untitled")”?"
         alert.informativeText = "Your changes will be lost if you don't save them."

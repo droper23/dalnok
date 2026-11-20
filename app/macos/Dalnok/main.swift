@@ -134,7 +134,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard engine.isDirty, main.window?.attachedSheet == nil, !SelfTest.running,
+        guard engine.hasUnsavedChanges, main.window?.attachedSheet == nil, !SelfTest.running,
               !CommandLine.arguments.contains("--snapshot"), !CommandLine.arguments.contains("--screenshots") else {
             return .terminateNow
         }

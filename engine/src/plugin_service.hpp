@@ -72,6 +72,12 @@ public:
     // call, and isolated slots whose host failed since then.
     std::vector<int32_t> poll();
     bool takeEditorKey(int32_t &slot, PluginProcessor::EditorKey &key); // from any isolated editor (ADR-0015)
+    // Some editors change their plug-in's state without telling the host. The state of each plug-in whose editor was
+    // opened is remembered (when first opened since the last save, and at each save) and compared when closing.
+    void noteEditorOpened(int32_t id);
+    void rememberEditorStates(); // the project was saved
+    void forgetEditorStates() { editorStates_.clear(); } // a project was opened or created
+    bool editorStatesChanged() const;
 
 private:
     static const PluginSlot *findSlot(const Model &m, int32_t id);
@@ -94,6 +100,7 @@ private:
     int loadTimeoutMs_ = 60'000;   // an isolated plug-in that takes longer to load is killed
     uint32_t workgroupPort_ = 0;   // send right for the running device's audio workgroup
     std::map<int32_t, uint64_t> editCounts_; // editor edit counts already seen
+    std::map<int32_t, size_t> editorStates_; // state hash per plug-in whose editor was opened since the last save
 };
 
 } // namespace dalnok

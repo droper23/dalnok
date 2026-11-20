@@ -785,6 +785,10 @@ DalnokStatus dalnok_project_import(const char *path, double sample_rate, DalnokP
 
 /* True if the model changed since the last save/load/new. */
 bool dalnok_project_dirty(const DalnokEngine *engine);
+/* Some plug-in editors change their plug-in's state without telling the host. True when a plug-in whose editor was
+ * opened since the last save now has a different state: ask before closing, as for dalnok_project_dirty. Asks those
+ * plug-ins for their state, so call it when closing, not on every frame. Main thread. (API 39) */
+bool dalnok_project_plugins_changed(const DalnokEngine *engine);
 
 /* ---- Command catalog (scripting / command palette) ------------------- */
 
