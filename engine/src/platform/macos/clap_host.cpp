@@ -64,6 +64,7 @@ public:
             if (!std::strcmp(id, CLAP_EXT_GUI)) return &self->hostGui_;
             if (!std::strcmp(id, CLAP_EXT_LATENCY)) return &self->hostLatency_;
             if (!std::strcmp(id, CLAP_EXT_PARAMS)) return &self->hostParams_;
+            if (!std::strcmp(id, CLAP_EXT_STATE)) return &self->hostState_;
             return nullptr;
         };
         host_.request_restart = [](const clap_host_t *) {};
@@ -88,6 +89,10 @@ public:
         hostParams_.rescan = [](const clap_host_t *, clap_param_rescan_flags) {};
         hostParams_.clear = [](const clap_host_t *, clap_id, clap_param_clear_flags) {};
         hostParams_.request_flush = [](const clap_host_t *) {};
+        // Edits in the plug-in's own editor: it marks its state dirty, or reports parameter changes it made.
+        hostState_.mark_dirty = [](const clap_host_t *h) {
+            static_cast<ClapProcessor *>(h->host_data)->edits_.fetch_add(1, std::memory_order_relaxed);
+        };
         alive_ = std::make_shared<Alive>();
         alive_->self = this;
 
@@ -170,7 +175,11 @@ public:
         clap_audio_buffer_t out = {outPtr, nullptr, 2, 0, 0};
         clap_input_events_t in = {this, [](const clap_input_events_t *l) -> uint32_t { return static_cast<uint32_t>(static_cast<const ClapProcessor *>(l->ctx)->eventCount_); },
                                   [](const clap_input_events_t *l, uint32_t i) -> const clap_event_header_t * { return &static_cast<const ClapProcessor *>(l->ctx)->events_[i].header(); }};
-        clap_output_events_t outEvents = {this, [](const clap_output_events_t *, const clap_event_header_t *) { return true; }};
+        clap_output_events_t outEvents = {this, [](const clap_output_events_t *l, const clap_event_header_t *e) {
+            if (e->space_id == CLAP_CORE_EVENT_SPACE_ID && (e->type == CLAP_EVENT_PARAM_VALUE || e->type == CLAP_EVENT_PARAM_GESTURE_END))
+                static_cast<const ClapProcessor *>(l->ctx)->edits_.fetch_add(1, std::memory_order_relaxed);
+            return true;
+        }};
         clap_process_t p{};
         p.steady_time = -1;
         p.frames_count = static_cast<uint32_t>(frames);
@@ -256,7 +265,7 @@ public:
             out.push_back({id, r.second > r.first ? (plain - r.first) / (r.second - r.first) : 0});
         }
     }
-    uint64_t editCount() const override { return 0; }
+    uint64_t editCount() const override { return edits_.load(std::memory_order_relaxed); }
     bool automationRange(uint32_t id, double &lo, double &hi) override {
         auto it = ranges_.find(id);
         if (it == ranges_.end()) return false;
@@ -326,6 +335,8 @@ private:
     clap_host_gui_t hostGui_{};
     clap_host_latency_t hostLatency_{};
     clap_host_params_t hostParams_{};
+    clap_host_state_t hostState_{};
+    mutable std::atomic<uint64_t> edits_{0};
     std::shared_ptr<Alive> alive_;
     const clap_plugin_params_t *params_ = nullptr;
     const clap_plugin_state_t *state_ = nullptr;

@@ -33,6 +33,7 @@ class AudioUnitProcessor final : public PluginProcessor {
 public:
     ~AudioUnitProcessor() override {
         closeEditor();
+        if (listener_) AUListenerDispose(listener_);
         if (unit_) {
             std::lock_guard<std::mutex> g(lifecycleLock());
             AudioUnitUninitialize(unit_);
@@ -90,6 +91,7 @@ public:
         UInt32 frames = static_cast<UInt32>(maxBlock);
         AudioUnitSetProperty(unit_, kAudioUnitProperty_MaximumFramesPerSlice, kAudioUnitScope_Global, 0, &frames, sizeof frames);
         if (AudioUnitInitialize(unit_) != noErr) { err = "the Audio Unit failed to initialize"; return false; }
+        listenForEdits();
         inL_.assign(static_cast<size_t>(maxBlock), 0.0f);
         inR_.assign(static_cast<size_t>(maxBlock), 0.0f);
         time_.mFlags = kAudioTimeStampSampleTimeValid;
@@ -271,7 +273,35 @@ public:
         std::lock_guard<std::mutex> g(producer_);
         out.assign(touched_.begin(), touched_.end());
     }
-    uint64_t editCount() const override { return 0; } // AU editors change parameters directly; state is read at save
+    // Edits in the unit's own view: the end of a parameter gesture (its view tells listeners, as Apple's generic
+    // view and most frameworks do) or a preset change. State itself is read at save.
+    uint64_t editCount() const override { return edits_.load(std::memory_order_relaxed); }
+    void listenForEdits() {
+        auto counted = [](void *self, void *, const AudioUnitEvent *, UInt64, AudioUnitParameterValue) {
+            static_cast<AudioUnitProcessor *>(self)->edits_.fetch_add(1, std::memory_order_relaxed);
+        };
+        if (AUEventListenerCreate(counted, this, CFRunLoopGetMain(), kCFRunLoopCommonModes, 0.05f, 0.05f, &listener_) != noErr) {
+            listener_ = nullptr;
+            return;
+        }
+        // The wildcard parameter ID is only valid for sending, so each parameter is registered.
+        UInt32 size = 0;
+        std::vector<AudioUnitParameterID> ids;
+        if (AudioUnitGetPropertyInfo(unit_, kAudioUnitProperty_ParameterList, kAudioUnitScope_Global, 0, &size, nullptr) == noErr && size) {
+            ids.resize(size / sizeof(AudioUnitParameterID));
+            if (AudioUnitGetProperty(unit_, kAudioUnitProperty_ParameterList, kAudioUnitScope_Global, 0, ids.data(), &size) != noErr) ids.clear();
+        }
+        for (AudioUnitParameterID id : ids) {
+            AudioUnitEvent e{};
+            e.mEventType = kAudioUnitEvent_EndParameterChangeGesture;
+            e.mArgument.mParameter = {unit_, id, kAudioUnitScope_Global, 0};
+            AUEventListenerAddEventType(listener_, this, &e);
+        }
+        AudioUnitEvent preset{};
+        preset.mEventType = kAudioUnitEvent_PropertyChange;
+        preset.mArgument.mProperty = {unit_, kAudioUnitProperty_PresentPreset, kAudioUnitScope_Global, 0};
+        AUEventListenerAddEventType(listener_, this, &preset);
+    }
 
     // Editor: the unit's Cocoa view (AUv2 kAudioUnitProperty_CocoaUI).
     bool hasEditor() override {
@@ -325,6 +355,8 @@ private:
     std::mutex producer_;
     std::map<uint32_t, double> touched_;
     void *editor_ = nullptr;
+    AUEventListenerRef listener_ = nullptr;
+    std::atomic<uint64_t> edits_{0};
 };
 } // namespace
 

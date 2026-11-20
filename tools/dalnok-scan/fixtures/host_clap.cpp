@@ -5,12 +5,14 @@
 #include <cmath>
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 
 namespace {
 struct Gain {
     clap_plugin_t plugin;
     const clap_host_t *host;
     double gain = 0.5;
+    int blocks = 0;
 };
 
 const clap_plugin_descriptor_t kDesc = {CLAP_VERSION, "org.dalnok.test-gain", "Dalnok Test CLAP Gain", "Dalnok Tests", "", "", "", "1.0", "",
@@ -65,6 +67,16 @@ const clap_plugin_state_t kState = {stateSave, stateLoad};
 
 clap_process_status process(const clap_plugin_t *p, const clap_process_t *pr) {
     paramsFlush(p, pr->in_events, nullptr);
+    // An edit in the plug-in's own editor, on its fourth block (DALNOK_TEST_CLAP_EDIT): "event" reports the end of a
+    // parameter gesture as an output event; "dirty" asks for the main thread and marks its state dirty there.
+    if (const char *edit = std::getenv("DALNOK_TEST_CLAP_EDIT"); edit && ++self(p)->blocks == 4) {
+        if (!std::strcmp(edit, "event")) {
+            clap_event_param_gesture_t g{{sizeof g, 0, CLAP_CORE_EVENT_SPACE_ID, CLAP_EVENT_PARAM_GESTURE_END, 0}, 7};
+            pr->out_events->try_push(pr->out_events, &g.header);
+        } else {
+            self(p)->host->request_callback(self(p)->host);
+        }
+    }
     const float g = static_cast<float>(self(p)->gain);
     for (uint32_t c = 0; c < 2; ++c)
         for (uint32_t i = 0; i < pr->frames_count; ++i) {
@@ -88,7 +100,10 @@ const clap_plugin_t *create(const clap_plugin_factory_t *, const clap_host_t *ho
     g->plugin = {&kDesc, g, [](const clap_plugin_t *) { return true; }, [](const clap_plugin_t *p) { delete self(p); },
                  [](const clap_plugin_t *, double, uint32_t, uint32_t) { return true; }, [](const clap_plugin_t *) {},
                  [](const clap_plugin_t *) { return true; }, [](const clap_plugin_t *) {}, [](const clap_plugin_t *) {},
-                 process, extension, [](const clap_plugin_t *) {}};
+                 process, extension, [](const clap_plugin_t *p) {
+                     const auto *state = static_cast<const clap_host_state_t *>(self(p)->host->get_extension(self(p)->host, CLAP_EXT_STATE));
+                     if (state && std::getenv("DALNOK_TEST_CLAP_EDIT")) state->mark_dirty(self(p)->host);
+                 }};
     return &g->plugin;
 }
 

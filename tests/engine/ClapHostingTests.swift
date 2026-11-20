@@ -58,4 +58,27 @@ struct ClapHosting {
         #expect(abs(render(e, 30_000, 10)[5] - 0.25) < 1e-4, "disconnect returns sidechain to silence")
     }
 
+    /// Edits made in the plug-in's own editor reach the project as changes (so closing asks to save): the plug-in
+    /// marks its state dirty, or reports a parameter gesture. In process and isolated.
+    @MainActor @Test(arguments: ["event", "dirty"]) func editorEditsMarkTheProjectChanged(_ how: String) async throws {
+        let (e, t) = audioSession(); defer { dalnok_engine_destroy(e) }
+        let slot = dalnok_plugin_add(e, t, testClap, nil, nil, 0)
+        #expect(slot != 0)
+        let path = tempDir().appendingPathComponent("clap-edit-\(UUID().uuidString).dalnok").path
+        #expect(dalnok_project_save(e, path, nil, 0) == DALNOK_OK && !dalnok_project_dirty(e))
+        setenv("DALNOK_TEST_CLAP_EDIT", how, 1); defer { unsetenv("DALNOK_TEST_CLAP_EDIT") }
+        let b = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(b) }
+        var missing: Int32 = -1
+        #expect(dalnok_project_load(b, path, &missing, nil, 0) == DALNOK_OK && missing == 0)
+        var l = [Float](repeating: 0, count: 512), r = l
+        dalnok_transport_play(b)
+        for _ in 0..<2 { _ = dalnok_engine_pump(b, &l, &r, 512) }
+        #expect(!dalnok_project_dirty(b), "clean before the edit")
+        let deadline = Date().addingTimeInterval(5)
+        while !dalnok_project_dirty(b) && Date() < deadline {
+            _ = dalnok_engine_pump(b, &l, &r, 512)
+            try await Task.sleep(for: .milliseconds(10)) // lets the main queue run the plug-in's callback ("dirty")
+        }
+        #expect(dalnok_project_dirty(b), "an edit in the editor (\(how)) marks the project changed")
+    }
 }
