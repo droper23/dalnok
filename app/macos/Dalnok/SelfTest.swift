@@ -938,6 +938,7 @@ final class SelfTest {
             let png = workdir.appendingPathComponent("isolated-editor-\(label.replacingOccurrences(of: " ", with: "-")).png").path
             check(dalnok_plugin_editor_snapshot(e.handle, slot, png) == DALNOK_OK, "\(label): editor snapshot written (\(png))")
             if label == "AUDelay", ProcessInfo.processInfo.environment["DALNOK_REAL_INPUT"] == "1" { await typeIntoIsolatedEditor(slot, ed) }
+            if label == "test VST3", ProcessInfo.processInfo.environment["DALNOK_REAL_INPUT"] == "1" { await spaceThroughIsolatedEditor(ed) }
             if label == "AUDelay", let finder = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.finder").first {
                 // Follows Dalnok: hidden while another application is active, back when Dalnok is.
                 NSApp.activate(ignoringOtherApps: true); await wait(0.5)
@@ -956,6 +957,33 @@ final class SelfTest {
             s.refresh()
         }
         frontBefore?.activate()
+    }
+
+    /// DALNOK_REAL_INPUT=1: a real click in an isolated editor gives its window the keyboard; a real Space then still
+    /// plays and stops Dalnok (keys the editor does not use are passed back, API 39).
+    private func spaceThroughIsolatedEditor(_ ed: DalnokPluginEditorWindow) async {
+        if let session = CGSessionCopyCurrentDictionary() as? [String: Any], session["CGSSessionScreenIsLocked"] as? Bool == true {
+            return print("SKIP  Space through the isolated editor (the screen is locked)")
+        }
+        NSApp.activate(ignoringOtherApps: true); await wait(0.5)
+        guard NSWorkspace.shared.frontmostApplication?.processIdentifier == getpid() else {
+            return print("SKIP  Space through the isolated editor (Dalnok could not be made frontmost)")
+        }
+        let screenHeight = NSScreen.screens.first?.frame.height ?? 0
+        let inside = CGPoint(x: ed.x + ed.width / 2, y: screenHeight - (ed.y + ed.content_height / 2)) // the editor's view
+        let src = CGEventSource(stateID: .hidSystemState)
+        func post(_ e: CGEvent?) { e?.post(tap: .cghidEventTap); usleep(15_000) }
+        for type in [CGEventType.leftMouseDown, .leftMouseUp] { post(CGEvent(mouseEventSource: src, mouseType: type, mouseCursorPosition: inside, mouseButton: .left)) }
+        await wait(0.3)
+        let e = s.engine, wasPlaying = e.isPlaying
+        func space() { for down in [true, false] { post(CGEvent(keyboardEventSource: src, virtualKey: 49, keyDown: down)) } }
+        space(); await wait(0.5)
+        let started = e.isPlaying
+        space(); await wait(0.5)
+        let stopped = !e.isPlaying
+        print("MEASURE Space through the isolated editor: was playing \(wasPlaying), after first Space \(started), after second \(!stopped)")
+        check(!wasPlaying && started && stopped, "Space pressed in an isolated editor's window plays and stops Dalnok")
+        check(NSWorkspace.shared.frontmostApplication?.processIdentifier == getpid(), "clicking in the editor leaves Dalnok active")
     }
 
     /// DALNOK_REAL_INPUT=1 (unlocked screen, Accessibility): real OS-level clicks and typing reach an isolated editor.

@@ -122,6 +122,14 @@ public:
         return false;
     }
     virtual bool editorWindow(EditorWindowInfo &out) { (void)out; return false; }
+    // A key the isolated editor's window did not use (its window has the keyboard while Dalnok stays active), passed
+    // back so Dalnok's own shortcuts still work. Main thread; false when there is none.
+    struct EditorKey {
+        uint16_t keyCode = 0;
+        uint64_t modifiers = 0;       // NSEventModifierFlags
+        char characters[16] = {}, charactersIgnoringModifiers[16] = {};
+    };
+    virtual bool takeEditorKey(EditorKey &out) { (void)out; return false; }
     virtual bool editorSnapshot(const std::string &pngPath) { (void)pngPath; return false; }
 
     // Isolated instances: the audio device's workgroup for the host's processing thread to join (a Mach send right,

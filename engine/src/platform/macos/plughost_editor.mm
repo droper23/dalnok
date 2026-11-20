@@ -15,8 +15,20 @@ using dalnok::PluginProcessor;
 
 @interface DalnokEditorPanel : NSPanel
 @end
+namespace dalnok::hostui { void forwardKey(NSEvent *event); }
+
 @implementation DalnokEditorPanel
 - (BOOL)canBecomeKeyWindow { return YES; } // typing reaches the editor without activating the host
+// The panel has the keyboard while Dalnok stays active, so keys the editor does not use (Space, ⌘S, ⌘Z outside a text
+// field) are passed back to Dalnok instead of being lost.
+- (void)keyDown:(NSEvent *)event { dalnok::hostui::forwardKey(event); } // nothing in the editor took it
+- (BOOL)performKeyEquivalent:(NSEvent *)event {
+    if ([super performKeyEquivalent:event]) return YES; // the editor's own views
+    // Standard text editing (⌘A, ⌘C, ⌘V, ⌘X, ⌘Z) through the hidden Edit menu, only while a text field is being edited.
+    if ([self.firstResponder isKindOfClass:NSText.class] && [NSApp.mainMenu performKeyEquivalent:event]) return YES;
+    dalnok::hostui::forwardKey(event);
+    return YES;
+}
 @end
 
 @interface DalnokEditorController : NSObject <NSWindowDelegate>
@@ -59,6 +71,7 @@ namespace dalnok::hostui {
 namespace {
 DalnokEditorController *gEditor = nil;
 bool gAppReady = false;
+KeySink gKeySink = nullptr;
 
 // Resizable editors (autoresizing in both directions, as Audio Unit views are) fill a resizable window; fixed-size ones
 // set the window's size.
@@ -129,6 +142,13 @@ void startApp() {
 }
 
 void runApp() { [NSApp run]; }
+
+void setKeySink(KeySink sink) { gKeySink = sink; }
+
+void forwardKey(NSEvent *event) {
+    if (!gKeySink || (event.type != NSEventTypeKeyDown)) return;
+    gKeySink(event.keyCode, event.modifierFlags, event.characters.UTF8String ?: "", event.charactersIgnoringModifiers.UTF8String ?: "");
+}
 
 bool showEditor(PluginProcessor &plugin, const std::string &title, double x, double y, int32_t &width, int32_t &height,
                 std::string &err) {

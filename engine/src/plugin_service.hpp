@@ -71,6 +71,7 @@ public:
     // Health, from the control thread's garbage collection: slots whose editor changed a parameter since the last
     // call, and isolated slots whose host failed since then.
     std::vector<int32_t> poll();
+    bool takeEditorKey(int32_t &slot, PluginProcessor::EditorKey &key); // from any isolated editor (ADR-0015)
 
 private:
     static const PluginSlot *findSlot(const Model &m, int32_t id);

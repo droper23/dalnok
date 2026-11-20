@@ -60,6 +60,12 @@ struct Shared {
     PluginNote notes[kMaxNotes];
     struct { uint32_t id; double value; } automation[kMaxAutomation];
     float inL[kMaxFrames], inR[kMaxFrames], outL[kMaxFrames], outR[kMaxFrames], scL[kMaxFrames], scR[kMaxFrames];
+    // Keys the editor's window did not use (host main thread writes, engine main thread reads; ADR-0015).
+    struct Key { uint16_t keyCode; uint64_t modifiers; char characters[16], charactersIgnoringModifiers[16]; };
+    static constexpr uint32_t kKeys = 16;
+    Key keys[kKeys];
+    alignas(64) std::atomic<uint32_t> keyWrite; // host
+    alignas(64) std::atomic<uint32_t> keyRead;  // engine
 };
 static_assert(std::atomic<uint32_t>::is_always_lock_free);
 
@@ -636,6 +642,19 @@ public:
         std::lock_guard lock(failureMutex_);
         return failure_;
     }
+    bool takeEditorKey(EditorKey &out) override {
+        if (!shared_) return false;
+        const uint32_t r = shared_->keyRead.load(std::memory_order_relaxed);
+        if (r == shared_->keyWrite.load(std::memory_order_acquire)) return false;
+        const Shared::Key &k = shared_->keys[r % Shared::kKeys];
+        out.keyCode = k.keyCode;
+        out.modifiers = k.modifiers;
+        std::memcpy(out.characters, k.characters, sizeof out.characters);
+        std::memcpy(out.charactersIgnoringModifiers, k.charactersIgnoringModifiers, sizeof out.charactersIgnoringModifiers);
+        out.characters[sizeof out.characters - 1] = out.charactersIgnoringModifiers[sizeof out.charactersIgnoringModifiers - 1] = 0;
+        shared_->keyRead.store(r + 1, std::memory_order_release);
+        return true;
+    }
     void poll() override {
         if (failed_.load(std::memory_order_acquire)) return;
         int status = 0;
@@ -1072,6 +1091,17 @@ int plughostMain(int argc, char **argv) {
         return 2;
     }
     host.shared = static_cast<Shared *>(mem);
+    hostui::setKeySink([](uint16_t code, uint64_t mods, const char *chars, const char *bare) {
+        Shared *sh = gHost->shared;
+        const uint32_t w = sh->keyWrite.load(std::memory_order_relaxed);
+        if (w - sh->keyRead.load(std::memory_order_acquire) >= Shared::kKeys) return; // Dalnok is not collecting: drop
+        Shared::Key &k = sh->keys[w % Shared::kKeys];
+        k.keyCode = code;
+        k.modifiers = mods;
+        std::snprintf(k.characters, sizeof k.characters, "%s", chars);
+        std::snprintf(k.charactersIgnoringModifiers, sizeof k.charactersIgnoringModifiers, "%s", bare);
+        sh->keyWrite.store(w + 1, std::memory_order_release);
+    });
     installCrashReporter();
     startWorkgroupListener(&host, rendezvous);
     std::string why;

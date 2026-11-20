@@ -28,7 +28,7 @@
 extern "C" {
 #endif
 
-#define DALNOK_API_VERSION 38
+#define DALNOK_API_VERSION 39
 
 typedef enum {
     DALNOK_OK = 0,
@@ -628,6 +628,17 @@ typedef struct {
     int32_t process_id;        /* the plug-in's dalnok-plughost process */
 } DalnokPluginEditorWindow;
 DalnokStatus dalnok_plugin_editor_window(DalnokEngine *engine, int32_t slot, DalnokPluginEditorWindow *out);
+/* An isolated editor's window has the keyboard while Dalnok stays active, so keys it does not use (Space, ⌘S, ⌘Z
+ * outside a text field) are passed back here, oldest first. Returns false when there are none. The front end replays
+ * each one as its own key event. Main thread. (API 39) */
+typedef struct {
+    int32_t slot;
+    uint16_t key_code;                       /* virtual key code */
+    uint64_t modifiers;                      /* NSEventModifierFlags */
+    char characters[16];                     /* UTF-8 */
+    char characters_ignoring_modifiers[16];  /* UTF-8 */
+} DalnokEditorKey;
+bool dalnok_plugin_take_editor_key(DalnokEngine *engine, DalnokEditorKey *out);
 /* Writes the editor window's pixels to a PNG (visual checks, self-tests). */
 DalnokStatus dalnok_plugin_editor_snapshot(DalnokEngine *engine, int32_t slot, const char *png_path);
 

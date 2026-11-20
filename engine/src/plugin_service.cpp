@@ -225,4 +225,10 @@ std::vector<int32_t> PluginHostService::poll() {
     return changed;
 }
 
+bool PluginHostService::takeEditorKey(int32_t &slot, PluginProcessor::EditorKey &key) {
+    for (const auto &[id, p] : instances_)
+        if (p && p->isolated() && p->takeEditorKey(key)) { slot = id; return true; }
+    return false;
+}
+
 } // namespace dalnok

@@ -337,6 +337,19 @@ DalnokStatus dalnok_plugin_parameter(const DalnokEngine *e, int32_t slot, int32_
     out->hidden = pp.hidden;
     return DALNOK_OK;
 }
+bool dalnok_plugin_take_editor_key(DalnokEngine *e, DalnokEditorKey *out) {
+    if (!e || !out) return false;
+    int32_t slot = 0;
+    dalnok::PluginProcessor::EditorKey k;
+    if (!e->impl.takeEditorKey(slot, k)) return false;
+    *out = DalnokEditorKey{};
+    out->slot = slot;
+    out->key_code = k.keyCode;
+    out->modifiers = k.modifiers;
+    std::memcpy(out->characters, k.characters, sizeof out->characters);
+    std::memcpy(out->characters_ignoring_modifiers, k.charactersIgnoringModifiers, sizeof out->characters_ignoring_modifiers);
+    return true;
+}
 DalnokStatus dalnok_plugin_set_parameter(DalnokEngine *e, int32_t slot, uint32_t id, double v) {
     PluginProcessor *p = e ? e->impl.pluginInstance(slot) : nullptr;
     if (!p) return DALNOK_ERR_NOT_FOUND;

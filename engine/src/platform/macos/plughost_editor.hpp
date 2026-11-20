@@ -24,6 +24,10 @@ bool showEditor(PluginProcessor &plugin, const std::string &title, double x, dou
 void closeEditor();
 EditorWindow editorWindow();
 bool snapshot(const std::string &pngPath); // the editor's pixels as the window shows them
+// Keys the editor's window did not use go to `sink` (keyCode, NSEventModifierFlags, characters, characters ignoring
+// modifiers), so the engine can hand them back to Dalnok.
+using KeySink = void (*)(uint16_t keyCode, uint64_t modifiers, const char *characters, const char *charactersIgnoringModifiers);
+void setKeySink(KeySink sink);
 
 } // namespace hostui
 } // namespace dalnok

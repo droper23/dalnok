@@ -40,3 +40,13 @@ only. Two designs were considered.
 separate window rather than a tab, and it floats above Dalnok's windows while Dalnok is active. Opening an editor
 connects that host to the window server (memory and launch cost only for instances whose editor was opened). An editor
 that takes longer than the 5 s control timeout to open marks the instance failed, as any hung request does.
+
+**Keys (2026-11-20).** Verified with real input on the owner's library: a click in an isolated editor gives the host's
+panel the keyboard (it must, so plug-in text fields work), and Dalnok then lost Space, ⌘S and every other shortcut until
+the user clicked back into one of its windows. The panel now passes back keys its editor does not use: `keyDown:` that
+falls off the responder chain, and key equivalents that no view takes (the hidden Edit menu still serves ⌘A/C/V/X/Z while
+a text field is being edited). They travel through a 16-entry ring in the shared block, and the engine returns them with
+`dalnok_plugin_take_editor_key` (C API 39). Dalnok replays each one on its display tick through its shortcut registry,
+as if typed in an editor embedded in its own window. A focused search field in Dalnok's plug-in window does not swallow
+them. Self-test (DALNOK_REAL_INPUT=1): a real click in the test VST3's editor followed by two real Space presses plays and
+stops Dalnok.

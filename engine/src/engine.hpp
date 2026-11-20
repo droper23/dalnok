@@ -443,6 +443,7 @@ public:
     int32_t activateNextPlugin(int32_t &slot, double &seconds);
     int32_t pendingPluginCount() const { return static_cast<int32_t>(pluginHost_.pendingCount()); }
     bool pluginLoading(int32_t slot) const;
+    bool takeEditorKey(int32_t &slot, PluginProcessor::EditorKey &key) { return pluginHost_.takeEditorKey(slot, key); }
     void cancelPendingPlugins();
     bool reloadPlugin(int32_t slot, std::string &err); // an unloaded or failed slot, from its saved state
     void setPluginHost(const std::string &path) { pluginHost_.setHostPath(path); }

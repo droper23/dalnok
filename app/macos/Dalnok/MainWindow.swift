@@ -631,6 +631,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     func tick() {
         let e = session.engine
         e.collectGarbage()
+        replayEditorKeys()
         session.refresh(onDisplayTick: true) // picks up changes from any source (e.g. scripts)
         _ = session.pollJobs() // installs finished time-stretch renders
         followTempoSegment()
@@ -1739,7 +1740,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
     /// True while a text field is being edited (track rename, palette search…).
     /// Unmodified shortcuts (Space, ↩, ⌫) must then reach the text, not the menu.
+    /// True while a key passed back from an isolated editor is replayed: it was typed in the editor, not in a field.
+    static var replayingEditorKey = false
     static var isTyping: Bool {
+        if replayingEditorKey { return false }
         if let key = NSApp.keyWindow { return key.firstResponder is NSText }
         // App not active (e.g. driven by automation): any visible window editing text.
         return NSApp.windows.contains { $0.isVisible && $0.firstResponder is NSText }
@@ -1958,5 +1962,29 @@ final class DropView: NSView {
         guard !urls.isEmpty else { return false }
         onDrop?(urls)
         return true
+    }
+}
+
+extension MainWindowController {
+    /// An isolated plug-in's editor window (ADR-0015) has the keyboard while Dalnok stays active. Keys it did not use
+    /// come back through the engine and are replayed here as Dalnok's own key events, so Space, ⌘S and the rest work
+    /// as they do with an editor inside Dalnok.
+    func replayEditorKeys() {
+        var k = DalnokEditorKey()
+        while dalnok_plugin_take_editor_key(session.engine.handle, &k) {
+            let chars = withUnsafeBytes(of: k.characters) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }
+            let bare = withUnsafeBytes(of: k.characters_ignoring_modifiers) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }
+            guard let window = window, let event = NSEvent.keyEvent(with: .keyDown, location: .zero,
+                                                           modifierFlags: NSEvent.ModifierFlags(rawValue: UInt(k.modifiers)),
+                                                           timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                                                           context: nil, characters: chars, charactersIgnoringModifiers: bare,
+                                                           isARepeat: false, keyCode: k.key_code) else { continue }
+            // The key was pressed in the editor, not in one of Dalnok's text fields (a focused search field in the
+            // plug-in window must not swallow it): the shortcut registry decides, then the menu for ⌘ items it leaves.
+            Self.replayingEditorKey = true
+            defer { Self.replayingEditorKey = false }
+            if ShortcutRegistry.shared.handle(event) { continue }
+            if !event.modifierFlags.intersection([.command, .control]).isEmpty { _ = NSApp.mainMenu?.performKeyEquivalent(with: event) }
+        }
     }
 }
