@@ -175,7 +175,7 @@
       "priority": "P1",
       "category": "Performance",
       "subsystem": "Project model / undo",
-      "status": "partial",
+      "status": "fixed",
       "summary": "Engine::edit copies the entire Model before running the edit closure, for every mutation, including gain/pan/mute edits whose real effect is an atomic store. Undo keeps up to 500 of those copies, each containing every clip, every plug-in slot and every plug-in state string.",
       "evidence": [
         "engine/src/engine.cpp:282 - `Model before = model_;` runs for every edit, structural or not.",
@@ -210,7 +210,7 @@
         "value": 4
       },
       "measured": true,
-      "resolution": "Partial: A-03a uses compact undo for scalar mixer edits and measured 500 gain-edit RSS 302.6 MB to 34.5 MB at 4,096 clips. Structural edits still retain whole-model snapshots; structurally shared undo remains open."
+      "resolution": "Partial: A-03a uses compact undo for scalar mixer edits and measured 500 gain-edit RSS 302.6 MB to 34.5 MB at 4,096 clips. Structural edits still retain whole-model snapshots; structurally shared undo remains open. Structural undo (2026-11-19): a snapshot step below the top of the undo or redo stack is stored as a delta against the state it will be applied to. The delta holds the model without its clips, the clips that differ from that state, and the clip order if it changed; unchanged clips come from the live model. A step is compacted when the next one is pushed, so the top stays a full snapshot and group, scalar and redo semantics are unchanged. Evidence: UndoDeltas (3 seeds; 120 random clip, track, parameter and grouped edits; every state reproduced exactly through undo, redo and a branch); 219 engine tests; ASan on the undo suites. Release dalnok-cli audit-bench on the generated 16 x 256 project, --edits 500, two runs: RSS growth over 500 structural edits 268.9 MB -> 3.3-3.4 MB (about 80x); structural edit p50 0.274 -> 0.298-0.300 ms; undo p50 0.27-0.28 -> 0.36-0.37 ms. Each edit still copies the whole model transiently for rollback (CPU is O(clips)); only the retained history shrank."
     },
     {
       "id": "A-03a",

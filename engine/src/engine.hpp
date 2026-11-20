@@ -486,11 +486,26 @@ private:
         ParameterField field;
         float value;
     };
+    // A snapshot step below the top of its stack, stored against the state it will be applied to (A-03): everything
+    // but the clips, the clips that differ from that state, and the clip order if it changed. Unchanged clips are
+    // taken from the live model when the step is applied, so history no longer holds a copy of every clip per step.
+    struct ModelDelta {
+        Model rest;                      // the target model without its clips
+        bool sameOrder = true;           // target clip ids are the base's, in the same order
+        std::vector<DalnokClipId> order; // otherwise the target's clip ids in order
+        std::vector<ClipState> changed;  // target clips that are absent from or different in the base
+    };
     struct UndoStep {
         std::string name;
-        std::unique_ptr<Model> model; // snapshot edits; null for scalar edits
+        std::unique_ptr<Model> model; // snapshot edits (top of a stack); null for scalar edits
         std::vector<ParameterValue> parameters;
+        std::unique_ptr<ModelDelta> delta; // a snapshot step once another step is pushed above it
     };
+    // Compacts the current top of `stack` against `base` (the state it will be applied to) and pushes `step`.
+    static void pushStep(std::vector<UndoStep> &stack, UndoStep step, const Model &base);
+    static void compactTop(std::vector<UndoStep> &stack, const Model &base);
+    static std::unique_ptr<ModelDelta> makeDelta(Model target, const Model &base);
+    static Model applyDelta(ModelDelta delta, const Model &base);
     bool editParameter(const char *name, DalnokTrackId track, ParameterField field, float value, std::string &err);
     static void setParameterInModel(Model &model, const ParameterValue &value);
     float parameterValue(DalnokTrackId track, ParameterField field) const;

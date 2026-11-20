@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "engine.hpp"
+#include <unordered_map>
 #include "plugin_remote.hpp"
 
 #include <algorithm>
@@ -325,8 +326,10 @@ bool Engine::edit(const char *name, bool structural, F &&fn) {
     }
     const auto changed = changedTracks(before);
     if (groupDepth_ == 0 || !groupRecorded_) {
+        // The previous step will next be applied to the state before this edit: compact it against that state.
+        compactTop(undo_, before);
         undo_.push_back({groupDepth_ && !groupName_.empty() ? groupName_ : name,
-                         std::make_unique<Model>(std::move(before)), {}});
+                         std::make_unique<Model>(std::move(before)), {}, nullptr});
         if (groupDepth_) groupRecorded_ = true;
     } else if (!undo_.back().model) {
         // Promote the scalar group to a snapshot of its original state.
@@ -397,7 +400,7 @@ bool Engine::editParameter(const char *name, DalnokTrackId track, ParameterField
     if (field == ParameterField::pan) value = std::clamp(value, -1.0f, 1.0f);
     ParameterValue old{track, field, parameterValue(track, field)};
     if (groupDepth_ == 0 || !groupRecorded_) {
-        undo_.push_back({groupDepth_ && !groupName_.empty() ? groupName_ : name, nullptr, {old}});
+        pushStep(undo_, {groupDepth_ && !groupName_.empty() ? groupName_ : name, nullptr, {old}, nullptr}, model_);
         if (groupDepth_) groupRecorded_ = true;
     } else if (!undo_.back().model) {
         auto &values = undo_.back().parameters;
@@ -466,21 +469,85 @@ std::vector<DalnokTrackId> Engine::changedTracks(const Model &before) const {
 void Engine::applyUndo(std::vector<UndoStep> &from, std::vector<UndoStep> &to) {
     UndoStep step = std::move(from.back());
     from.pop_back();
-    if (step.model) {
-        to.push_back({step.name, std::make_unique<Model>(model_), {}});
-        restore(std::move(*step.model));
+    if (step.model || step.delta) {
+        Model target = step.model ? std::move(*step.model) : applyDelta(std::move(*step.delta), model_);
+        pushStep(to, {step.name, std::make_unique<Model>(model_), {}, nullptr}, model_);
+        restore(std::move(target));
     } else {
-        UndoStep inverse{step.name, nullptr, {}};
+        UndoStep inverse{step.name, nullptr, {}, nullptr};
         inverse.parameters.reserve(step.parameters.size());
         for (const auto &v : step.parameters) {
             inverse.parameters.push_back({v.track, v.field, parameterValue(v.track, v.field)});
             applyParameter(v);
         }
-        to.push_back(std::move(inverse));
+        pushStep(to, std::move(inverse), model_); // model_ already holds the parameters' undone values
         ++revision_;
         for (const auto &v : step.parameters) if (v.field != ParameterField::masterGain) stampTracks({v.track});
         markParameterRevision();
     }
+}
+
+void Engine::compactTop(std::vector<UndoStep> &stack, const Model &base) {
+    if (stack.empty() || !stack.back().model) return;
+    stack.back().delta = makeDelta(std::move(*stack.back().model), base);
+    stack.back().model.reset();
+}
+
+void Engine::pushStep(std::vector<UndoStep> &stack, UndoStep step, const Model &base) {
+    compactTop(stack, base);
+    stack.push_back(std::move(step));
+}
+
+std::unique_ptr<Engine::ModelDelta> Engine::makeDelta(Model target, const Model &base) {
+    auto d = std::make_unique<ModelDelta>();
+    // Usually the clips line up by index (an edit changed a few in place); look ids up only when they don't.
+    std::unordered_map<DalnokClipId, size_t> at;
+    const auto find = [&](DalnokClipId id) -> const ClipState * {
+        if (at.empty() && !base.clips.empty()) {
+            at.reserve(base.clips.size());
+            for (size_t i = 0; i < base.clips.size(); ++i) at.emplace(base.clips[i].id, i);
+        }
+        const auto it = at.find(id);
+        return it == at.end() ? nullptr : &base.clips[it->second];
+    };
+    d->sameOrder = target.clips.size() == base.clips.size();
+    for (size_t i = 0; i < target.clips.size(); ++i) {
+        const ClipState &c = target.clips[i];
+        const ClipState *b = i < base.clips.size() && base.clips[i].id == c.id ? &base.clips[i] : nullptr;
+        if (!b) { d->sameOrder = false; b = find(c.id); }
+        if (!b || !(*b == c)) d->changed.push_back(c);
+    }
+    if (!d->sameOrder) {
+        d->order.reserve(target.clips.size());
+        for (const auto &c : target.clips) d->order.push_back(c.id);
+    }
+    target.clips.clear();
+    target.clips.shrink_to_fit();
+    d->rest = std::move(target);
+    return d;
+}
+
+Model Engine::applyDelta(ModelDelta d, const Model &base) {
+    Model m = std::move(d.rest);
+    std::unordered_map<DalnokClipId, ClipState *> changed;
+    changed.reserve(d.changed.size());
+    for (auto &c : d.changed) changed.emplace(c.id, &c);
+    if (d.sameOrder) {
+        m.clips = base.clips;
+        if (!changed.empty())
+            for (auto &c : m.clips)
+                if (auto it = changed.find(c.id); it != changed.end()) c = std::move(*it->second);
+        return m;
+    }
+    std::unordered_map<DalnokClipId, size_t> at;
+    at.reserve(base.clips.size());
+    for (size_t i = 0; i < base.clips.size(); ++i) at.emplace(base.clips[i].id, i);
+    m.clips.reserve(d.order.size());
+    for (DalnokClipId id : d.order) {
+        if (auto it = changed.find(id); it != changed.end()) m.clips.push_back(std::move(*it->second));
+        else if (auto b = at.find(id); b != at.end()) m.clips.push_back(base.clips[b->second]);
+    }
+    return m;
 }
 
 bool Engine::undo() {
