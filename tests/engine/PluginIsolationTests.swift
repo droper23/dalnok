@@ -87,6 +87,8 @@ struct PluginIsolation {
         let slot = dalnok_plugin_add(e, t, testVst3, gainClass, &err, 256)
         unsetenv("DALNOK_TEST_PROCESS_FAILURE")
         #expect(slot != 0, "\(cstr(err))")
+        let saved = tempDir().appendingPathComponent("crash-\(UUID().uuidString).dalnok").path
+        #expect(dalnok_project_save(e, saved, nil, 0) == DALNOK_OK && !dalnok_project_dirty(e))
         dalnok_transport_play(e)
         let worst = pumpLive(e, blocks: 40)
         #expect(worst < 50, "the audio path never stalls on the dead plug-in (worst block \(worst) ms)")
@@ -94,6 +96,7 @@ struct PluginIsolation {
         while info(e, t).loaded && waited < 200 { dalnok_engine_collect_garbage(e); usleep(5_000); waited += 1 }
         let failed = info(e, t)
         #expect(!failed.loaded && name(failed.error).contains("crashed"), "reported: \(name(failed.error))")
+        #expect(!dalnok_project_dirty(e), "a crash is not an edit: the saved project stays clean")
         #expect(dalnok_track_count(e) == 1 && dalnok_track_plugin_count(e, t) == 1, "the project is intact")
         // While failed, the effect passes the dry signal through.
         let dry = renderStereo(e, 4_800)

@@ -204,13 +204,20 @@ void Engine::collectGarbage() {
     RenderState *s = nullptr;
     while (retired_.pop(s)) delete s;
     // Plug-ins edited in their editors, and isolated plug-ins whose host failed: stamp only their tracks (A-05).
+    // A failure changes what the track shows but is not an edit: a clean project stays clean.
     std::vector<DalnokTrackId> edited;
-    const auto changed = pluginHost_.poll();
-    const bool any = !changed.empty();
-    for (int32_t id : changed)
-        for (const auto &t : model_.tracks)
-            for (const auto &slot : t.plugins) if (slot.id == id) edited.push_back(t.id);
-    if (any) { ++revision_; stampTracks(edited); }
+    std::vector<int32_t> failed;
+    const auto changed = pluginHost_.poll(&failed);
+    for (int32_t id : changed) for (const auto &t : model_.tracks)
+        for (const auto &slot : t.plugins) if (slot.id == id) edited.push_back(t.id);
+    for (int32_t id : failed) for (const auto &t : model_.tracks)
+        for (const auto &slot : t.plugins) if (slot.id == id) edited.push_back(t.id);
+    if (!changed.empty() || !failed.empty()) {
+        const bool clean = revision_ == savedRevision_;
+        ++revision_;
+        stampTracks(edited);
+        if (changed.empty() && clean) savedRevision_ = revision_;
+    }
     if (rec_.active) drainRecordedMidi();
 }
 
