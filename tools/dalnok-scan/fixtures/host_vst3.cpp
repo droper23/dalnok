@@ -217,6 +217,8 @@ public:
         int32 got = 0;
         if (!s || s->read(&g, sizeof g, &got) != kResultOk || got != sizeof g) return kResultFalse;
         gain_ = g;
+        // Many plug-ins report their restored values through performEdit (DALNOK_TEST_STATE_EDIT=1 behaves so).
+        if (std::getenv("DALNOK_TEST_STATE_EDIT") && handler_) handler_->performEdit(1, g);
         return kResultOk;
     }
     tresult PLUGIN_API getState(IBStream *s) override {

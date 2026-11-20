@@ -298,4 +298,34 @@ struct PluginHosting {
         dalnok_plugin_set_state(e, info.id, floatState(1))
         #expect(renderStereo(e, 4_800).0 != two.0, "changing the copy's plug-in leaves the original alone")
     }
+
+    /// A VST3 that reports its restored values through performEdit while loading (common in commercial plug-ins)
+    /// must not make a freshly opened project look edited, in-process or isolated, synchronous or deferred.
+    @Test func editsReportedWhileLoadingAreNotProjectChanges() throws {
+        setenv("DALNOK_TEST_STATE_EDIT", "1", 1); defer { unsetenv("DALNOK_TEST_STATE_EDIT") }
+        let (e, t) = audioSession(); defer { dalnok_engine_destroy(e) }
+        let slot = dalnok_plugin_add(e, t, testVst3, gainClass, nil, 0)
+        #expect(slot != 0)
+        dalnok_plugin_set_state(e, slot, floatState(0.25))
+        let path = tempDir().appendingPathComponent("state-edit-\(UUID().uuidString).dalnok").path
+        #expect(dalnok_project_save(e, path, nil, 0) == DALNOK_OK && !dalnok_project_dirty(e))
+        var l = [Float](repeating: 0, count: 512), r = l
+        // Synchronous open.
+        let a = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(a) }
+        var missing: Int32 = -1
+        #expect(dalnok_project_load(a, path, &missing, nil, 0) == DALNOK_OK && missing == 0)
+        for _ in 0..<4 { _ = dalnok_engine_pump(a, &l, &r, 512) }
+        #expect(!dalnok_project_dirty(a), "a synchronously opened project is clean")
+        // Deferred open (the app's path).
+        let b = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(b) }
+        var data: OpaquePointer?
+        #expect(dalnok_project_prepare(path, 48_000, &data, &missing, nil, 0) == DALNOK_OK)
+        #expect(dalnok_project_apply_deferred(b, data) == DALNOK_OK)
+        let deadline = Date().addingTimeInterval(10)
+        while dalnok_plugins_activate_next(b, nil, nil) >= 0 && Date() < deadline { usleep(2_000) }
+        for _ in 0..<4 { _ = dalnok_engine_pump(b, &l, &r, 512) }
+        var info = DalnokPluginSlotInfo()
+        #expect(dalnok_track_plugin_info(b, dalnok_track_at(b, 0), 0, &info) == DALNOK_OK && info.loaded)
+        #expect(!dalnok_project_dirty(b), "a project opened with deferred activation is clean")
+    }
 }

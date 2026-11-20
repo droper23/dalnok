@@ -31,7 +31,10 @@ public:
     const PluginMap &instances() const { return instances_; }
     PluginProcessor *instance(int32_t id) const;
     bool loaded(int32_t id) const { return instances_.count(id) != 0; }
-    void insert(int32_t id, std::shared_ptr<PluginProcessor> p) { instances_[id] = std::move(p); }
+    void insert(int32_t id, std::shared_ptr<PluginProcessor> p) {
+        editCounts_[id] = p ? p->editCount() : 0; // values reported while loading are not edits
+        instances_[id] = std::move(p);
+    }
     void erase(int32_t id) { instances_.erase(id); }
     std::string error(int32_t id) const;
     void setError(int32_t id, std::string why) { errors_[id] = std::move(why); }

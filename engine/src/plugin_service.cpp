@@ -59,6 +59,7 @@ bool PluginHostService::instantiate(const PluginSlot &slot) {
         return false;
     }
     errors_.erase(slot.id);
+    editCounts_[slot.id] = p->editCount(); // values a plug-in reports while loading are not edits
     instances_[slot.id] = std::move(p);
     return true;
 }
@@ -136,6 +137,7 @@ int32_t PluginHostService::activateNext(const Model &m, int32_t &slot, double &s
         else {
             errors_.erase(id);
             instances_[id] = std::shared_ptr<PluginProcessor>(launch->take());
+            editCounts_[id] = instances_[id]->editCount(); // values reported while loading are not edits
             if (workgroupPort_) instances_[id]->shareWorkgroup(workgroupPort_);
         }
         return finished(id, t0);
