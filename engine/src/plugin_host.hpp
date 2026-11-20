@@ -86,6 +86,9 @@ public:
     void setSidechain(const float *l, const float *r) DALNOK_NONBLOCKING { scL_ = l; scR_ = r; }
     // The callback's shared deadline for isolated plug-ins (CLOCK_UPTIME_RAW ns; 0 = none). Audio thread, before process.
     void setDeadline(uint64_t ns) DALNOK_NONBLOCKING { deadlineNs_ = ns; }
+    // Audio thread, while the transport is stopped and `process` is not called: lets a plug-in exchange parameter
+    // changes with the host (a CLAP plug-in's request_flush, so edits in its editor reach Dalnok at once).
+    virtual void idle() DALNOK_NONBLOCKING {}
 protected:
     uint64_t deadlineNs_ = 0;
     const float *scL_ = nullptr, *scR_ = nullptr;

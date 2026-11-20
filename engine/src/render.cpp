@@ -481,4 +481,11 @@ void renderBlock(const RenderState &state, int64_t pos, int frames, float *left,
     }
 }
 
+void idlePlugins(const RenderState &state, Scratch &s) DALNOK_NONBLOCKING {
+    for (const RenderTrack &t : state.tracks) {
+        if (t.instrumentPlugin) { t.instrumentPlugin->setDeadline(s.deadlineNs); t.instrumentPlugin->idle(); }
+        for (PluginProcessor *p : t.inserts) { p->setDeadline(s.deadlineNs); p->idle(); }
+    }
+}
+
 } // namespace dalnok

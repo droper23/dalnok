@@ -6,7 +6,7 @@ import Testing
 
 let testClap = ProcessInfo.processInfo.environment["DALNOK_TEST_CLAP"] ?? ""
 
-@Suite(.enabled(if: !testClap.isEmpty, "set DALNOK_TEST_CLAP (scripts/ci/plugin-host.sh)"))
+@Suite(.serialized, .enabled(if: !testClap.isEmpty, "set DALNOK_TEST_CLAP (scripts/ci/plugin-host.sh)"))
 struct ClapHosting {
     @Test func gainParametersStateAndAutomation() throws {
         let (e, t) = audioSession(); defer { dalnok_engine_destroy(e) }
@@ -60,7 +60,26 @@ struct ClapHosting {
 
     /// Edits made in the plug-in's own editor reach the project as changes (so closing asks to save): the plug-in
     /// marks its state dirty, or reports a parameter gesture. In process and isolated.
-    @MainActor @Test(arguments: ["event", "dirty"]) func editorEditsMarkTheProjectChanged(_ how: String) async throws {
+    /// Reported values that only repeat what the plug-in already holds (a sync after loading) are not edits.
+    @Test func reportedValuesThatDoNotChangeAnythingAreNotEdits() throws {
+        let (e, t) = audioSession(); defer { dalnok_engine_destroy(e) }
+        #expect(dalnok_plugin_add(e, t, testClap, nil, nil, 0) != 0)
+        let path = tempDir().appendingPathComponent("clap-sync-\(UUID().uuidString).dalnok").path
+        #expect(dalnok_project_save(e, path, nil, 0) == DALNOK_OK)
+        setenv("DALNOK_TEST_CLAP_SYNC", "1", 1); defer { unsetenv("DALNOK_TEST_CLAP_SYNC") }
+        let b = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(b) }
+        var missing: Int32 = -1
+        #expect(dalnok_project_load(b, path, &missing, nil, 0) == DALNOK_OK)
+        var l = [Float](repeating: 0, count: 512), r = l
+        for _ in 0..<8 { _ = dalnok_engine_pump(b, &l, &r, 512); usleep(10_000) } // stopped: flushes run
+        dalnok_transport_play(b)
+        for _ in 0..<8 { _ = dalnok_engine_pump(b, &l, &r, 512) }
+        var info = DalnokPluginSlotInfo()
+        _ = dalnok_track_plugin_info(b, dalnok_track_at(b, 0), 0, &info)
+        #expect(!dalnok_project_dirty(b), "a plug-in repeating its own values after loading leaves the project clean (loaded \(info.loaded), error '\(cstr(withUnsafeBytes(of: info.error) { Array($0.bindMemory(to: CChar.self)) }))')")
+    }
+
+    @MainActor @Test(.serialized, arguments: ["event", "dirty", "flush"]) func editorEditsMarkTheProjectChanged(_ how: String) async throws {
         let (e, t) = audioSession(); defer { dalnok_engine_destroy(e) }
         let slot = dalnok_plugin_add(e, t, testClap, nil, nil, 0)
         #expect(slot != 0)
@@ -71,9 +90,12 @@ struct ClapHosting {
         var missing: Int32 = -1
         #expect(dalnok_project_load(b, path, &missing, nil, 0) == DALNOK_OK && missing == 0)
         var l = [Float](repeating: 0, count: 512), r = l
-        dalnok_transport_play(b)
-        for _ in 0..<2 { _ = dalnok_engine_pump(b, &l, &r, 512) }
-        #expect(!dalnok_project_dirty(b), "clean before the edit")
+        // "flush": the edit arrives while the transport is stopped, through the flush the plug-in asked for.
+        if how != "flush" {
+            dalnok_transport_play(b)
+            for _ in 0..<2 { _ = dalnok_engine_pump(b, &l, &r, 512) }
+            #expect(!dalnok_project_dirty(b), "clean before the edit")
+        }
         let deadline = Date().addingTimeInterval(5)
         while !dalnok_project_dirty(b) && Date() < deadline {
             _ = dalnok_engine_pump(b, &l, &r, 512)

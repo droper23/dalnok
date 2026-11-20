@@ -31,7 +31,7 @@ func audioSession() -> (OpaquePointer, DalnokTrackId) {
     return (e, t)
 }
 
-@Suite(.enabled(if: !testVst3.isEmpty, "set DALNOK_TEST_VST3 (scripts/ci/plugin-host.sh)"))
+@Suite(.serialized, .enabled(if: !testVst3.isEmpty, "set DALNOK_TEST_VST3 (scripts/ci/plugin-host.sh)"))
 struct PluginHosting {
     @Test func gainInsertProcessesAndPassthroughNulls() throws {
         let (e, t) = audioSession(); defer { dalnok_engine_destroy(e) }

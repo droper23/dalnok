@@ -221,7 +221,10 @@ void Engine::process(float *left, float *right, int frames) DALNOK_NONBLOCKING {
             for (int i = 0; i < n; ++i) l[i] = r[i] = 0.0f;
             scratch_.liveNotes = rtLiveNotes_;
             scratch_.liveNoteCount = off == n ? rtLiveNoteCount_ : 0; // live notes go to the first sub-block
-            if (current_) renderLiveInput(*current_, n, l, r, scratch_, anySolo, true);
+            if (current_) {
+                if (off == n) idlePlugins(*current_, scratch_); // once per callback
+                renderLiveInput(*current_, n, l, r, scratch_, anySolo, true);
+            }
             continue;
         }
         scratch_.liveNotes = rtLiveNotes_;

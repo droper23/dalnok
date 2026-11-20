@@ -11,6 +11,7 @@
 #import <AudioUnit/AUCocoaUIView.h>
 #import <AVFoundation/AVFoundation.h>
 #include <atomic>
+#include <cmath>
 #include <map>
 #include <mutex>
 #include <vector>
@@ -191,6 +192,8 @@ public:
         else if (!ok) stateError_ = "Audio Unit error " + std::to_string(status);
         CFRelease(plist);
         if (ok) {
+            preset_ = currentPreset(); // restoring is not an edit
+            rememberValues();
             AudioUnitParameter changed{unit_, kAUParameterListener_AnyParameter, kAudioUnitScope_Global, 0};
             AUParameterListenerNotify(nullptr, nullptr, &changed);
             std::lock_guard<std::mutex> g(producer_);
@@ -276,9 +279,44 @@ public:
     // Edits in the unit's own view: the end of a parameter gesture (its view tells listeners, as Apple's generic
     // view and most frameworks do) or a preset change. State itself is read at save.
     uint64_t editCount() const override { return edits_.load(std::memory_order_relaxed); }
+    void rememberValues() {
+        for (AudioUnitParameterID id : paramIds_) {
+            AudioUnitParameterValue v = 0;
+            if (AudioUnitGetParameter(unit_, id, kAudioUnitScope_Global, 0, &v) == noErr) known_[id] = v;
+        }
+    }
+    // The unit's current preset as number and name ("" when it has none). Main thread.
+    std::string currentPreset() const {
+        AUPreset p{};
+        UInt32 size = sizeof p;
+        if (AudioUnitGetProperty(unit_, kAudioUnitProperty_PresentPreset, kAudioUnitScope_Global, 0, &p, &size) != noErr) return {};
+        std::string name = std::to_string(p.presetNumber) + ":";
+        if (p.presetName) {
+            char buf[256] = {};
+            CFStringGetCString(p.presetName, buf, sizeof buf, kCFStringEncodingUTF8);
+            name += buf;
+            CFRelease(p.presetName);
+        }
+        return name;
+    }
     void listenForEdits() {
-        auto counted = [](void *self, void *, const AudioUnitEvent *, UInt64, AudioUnitParameterValue) {
-            static_cast<AudioUnitProcessor *>(self)->edits_.fetch_add(1, std::memory_order_relaxed);
+        auto counted = [](void *self, void *, const AudioUnitEvent *e, UInt64, AudioUnitParameterValue) {
+            auto *me = static_cast<AudioUnitProcessor *>(self);
+            // Units also announce their preset, and some end parameter gestures, while loading or restoring state
+            // (asynchronously): only a different preset or a changed value counts.
+            if (e->mEventType == kAudioUnitEvent_PropertyChange) {
+                const std::string now = me->currentPreset();
+                if (now == me->preset_) return;
+                me->preset_ = now;
+            } else {
+                const AudioUnitParameterID id = e->mArgument.mParameter.mParameterID;
+                AudioUnitParameterValue v = 0;
+                if (AudioUnitGetParameter(me->unit_, id, kAudioUnitScope_Global, 0, &v) != noErr) return;
+                auto it = me->known_.find(id);
+                if (it != me->known_.end() && std::abs(it->second - v) < 1e-6f) return;
+                me->known_[id] = v;
+            }
+            me->edits_.fetch_add(1, std::memory_order_relaxed);
         };
         if (AUEventListenerCreate(counted, this, CFRunLoopGetMain(), kCFRunLoopCommonModes, 0.05f, 0.05f, &listener_) != noErr) {
             listener_ = nullptr;
@@ -291,12 +329,15 @@ public:
             ids.resize(size / sizeof(AudioUnitParameterID));
             if (AudioUnitGetProperty(unit_, kAudioUnitProperty_ParameterList, kAudioUnitScope_Global, 0, ids.data(), &size) != noErr) ids.clear();
         }
+        paramIds_ = ids;
+        rememberValues();
         for (AudioUnitParameterID id : ids) {
             AudioUnitEvent e{};
             e.mEventType = kAudioUnitEvent_EndParameterChangeGesture;
             e.mArgument.mParameter = {unit_, id, kAudioUnitScope_Global, 0};
             AUEventListenerAddEventType(listener_, this, &e);
         }
+        preset_ = currentPreset();
         AudioUnitEvent preset{};
         preset.mEventType = kAudioUnitEvent_PropertyChange;
         preset.mArgument.mProperty = {unit_, kAudioUnitProperty_PresentPreset, kAudioUnitScope_Global, 0};
@@ -356,6 +397,9 @@ private:
     std::map<uint32_t, double> touched_;
     void *editor_ = nullptr;
     AUEventListenerRef listener_ = nullptr;
+    std::string preset_; // last known preset (main thread)
+    std::vector<AudioUnitParameterID> paramIds_;
+    std::map<AudioUnitParameterID, AudioUnitParameterValue> known_; // last known values (main thread)
     std::atomic<uint64_t> edits_{0};
 };
 } // namespace

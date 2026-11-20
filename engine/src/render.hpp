@@ -261,6 +261,8 @@ struct Scratch {
 // playback voices in each TrackRuntime.
 void renderBlock(const RenderState &state, int64_t pos, int frames, float *left, float *right,
                  Scratch &scratch, bool smooth, bool anySolo, SynthState *synths = nullptr) DALNOK_NONBLOCKING;
+// While the transport is stopped: gives every plug-in its idle call (parameter flushes), within the callback's budget.
+void idlePlugins(const RenderState &state, Scratch &scratch) DALNOK_NONBLOCKING;
 // Adds live-input instrument voices (independent of the transport) through the track's gain and pan.
 // While the transport is stopped this also runs a plugin instrument (and its inserts) for live notes.
 void renderLiveInput(const RenderState &state, int frames, float *left, float *right, Scratch &scratch,

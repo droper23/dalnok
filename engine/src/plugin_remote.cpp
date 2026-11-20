@@ -481,6 +481,27 @@ public:
         for (int i = 0; i < frames; ++i) { left[i] = s->outL[i]; right[i] = s->outR[i]; }
     }
 
+    // Stopped transport: about every 50 ms, a request without audio lets the host give the plug-in its idle call (a
+    // CLAP plug-in's parameter flush). Bounded by the callback's budget like a block; an unanswered one is not a miss.
+    void idle() DALNOK_NONBLOCKING override {
+        Shared *s = shared_;
+        if (offline_ || failed_.load(std::memory_order_acquire)) return;
+        const uint64_t now = nowNs();
+        if (now - lastIdleNs_ < 50'000'000 || (deadlineNs_ && now >= deadlineNs_)) return;
+        const uint32_t request = s->request.load(std::memory_order_relaxed);
+        if (s->done.load(std::memory_order_acquire) != request) return; // still busy
+        lastIdleNs_ = now;
+        s->automationCount = 0;
+        s->noteCount = 0;
+        s->frames = 0;
+        s->request.store(request + 1, std::memory_order_release);
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wfunction-effects"
+        wake(s->request);
+        (void)waitChange(s->done, request, deadlineNs_ > now ? deadlineNs_ - now : 2'000'000);
+#pragma clang diagnostic pop
+    }
+
     bool response(const double *hz, int count, double *db) override {
         Writer w;
         w.u32(static_cast<uint32_t>(count));
@@ -767,6 +788,7 @@ private:
     std::string name_, vendor_, classId_, categories_;
     mutable std::atomic<uint32_t> latency_{0};
     mutable uint64_t edits_ = 0;
+    uint64_t lastIdleNs_ = 0; // audio thread
     mutable std::mutex callMutex_, failureMutex_;
     mutable std::string failure_;
     mutable std::atomic<bool> failed_{false};
@@ -870,6 +892,7 @@ void audioLoop(Host *h) {
             adoptWorkgroup(h, workgroup, token);
         }
         const int frames = s->frames;
+        if (frames == 0) h->plugin->idle(); // the engine's transport is stopped (parameter flushes)
         if (frames <= 0 || frames > kMaxFrames) { s->done.store(seen, std::memory_order_release); wake(s->done); continue; }
         for (int i = 0; i < s->automationCount && i < kMaxAutomation; ++i) h->plugin->automate(s->automation[i].id, s->automation[i].value);
         const int n = std::min(s->noteCount, kMaxNotes);
