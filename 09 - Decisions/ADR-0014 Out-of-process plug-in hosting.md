@@ -41,3 +41,14 @@ on, a plug-in that blocks its own initialization no longer blocks the window (A-
 
 **Editors (2026-11-19).** Isolated instances now show their editors in a window owned by the host process; see
 ADR-0015. The stage 1 "parameter panel only" restriction no longer applies.
+
+**Real-time amendment (2026-11-19).** *One budget per callback:* every isolated plug-in in a live callback shares one
+deadline, 40 % of the callback's period from its start (`Scratch::deadlineNs`). Once the budget is spent, the rest pass
+dry (effects) or silent (instruments) for that block without issuing a request. These budget skips are never counted
+towards "stopped responding". *Audio workgroup:* the host's processing thread joins the running device's I/O workgroup.
+At spawn the engine registers a send right to a rendezvous port in the host (`posix_spawnattr_set_registered_ports_np`,
+exported by libSystem but undeclared in the SDK, so it is looked up at run time and its absence costs only membership).
+The host answers with its own port. On every device start, change or stop, the engine sends it the workgroup's port
+(`os_workgroup_copy_port`), and the processing thread leaves the old workgroup and joins the new one
+(`os_workgroup_create_with_port`, `os_workgroup_join`) before its next block. The host answers the rendezvous only when
+told to (`--rendezvous`), because otherwise it would hold ports inherited from the engine's own process.

@@ -28,7 +28,7 @@
 extern "C" {
 #endif
 
-#define DALNOK_API_VERSION 36
+#define DALNOK_API_VERSION 37
 
 typedef enum {
     DALNOK_OK = 0,
@@ -726,6 +726,17 @@ void dalnok_plugins_cancel_pending(DalnokEngine *engine);
  * NULL or "" runs them in this process. Built-in plug-ins always run here. A crashed or unresponsive isolated
  * plug-in is reported as not loaded with its reason; dalnok_plugin_reload restarts it. [control thread] */
 void dalnok_plugins_set_host(DalnokEngine *engine, const char *host);
+/* How an isolated plug-in is doing on the live path (API 37). All isolated plug-ins in one callback share a deadline
+ * of 40 % of its period; once it is spent the rest pass a block untouched (budget_skips, never counted as missed).
+ * While an output device runs, the host's processing thread joins the device's audio workgroup. */
+typedef struct {
+    uint64_t missed_blocks;   /* the host answered late or was still busy */
+    uint64_t budget_skips;    /* passed because other isolated plug-ins spent the callback's budget */
+    bool workgroup_joined;    /* the processing thread is in the running device's audio workgroup */
+    int32_t workgroup_error;  /* os_workgroup_join's result for the last workgroup offered (0 = joined) */
+    uint32_t workgroup_joins; /* workgroups joined so far (one per device start or change) */
+} DalnokPluginIsolationStats;
+DalnokStatus dalnok_plugin_isolation_stats(DalnokEngine *engine, int32_t slot, DalnokPluginIsolationStats *out);
 /* The host process's entry point (tools/dalnok-plughost). */
 int dalnok_plughost_main(int argc, char **argv);
 /* Loads an unloaded slot (cancelled, recovery mode, or failed) from its saved state. Not undoable.

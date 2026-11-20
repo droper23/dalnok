@@ -393,6 +393,14 @@ DalnokStatus dalnok_plugin_editor_window(DalnokEngine *e, int32_t slot, DalnokPl
                                     i.windowNumber, i.level, i.processId};
     return DALNOK_OK;
 }
+DalnokStatus dalnok_plugin_isolation_stats(DalnokEngine *e, int32_t slot, DalnokPluginIsolationStats *out) {
+    PluginProcessor *p = e ? e->impl.pluginInstance(slot) : nullptr;
+    if (!p || !out) return DALNOK_ERR_INVALID_ARG;
+    PluginProcessor::IsolationStats s;
+    if (!p->isolationStats(s)) return DALNOK_ERR_UNSUPPORTED;
+    *out = DalnokPluginIsolationStats{s.missedBlocks, s.budgetSkips, s.workgroupJoined, s.workgroupError, s.workgroupJoins};
+    return DALNOK_OK;
+}
 DalnokStatus dalnok_plugin_editor_snapshot(DalnokEngine *e, int32_t slot, const char *path) {
     PluginProcessor *p = e ? e->impl.pluginInstance(slot) : nullptr;
     if (!p || !path) return DALNOK_ERR_INVALID_ARG;

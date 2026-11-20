@@ -92,7 +92,17 @@ bool Engine::startDevice(std::string &err) {
     auto dev = createOutputDevice(outputUid_, sampleRate_, err);
     if (!dev || !dev->start(&Engine::audioCallback, this, err)) return false;
     device_ = std::move(dev);
+    updateWorkgroup();
     return true;
+}
+
+void Engine::updateWorkgroup() {
+    const uint32_t port = duplex_ ? duplex_->workgroupPort() : device_ ? device_->workgroupPort() : 0;
+    if (port && port == workgroupPort_) { releaseMachSendRight(port); return; } // same workgroup (one name per port)
+    if (workgroupPort_) releaseMachSendRight(workgroupPort_);
+    workgroupPort_ = port;
+    for (const auto &[id, p] : plugins_)
+        if (p && p->isolated()) p->shareWorkgroup(workgroupPort_);
 }
 
 bool Engine::setOutputDevice(const std::string &uid, std::string &err) {
@@ -184,6 +194,7 @@ bool Engine::startCapture(const std::string &uid, const std::vector<int> &channe
     }
     duplex_ = std::move(duplex);
     simulatedInput_ = simulated;
+    updateWorkgroup();
     return true;
 }
 
@@ -210,6 +221,7 @@ bool Engine::stopCapture(DalnokCaptureStats &stats, std::string &err, bool resto
     captureWriter_->stop();
     captureStatus(stats);
     duplex_.reset(); captureWriter_.reset(); captureSpool_.reset();
+    updateWorkgroup();
     const bool valid = !stats.input_error && !stats.overflow && !stats.write_error && !stats.finalize_error &&
                        stats.captured_frames > 0 && stats.captured_frames == stats.written_frames;
     std::string outputError;
@@ -239,6 +251,7 @@ void Engine::stopDevice() {
     if (!device_) return;
     device_->stop(); // synchronous: the audio thread is no longer inside process()
     device_.reset();
+    updateWorkgroup();
 }
 
 void Engine::collectGarbage() {
@@ -1041,8 +1054,11 @@ bool Engine::instantiateSlot(const PluginSlot &slot) {
 std::shared_ptr<PluginProcessor> Engine::createPlugin(const std::string &format, const std::string &path,
                                                      const std::string &classId, bool offline, std::string &err) const {
     // Built-in plug-ins are our own code and always run here; others run in a host process when enabled (ADR-0014).
-    if (!pluginHostPath_.empty() && format != "dalnok")
-        return loadRemotePlugin(pluginHostPath_, format, path, classId, sampleRate_, kMaxBlock, offline, pluginLoadTimeoutMs_, err);
+    if (!pluginHostPath_.empty() && format != "dalnok") {
+        auto p = loadRemotePlugin(pluginHostPath_, format, path, classId, sampleRate_, kMaxBlock, offline, pluginLoadTimeoutMs_, err);
+        if (p && !offline && workgroupPort_) p->shareWorkgroup(workgroupPort_);
+        return p;
+    }
     return loadPlugin(format, path, classId, sampleRate_, kMaxBlock, offline, err);
 }
 
@@ -1076,7 +1092,11 @@ int32_t Engine::activateNextPlugin(int32_t &slot, double &seconds) {
         if (!findSlot(id)) return finished(0, t0); // removed while loading
         if (status == RemotePluginLaunch::Status::failed) pluginErrors_[id] = err;
         else if (!launch->stateAccepted()) pluginErrors_[id] = stateRejected(launch->stateError());
-        else { pluginErrors_.erase(id); plugins_[id] = std::shared_ptr<PluginProcessor>(launch->take()); }
+        else {
+            pluginErrors_.erase(id);
+            plugins_[id] = std::shared_ptr<PluginProcessor>(launch->take());
+            if (workgroupPort_) plugins_[id]->shareWorkgroup(workgroupPort_);
+        }
         return finished(id, t0);
     }
     if (pendingPlugins_.empty() && launching_.empty()) return -1;
@@ -2628,6 +2648,8 @@ struct FlushDenormals {
 
 void Engine::process(float *left, float *right, int frames) DALNOK_NONBLOCKING {
     [[maybe_unused]] const FlushDenormals flushDenormals;
+    // Isolated plug-ins (ADR-0014) share one budget per callback: together they may wait 40 % of its period.
+    scratch_.deadlineNs = nowNs() + static_cast<uint64_t>(0.4e9 * frames / sampleRate_);
     // Adopt the newest snapshot only if the previous one can be retired.
     if (!retired_.full()) {
         if (RenderState *s = pending_.exchange(nullptr, std::memory_order_acq_rel)) {

@@ -149,6 +149,7 @@ void renderPluginNotes(PluginProcessor *plugin, const RenderNote *starts, const 
     sortEvents(0);
     clear(s.trackL, frames);
     clear(s.trackR, frames);
+    plugin->setDeadline(s.deadlineNs);
     plugin->process(s.trackL, s.trackR, frames, s.events, count);
     raisePeaks(plugin->meterOut, s.trackL, s.trackR, frames);
     if (PluginProcessor::Tap *tap = plugin->tap.load(std::memory_order_acquire)) {
@@ -162,6 +163,7 @@ void runInserts(const RenderTrack &t, int frames, Scratch &s) DALNOK_NONBLOCKING
         PluginProcessor::Tap *tap = p->tap.load(std::memory_order_acquire);
         raisePeaks(p->meterIn, s.trackL, s.trackR, frames);
         if (tap) writeTap(tap->in, tap->pos, s.trackL, s.trackR, frames, false);
+        p->setDeadline(s.deadlineNs);
         p->process(s.trackL, s.trackR, frames, nullptr, 0);
         raisePeaks(p->meterOut, s.trackL, s.trackR, frames);
         if (tap) {

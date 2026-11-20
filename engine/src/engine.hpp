@@ -612,6 +612,8 @@ private:
     bool isolates(const PluginSlot &slot) const { return !pluginHostPath_.empty() && slot.format != "dalnok"; }
     std::string pluginHostPath_;          // dalnok-plughost; empty = plug-ins run in this process (ADR-0014)
     std::set<int32_t> failedPlugins_;     // isolated instances whose failure has been reported
+    uint32_t workgroupPort_ = 0;          // send right for the running device's audio workgroup (0 = none)
+    void updateWorkgroup();               // after the device starts, changes or stops: tell isolated hosts
     int pluginLoadTimeoutMs_ = 60'000;    // an isolated plug-in that takes longer to load is killed
     int32_t nextPlugin_ = 1;
     int32_t nextMarker_ = 1;

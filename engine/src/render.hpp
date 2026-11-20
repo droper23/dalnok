@@ -249,6 +249,9 @@ struct Scratch {
     // Live-input notes for the live track's plugin instrument in this block (set by the live path).
     const PluginNote *liveNotes = nullptr;
     int liveNoteCount = 0;
+    // Live callbacks: when every isolated plug-in in this callback must have answered (one shared budget; 0 = none,
+    // as for offline renders). Set once per callback by Engine::process.
+    uint64_t deadlineNs = 0;
 };
 
 // Mixes `frames` (<= kMaxBlock) of `state` at timeline position `pos` into

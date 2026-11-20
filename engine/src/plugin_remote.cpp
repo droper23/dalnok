@@ -13,11 +13,13 @@
 #include <mach/mach_time.h>
 #include <mach/thread_policy.h>
 #include <os/os_sync_wait_on_address.h>
+#include <os/workgroup.h>
 
 #include <atomic>
 #include <cerrno>
 #include <chrono>
 #include <csignal>
+#include <dlfcn.h>
 #include <cstring>
 #include <fcntl.h>
 #include <mutex>
@@ -31,6 +33,13 @@
 #include <unistd.h>
 
 extern char **environ;
+// posix_spawnattr_set_registered_ports_np sets the child task's registered ports (mach_ports_lookup). libSystem exports
+// it but the public SDK does not declare it, so it is looked up at run time; without it only workgroup membership is lost.
+using SetRegisteredPorts = int (*)(posix_spawnattr_t *, mach_port_t[], uint32_t);
+static SetRegisteredPorts setRegisteredPorts() {
+    static const auto fn = reinterpret_cast<SetRegisteredPorts>(dlsym(RTLD_DEFAULT, "posix_spawnattr_set_registered_ports_np"));
+    return fn;
+}
 
 namespace dalnok {
 namespace {
@@ -61,7 +70,13 @@ void wake(std::atomic<uint32_t> &a) noexcept {
         os_sync_wake_by_address_any(&a, sizeof(uint32_t), OS_SYNC_WAKE_BY_ADDRESS_SHARED);
 }
 
-uint64_t nowNs() noexcept { return clock_gettime_nsec_np(CLOCK_UPTIME_RAW); }
+// Reads the commpage (no syscall or lock); the SDK does not annotate it, so the effect check is suppressed here only.
+uint64_t nowNs() DALNOK_NONBLOCKING {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wfunction-effects"
+    return clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
+#pragma clang diagnostic pop
+}
 
 // Waits until `a` differs from `old`, at most `timeoutNs` (0 = forever). True if it changed.
 bool waitChange(std::atomic<uint32_t> &a, uint32_t old, uint64_t timeoutNs) noexcept {
@@ -92,7 +107,8 @@ enum Op : uint8_t {
     opHello = 1, opGetState, opSetState, opSetStateDocument, opStateError, opParameterCount, opParameter,
     opParameterText, opSetParameter, opTouched, opEditCount, opAutomationRange, opResponse, opLatency, opQuit,
     opInit, // engine → host once after starting: [u8 has state][u8 from document][str state]
-    opHasEditor, opShowEditor, opCloseEditor, opEditorWindow, opEditorSnapshot // ADR-0015
+    opHasEditor, opShowEditor, opCloseEditor, opEditorWindow, opEditorSnapshot, // ADR-0015
+    opIsolationStats
 };
 // Reply heads: 0 = refused (payload: reason), 1 = done, 2 = the host is crashing (payload: str reason; see onCrash).
 constexpr uint8_t kCrashed = 2;
@@ -179,6 +195,44 @@ bool receiveMessage(int fd, uint8_t &head, std::string &payload, uint64_t deadli
     return true;
 }
 
+// ---- Audio workgroup hand-off (Mach ports) ------------------------------------------------------------------
+// At spawn the engine registers a send right to a rendezvous port in the host (posix_spawnattr_set_registered_ports_np).
+// The host answers on it with a send right to its own port, over which the engine later sends the device's workgroup
+// port (os_workgroup_copy_port) whenever the device starts, changes or stops. Workgroups are made to be shared this way.
+
+struct PortMessage {
+    mach_msg_header_t header;
+    mach_msg_body_t body;
+    mach_msg_port_descriptor_t port;
+};
+struct PortMessageReceived {
+    PortMessage m;
+    mach_msg_trailer_t trailer;
+};
+
+// Sends `port` (as `disposition`; MACH_PORT_NULL is allowed) to `to`. Never blocks.
+bool sendPort(mach_port_t to, mach_port_t port, mach_msg_type_name_t disposition) {
+    PortMessage m{};
+    m.header.msgh_bits = MACH_MSGH_BITS(MACH_MSG_TYPE_COPY_SEND, 0) | MACH_MSGH_BITS_COMPLEX;
+    m.header.msgh_size = sizeof m;
+    m.header.msgh_remote_port = to;
+    m.body.msgh_descriptor_count = 1;
+    m.port.name = port;
+    m.port.disposition = port ? disposition : MACH_MSG_TYPE_COPY_SEND;
+    m.port.type = MACH_MSG_PORT_DESCRIPTOR;
+    return mach_msg(&m.header, MACH_SEND_MSG | MACH_SEND_TIMEOUT, sizeof m, 0, MACH_PORT_NULL, 0, MACH_PORT_NULL) ==
+           MACH_MSG_SUCCESS;
+}
+
+// Receives one port from `on`: waits for it if `wait`, else only takes one already queued (within `timeoutMs`).
+bool receivePort(mach_port_t on, mach_port_t &port, bool wait, mach_msg_timeout_t timeoutMs = 0) {
+    PortMessageReceived r{};
+    const mach_msg_option_t options = MACH_RCV_MSG | (wait ? 0 : MACH_RCV_TIMEOUT);
+    if (mach_msg(&r.m.header, options, 0, sizeof r, on, timeoutMs, MACH_PORT_NULL) != MACH_MSG_SUCCESS) return false;
+    port = r.m.body.msgh_descriptor_count == 1 ? r.m.port.name : MACH_PORT_NULL;
+    return true;
+}
+
 std::string shmName() {
     static std::atomic<uint32_t> counter{0};
     return "/dalnok." + std::to_string(::getpid()) + "." + std::to_string(counter.fetch_add(1));
@@ -209,6 +263,8 @@ public:
         }
         if (shared_) ::munmap(shared_, sizeof(Shared));
         unlinkName();
+        closeRendezvous();
+        if (hostPort_) mach_port_deallocate(mach_task_self(), hostPort_);
     }
 
     // Starts the host without waiting for it (ADR-0014 stage 2). `state` (may be null) is sent with the start request and
@@ -242,15 +298,32 @@ public:
         posix_spawn_file_actions_init(&actions);
         posix_spawn_file_actions_adddup2(&actions, sv[1], 3);
         posix_spawn_file_actions_addopen(&actions, 1, "/dev/null", O_WRONLY, 0); // plug-ins print; keep it out of ours
+        posix_spawnattr_t attr;
+        posix_spawnattr_init(&attr);
+        // Live hosts get a rendezvous port for the audio workgroup hand-off (offline renders need no workgroup).
+        bool registered = false;
+        if (!offline && setRegisteredPorts() &&
+            mach_port_allocate(mach_task_self(), MACH_PORT_RIGHT_RECEIVE, &rendezvous_) == KERN_SUCCESS) {
+            if (mach_port_insert_right(mach_task_self(), rendezvous_, rendezvous_, MACH_MSG_TYPE_MAKE_SEND) == KERN_SUCCESS) {
+                mach_port_t ports[1] = {rendezvous_};
+                registered = setRegisteredPorts()(&attr, ports, 1) == 0;
+                if (!registered) mach_port_deallocate(mach_task_self(), rendezvous_);
+            }
+            if (!registered) closeRendezvous();
+        }
         const std::string rate = std::to_string(sampleRate), block = std::to_string(maxBlock);
         std::vector<std::string> args = {host, "--shm", name, "--format", format, "--path", path, "--class", classId,
                                          "--rate", rate, "--block", block};
         if (offline) args.push_back("--offline");
+        // Only when our port really is registered: otherwise the child inherits our own registered ports.
+        if (rendezvous_) args.push_back("--rendezvous");
         std::vector<char *> argv;
         for (auto &a : args) argv.push_back(a.data());
         argv.push_back(nullptr);
-        const int spawned = ::posix_spawn(&pid_, host.c_str(), &actions, nullptr, argv.data(), environ);
+        const int spawned = ::posix_spawn(&pid_, host.c_str(), &actions, &attr, argv.data(), environ);
         posix_spawn_file_actions_destroy(&actions);
+        posix_spawnattr_destroy(&attr);
+        if (registered) mach_port_deallocate(mach_task_self(), rendezvous_); // the host holds its own send right now
         ::close(sv[1]);
         fd_ = sv[0];
         if (spawned != 0) {
@@ -315,6 +388,12 @@ public:
         if (!r.ok) { err = "the plug-in host sent a damaged reply"; return Launch::failed; }
         launched_ = true;
         outbox_.clear();
+        // The host answered the rendezvous before loading the plug-in, so its port is already queued.
+        if (rendezvous_) {
+            mach_port_t hostPort = MACH_PORT_NULL;
+            if (receivePort(rendezvous_, hostPort, false, 100)) hostPort_ = hostPort;
+            closeRendezvous();
+        }
         return Launch::ready;
     }
     bool stateAccepted() const { return stateAccepted_; }
@@ -362,6 +441,19 @@ public:
         if (s->done.load(std::memory_order_acquire) != request) { // the previous block is still in the host
             missed(); silenceIfInstrument(left, right, frames); return;
         }
+        // Live: the callback's shared budget. Once other isolated plug-ins have spent it, this one passes for a block
+        // without being blamed (budget skips never count towards "stopped responding").
+        uint64_t timeout = offline_ ? 10'000'000'000ull
+                                    : static_cast<uint64_t>(0.4e9 * frames / (sampleRate_ > 0 ? sampleRate_ : 48000));
+        if (!offline_ && deadlineNs_) {
+            const uint64_t now = nowNs();
+            if (now >= deadlineNs_) {
+                budgetSkips_.fetch_add(1, std::memory_order_relaxed);
+                silenceIfInstrument(left, right, frames);
+                return;
+            }
+            timeout = std::min(timeout, deadlineNs_ - now);
+        }
         for (int i = 0; i < frames; ++i) { s->inL[i] = left[i]; s->inR[i] = right[i]; }
         s->sidechain = scL_ && scR_ ? 1 : 0;
         if (s->sidechain) for (int i = 0; i < frames; ++i) { s->scL[i] = scL_[i]; s->scR[i] = scR_[i]; }
@@ -372,9 +464,6 @@ public:
         s->automationCount = automation;
         s->frames = frames;
         s->request.store(request + 1, std::memory_order_release);
-        // A live block may wait 40 % of its period; offline renders wait as long as the plug-in needs (10 s cap).
-        const uint64_t timeout = offline_ ? 10'000'000'000ull
-                                          : static_cast<uint64_t>(0.4e9 * frames / (sampleRate_ > 0 ? sampleRate_ : 48000));
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wfunction-effects"
         // The one IPC exception on the audio thread (ADR-0014): a bounded wake and a bounded wait.
@@ -527,6 +616,22 @@ public:
         return call(opEditorSnapshot, w.b, reply);
     }
 
+    void shareWorkgroup(uint32_t port) override {
+        if (hostPort_ && !failed_.load(std::memory_order_acquire)) (void)sendPort(hostPort_, port, MACH_MSG_TYPE_COPY_SEND);
+    }
+    bool isolationStats(IsolationStats &out) override {
+        out.missedBlocks = misses_.load(std::memory_order_relaxed);
+        out.budgetSkips = budgetSkips_.load(std::memory_order_relaxed);
+        std::string reply;
+        if (!call(opIsolationStats, {}, reply)) return true;
+        Reader r{reply};
+        const uint8_t joined = r.u8();
+        const int32_t error = r.i32();
+        const uint32_t joins = r.u32();
+        if (r.ok) { out.workgroupJoined = joined; out.workgroupError = error; out.workgroupJoins = joins; }
+        return true;
+    }
+
     std::string failure() const override {
         std::lock_guard lock(failureMutex_);
         return failure_;
@@ -549,6 +654,10 @@ public:
     }
 
 private:
+    void closeRendezvous() {
+        if (rendezvous_) mach_port_mod_refs(mach_task_self(), rendezvous_, MACH_PORT_RIGHT_RECEIVE, -1);
+        rendezvous_ = MACH_PORT_NULL;
+    }
     // The crash reporter can hold a dying process for seconds; its report comes from a copy, so end it now.
     void killAndReap() const {
         if (pid_ <= 0) return;
@@ -626,6 +735,7 @@ private:
     }
 
     Shared *shared_ = nullptr;
+    mach_port_t rendezvous_ = MACH_PORT_NULL, hostPort_ = MACH_PORT_NULL;
     std::string shmName_, outbox_, launchStateError_;
     size_t outboxSent_ = 0;
     uint64_t launchDeadline_ = 0;
@@ -641,7 +751,7 @@ private:
     mutable std::mutex callMutex_, failureMutex_;
     mutable std::string failure_;
     mutable std::atomic<bool> failed_{false};
-    std::atomic<uint64_t> misses_{0}, consecutiveMisses_{0};
+    std::atomic<uint64_t> misses_{0}, consecutiveMisses_{0}, budgetSkips_{0};
 };
 
 // ---- Host side --------------------------------------------------------------------------------------------
@@ -650,7 +760,59 @@ struct Host {
     std::unique_ptr<PluginProcessor> plugin;
     Shared *shared = nullptr;
     int fd = 3;
+    // The audio device's workgroup, offered by the engine (listener thread) and joined by the processing thread.
+    std::atomic<os_workgroup_t> offered{nullptr};
+    std::atomic<uint32_t> offers{0};
+    std::atomic<bool> joined{false};
+    std::atomic<int32_t> joinError{0};
+    std::atomic<uint32_t> joins{0};
 };
+
+// Answers the engine's rendezvous with a port of our own, then receives workgroup ports for as long as we live.
+void startWorkgroupListener(Host *h, bool rendezvousGiven) {
+    if (!rendezvousGiven) return; // registered ports would be ones inherited from the engine's process, not ours
+    mach_port_array_t ports = nullptr;
+    mach_msg_type_number_t count = 0;
+    if (mach_ports_lookup(mach_task_self(), &ports, &count) != KERN_SUCCESS) return;
+    const mach_port_t rendezvous = count > 0 ? ports[0] : MACH_PORT_NULL;
+    vm_deallocate(mach_task_self(), reinterpret_cast<vm_address_t>(ports), count * sizeof(mach_port_t));
+    mach_port_t mine = MACH_PORT_NULL;
+    if (!rendezvous || mach_port_allocate(mach_task_self(), MACH_PORT_RIGHT_RECEIVE, &mine) != KERN_SUCCESS) return;
+    const bool sent = sendPort(rendezvous, mine, MACH_MSG_TYPE_MAKE_SEND);
+    mach_port_deallocate(mach_task_self(), rendezvous);
+    if (!sent) return;
+    std::thread([h, mine] {
+        while (true) {
+            mach_port_t port = MACH_PORT_NULL;
+            if (!receivePort(mine, port, true)) return;
+            os_workgroup_t wg = port ? os_workgroup_create_with_port("dalnok-plughost", port) : nullptr;
+            if (port) mach_port_deallocate(mach_task_self(), port);
+            if (os_workgroup_t old = h->offered.exchange(wg, std::memory_order_acq_rel)) os_release(old); // never joined
+            h->offers.fetch_add(1, std::memory_order_release);
+        }
+    }).detach();
+}
+
+// On the processing thread: leave the current workgroup and join the newest one offered.
+void adoptWorkgroup(Host *h, os_workgroup_t &current, os_workgroup_join_token_s &token) {
+    if (current) {
+        os_workgroup_leave(current, &token);
+        os_release(current);
+        current = nullptr;
+        h->joined.store(false, std::memory_order_relaxed);
+    }
+    os_workgroup_t next = h->offered.exchange(nullptr, std::memory_order_acq_rel);
+    if (!next) return;
+    const int r = os_workgroup_join(next, &token);
+    h->joinError.store(r, std::memory_order_relaxed);
+    if (r == 0) {
+        current = next;
+        h->joined.store(true, std::memory_order_relaxed);
+        h->joins.fetch_add(1, std::memory_order_relaxed);
+    } else {
+        os_release(next);
+    }
+}
 Host *gHost = nullptr;
 
 void setRealtime() {
@@ -671,10 +833,17 @@ void audioLoop(Host *h) {
     Shared *s = h->shared;
     uint32_t seen = s->request.load(std::memory_order_acquire);
     PluginNote notes[kMaxNotes];
+    os_workgroup_t workgroup = nullptr;
+    os_workgroup_join_token_s token{};
+    uint32_t offersSeen = 0;
     while (true) {
         waitChange(s->request, seen, 0);
         seen = s->request.load(std::memory_order_acquire);
         if (s->quit.load(std::memory_order_acquire)) return;
+        if (const uint32_t offers = h->offers.load(std::memory_order_acquire); offers != offersSeen) {
+            offersSeen = offers;
+            adoptWorkgroup(h, workgroup, token);
+        }
         const int frames = s->frames;
         if (frames <= 0 || frames > kMaxFrames) { s->done.store(seen, std::memory_order_release); wake(s->done); continue; }
         for (int i = 0; i < s->automationCount && i < kMaxAutomation; ++i) h->plugin->automate(s->automation[i].id, s->automation[i].value);
@@ -777,6 +946,11 @@ void serve(Host *h, uint8_t op, const std::string &payload) {
         }
         case opLatency: w.u32(p.latency()); break;
         case opHasEditor: w.u8(p.hasEditor()); break;
+        case opIsolationStats:
+            w.u8(h->joined.load(std::memory_order_relaxed));
+            w.i32(h->joinError.load(std::memory_order_relaxed));
+            w.u32(h->joins.load(std::memory_order_relaxed));
+            break;
         case opShowEditor: {
             const std::string title = r.str();
             const double x = r.f64(), y = r.f64();
@@ -866,7 +1040,7 @@ int plughostMain(int argc, char **argv) {
     std::string shm, format, path, classId;
     double rate = 48000;
     int block = 512;
-    bool offline = false;
+    bool offline = false, rendezvous = false;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         auto next = [&]() -> std::string { return i + 1 < argc ? argv[++i] : ""; };
@@ -877,6 +1051,7 @@ int plughostMain(int argc, char **argv) {
         else if (a == "--rate") rate = std::atof(next().c_str());
         else if (a == "--block") block = std::atoi(next().c_str());
         else if (a == "--offline") offline = true;
+        else if (a == "--rendezvous") rendezvous = true;
     }
     std::signal(SIGPIPE, SIG_IGN);
     Host host;
@@ -892,6 +1067,7 @@ int plughostMain(int argc, char **argv) {
     }
     host.shared = static_cast<Shared *>(mem);
     installCrashReporter();
+    startWorkgroupListener(&host, rendezvous);
     std::string why;
     host.plugin = loadPlugin(format, path, classId, rate, block, offline, why);
     if (!host.plugin) {
@@ -934,6 +1110,10 @@ int plughostMain(int argc, char **argv) {
     CFRunLoopRun();
     if (hostui::appStarted()) hostui::runApp(); // the first editor turned the host into an AppKit application
     return 0;
+}
+
+void releaseMachSendRight(uint32_t port) {
+    if (port) mach_port_deallocate(mach_task_self(), port);
 }
 
 } // namespace dalnok

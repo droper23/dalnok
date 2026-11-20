@@ -6,6 +6,7 @@
 
 #include <AudioToolbox/AudioToolbox.h>
 #include <CoreAudio/CoreAudio.h>
+#include <os/workgroup.h>
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -85,6 +86,19 @@ AudioDeviceID deviceForUID(const std::string &uid) {
     return 0;
 }
 
+// A send right for the device's I/O-thread workgroup (macOS 11+), for isolated plug-in hosts to join.
+uint32_t ioWorkgroupPort(AudioDeviceID dev) {
+    if (!dev) return 0;
+    auto a = addr(kAudioDevicePropertyIOThreadOSWorkgroup);
+    os_workgroup_t wg = nullptr;
+    UInt32 size = sizeof(wg);
+    if (AudioObjectGetPropertyData(dev, &a, 0, nullptr, &size, &wg) != noErr || !wg) return 0;
+    mach_port_t port = MACH_PORT_NULL;
+    const int r = os_workgroup_copy_port(wg, &port);
+    os_release(wg);
+    return r == 0 ? port : 0;
+}
+
 class CoreAudioOutput final : public AudioDevice {
 public:
     CoreAudioOutput(AudioDeviceID dev, double sr) : device_(dev), sampleRate_(sr) {}
@@ -157,6 +171,13 @@ public:
     }
 
     double hardwareSampleRate() const override { return nominalRate(device_ ? device_ : defaultOutputID()); }
+    uint32_t workgroupPort() const override {
+        AudioDeviceID dev = device_;
+        UInt32 size = sizeof(dev);
+        if (!dev && unit_)
+            AudioUnitGetProperty(unit_, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0, &dev, &size);
+        return ioWorkgroupPort(dev);
+    }
 
 private:
     bool fail(const char *what, OSStatus s, std::string &err) {
@@ -250,6 +271,7 @@ public:
         return AudioObjectGetPropertyData(device_, &a, 0, nullptr, &size, &value) == noErr && value;
     }
     double hardwareSampleRate() const override { return nominalRate(device_); }
+    uint32_t workgroupPort() const override { return ioWorkgroupPort(device_); }
     int64_t roundTripLatency() const override {
         auto get = [](AudioObjectID object, AudioObjectPropertySelector sel, AudioObjectPropertyScope scope) {
             auto a = addr(sel, scope);

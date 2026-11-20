@@ -24,6 +24,9 @@ public:
     virtual bool alive() const = 0;
     // The device's own (hardware) sample rate; the engine rate is converted to it if different.
     virtual double hardwareSampleRate() const = 0;
+    // A new Mach send right for the audio workgroup of the device's I/O thread (os_workgroup_copy_port), or 0.
+    // Control thread, while started. Isolated plug-in hosts join it (ADR-0014 stage 2).
+    virtual uint32_t workgroupPort() const { return 0; }
 };
 
 // Internal full-duplex path. Input and output are clocked by the same device.
@@ -35,6 +38,7 @@ public:
                               int frames) DALNOK_NONBLOCKING;
     virtual ~AudioDuplexDevice() = default;
     virtual bool start(Callback cb, void *ctx, std::string &err) = 0;
+    virtual uint32_t workgroupPort() const { return 0; } // as AudioDevice::workgroupPort
     virtual void stop() = 0;
     virtual bool captureFailed() const = 0;
     virtual bool alive() const = 0;

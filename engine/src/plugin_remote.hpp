@@ -31,6 +31,9 @@ std::unique_ptr<RemotePluginLaunch> launchRemotePlugin(const std::string &hostPa
                                                        double sampleRate, int maxBlock, int loadTimeoutMs,
                                                        const std::string *state, bool document, std::string &err);
 
+// Gives up one reference to a Mach send right (workgroup ports from AudioDevice::workgroupPort).
+void releaseMachSendRight(uint32_t port);
+
 // The host process: `dalnok-plughost --shm <name> --format <f> --path <p> --class <id> --rate <hz> --block <n>
 // [--offline]`, with the control socket on fd 3. Returns the exit status.
 int plughostMain(int argc, char **argv);

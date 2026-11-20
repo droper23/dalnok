@@ -521,12 +521,15 @@ case "audit-bench":
     summarize("gain edit plus scalar read (C API only)", dragEvents)
     if firstClip != 0 {
         var moves: [Double] = []
+        let rssStructural = rssMB()
         for i in 0..<edits {
             let t0 = DispatchTime.now().uptimeNanoseconds
             _ = dalnok_clips_nudge(engine, [firstClip], 1, i % 2 == 0 ? 1 : -1)
             moves.append(Double(DispatchTime.now().uptimeNanoseconds - t0) / 1e6)
         }
         summarize("structural edit (nudge one clip, recompile)", moves)
+        print(String(format: "undo memory: RSS %.1f MB -> %.1f MB after %d undoable structural edits (%.2f MB/edit)",
+                     rssStructural, rssMB(), edits, (rssMB() - rssStructural) / Double(edits)))
     }
     var undo: [Double] = []
     for _ in 0..<20 {

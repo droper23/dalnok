@@ -84,7 +84,10 @@ public:
     // this block's sidechain signal (frames long); nullptr feeds silence.
     virtual bool hasSidechain() const { return false; }
     void setSidechain(const float *l, const float *r) DALNOK_NONBLOCKING { scL_ = l; scR_ = r; }
+    // The callback's shared deadline for isolated plug-ins (CLOCK_UPTIME_RAW ns; 0 = none). Audio thread, before process.
+    void setDeadline(uint64_t ns) DALNOK_NONBLOCKING { deadlineNs_ = ns; }
 protected:
+    uint64_t deadlineNs_ = 0;
     const float *scL_ = nullptr, *scR_ = nullptr;
     static constexpr int kMaxAuto = 64;
     struct AutoChange { uint32_t id; double value; };
@@ -120,6 +123,17 @@ public:
     }
     virtual bool editorWindow(EditorWindowInfo &out) { (void)out; return false; }
     virtual bool editorSnapshot(const std::string &pngPath) { (void)pngPath; return false; }
+
+    // Isolated instances: the audio device's workgroup for the host's processing thread to join (a Mach send right,
+    // copied; 0 = leave), and how the instance is doing. Control thread.
+    virtual void shareWorkgroup(uint32_t port) { (void)port; }
+    struct IsolationStats {
+        uint64_t missedBlocks = 0, budgetSkips = 0;
+        bool workgroupJoined = false;
+        int32_t workgroupError = 0; // os_workgroup_join's result for the last workgroup offered (0 = joined)
+        uint32_t workgroupJoins = 0;
+    };
+    virtual bool isolationStats(IsolationStats &out) { (void)out; return false; }
 };
 
 // Loads a VST3 bundle in this process. `classId` (32 hex digits) picks a class; empty = the first

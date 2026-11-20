@@ -376,4 +376,80 @@ struct PluginIsolation {
         dalnok_plugin_close_editor(e, slot)
         #expect(!editorWindow(e, slot).open)
     }
+
+    // MARK: One deadline budget per callback (A-01 stage 2)
+
+    /// Three isolated plug-ins in series all hang mid-session, followed by a healthy one. Each callback waits on the
+    /// hung hosts for at most one shared budget (40 % of the period), not 40 % per plug-in. The healthy plug-in, which
+    /// is skipped when the budget is spent, is never blamed for it.
+    @Test func hungPluginsShareOneDeadlinePerCallback() throws {
+        let (e, t) = audioSession(); defer { dalnok_engine_destroy(e) }
+        dalnok_plugins_set_host(e, isolationHost)
+        setenv("DALNOK_TEST_PROCESS_FAILURE", "hang", 1); setenv("DALNOK_TEST_PROCESS_AFTER", "4", 1)
+        var err = [CChar](repeating: 0, count: 256)
+        for _ in 0..<3 { #expect(dalnok_plugin_add(e, t, testVst3, gainClass, &err, 256) != 0, "\(cstr(err))") }
+        unsetenv("DALNOK_TEST_PROCESS_FAILURE")
+        let healthy = dalnok_plugin_add(e, t, testVst3, gainClass, &err, 256)
+        #expect(healthy != 0)
+        dalnok_transport_play(e)
+        var l = [Float](repeating: 0, count: 512), r = l, times: [Double] = []
+        for i in 0..<300 { // 3.2 s of audio: past the 2 s after which a host that keeps missing is reported
+            let t0 = DispatchTime.now().uptimeNanoseconds
+            _ = dalnok_engine_pump(e, &l, &r, 512)
+            _ = i; times.append(Double(DispatchTime.now().uptimeNanoseconds - t0) / 1e6)
+        }
+        times.sort()
+        let period = 512.0 / 48.0 // ms
+        print(String(format: "BUDGET 3 hung + 1 healthy, 512 frames (period %.2f ms): p50 %.2f ms, max %.2f ms", period, times[times.count / 2], times.last!))
+        #expect(times.last! < period, "no callback overruns its period (max \(times.last!) ms)")
+        // One shared budget is 40 % of the period. The tight bound holds at normal speed. Under a sanitizer (p50 several
+        // times higher) only the no-overrun bound above is meaningful.
+        if times[times.count / 2] < 1 {
+            #expect(times.last! < period * 0.6, "the callback never waits more than one shared budget (max \(times.last!) ms)")
+        }
+        dalnok_engine_collect_garbage(e)
+        var i = DalnokPluginSlotInfo()
+        _ = dalnok_track_plugin_info(e, t, 3, &i)
+        #expect(i.loaded && name(i.error).isEmpty, "the healthy plug-in is not blamed for the budget others used: \(name(i.error))")
+        for k: Int32 in 0..<3 {
+            var h = DalnokPluginSlotInfo()
+            _ = dalnok_track_plugin_info(e, t, k, &h)
+            #expect(!h.loaded && name(h.error).contains("stopped responding"), "hung plug-in \(k) is reported: \(name(h.error))")
+        }
+    }
+
+    // MARK: Audio workgroup (A-01 stage 2)
+
+    /// With a real output device running, the isolated host's processing thread joins the device's audio workgroup.
+    /// It joins again after the device restarts, and also when the plug-in is added while the device is already running.
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["CI"] == nil, "needs real audio hardware"))
+    func hostThreadJoinsTheDeviceWorkgroup() throws {
+        let (e, t) = audioSession(); defer { dalnok_engine_destroy(e) }
+        dalnok_plugins_set_host(e, isolationHost)
+        var err = [CChar](repeating: 0, count: 256)
+        let early = dalnok_plugin_add(e, t, testVst3, gainClass, &err, 256)
+        #expect(early != 0, "\(cstr(err))")
+        func stats(_ slot: Int32) -> DalnokPluginIsolationStats {
+            var s = DalnokPluginIsolationStats()
+            #expect(dalnok_plugin_isolation_stats(e, slot, &s) == DALNOK_OK)
+            return s
+        }
+        #expect(!stats(early).workgroup_joined && stats(early).workgroup_joins == 0, "no device, no workgroup")
+        guard dalnok_engine_start_device(e, &err, 256) == DALNOK_OK else { Issue.record("no output device: \(cstr(err))"); return }
+        dalnok_transport_play(e)
+        usleep(400_000)
+        let late = dalnok_plugin_add(e, t, testVst3, gainClass, &err, 256)
+        usleep(400_000)
+        let a = stats(early), b = stats(late)
+        print("WORKGROUP device running: early joined \(a.workgroup_joined) (error \(a.workgroup_error), joins \(a.workgroup_joins), missed \(a.missed_blocks), skips \(a.budget_skips)); late joined \(b.workgroup_joined) (error \(b.workgroup_error))")
+        #expect(a.workgroup_joined && a.workgroup_error == 0 && a.workgroup_joins == 1, "a host started before the device joins it")
+        #expect(b.workgroup_joined && b.workgroup_error == 0, "a host started while the device runs joins it")
+        dalnok_engine_stop_device(e)
+        #expect(dalnok_engine_start_device(e, &err, 256) == DALNOK_OK)
+        usleep(400_000)
+        let c = stats(early)
+        print("WORKGROUP after restart: joined \(c.workgroup_joined), joins \(c.workgroup_joins)")
+        #expect(c.workgroup_joined && c.workgroup_joins == 2, "after the device restarts it joins the new workgroup")
+        dalnok_engine_stop_device(e)
+    }
 }
