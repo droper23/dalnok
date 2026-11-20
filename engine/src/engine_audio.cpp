@@ -53,9 +53,9 @@ void Engine::duplexCallback(void *ctx, float *left, float *right, const float *c
 }
 
 void Engine::renderClick(float *left, float *right, int frames, int64_t pos) DALNOK_NONBLOCKING {
-    const bool on = metronome_.load(std::memory_order_relaxed);
-    const int64_t until = countInUntil_.load(std::memory_order_relaxed); // count-in clicks even with the metronome off
-    const float level = metronomeLevel_.load(std::memory_order_relaxed), decay = clickDecay_.load(std::memory_order_relaxed);
+    const bool on = transport_.metronome.load(std::memory_order_relaxed);
+    const int64_t until = transport_.countInUntil.load(std::memory_order_relaxed); // count-in clicks even with the metronome off
+    const float level = transport_.metronomeLevel.load(std::memory_order_relaxed), decay = clickDecay_.load(std::memory_order_relaxed);
     bool accent = false;
     int64_t next = (on || pos < until) && current_ ? nextClick(*current_, pos, accent) : INT64_MAX;
     for (int i = 0; i < frames; ++i) {
@@ -148,18 +148,18 @@ void Engine::process(float *left, float *right, int frames) DALNOK_NONBLOCKING {
     const int64_t before = rtPosition_;
     handleMidiInput(before);
     const bool anySolo = soloCount_.load(std::memory_order_relaxed) > 0;
-    const int64_t seek = seekRequest_.exchange(-1, std::memory_order_relaxed);
+    const int64_t seek = transport_.seekRequest.exchange(-1, std::memory_order_relaxed);
     if (seek >= 0) pendingSeek_ = seek;
-    const bool play = playing_.load(std::memory_order_relaxed);
+    const bool play = transport_.playing.load(std::memory_order_relaxed);
     const float step = static_cast<float>(1.0 / (kTransportFadeSeconds * sampleRate_));
 
     // Cycle: read once per callback (the control thread writes start/end before enabling).
     // Recording plays straight through, except a cycle take (recordCycle_), which loops and becomes takes.
     const bool cycleTake = recordCycle_.load(std::memory_order_acquire) && recordArmed_.load(std::memory_order_relaxed);
-    const bool cycling = cycleOn_.load(std::memory_order_acquire) && (!recordArmed_.load(std::memory_order_relaxed) || cycleTake);
+    const bool cycling = transport_.cycleOn.load(std::memory_order_acquire) && (!recordArmed_.load(std::memory_order_relaxed) || cycleTake);
     int64_t advanced = 0; // frames the transport advanced in this callback (cycle wraps included)
     bool jumped = false;  // a seek landed in this callback
-    const int64_t cycleStart = cycleStart_.load(std::memory_order_relaxed), cycleEnd = cycleEnd_.load(std::memory_order_relaxed);
+    const int64_t cycleStart = transport_.cycleStart.load(std::memory_order_relaxed), cycleEnd = transport_.cycleEnd.load(std::memory_order_relaxed);
     const bool cycleValid = cycling && cycleEnd - cycleStart >= 64 && cycleStart >= 0;
 
     for (int off = 0; off < frames;) {
@@ -242,8 +242,8 @@ void Engine::process(float *left, float *right, int frames) DALNOK_NONBLOCKING {
             transportGain_ = g;
         }
         if (current_) renderLiveInput(*current_, n, l, r, scratch_, anySolo, false);
-        if (play && pendingSeek_ < 0 && (clickLeft_ > 0 || metronome_.load(std::memory_order_relaxed) ||
-                                         rtPosition_ < countInUntil_.load(std::memory_order_relaxed)))
+        if (play && pendingSeek_ < 0 && (clickLeft_ > 0 || transport_.metronome.load(std::memory_order_relaxed) ||
+                                         rtPosition_ < transport_.countInUntil.load(std::memory_order_relaxed)))
             renderClick(l, r, n, rtPosition_);
         float pl = 0, pr = 0;
         for (int i = 0; i < n; ++i) {
@@ -256,7 +256,7 @@ void Engine::process(float *left, float *right, int frames) DALNOK_NONBLOCKING {
         advanced += n;
         if (cycleValid && play && pendingSeek_ < 0 && rtPosition_ == cycleEnd) rtPosition_ = cycleStart;
     }
-    position_.store(pendingSeek_ >= 0 ? pendingSeek_ : rtPosition_, std::memory_order_relaxed);
+    transport_.position.store(pendingSeek_ >= 0 ? pendingSeek_ : rtPosition_, std::memory_order_relaxed);
 
     // Recording: a take covers the blocks where the transport advanced continuously.
     const uint32_t take = recordTake_.load(std::memory_order_acquire);
@@ -266,7 +266,7 @@ void Engine::process(float *left, float *right, int frames) DALNOK_NONBLOCKING {
     rtRecordCount_ = frames;
     if (recordArmed_.load(std::memory_order_acquire) && !recordBroken_.load(std::memory_order_relaxed)) {
         // Punch window: only frames in [in, out) belong to the take (whole blocks without punch).
-        const int64_t in = punchIn_.load(std::memory_order_relaxed), out = punchOut_.load(std::memory_order_relaxed);
+        const int64_t in = transport_.punchIn.load(std::memory_order_relaxed), out = transport_.punchOut.load(std::memory_order_relaxed);
         const bool finished = rtRecordNext_ >= 0 && rtRecordNext_ >= out; // past punch-out: nothing more to check
         if (cycleTake) {
             // Cycle take: every frame while the transport rolls continuously, across wraps. The control

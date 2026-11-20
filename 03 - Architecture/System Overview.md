@@ -42,6 +42,7 @@ headers out of Swift compilation, and it forces a deliberate, small surface.
 - `plugin_service.*`: `PluginHostService`, which owns plug-in instances, load errors, deferred and isolated activation,
   offline copies, the device workgroup for isolated hosts, and their health.
 - `undo_stack.*`: `UndoStack`, which owns undo and redo, groups, compact parameter steps and clip-delta compaction.
+- `transport.hpp`: `Transport`, the play state, playhead, seek request, cycle, punch, metronome and count-in shared with the audio thread, plus their validation.
 - `engine.cpp` (model edits: tracks, MIDI, markers, routing, plug-in slots, mixer), `engine_clips.cpp`, `engine_takes.cpp`,
   `engine_launcher.cpp`, `engine_device.cpp` (devices, capture, workgroup), `engine_compile.cpp` (RenderState snapshots),
   `engine_audio.cpp` (the real-time path), `engine_offline.cpp` (offline render, export, stats).

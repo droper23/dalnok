@@ -43,7 +43,7 @@ Engine::Engine(double sampleRate) : sampleRate_(sampleRate) {
     if (sampleRate_ <= 0) sampleRate_ = 48000.0;
     pluginHost_.setSampleRate(sampleRate_);
     streamPlan_ = std::make_shared<StreamPlan>();
-    streamPlan_->position = &position_;
+    streamPlan_->position = &transport_.position;
     StreamCache::shared().addPlan(streamPlan_);
     midiParsers_[0] = std::make_unique<MidiParser>();
     midiInputs_[0].store(midiParsers_[0].get(), std::memory_order_release);
@@ -235,9 +235,9 @@ void Engine::resetModel() {
     cache_.clear();
     history_.clear();
     nextColor_ = 0;
-    cycleOn_.store(false, std::memory_order_release);
-    cycleStart_.store(0, std::memory_order_relaxed);
-    cycleEnd_.store(0, std::memory_order_relaxed);
+    transport_.cycleOn.store(false, std::memory_order_release);
+    transport_.cycleStart.store(0, std::memory_order_relaxed);
+    transport_.cycleEnd.store(0, std::memory_order_relaxed);
     syncRuntimes();
     bumpRevisionAll();
     savedRevision_ = revision_;
@@ -423,28 +423,6 @@ bool Engine::setTempoMap(std::vector<TempoPoint> tempo, std::vector<MeterChange>
         m.meters = std::move(meters);
         return true;
     });
-}
-
-bool Engine::setPunch(bool on, int64_t in, int64_t out, std::string &err) {
-    if (on && (in < 0 || out <= in)) return fail(err, "punch needs 0 <= in < out");
-    punchIn_.store(on ? in : INT64_MIN, std::memory_order_relaxed);
-    punchOut_.store(on ? out : INT64_MAX, std::memory_order_relaxed);
-    return true;
-}
-
-bool Engine::setCycle(bool on, int64_t start, int64_t end, std::string &err) {
-    if (!on && start == 0 && end == 0) { // clear the region
-        cycleOn_.store(false, std::memory_order_release);
-        cycleStart_.store(0, std::memory_order_relaxed);
-        cycleEnd_.store(0, std::memory_order_relaxed);
-        return true;
-    }
-    if (start < 0 || end - start < 64 || end > (int64_t{1} << 48)) return fail(err, "cycle needs 0 <= start and end at least 64 frames after start");
-    cycleOn_.store(false, std::memory_order_release); // audio thread never sees a half-updated range while on
-    cycleStart_.store(start, std::memory_order_relaxed);
-    cycleEnd_.store(end, std::memory_order_relaxed);
-    cycleOn_.store(on, std::memory_order_release);
-    return true;
 }
 
 bool Engine::validNotes(const std::vector<MidiNote> &notes, std::string &err) const {

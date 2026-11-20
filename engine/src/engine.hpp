@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include "transport.hpp"
 #include "dalnok/dalnok.h"
 #include "device.hpp"
 #include "capture_spool.hpp"
@@ -239,28 +240,18 @@ public:
     void setMonitoring(bool on) { monitoring_.store(on, std::memory_order_relaxed); }
     // Metronome: a click on every beat (accented on the bar) while the transport rolls. Live path only;
     // offline renders and exports never contain it.
-    void setMetronome(bool on, float level) {
-        metronomeLevel_.store(std::clamp(level, 0.0f, 1.0f), std::memory_order_relaxed);
-        metronome_.store(on, std::memory_order_relaxed);
-    }
-    bool metronome() const { return metronome_.load(std::memory_order_relaxed); }
+    void setMetronome(bool on, float level) { transport_.setMetronome(on, level); }
+    bool metronome() const { return transport_.metronome.load(std::memory_order_relaxed); }
     // Count-in: the click also sounds before `frame` (0 = off), whether or not the metronome is on.
-    void setCountIn(int64_t frame) { countInUntil_.store(std::max<int64_t>(0, frame), std::memory_order_relaxed); }
+    void setCountIn(int64_t frame) { transport_.setCountIn(frame); }
     // Cycle (loop) playback between two frames. Transport state saved with the project, not an undo step.
     // Playback that crosses `end` continues at `start` on the exact sample; recording plays straight through.
-    bool setCycle(bool on, int64_t start, int64_t end, std::string &err);
+    bool setCycle(bool on, int64_t start, int64_t end, std::string &err) { return transport_.setCycle(on, start, end, err); }
     // Punch: a take only records [in, out); the transport rolls before and after (pre- and post-roll).
     // Used for punch in/out and for count-in (in = where recording was started). Not saved.
-    bool setPunch(bool on, int64_t in, int64_t out, std::string &err);
-    void punch(bool &on, int64_t &in, int64_t &out) const {
-        in = punchIn_.load(std::memory_order_relaxed); out = punchOut_.load(std::memory_order_relaxed);
-        on = in != INT64_MIN;
-    }
-    void cycle(bool &on, int64_t &start, int64_t &end) const {
-        on = cycleOn_.load(std::memory_order_relaxed);
-        start = cycleStart_.load(std::memory_order_relaxed);
-        end = cycleEnd_.load(std::memory_order_relaxed);
-    }
+    bool setPunch(bool on, int64_t in, int64_t out, std::string &err) { return transport_.setPunch(on, in, out, err); }
+    void punch(bool &on, int64_t &in, int64_t &out) const { transport_.punch(on, in, out); }
+    void cycle(bool &on, int64_t &start, int64_t &end) const { transport_.cycle(on, start, end); }
     bool monitoring() const { return monitoring_.load(std::memory_order_relaxed); }
     void setSimulatedLatency(int64_t frames) { simulatedLatency_ = frames; }
     // Runs one duplex cycle on the simulated input device (tests and simulation).
@@ -465,11 +456,11 @@ public:
     json::Value describe() const; // model as JSON (used by save and session.describe)
 
     // Transport
-    void play() { playing_.store(true, std::memory_order_relaxed); }
-    void pause() { playing_.store(false, std::memory_order_relaxed); }
-    void seek(int64_t frame) { seekRequest_.store(std::max<int64_t>(0, frame), std::memory_order_relaxed); }
-    bool playing() const { return playing_.load(std::memory_order_relaxed); }
-    int64_t position() const { return position_.load(std::memory_order_relaxed); }
+    void play() { transport_.play(); }
+    void pause() { transport_.pause(); }
+    void seek(int64_t frame) { transport_.seek(frame); }
+    bool playing() const { return transport_.playing.load(std::memory_order_relaxed); }
+    int64_t position() const { return transport_.position.load(std::memory_order_relaxed); }
 
     // Offline
     bool renderOffline(int64_t start, int64_t frames, float *left, float *right);
@@ -640,20 +631,13 @@ private:
     float masterDcL_ = 0, masterDcR_ = 0; // audio thread (meterLevel)
 
     // Shared atomics.
-    std::atomic<bool> playing_{false};
+    Transport transport_; // play state, playhead, cycle, punch, metronome (control and audio threads)
     std::atomic<int32_t> soloCount_{0};
-    std::atomic<bool> metronome_{false};
-    std::atomic<float> metronomeLevel_{0.5f};
     // Click oscillator coefficients (control thread computes them; see syncRuntimes).
     std::atomic<float> clickCoef_{0}, clickAccentCoef_{0}, clickSin_{0}, clickAccentSin_{0}, clickDecay_{0};
-    std::atomic<int64_t> seekRequest_{-1};
-    std::atomic<int64_t> position_{0};
-    std::atomic<bool> cycleOn_{false};
-    std::atomic<int64_t> punchIn_{INT64_MIN}, punchOut_{INT64_MAX};
     std::atomic<int32_t> recordSlot_{-1};
     // Moves a take (the last of `takes`, trimmed to whole bars) into a launcher slot; removes `takes`.
     DalnokClipId takeToSlot(const std::vector<DalnokClipId> &takes, int32_t slot, std::string &err);
-    std::atomic<int64_t> countInUntil_{0};
     std::atomic<bool> recordCycle_{false};
     struct LaunchEvent { DalnokTrackId track; int32_t slot; int64_t frame; };
     std::atomic<bool> launcherRecording_{false};
@@ -661,7 +645,6 @@ private:
     std::vector<LaunchEvent> launchLog_; // control thread
     int64_t launcherRecordStart_ = 0;      // this take loops the cycle and becomes one take per pass
     int64_t recordCycleStart_ = 0, recordCycleEnd_ = 0; // the cycle when that take started (control thread)
-    std::atomic<int64_t> cycleStart_{0}, cycleEnd_{0};
 
     // Diagnostics (written by the audio thread).
     std::atomic<uint64_t> callbacks_{0}, framesRendered_{0}, maxCallbackNs_{0}, lastCallbackNs_{0};

@@ -116,11 +116,11 @@ json::Value Engine::describe() const {
         meter.push(model_.meters.front().den);
         root.set("meter", std::move(meter));
     }
-    if (cycleEnd_.load() > cycleStart_.load()) {
+    if (transport_.cycleEnd.load() > transport_.cycleStart.load()) {
         json::Value cyc = json::Value::makeArray();
-        cyc.push(cycleOn_.load());
-        cyc.push(static_cast<double>(cycleStart_.load()));
-        cyc.push(static_cast<double>(cycleEnd_.load()));
+        cyc.push(transport_.cycleOn.load());
+        cyc.push(static_cast<double>(transport_.cycleStart.load()));
+        cyc.push(static_cast<double>(transport_.cycleEnd.load()));
         root.set("cycle", std::move(cyc));
     }
     if (model_.tempo.size() > 1) {
@@ -830,9 +830,9 @@ bool Engine::applyProject(std::unique_ptr<PreparedProject> p, ApplyMode mode) {
         Engine staged(sampleRate_);
         staged.model_ = std::move(p->model);
         staged.pool_ = std::move(p->pool);
-        staged.cycleOn_.store(p->cycleOn);
-        staged.cycleStart_.store(p->cycleStart);
-        staged.cycleEnd_.store(p->cycleEnd);
+        staged.transport_.cycleOn.store(p->cycleOn);
+        staged.transport_.cycleStart.store(p->cycleStart);
+        staged.transport_.cycleEnd.store(p->cycleEnd);
         std::string err;
         const bool saved = staged.saveProject(name.data(), err, false, false);
         p->model = std::move(staged.model_);
@@ -868,7 +868,7 @@ bool Engine::applyProject(std::unique_ptr<PreparedProject> p, ApplyMode mode) {
     nextColor_ = p->maxColor + 1;
     for (const auto &mk : model_.markers) nextMarker_ = std::max(nextMarker_, mk.id + 1);
     std::string ignored;
-    if (!setCycle(p->cycleOn, p->cycleStart, p->cycleEnd, ignored)) cycleOn_.store(false, std::memory_order_release);
+    if (!setCycle(p->cycleOn, p->cycleStart, p->cycleEnd, ignored)) transport_.cycleOn.store(false, std::memory_order_release);
     syncRuntimes();
     bumpRevisionAll();
     savedRevision_ = (p->imported || recovered) ? revision_ - 1 : revision_; // an import is unsaved work

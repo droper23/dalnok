@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Internal: the transport state (play, playhead, cycle, punch, metronome, count-in) is now its own type, `Transport`, outside the engine class. No behaviour change: all 225 engine tests pass and the real-time checks are clean.
+
 - Faster redraw after edits:
   - Clip names are no longer re-typeset every time a lane redraws.
   - Faders only repaint when their value actually changes; before, every fader repainted on any edit.

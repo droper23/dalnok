@@ -129,7 +129,7 @@ bool Engine::launch(DalnokTrackId track, int32_t slot, std::string &err) {
         return fail(err, "that slot is empty");
     // Launch times are timeline frames; the audio thread switches when the rendered position (the playhead
     // plus delay compensation) reaches them, so the change is heard exactly on the bar.
-    const bool rolling = playing_.load();
+    const bool rolling = transport_.playing.load();
     const int64_t at = rolling ? nextBar(model_, map_, position() + 1) : position();
     t->runtime->launchTarget.store(slot, std::memory_order_relaxed);
     t->runtime->launchAt.store(at, std::memory_order_release);

@@ -155,9 +155,9 @@ bool Engine::startRecording(const std::string &inputUid, const std::string &dire
     recordBroken_.store(false, std::memory_order_relaxed);
     recordMidi_.store(midi != nullptr, std::memory_order_relaxed);
     // With cycle on (and no punch), the take loops the cycle and becomes one take per pass.
-    recordCycleStart_ = cycleStart_.load();
-    recordCycleEnd_ = cycleEnd_.load();
-    recordCycle_.store(cycleOn_.load() && punchIn_.load() == INT64_MIN && recordCycleEnd_ - recordCycleStart_ >= 64,
+    recordCycleStart_ = transport_.cycleStart.load();
+    recordCycleEnd_ = transport_.cycleEnd.load();
+    recordCycle_.store(transport_.cycleOn.load() && transport_.punchIn.load() == INT64_MIN && recordCycleEnd_ - recordCycleStart_ >= 64,
                        std::memory_order_release);
     recordTake_.fetch_add(1, std::memory_order_acq_rel);
     recordSession_.store(audio != nullptr, std::memory_order_release);
@@ -207,7 +207,7 @@ bool Engine::stopRecording(RecordResult &r, std::string &err) {
         audioOK = captureOK && !broken && r.start >= 0;
         if (!captureOK) problems.push_back(captureErr);
         if (r.start < 0)
-            problems.push_back(punchIn_.load() != INT64_MIN ? "playback never reached the punch-in point, so nothing was recorded"
+            problems.push_back(transport_.punchIn.load() != INT64_MIN ? "playback never reached the punch-in point, so nothing was recorded"
                                                             : "the transport never started, so nothing was recorded");
         // One mono WAV per armed track (spool channel i → recordAudio_[i]); each is verified independently.
         uint64_t frames = 0;
