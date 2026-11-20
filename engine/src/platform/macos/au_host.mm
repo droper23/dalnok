@@ -316,6 +316,9 @@ public:
                 if (it != me->known_.end() && std::abs(it->second - v) < 1e-6f) return;
                 me->known_[id] = v;
             }
+            // Only an open editor makes an edit. Some units apply restored state in the background and announce the
+            // resulting preset and values later (seen isolated, where the host's run loop delivers them at once).
+            if (!me->editor_) return;
             me->edits_.fetch_add(1, std::memory_order_relaxed);
         };
         if (AUEventListenerCreate(counted, this, CFRunLoopGetMain(), kCFRunLoopCommonModes, 0.05f, 0.05f, &listener_) != noErr) {

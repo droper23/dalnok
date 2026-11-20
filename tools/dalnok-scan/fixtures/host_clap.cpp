@@ -100,7 +100,28 @@ clap_process_status process(const clap_plugin_t *p, const clap_process_t *pr) {
     return CLAP_PROCESS_CONTINUE;
 }
 
+// With DALNOK_TEST_CLAP_EDIT set it also has an editor (draws nothing): the edits it simulates are editor edits, and
+// the host counts them only while the editor is open.
+const clap_plugin_gui_t kGui = {
+    [](const clap_plugin_t *, const char *api, bool floating) { return !floating && !std::strcmp(api, CLAP_WINDOW_API_COCOA); },
+    [](const clap_plugin_t *, const char **api, bool *floating) { *api = CLAP_WINDOW_API_COCOA; *floating = false; return true; },
+    [](const clap_plugin_t *, const char *, bool) { return true; },                      // create
+    [](const clap_plugin_t *) {},                                                         // destroy
+    [](const clap_plugin_t *, double) { return true; },                                  // set_scale
+    [](const clap_plugin_t *, uint32_t *w, uint32_t *h) { *w = 200; *h = 100; return true; },
+    [](const clap_plugin_t *) { return false; },                                          // can_resize
+    [](const clap_plugin_t *, clap_gui_resize_hints_t *) { return false; },
+    [](const clap_plugin_t *, uint32_t *, uint32_t *) { return false; },                  // adjust_size
+    [](const clap_plugin_t *, uint32_t, uint32_t) { return false; },                     // set_size
+    [](const clap_plugin_t *, const clap_window_t *) { return true; },                   // set_parent
+    [](const clap_plugin_t *, const clap_window_t *) { return false; },                  // set_transient
+    [](const clap_plugin_t *, const char *) {},                                           // suggest_title
+    [](const clap_plugin_t *) { return true; },                                           // show
+    [](const clap_plugin_t *) { return true; },                                           // hide
+};
+
 const void *extension(const clap_plugin_t *, const char *id) {
+    if (!std::strcmp(id, CLAP_EXT_GUI) && std::getenv("DALNOK_TEST_CLAP_EDIT")) return &kGui;
     if (!std::strcmp(id, CLAP_EXT_AUDIO_PORTS)) return &kPorts;
     if (!std::strcmp(id, CLAP_EXT_PARAMS)) return &kParams;
     if (!std::strcmp(id, CLAP_EXT_STATE)) return &kState;
