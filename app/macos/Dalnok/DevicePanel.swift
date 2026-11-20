@@ -162,7 +162,7 @@ final class DevicePanel: NSView {
         let t = track.flatMap { session.track($0) }
         let plugins = t?.plugins ?? []
         func matches(_ d: DeviceView, _ p: TrackView.Plugin) -> Bool {
-            d.slot == p.id && d.loaded == p.loaded && d.error == p.error && d.trackId == t?.id
+            d.slot == p.id && d.loaded == p.loaded && d.error == p.error && d.trackId == t?.id && d.pluginName == p.name && d.pluginPath == p.path
         }
         if devices.count == plugins.count, zip(devices, plugins).allSatisfy({ matches($0, $1) }) {
             devices.forEach { $0.refreshControls() }
@@ -175,7 +175,7 @@ final class DevicePanel: NSView {
             let sameTrack = !old.isEmpty && old.allSatisfy { $0.trackId == t?.id }
             if !sameTrack { knownCables = [] } // a different track: draw its cables fresh
             // The same track keeps the units whose plug-in is unchanged; only arrivals and departures animate.
-            var next: [DeviceView] = [], arrived: [DeviceView] = []
+            var next: [DeviceView] = [], arrived: [DeviceView] = [], replaced: [DeviceView] = []
             for p in plugins {
                 if sameTrack, let d = old.first(where: { matches($0, p) }) {
                     d.refreshControls()
@@ -193,9 +193,12 @@ final class DevicePanel: NSView {
                 }
                 d.setFolded(p.folded, animated: false)
                 next.append(d)
-                arrived.append(d)
+                // A slot that stays in the chain but changed (loaded, failed, reloaded) is replaced in place, without
+                // the arrival and departure animations, which are for plug-ins added to or removed from the chain.
+                if sameTrack, let o = old.first(where: { $0.slot == p.id }) { replaced.append(o) } else { arrived.append(d) }
             }
-            let departed = sameTrack ? old.filter { o in !next.contains { $0 === o } } : []
+            let departed = sameTrack ? old.filter { o in !next.contains { $0 === o } && !replaced.contains { $0 === o } } : []
+            replaced.forEach { $0.removeFromSuperview() }
             if !sameTrack { old.forEach { $0.removeFromSuperview() } }
             // Arrange: the new chain, with departing units kept at their old place while they leave.
             var arranged = next
@@ -417,6 +420,8 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
     let slot: Int32
     let loaded: Bool
     let error: String
+    let pluginName: String
+    var pluginPath: String { path }
     private let unavailableMessage: String
     private let color: NSColor
     private let title = NSTextField(labelWithString: "")
@@ -481,6 +486,7 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         self.slot = slot
         self.loaded = loaded
         self.error = error
+        self.pluginName = name
         self.unavailableMessage = (instrument ? "Not loaded: instrument silent." : "Not loaded: effect bypassed.")
             + (error.isEmpty ? " Settings are kept." : " " + error)
         self.color = color
