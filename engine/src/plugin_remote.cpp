@@ -356,12 +356,21 @@ public:
     // there. A host that crashes, exits or outlives the load timeout fails the launch.
     Launch pollLaunch(std::string &err) {
         if (launched_) return Launch::ready;
-        while (outboxSent_ < outbox_.size()) {
-            const ssize_t n = ::send(fd_, outbox_.data() + outboxSent_, outbox_.size() - outboxSent_, MSG_DONTWAIT);
+        // The start request carries the saved state (several MB for some synths). The host drains the socket while we
+        // write, so every send succeeds partially and an unbounded loop sent the whole state in one call: 1.2 s on the
+        // main thread for three 2-4 MB states. Send for at most 2 ms per call; the rest goes on later calls.
+        // macOS ignores MSG_DONTWAIT on this AF_UNIX socket pair (a send waits for room; measured), so the descriptor
+        // itself is non-blocking while sending, and only here: the other calls on it wait with their own deadlines.
+        const uint64_t sendUntil = nowNs() + 2'000'000ull;
+        const int flags = ::fcntl(fd_, F_GETFL);
+        if (outboxSent_ < outbox_.size() && flags >= 0) ::fcntl(fd_, F_SETFL, flags | O_NONBLOCK);
+        while (outboxSent_ < outbox_.size() && nowNs() < sendUntil) {
+            const ssize_t n = ::send(fd_, outbox_.data() + outboxSent_, outbox_.size() - outboxSent_, 0);
             if (n > 0) { outboxSent_ += static_cast<size_t>(n); continue; }
             if (n < 0 && errno == EINTR) continue;
             break; // full (the host is still loading) or closed (reported below)
         }
+        if (flags >= 0) ::fcntl(fd_, F_SETFL, flags);
         pollfd p{fd_, POLLIN, 0};
         const bool readable = ::poll(&p, 1, 0) > 0;
         if (!readable) {

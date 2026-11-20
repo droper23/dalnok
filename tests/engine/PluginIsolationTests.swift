@@ -174,6 +174,36 @@ struct PluginIsolation {
         return String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self).split(separator: "\n").count
     }
 
+    /// The start request carries the saved state. With states of several MB and hosts busy initializing, sending it
+    /// blocked the caller for the whole transfer (1.2 s on a real project), because macOS ignores MSG_DONTWAIT on the
+    /// socket pair. Activation calls must stay short with 4 MB states, and the states must arrive intact.
+    @Test func largeStatesDoNotBlockActivation() throws {
+        setenv("DALNOK_TEST_STATE_PAD", "4000000", 1); defer { unsetenv("DALNOK_TEST_STATE_PAD") }
+        let project = slowProject()
+        setenv("DALNOK_TEST_INIT_FAILURE", "slow", 1); setenv("DALNOK_TEST_INIT_SLOW_MS", "800", 1)
+        defer { unsetenv("DALNOK_TEST_INIT_FAILURE"); unsetenv("DALNOK_TEST_INIT_SLOW_MS") }
+        let e = openDeferred(project.path); defer { dalnok_engine_destroy(e) }
+        let t = dalnok_track_at(e, 0)
+        var worstCall = 0.0, calls = 0
+        let deadline = Date().addingTimeInterval(20)
+        while Date() < deadline {
+            let t0 = DispatchTime.now().uptimeNanoseconds
+            let left = dalnok_plugins_activate_next(e, nil, nil)
+            worstCall = max(worstCall, Double(DispatchTime.now().uptimeNanoseconds - t0) / 1e6)
+            calls += 1
+            if left <= 0 { break }
+            usleep(2_000)
+        }
+        print(String(format: "BIGSTATE 3 × 4 MB isolated: worst activate call %.2f ms over %d calls", worstCall, calls))
+        #expect(worstCall < 50, "sending a large state never blocks the caller (worst \(worstCall) ms)")
+        for i: Int32 in 0..<3 {
+            let s = info(e, t, i)
+            #expect(s.loaded && s.isolated, "slot \(i): \(name(s.error))")
+        }
+        let wet = renderStereo(e, 4_800).0
+        #expect(zip(wet, project.wet).allSatisfy { abs($0 - $1) < 1e-6 }, "each host restored its state (gain 0.5)")
+    }
+
     /// Every slot's initialization sleeps 1.5 s in its host. Activation calls never block (each returns in well under a
     /// frame), the three hosts load in parallel, and each slot comes up with its saved state.
     @Test func slowPluginsLoadWithoutBlockingTheCaller() throws {

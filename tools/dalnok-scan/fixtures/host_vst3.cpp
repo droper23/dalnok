@@ -25,6 +25,7 @@
 #include <cstdlib>
 #include <unistd.h>
 #include <thread>
+#include <string>
 #include <dlfcn.h>
 #include "pluginterfaces/gui/iplugview.h"
 #include "pluginterfaces/vst/ivsteditcontroller.h"
@@ -254,7 +255,14 @@ public:
     }
     tresult PLUGIN_API getState(IBStream *s) override {
         float g = gain_;
-        return s && s->write(&g, sizeof g) == kResultOk ? kResultOk : kResultFalse;
+        if (!s || s->write(&g, sizeof g) != kResultOk) return kResultFalse;
+        // DALNOK_TEST_STATE_PAD=bytes: a large state (some synths save several MB); setState reads only the gain.
+        if (const char *pad = std::getenv("DALNOK_TEST_STATE_PAD")) {
+            std::string zeros(static_cast<size_t>(std::atol(pad)), '\0');
+            int32 wrote = 0;
+            if (s->write(zeros.data(), static_cast<int32>(zeros.size()), &wrote) != kResultOk) return kResultFalse;
+        }
+        return kResultOk;
     }
     // IAudioProcessor
     tresult PLUGIN_API setBusArrangements(SpeakerArrangement *, int32, SpeakerArrangement *, int32) override { return kResultOk; }
