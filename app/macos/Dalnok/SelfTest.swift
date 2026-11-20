@@ -1639,6 +1639,20 @@ final class SelfTest {
 
         // Welcome flow: choosing a DAW applies its preset and starts the project finder.
         w.welcome.show()
+        // Secondary windows open centered on Dalnok's screen (Settings opened at the bottom-left corner).
+        func centered(_ win: NSWindow?) -> Bool {
+            guard let win, let vf = (w.window?.screen ?? NSScreen.main)?.visibleFrame else { return false }
+            return abs(win.frame.midX - vf.midX) < 2 && abs(win.frame.midY - vf.midY) < 2
+        }
+        await wait(0.1)
+        check(centered(w.welcome.window), "welcome window opens centered (frame \(w.welcome.window.frame))")
+        let settingsWasOpen = w.settings.window?.isVisible == true
+        if !settingsWasOpen {
+            w.settings.show()
+            await wait(0.1)
+            check(centered(w.settings.window), "settings window opens centered (frame \(String(describing: w.settings.window?.frame)))")
+            w.settings.window?.orderOut(nil)
+        }
         w.welcome.choose(.ableton)
         check(SourceDAW.preferred == .ableton && menuItem("Split at Playhead")?.keyEquivalent == "e", "welcome: Ableton chosen, preset applied")
         await w.welcome.rescan()

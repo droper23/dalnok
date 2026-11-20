@@ -134,9 +134,10 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
     func show(_ pane: Pane? = nil) {
         if let pane { select(pane) }
         refresh()
-        showWindow(nil)
-        if window?.isVisible == false { window?.center() }
-        window?.makeKeyAndOrderFront(nil)
+        // Placed before it shows: showWindow made it visible first, so the old check never centered it and it opened at
+        // its creation origin, the screen's bottom-left corner.
+        guard let window else { return }
+        if window.isVisible { window.makeKeyAndOrderFront(nil) } else { showCentered(window) }
     }
     func windowDidBecomeKey(_ notification: Notification) { refresh() }
     func windowWillClose(_ notification: Notification) { shortcuts.windowWillClose(notification) }
