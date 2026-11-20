@@ -436,6 +436,15 @@ case "load-bench":
         var st = DalnokPluginIsolationStats()
         if dalnok_plugin_isolation_stats(engine, s, &st) == DALNOK_OK { missed += st.missed_blocks; skips += st.budget_skips }
     }
+    var failedNow: [String] = []
+    for i in 0..<dalnok_track_count(engine) {
+        let t = dalnok_track_at(engine, i)
+        var info = DalnokPluginSlotInfo()
+        for j in 0..<dalnok_track_plugin_count(engine, t) where dalnok_track_plugin_info(engine, t, j, &info) == DALNOK_OK && !info.loaded {
+            failedNow.append(withUnsafeBytes(of: info.error) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) })
+        }
+    }
+    if failedNow.count > failures.count { print("FAILED DURING PLAY: \(failedNow.count - failures.count) (\(Set(failedNow).subtracting(failures).joined(separator: "; ")))") }
     print(String(format: "PLAY %d blocks, mean %.2f ms, worst %.2f ms of %.2f ms, %d over the period; isolated missed %llu, budget skips %llu; dirty %@",
                  blocks, sum / Double(max(blocks, 1)) * 1000, worstBlock * 1000, period * 1000, over, missed, skips, dalnok_project_dirty(engine) ? "yes" : "no"))
     dalnok_engine_destroy(engine)
