@@ -327,7 +327,11 @@ struct PluginIsolation {
         #expect(w.level == Int64(NSWindow.Level.floating.rawValue), "floats above Dalnok's windows")
         #expect(w.process_id > 0 && w.process_id != getpid())
         let ws = windowServerEntry(w.window_number)
-        #expect(ws?.pid == w.process_id && ws?.bounds.width == 480, "the window server shows it owned by the host: \(String(describing: ws))")
+        #expect(ws?.pid == w.process_id, "the window server shows it owned by the host: \(String(describing: ws))")
+        // The lock screen shows every window scaled to 90 % about the screen's centre, so bounds only hold unlocked.
+        let locked = (CGSessionCopyCurrentDictionary() as? [String: Any])?["CGSSessionScreenIsLocked"] as? Bool == true
+        if locked { print("SKIP  window-server bounds of the editor (the screen is locked)") }
+        else { #expect(ws?.bounds.width == 480, "the window server shows the resized window: \(String(describing: ws))") }
         let png = tempDir().appendingPathComponent("vst3-editor-\(UUID().uuidString).png").path
         #expect(dalnok_plugin_editor_snapshot(e, slot, png) == DALNOK_OK)
         let p = pixels(png)
