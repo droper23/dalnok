@@ -8,6 +8,7 @@
 
 #import <AppKit/AppKit.h>
 #import <QuartzCore/QuartzCore.h>
+#include <algorithm>
 #include <cmath>
 #include <unistd.h>
 
@@ -75,6 +76,18 @@ KeySink gKeySink = nullptr;
 
 // Resizable editors (autoresizing in both directions, as Audio Unit views are) fill a resizable window; fixed-size ones
 // set the window's size.
+// A panel that grew (the editor resized itself after opening) is moved back inside its screen's visible area.
+NSRect onScreen(NSRect frame) {
+    NSScreen *screen = gEditor.panel.screen ?: NSScreen.mainScreen;
+    if (!screen) return frame;
+    const NSRect vf = screen.visibleFrame;
+    if (NSMaxX(frame) > NSMaxX(vf)) frame.origin.x = std::max(NSMinX(vf), NSMaxX(vf) - frame.size.width);
+    if (frame.origin.x < NSMinX(vf)) frame.origin.x = NSMinX(vf);
+    if (NSMaxY(frame) > NSMaxY(vf)) frame.origin.y = NSMaxY(vf) - frame.size.height;
+    if (frame.origin.y < NSMinY(vf)) frame.origin.y = std::min(NSMinY(vf), NSMaxY(vf) - frame.size.height);
+    return frame;
+}
+
 void fit() {
     NSView *view = gEditor.panel.contentView.subviews.firstObject;
     if (!view) return;
@@ -90,7 +103,7 @@ void fit() {
             const NSRect next = [gEditor.panel frameRectForContentRect:NSMakeRect(0, 0, size.width, size.height)];
             frame.origin.y += frame.size.height - next.size.height; // keep the top edge
             frame.size = next.size;
-            [gEditor.panel setFrame:frame display:YES];
+            [gEditor.panel setFrame:onScreen(frame) display:YES];
         }
         if (!NSEqualPoints(view.frame.origin, NSZeroPoint)) view.frameOrigin = NSZeroPoint;
     }
@@ -102,7 +115,7 @@ void resized(void *, int32_t w, int32_t h) {
     const NSRect next = [gEditor.panel frameRectForContentRect:NSMakeRect(0, 0, w, h)];
     frame.origin.y += frame.size.height - next.size.height; // keep the top edge
     frame.size = next.size;
-    [gEditor.panel setFrame:frame display:YES];
+    [gEditor.panel setFrame:onScreen(frame) display:YES];
 }
 } // namespace
 

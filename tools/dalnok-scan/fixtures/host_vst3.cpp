@@ -29,6 +29,7 @@
 #include "pluginterfaces/vst/ivsteditcontroller.h"
 #include "pluginterfaces/vst/vstspeaker.h"
 #include <CoreFoundation/CoreFoundation.h>
+#include <dispatch/dispatch.h>
 #include <cmath>
 #include <cstring>
 
@@ -92,7 +93,19 @@ public:
         msg<void>(static_cast<Id>(parent), "addSubview:", view_);
         if (const char *size = std::getenv("DALNOK_TEST_EDITOR_RESIZE"); size && frame_) {
             int w = 0, h = 0;
-            if (std::sscanf(size, "%dx%d", &w, &h) == 2) { ViewRect r(0, 0, w, h); frame_->resizeView(this, &r); }
+            if (std::sscanf(size, "%dx%d", &w, &h) == 2) {
+                // DALNOK_TEST_EDITOR_RESIZE_LATER: ask a moment after opening, as editors that build their UI late do.
+                if (std::getenv("DALNOK_TEST_EDITOR_RESIZE_LATER")) {
+                    IPlugFrame *f = frame_;
+                    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 300'000'000), dispatch_get_main_queue(), ^{
+                        ViewRect r(0, 0, w, h);
+                        f->resizeView(this, &r);
+                    });
+                } else {
+                    ViewRect r(0, 0, w, h);
+                    frame_->resizeView(this, &r);
+                }
+            }
         }
         if (const char *edit = std::getenv("DALNOK_TEST_EDITOR_EDIT"); edit && handler_) {
             handler_->beginEdit(1);

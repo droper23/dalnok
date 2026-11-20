@@ -423,6 +423,31 @@ struct PluginIsolation {
         }
     }
 
+    /// An editor placed beside Dalnok's plug-in window near the screen's right edge that grows after opening (as many
+    /// plug-ins do) is kept inside the screen's visible area instead of running off it.
+    @Test func anEditorThatGrowsAfterOpeningStaysOnScreen() throws {
+        guard let screen = NSScreen.screens.first else { return }
+        setenv("DALNOK_TEST_EDITOR", "1", 1); setenv("DALNOK_TEST_EDITOR_RESIZE", "900x500", 1); setenv("DALNOK_TEST_EDITOR_RESIZE_LATER", "1", 1)
+        defer { unsetenv("DALNOK_TEST_EDITOR"); unsetenv("DALNOK_TEST_EDITOR_RESIZE"); unsetenv("DALNOK_TEST_EDITOR_RESIZE_LATER") }
+        let (e, t) = audioSession(); defer { dalnok_engine_destroy(e) }
+        dalnok_plugins_set_host(e, isolationHost)
+        var err = [CChar](repeating: 0, count: 256)
+        let slot = dalnok_plugin_add(e, t, testVst3, gainClass, &err, 256)
+        #expect(slot != 0, "\(cstr(err))")
+        let vf = screen.visibleFrame
+        // Top-left 300 pt from the right edge: the 900 pt editor would end 600 pt past it.
+        #expect(dalnok_plugin_show_editor_window(e, slot, "Audio — Dalnok Test Gain", vf.maxX - 300, vf.maxY - 50, &err, 256) == DALNOK_OK)
+        usleep(800_000) // the editor asks for its size a moment later
+        var w = DalnokPluginEditorWindow()
+        #expect(dalnok_plugin_editor_window(e, slot, &w) == DALNOK_OK)
+        print(String(format: "EDITOR grown: frame %.0f × %.0f at (%.0f, %.0f); visible frame %.0f…%.0f × %.0f…%.0f",
+                     w.width, w.height, w.x, w.y, vf.minX, vf.maxX, vf.minY, vf.maxY))
+        #expect(w.content_width == 900, "the editor grew")
+        #expect(w.x >= Double(vf.minX) - 0.5 && w.x + w.width <= Double(vf.maxX) + 0.5, "inside the screen horizontally")
+        #expect(w.y >= Double(vf.minY) - 0.5 && w.y + w.height <= Double(vf.maxY) + 0.5, "inside the screen vertically")
+        dalnok_plugin_close_editor(e, slot)
+    }
+
     // MARK: Audio workgroup (A-01 stage 2)
 
     /// With a real output device running, the isolated host's processing thread joins the device's audio workgroup.
