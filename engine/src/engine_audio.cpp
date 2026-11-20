@@ -248,6 +248,14 @@ void Engine::process(float *left, float *right, int frames) DALNOK_NONBLOCKING {
             if (current_) {
                 if (off == n) idlePlugins(*current_, scratch_); // once per callback
                 renderLiveInput(*current_, n, l, r, scratch_, anySolo, true);
+                // The master meter shows live input and auditioned notes while stopped, as the track meter does.
+                float pl = 0, pr = 0;
+                for (int i = 0; i < n; ++i) {
+                    pl = std::max(pl, meterLevel(l[i], masterDcL_));
+                    pr = std::max(pr, meterLevel(r[i], masterDcR_));
+                }
+                raisePeak(masterPeakL_, pl);
+                raisePeak(masterPeakR_, pr);
             }
             continue;
         }

@@ -368,6 +368,52 @@ case "dirty-check":
     dalnok_engine_destroy(engine)
     leave(0)
 
+case "preview-check":
+    // Auditions a note on a track (dalnok_track_preview_note) with the transport stopped and reports the output peak.
+    let engine = openProject(args[1])
+    let track = DalnokTrackId(Int32(args.count > 2 ? args[2] : "1") ?? 1), pitch = UInt8(Int(args.count > 3 && !args[3].hasPrefix("-") ? args[3] : "60") ?? 60)
+    var l = [Float](repeating: 0, count: 512), r = l
+    func peak(_ blocks: Int) -> Float {
+        var m: Float = 0
+        for _ in 0..<blocks { _ = dalnok_engine_pump(engine, &l, &r, 512); m = max(m, l.map(abs).max() ?? 0, r.map(abs).max() ?? 0); usleep(10_000) }
+        return m
+    }
+    if args.contains("--device") {
+        // The real output device: time from note-on to the first level on the track's meter (polled every 2 ms).
+        var err = [CChar](repeating: 0, count: 256)
+        guard dalnok_engine_start_device(engine, &err, 256) == DALNOK_OK else { fail(cstr(err)) }
+        usleep(1_000_000)
+        if args.contains("--warm") { _ = dalnok_track_preview_note(engine, track, 0, 0, false); usleep(500_000) }
+        for round in 1...3 {
+            var ml: Float = 0, mr: Float = 0
+            _ = dalnok_meter_track(engine, track, &ml, &mr)
+            let t0 = DispatchTime.now().uptimeNanoseconds
+            _ = dalnok_track_preview_note(engine, track, pitch, 100, true)
+            var first = -1.0
+            while DispatchTime.now().uptimeNanoseconds - t0 < 1_500_000_000 {
+                _ = dalnok_meter_track(engine, track, &ml, &mr)
+                if first < 0 && max(ml, mr) > 0.001 { first = Double(DispatchTime.now().uptimeNanoseconds - t0) / 1e6 }
+                usleep(2_000)
+            }
+            _ = dalnok_track_preview_note(engine, track, pitch, 0, false)
+            print(String(format: "device round %d: first level after %.1f ms", round, first))
+            usleep(1_000_000)
+        }
+        dalnok_engine_stop_device(engine)
+        leave(0)
+    }
+    if args.contains("--warm") { _ = dalnok_track_preview_note(engine, track, 0, 0, false) } // what opening the piano roll does
+    let before = peak(50)
+    for round in 1...3 {
+        let st = dalnok_track_preview_note(engine, track, pitch, 100, true)
+        let held = peak(50)
+        _ = dalnok_track_preview_note(engine, track, pitch, 0, false)
+        let after = peak(100)
+        print(String(format: "preview %d track %d pitch %d: status %d, peak before %.4f, held %.4f, after release %.4f", round, track, pitch, st.rawValue, before, held, after))
+    }
+    dalnok_engine_destroy(engine)
+    leave(0)
+
 case "render-project":
     guard args.count >= 3 else { print(usage); leave(2) }
     let engine = openProject(args[1])

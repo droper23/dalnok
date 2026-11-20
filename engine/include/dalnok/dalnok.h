@@ -654,7 +654,9 @@ DalnokStatus dalnok_track_set_input(DalnokEngine *engine, DalnokTrackId track, i
 /* Auditions a note on an instrument track (piano-roll edits, as other DAWs do): `on` starts it at `velocity`, and the
  * same pitch with on = false releases it. It plays through the track's instrument (built-in or plug-in, isolated or not)
  * and its inserts whether or not the transport plays, without arming the track, and is never recorded. While notes
- * sound, and for 2 s after the last release, the track takes live MIDI input in place of the armed one.
+ * sound, and for 2 s after the last release, the track takes live MIDI input in place of the armed one. A release
+ * (on = false) of a note that is not sounding is silent but still processes the instrument for those 2 s: sample-based
+ * plug-ins that finish loading in their first blocks are then ready for the first note (open a piano roll with one).
  * DALNOK_ERR_NOT_FOUND: no such instrument track. [control thread] (API 39) */
 DalnokStatus dalnok_track_preview_note(DalnokEngine *engine, DalnokTrackId track, uint8_t pitch, uint8_t velocity, bool on);
 

@@ -466,10 +466,19 @@ app.run()
         let t = Timer(timeInterval: 0.005, repeats: true) { _ in
             let now = DispatchTime.now().uptimeNanoseconds
             worstGapNs = max(worstGapNs, now - lastTickNs); lastTickNs = now
+            // Peaks since the last dump: meter reads reset them, and the UI reads every frame, so sample them often.
+            guard let e = (NSApp.delegate as? AppDelegate)?.main?.session.engine.handle else { return }
+            var l: Float = 0, r: Float = 0
+            dalnok_meter_master(e, &l, &r); peaks[0] = max(peaks[0] ?? 0, l, r)
+            for i in 0..<dalnok_track_count(e) {
+                let id = dalnok_track_at(e, i)
+                if dalnok_meter_track(e, id, &l, &r) == DALNOK_OK { peaks[Int(id)] = max(peaks[Int(id)] ?? 0, l, r) }
+            }
         }
         RunLoop.main.add(t, forMode: .common)
     }
     static var worstGapNs: UInt64 = 0, lastTickNs: UInt64 = 0
+    static var peaks: [Int: Float] = [:] // track id (0 = master) -> peak since the last dump
     /// Engine diagnostics for real-input checks: transport, callback stats, meters, undo, and every plug-in slot with
     /// its isolation stats, editor window and parameter values.
     static func diagnostics() -> [String: Any] {
@@ -486,6 +495,8 @@ app.run()
         info["position"] = dalnok_transport_position(e)
         var ml: Float = 0, mr: Float = 0; dalnok_meter_master(e, &ml, &mr)
         info["masterMeter"] = [ml, mr]
+        info["peaksSinceLastDump"] = Dictionary(uniqueKeysWithValues: peaks.map { (String($0.key), Double($0.value)) })
+        peaks = [:]
         var name = [CChar](repeating: 0, count: 256); dalnok_undo_name(e, &name, name.count)
         info["undo"] = String(cString: name)
         info["dirty"] = dalnok_project_dirty(e)

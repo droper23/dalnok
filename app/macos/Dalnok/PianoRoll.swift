@@ -34,6 +34,7 @@ final class PianoRollController: NSWindowController, NSWindowDelegate {
     func show(clip: DalnokClipId) {
         focused = true
         roll.clipId = clip
+        roll.warmInstrument()
         roll.selection = []
         roll.entryFrame = nil
         roll.entryPitch = 60
@@ -618,6 +619,12 @@ final class PianoRollView: NSView {
     private var heldPreview: (track: DalnokTrackId, pitch: UInt8)?
     private var playingKeys = false
 
+    /// Sample-based instruments finish loading during their first processing calls, so the first note heard after
+    /// opening a project came late or not at all. A release of no note makes the track's instrument process for a
+    /// moment (2 s) without a sound, before anything is clicked.
+    func warmInstrument() {
+        if let t = track?.id { _ = dalnok_track_preview_note(session.engine.handle, t, 0, 0, false) }
+    }
     /// A short note: created, transposed or step-entered notes.
     func previewNote(_ pitch: UInt8, _ velocity: UInt8) {
         guard let t = track?.id else { return }

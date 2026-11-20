@@ -356,6 +356,12 @@ public:
             }
             out[0][i] = out[1][i] = level_;
         }
+        // Like sample players that finish loading in their first blocks: silent for the first N process calls
+        // (DALNOK_TEST_SYNTH_WARMUP_BLOCKS).
+        if (const char *n = std::getenv("DALNOK_TEST_SYNTH_WARMUP_BLOCKS"); n && warmed_ < std::atoi(n)) {
+            ++warmed_;
+            for (int32 i = 0; i < data.numSamples; ++i) out[0][i] = out[1][i] = 0;
+        }
         return kResultOk;
     }
 
@@ -363,7 +369,7 @@ private:
     bool synth_, delay_, duck_;
     float line_[2][kTestDelay] = {};
     int pos_ = 0;
-    int blocks_ = 0;
+    int blocks_ = 0, warmed_ = 0;
     float gain_ = 0.5f, level_ = 0;
     double shown_ = 0.5;
     IComponentHandler *handler_ = nullptr;

@@ -25,8 +25,12 @@ import Testing
         _ = dalnok_track_set_armed(e, other, true)
         #expect(pumpPeak(e, blocks: 4) == 0, "silent before")
         #expect(dalnok_track_preview_note(e, t, 60, 100, true) == DALNOK_OK)
+        var ml: Float = 0, mr: Float = 0
+        dalnok_meter_master(e, &ml, &mr) // resets
         let held = pumpPeak(e, blocks: 8)
         #expect(held > 0.05, "the note sounds with the transport stopped (peak \(held))")
+        dalnok_meter_master(e, &ml, &mr)
+        #expect(max(ml, mr) > 0.05, "the master meter shows it too (\(ml), \(mr))")
         #expect(dalnok_track_preview_note(e, t, 60, 0, false) == DALNOK_OK)
         _ = pumpPeak(e, blocks: 94) // ~1 s of release
         let tail = pumpPeak(e, blocks: 4)
@@ -72,5 +76,24 @@ extension PluginHosting {
         #expect(dalnok_track_preview_note(e, t, 60, 0, false) == DALNOK_OK)
         for _ in 0..<4 { _ = dalnok_engine_pump(e, &l, &r, 512) }
         #expect(l.allSatisfy { $0 == 0 }, "released")
+    }
+
+    /// A plug-in that is silent for its first blocks (sample players finishing their load) plays the first auditioned
+    /// note at once if the track was warmed (a release of no note, as opening the piano roll sends) beforehand.
+    @Test(.serialized, arguments: [false, true]) func warmingMakesTheFirstPreviewNoteImmediate(_ warm: Bool) {
+        setenv("DALNOK_TEST_SYNTH_WARMUP_BLOCKS", "20", 1); defer { unsetenv("DALNOK_TEST_SYNTH_WARMUP_BLOCKS") }
+        let e = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(e) }
+        let t = dalnok_track_add_instrument(e, "Synth")
+        _ = dalnok_track_set_armed(e, t, false)
+        #expect(dalnok_plugin_add(e, t, testVst3, synthClass, nil, 0) != 0)
+        var l = [Float](repeating: 0, count: 512), r = l
+        if warm { #expect(dalnok_track_preview_note(e, t, 0, 0, false) == DALNOK_OK) }
+        for _ in 0..<30 { _ = dalnok_engine_pump(e, &l, &r, 512) } // ~0.3 s with nothing clicked yet
+        #expect(dalnok_track_preview_note(e, t, 60, 127, true) == DALNOK_OK)
+        var first: Float = 0
+        for _ in 0..<2 { _ = dalnok_engine_pump(e, &l, &r, 512); first = max(first, l.max() ?? 0) }
+        _ = dalnok_track_preview_note(e, t, 60, 0, false)
+        if warm { #expect(abs(first - 1) < 1e-3, "warmed: the first note is heard in its first blocks (peak \(first))") }
+        else { #expect(first == 0, "not warmed: the plug-in is still silent (the case warming fixes)") }
     }
 }
