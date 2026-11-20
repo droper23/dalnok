@@ -333,7 +333,7 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
             ("Selection", selectionGlow, nil),
             ("Displays", smallButton("Reset Display Choices", #selector(resetDisplays)), "Back to the display Dalnok picks for each plug-in (right-click a unit ▸ Display to choose one)."),
             ("Library", smallButton("Open Plug-in Manager…", #selector(openPlugins)), "Scan, validate, favourite and tag your VST3, CLAP and Audio Unit plug-ins."),
-            ("Safety", isolatePlugins, "A plug-in that crashes or stops responding is switched off and reported instead of stopping Dalnok; Load restarts it. Applies to plug-ins loaded from now on. Their own editor windows aren't available in this mode yet; the generic controls are."),
+            ("Safety", isolatePlugins, "A plug-in that crashes or stops responding is switched off and reported instead of stopping Dalnok; Load restarts it. Applies to plug-ins loaded from now on. Each plug-in's editor opens in its own window beside the plug-in window."),
             ("", smallButton("Restore Plug-in Defaults", #selector(restorePluginDefaults)), nil),
         ])
     }

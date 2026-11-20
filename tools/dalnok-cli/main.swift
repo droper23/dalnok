@@ -36,7 +36,7 @@ usage:
   dalnok-cli midi-play <source-id> <seconds> [--record]                  play (and record) the built-in synth from MIDI
   dalnok-cli make-test-project <folder> [--preset demo|band|midi|states|large] [--rate R] [--bpm B] [--tracks N] [--seconds S]
                                                                          generate a deterministic test project (no external files)
-  dalnok-cli plugins [--no-au] [--folder F]                              list VST3, CLAP and Audio Unit plugins (no code loaded)
+  dalnok-cli plugins [--no-au] [--folder F] [--json]                       list VST3, CLAP and Audio Unit plugins (no code loaded)
   dalnok-cli plugins --validate [--match NAME] [--folder F --only-folder] [--au] [--timeout S] [--rescan] [--cache FILE]
                                                                          load each plugin in a separate scanner process
   dalnok-cli bench [--tracks N] [--seconds S]                          render-cost benchmark (no device)
@@ -229,6 +229,7 @@ case "plugins":
     let n = dalnok_plugins_scan(folder, !args.contains("--no-au"), nil, 0)
     var buf = [CChar](repeating: 0, count: n + 1)
     dalnok_plugins_scan(folder, !args.contains("--no-au"), &buf, buf.count)
+    if args.contains("--json") { print(cstr(buf)); break }
     let list = (try? JSONSerialization.jsonObject(with: Data(cstr(buf).utf8))) as? [[String: Any]] ?? []
     var counts: [String: Int] = [:]
     for p in list {

@@ -5,6 +5,7 @@
 //   --snapshot  render the window to a PNG after loading, then quit (UI checks)
 //   --selftest  drive menus and mouse gestures end-to-end, print PASS/FAIL, then quit
 import AppKit
+import DalnokEngine
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -460,6 +461,69 @@ app.run()
         s.setEventHandler { dump(dir) }
         s.resume()
         source = s
+        // Worst main-thread gap between dumps: a 5 ms timer in the common modes notices any stall longer than that.
+        lastTickNs = DispatchTime.now().uptimeNanoseconds
+        let t = Timer(timeInterval: 0.005, repeats: true) { _ in
+            let now = DispatchTime.now().uptimeNanoseconds
+            worstGapNs = max(worstGapNs, now - lastTickNs); lastTickNs = now
+        }
+        RunLoop.main.add(t, forMode: .common)
+    }
+    static var worstGapNs: UInt64 = 0, lastTickNs: UInt64 = 0
+    /// Engine diagnostics for real-input checks: transport, callback stats, meters, undo, and every plug-in slot with
+    /// its isolation stats, editor window and parameter values.
+    static func diagnostics() -> [String: Any] {
+        var info: [String: Any] = ["mainThreadWorstGapMs": Double(worstGapNs) / 1e6,
+                                   "frontmostBundle": NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "",
+                                   "frontmostPid": Int(NSWorkspace.shared.frontmostApplication?.processIdentifier ?? 0)]
+        worstGapNs = 0
+        guard let main = (NSApp.delegate as? AppDelegate)?.main else { return info }
+        let e = main.session.engine.handle
+        var st = DalnokStats(); dalnok_engine_stats(e, &st)
+        info["engine"] = ["callbacks": st.callbacks, "overloads": st.overloads, "maxCallbackNs": st.max_callback_ns,
+                          "lastCallbackNs": st.last_callback_ns, "maxFrames": st.max_frames_per_callback]
+        info["playing"] = dalnok_transport_is_playing(e)
+        info["position"] = dalnok_transport_position(e)
+        var ml: Float = 0, mr: Float = 0; dalnok_meter_master(e, &ml, &mr)
+        info["masterMeter"] = [ml, mr]
+        var name = [CChar](repeating: 0, count: 256); dalnok_undo_name(e, &name, name.count)
+        info["undo"] = String(cString: name)
+        info["dirty"] = dalnok_project_dirty(e)
+        info["windowEdited"] = main.window?.isDocumentEdited ?? false
+        var tracks: [[String: Any]] = []
+        for i in 0..<dalnok_track_count(e) {
+            let tr = dalnok_track_at(e, i)
+            var tl: Float = 0, trr: Float = 0; dalnok_meter_track(e, tr, &tl, &trr)
+            var slots: [[String: Any]] = []
+            for j in 0..<dalnok_track_plugin_count(e, tr) {
+                var p = DalnokPluginSlotInfo(); guard dalnok_track_plugin_info(e, tr, j, &p) == DALNOK_OK else { continue }
+                var slot: [String: Any] = ["id": p.id, "name": withUnsafeBytes(of: p.name) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) },
+                                           "loaded": p.loaded, "loading": p.loading, "isolated": p.isolated,
+                                           "error": withUnsafeBytes(of: p.error) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }]
+                var iso = DalnokPluginIsolationStats()
+                if dalnok_plugin_isolation_stats(e, p.id, &iso) == DALNOK_OK {
+                    slot["isolation"] = ["missed": iso.missed_blocks, "budgetSkips": iso.budget_skips,
+                                         "workgroupJoined": iso.workgroup_joined, "workgroupError": iso.workgroup_error]
+                }
+                var ed = DalnokPluginEditorWindow()
+                if dalnok_plugin_editor_window(e, p.id, &ed) == DALNOK_OK {
+                    slot["editor"] = ["open": ed.open, "visible": ed.visible, "x": ed.x, "y": ed.y, "w": ed.width, "h": ed.height,
+                                      "pid": ed.process_id, "window": ed.window_number]
+                }
+                var params: [[String: Any]] = []
+                for k in 0..<dalnok_plugin_parameter_count(e, p.id) {
+                    var q = DalnokPluginParameter(); guard dalnok_plugin_parameter(e, p.id, k, &q) == DALNOK_OK else { continue }
+                    params.append(["id": q.id, "v": q.value,
+                                   "t": withUnsafeBytes(of: q.title) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) },
+                                   "d": withUnsafeBytes(of: q.display) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }])
+                }
+                slot["params"] = params
+                slots.append(slot)
+            }
+            tracks.append(["id": tr, "meter": [tl, trr], "plugins": slots])
+        }
+        info["tracks"] = tracks
+        return info
     }
     static func dump(_ dir: URL) {
         let screenHeight = NSScreen.screens.first?.frame.height ?? 0
@@ -475,9 +539,11 @@ app.run()
             list.append(["file": name + ".png", "title": w.title, "key": w.isKeyWindow,
                          "x": f.minX, "y": screenHeight - f.maxY, "w": f.width, "h": f.height])
         }
-        let info: [String: Any] = ["windows": list, "frontmost": NSApp.isActive, "time": Date().timeIntervalSince1970]
+        let info: [String: Any] = ["windows": list, "frontmost": NSApp.isActive, "time": Date().timeIntervalSince1970,
+                                   "diagnostics": diagnostics()]
         if let data = try? JSONSerialization.data(withJSONObject: info, options: [.prettyPrinted]) {
             try? data.write(to: dir.appendingPathComponent("windows.json"))
         }
+        lastTickNs = DispatchTime.now().uptimeNanoseconds // the dump's own time is not a stall
     }
 }
