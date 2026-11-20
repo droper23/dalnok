@@ -26,6 +26,7 @@ usage:
   dalnok-cli play <audio-file> [--seconds N] [--churn]   live playback on the default device
   dalnok-cli render <audio-file> <out.wav> [--bits 16|24|32]
   dalnok-cli render-project <project.dalnok> <out.wav> [--bits 16|24|32]
+  dalnok-cli load-bench <project.dalnok> [--play S]                     open as the app does; load time, worst block, misses
   dalnok-cli dirty-check <project.dalnok>                               does opening and playing mark it edited? (which tracks)
   dalnok-cli export-dawproject <project.dalnok> <out.dawproject>
   dalnok-cli recover-capture <spool> <new-output.wav>
@@ -365,6 +366,78 @@ case "dirty-check":
     dalnok_transport_play(engine)
     for _ in 0..<40 { _ = dalnok_engine_pump(engine, &l, &r, 512); usleep(10_000) }
     report("playing 0.4 s")
+    dalnok_engine_destroy(engine)
+    leave(0)
+
+case "load-bench":
+    // Opens a project as the app does (prepare, deferred apply, then activate_next until every plug-in has loaded) and
+    // reports how long that took, the slowest single activate call (what the main thread would block for), failures and
+    // memory; then plays live blocks paced like a device and reports the slowest block and isolated plug-ins' misses.
+    // DALNOK_PLUGIN_HOST=<dalnok-plughost> isolates plug-ins (ADR-0014), as Settings ▸ Plug-ins ▸ Safety does.
+    guard args.count >= 2 else { print(usage); leave(2) }
+    let playSeconds = Double(opt("--play") ?? "10") ?? 10
+    let engine = dalnok_engine_create(48_000)!
+    if let host = ProcessInfo.processInfo.environment["DALNOK_PLUGIN_HOST"] { dalnok_plugins_set_host(engine, host) }
+    var err = [CChar](repeating: 0, count: 512)
+    var missing: Int32 = 0
+    var data: OpaquePointer?
+    let t0 = Date()
+    guard dalnok_project_prepare(args[1], 48_000, &data, &missing, &err, 512) == DALNOK_OK else { fail(cstr(err)) }
+    let prepared = Date().timeIntervalSince(t0)
+    guard dalnok_project_apply_deferred(engine, data) == DALNOK_OK else { fail("apply failed") }
+    var worstCall = 0.0, calls = 0, slowest = (slot: Int32(0), seconds: 0.0)
+    let start = Date()
+    while true {
+        var slot: Int32 = 0, seconds = 0.0
+        let c0 = Date()
+        let left = dalnok_plugins_activate_next(engine, &slot, &seconds)
+        worstCall = max(worstCall, Date().timeIntervalSince(c0)); calls += 1
+        if slot != 0 && seconds > slowest.seconds { slowest = (slot, seconds) }
+        if ProcessInfo.processInfo.environment["DALNOK_LOAD_BENCH_TRACE"] != nil, Date().timeIntervalSince(c0) > 0.05 {
+            print(String(format: "  call %d took %.0f ms (slot finished %d, init %.2f s, %d left)", calls, Date().timeIntervalSince(c0) * 1000, slot, seconds, left))
+        }
+        if left < 0 || (left == 0 && dalnok_plugins_pending(engine) == 0) { break }
+        if Date().timeIntervalSince(start) > 300 { print("timeout: \(left) still loading"); break }
+        usleep(1_000) // the app returns to its run loop between calls
+    }
+    let loadedIn = Date().timeIntervalSince(start)
+    var total = 0, loaded = 0, isolated = 0, failures: [String] = []
+    var slots: [Int32] = []
+    for i in 0..<dalnok_track_count(engine) {
+        let t = dalnok_track_at(engine, i)
+        var info = DalnokPluginSlotInfo()
+        for j in 0..<dalnok_track_plugin_count(engine, t) where dalnok_track_plugin_info(engine, t, j, &info) == DALNOK_OK {
+            total += 1; if info.loaded { loaded += 1 }; if info.isolated { isolated += 1; slots.append(info.id) }
+            if !info.loaded { failures.append(withUnsafeBytes(of: info.error) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }) }
+        }
+    }
+    var rusage = rusage(); getrusage(RUSAGE_SELF, &rusage)
+    print(String(format: "LOAD prepare %.2f s, plug-ins %.2f s (%d calls, worst call %.1f ms, slowest plug-in %.2f s); %d/%d loaded, %d isolated; dirty %@; peak RSS %.0f MB",
+                 prepared, loadedIn, calls, worstCall * 1000, slowest.seconds, loaded, total, isolated,
+                 dalnok_project_dirty(engine) ? "yes" : "no", Double(rusage.ru_maxrss) / 1_048_576))
+    for f in Set(failures) { print("  not loaded: \(f)") }
+    // Live blocks paced at the device rate (no device), transport playing.
+    var l = [Float](repeating: 0, count: 512), r = l
+    let period = 512.0 / 48_000
+    dalnok_transport_play(engine)
+    var worstBlock = 0.0, over = 0, blocks = 0, sum = 0.0
+    let playStart = Date()
+    while Date().timeIntervalSince(playStart) < playSeconds {
+        let b0 = Date()
+        _ = dalnok_engine_pump(engine, &l, &r, 512)
+        let took = Date().timeIntervalSince(b0)
+        worstBlock = max(worstBlock, took); blocks += 1; sum += took; if took > period { over += 1 }
+        if blocks % 64 == 0 { dalnok_engine_collect_garbage(engine) }
+        let rest = period - Date().timeIntervalSince(b0)
+        if rest > 0 { usleep(useconds_t(rest * 1e6)) }
+    }
+    var missed: UInt64 = 0, skips: UInt64 = 0
+    for s in slots {
+        var st = DalnokPluginIsolationStats()
+        if dalnok_plugin_isolation_stats(engine, s, &st) == DALNOK_OK { missed += st.missed_blocks; skips += st.budget_skips }
+    }
+    print(String(format: "PLAY %d blocks, mean %.2f ms, worst %.2f ms of %.2f ms, %d over the period; isolated missed %llu, budget skips %llu; dirty %@",
+                 blocks, sum / Double(max(blocks, 1)) * 1000, worstBlock * 1000, period * 1000, over, missed, skips, dalnok_project_dirty(engine) ? "yes" : "no"))
     dalnok_engine_destroy(engine)
     leave(0)
 
