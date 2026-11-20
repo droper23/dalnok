@@ -203,6 +203,8 @@ bool showEditor(PluginProcessor &plugin, const std::string &title, double x, dou
         dispatch_async(dispatch_get_main_queue(), ^{ fit(); });
         if (std::isnan(x) || std::isnan(y)) [gEditor.panel center];
         else [gEditor.panel setFrameTopLeftPoint:NSMakePoint(x, y)];
+        // Dalnok asks for a place beside its own window without knowing the editor's size: keep it on screen.
+        [gEditor.panel setFrame:onScreen(gEditor.panel.frame) display:NO];
         gEditor.wanted = YES;
     }
     [gEditor.panel orderFrontRegardless]; // the host is not active, so plain orderFront could leave it behind

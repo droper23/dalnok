@@ -47,6 +47,7 @@ DEF_CLASS_IID(IAttributeList)
 DEF_CLASS_IID(IParameterChanges)
 DEF_CLASS_IID(IParamValueQueue)
 DEF_CLASS_IID(IComponentHandler)
+DEF_CLASS_IID(IComponentHandler2)
 }
 namespace Steinberg {
 DEF_CLASS_IID(IPlugView)
@@ -75,7 +76,7 @@ Id cls(const char *name) { return reinterpret_cast<Id (*)(const char *)>(dlsym(R
 
 class TestView final : public IPlugView {
 public:
-    explicit TestView(IComponentHandler *handler) : handler_(handler) {}
+    TestView(IComponentHandler *handler, float *gain) : handler_(handler), gain_(gain) {}
     tresult PLUGIN_API queryInterface(const TUID iid, void **obj) override {
         if (FUnknownPrivate::iidEqual(iid, IPlugView::iid) || FUnknownPrivate::iidEqual(iid, FUnknown::iid)) { *obj = this; addRef(); return kResultOk; }
         *obj = nullptr;
@@ -106,6 +107,12 @@ public:
                     frame_->resizeView(this, &r);
                 }
             }
+        }
+        // A change that is not a parameter (a sound picked in the editor), reported with IComponentHandler2::setDirty.
+        if (std::getenv("DALNOK_TEST_EDITOR_DIRTY") && handler_) {
+            if (gain_) *gain_ = 0.3f; // the change (part of the state, not a parameter)
+            IComponentHandler2 *h2 = nullptr;
+            if (handler_->queryInterface(IComponentHandler2::iid, reinterpret_cast<void **>(&h2)) == kResultOk && h2) h2->setDirty(true);
         }
         if (const char *edit = std::getenv("DALNOK_TEST_EDITOR_EDIT"); edit && handler_) {
             handler_->beginEdit(1);
@@ -138,6 +145,7 @@ private:
     Id view_ = nullptr;
     IPlugFrame *frame_ = nullptr;
     IComponentHandler *handler_ = nullptr;
+    float *gain_ = nullptr;
 };
 
 void setName(String128 out, const char *s) {
@@ -287,7 +295,7 @@ public:
     IPlugView *PLUGIN_API createView(FIDString name) override {
         const char *on = std::getenv("DALNOK_TEST_EDITOR");
         if (!on || std::strcmp(on, "1") != 0 || !name || std::strcmp(name, ViewType::kEditor) != 0) return nullptr;
-        return new TestView(handler_);
+        return new TestView(handler_, &gain_);
     }
 
     tresult PLUGIN_API process(ProcessData &data) override {

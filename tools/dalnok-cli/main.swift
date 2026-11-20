@@ -360,8 +360,8 @@ case "dirty-check":
             print("  track \(t): \(withUnsafeBytes(of: info.name) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }) not loaded: \(withUnsafeBytes(of: info.error) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) })")
         }
     }
-    for _ in 0..<40 { _ = dalnok_engine_pump(engine, &l, &r, 512); usleep(10_000) }
-    report("stopped 0.4 s")
+    for _ in 0..<300 { _ = dalnok_engine_pump(engine, &l, &r, 512); usleep(10_000) }
+    report("stopped 3 s")
     dalnok_transport_play(engine)
     for _ in 0..<40 { _ = dalnok_engine_pump(engine, &l, &r, 512); usleep(10_000) }
     report("playing 0.4 s")

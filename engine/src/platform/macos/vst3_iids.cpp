@@ -29,6 +29,7 @@ DEF_CLASS_IID(IAttributeList)
 DEF_CLASS_IID(IProcessContextRequirements)
 DEF_CLASS_IID(IEditController)
 DEF_CLASS_IID(IComponentHandler)
+DEF_CLASS_IID(IComponentHandler2)
 DEF_CLASS_IID(IConnectionPoint)
 }
 #pragma clang diagnostic pop

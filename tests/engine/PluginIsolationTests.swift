@@ -423,11 +423,13 @@ struct PluginIsolation {
         }
     }
 
-    /// An editor placed beside Dalnok's plug-in window near the screen's right edge that grows after opening (as many
-    /// plug-ins do) is kept inside the screen's visible area instead of running off it.
-    @Test func anEditorThatGrowsAfterOpeningStaysOnScreen() throws {
+    /// An editor placed beside Dalnok's plug-in window near the screen's right edge, at its own size or growing after
+    /// opening (as many plug-ins do), is kept inside the screen's visible area instead of running off it.
+    @Test(arguments: [false, true]) func anEditorThatGrowsAfterOpeningStaysOnScreen(_ later: Bool) throws {
         guard let screen = NSScreen.screens.first else { return }
-        setenv("DALNOK_TEST_EDITOR", "1", 1); setenv("DALNOK_TEST_EDITOR_RESIZE", "900x500", 1); setenv("DALNOK_TEST_EDITOR_RESIZE_LATER", "1", 1)
+        // Sized while opening (placed knowing nothing of it), or a moment later.
+        setenv("DALNOK_TEST_EDITOR", "1", 1); setenv("DALNOK_TEST_EDITOR_RESIZE", "900x500", 1)
+        if later { setenv("DALNOK_TEST_EDITOR_RESIZE_LATER", "1", 1) }
         defer { unsetenv("DALNOK_TEST_EDITOR"); unsetenv("DALNOK_TEST_EDITOR_RESIZE"); unsetenv("DALNOK_TEST_EDITOR_RESIZE_LATER") }
         let (e, t) = audioSession(); defer { dalnok_engine_destroy(e) }
         dalnok_plugins_set_host(e, isolationHost)
@@ -445,6 +447,32 @@ struct PluginIsolation {
         #expect(w.content_width == 900, "the editor grew")
         #expect(w.x >= Double(vf.minX) - 0.5 && w.x + w.width <= Double(vf.maxX) + 0.5, "inside the screen horizontally")
         #expect(w.y >= Double(vf.minY) - 0.5 && w.y + w.height <= Double(vf.maxY) + 0.5, "inside the screen vertically")
+        dalnok_plugin_close_editor(e, slot)
+    }
+
+    /// A VST3 editor change that is not a parameter (IComponentHandler2::setDirty with a changed state) marks the project
+    /// changed, in process (editor in one of our views) and isolated (editor in the host's window).
+    @MainActor @Test(arguments: [false, true]) func setDirtyFromAnEditorMarksTheProjectChanged(_ isolated: Bool) throws {
+        setenv("DALNOK_TEST_EDITOR", "1", 1); setenv("DALNOK_TEST_EDITOR_DIRTY", "1", 1)
+        defer { unsetenv("DALNOK_TEST_EDITOR"); unsetenv("DALNOK_TEST_EDITOR_DIRTY") }
+        let (e, t) = audioSession(); defer { dalnok_engine_destroy(e) }
+        dalnok_plugins_set_host(e, isolated ? isolationHost : nil)
+        var err = [CChar](repeating: 0, count: 256)
+        let slot = dalnok_plugin_add(e, t, testVst3, gainClass, &err, 256)
+        #expect(slot != 0, "\(cstr(err))")
+        let path = tempDir().appendingPathComponent("vst3-dirty-\(UUID().uuidString).dalnok").path
+        #expect(dalnok_project_save(e, path, nil, 0) == DALNOK_OK && !dalnok_project_dirty(e))
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: 400, height: 300))
+        usleep(2_200_000) // past the 2 s after loading in which setDirty only settles the state
+        if isolated {
+            #expect(dalnok_plugin_show_editor_window(e, slot, "Audio — Dalnok Test Gain", 100, 600, &err, 256) == DALNOK_OK, "\(cstr(err))")
+        } else {
+            var w: Int32 = 0, h: Int32 = 0
+            #expect(dalnok_plugin_open_editor(e, slot, Unmanaged.passUnretained(view).toOpaque(), &w, &h, nil, nil, &err, 256) == DALNOK_OK, "\(cstr(err))")
+        }
+        var l = [Float](repeating: 0, count: 512), r = l
+        for _ in 0..<4 { _ = dalnok_engine_pump(e, &l, &r, 512) }
+        #expect(dalnok_project_dirty(e), "setDirty from the editor marks the project changed (isolated \(isolated))")
         dalnok_plugin_close_editor(e, slot)
     }
 
