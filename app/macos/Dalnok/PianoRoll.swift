@@ -34,6 +34,7 @@ final class PianoRollController: NSWindowController, NSWindowDelegate {
     func show(clip: DalnokClipId) {
         focused = true
         roll.clipId = clip
+        roll.warmInstrument()
         roll.selection = []
         roll.entryFrame = nil
         roll.entryPitch = 60
@@ -366,7 +367,7 @@ final class PianoRollView: NSView {
         let original: [DalnokNote] // all notes at gesture start
         let moving: Set<NoteKey>
         var changed = false
-        var previewed: UInt8?
+        var previewed: UInt8? = nil
     }
     private var drag: Drag?
     private struct Marquee { let start: CGPoint; var end: CGPoint; let initial: Set<NoteKey> }
@@ -405,6 +406,13 @@ final class PianoRollView: NSView {
             if !selection.contains(k) { selection = [k] }
             drag = Drag(kind: .velocity, start: p, original: c.notes, moving: selection)
             session.engine.beginGroup("Note Velocity")
+            holdPreview(n.pitch, n.velocity)
+            return
+        }
+        // The keyboard on the left plays its keys (held while the mouse is down; dragging glides).
+        if p.x < Self.keyWidth, p.y >= grid.minY, p.y <= grid.maxY {
+            playingKeys = true
+            holdPreview(UInt8(pitch(atY: p.y)), 100)
             return
         }
         guard grid.contains(p) else { return }
@@ -415,8 +423,9 @@ final class PianoRollView: NSView {
             } else if !selection.contains(k) {
                 selection = [k]
             }
-            drag = Drag(kind: edge ? .resize : .move, start: p, original: c.notes, moving: selection)
+            drag = Drag(kind: edge ? .resize : .move, start: p, original: c.notes, moving: selection, previewed: n.pitch)
             session.engine.beginGroup(edge ? "Resize Notes" : "Move Notes")
+            holdPreview(n.pitch, n.velocity) // clicking a note plays it
             (edge ? NSCursor.resizeLeftRight : NSCursor.closedHand).set()
             return
         }
@@ -441,6 +450,11 @@ final class PianoRollView: NSView {
     }
 
     override func mouseDragged(with event: NSEvent) {
+        if playingKeys {
+            let p = convert(event.locationInWindow, from: nil)
+            holdPreview(UInt8(max(0, min(127, pitch(atY: min(max(p.y, grid.minY), grid.maxY))))), 100)
+            return
+        }
         if var m = marquee, let c = clip {
             let p = convert(event.locationInWindow, from: nil)
             m.end = CGPoint(x: min(max(p.x, grid.minX), grid.maxX), y: min(max(p.y, grid.minY), grid.maxY))
@@ -472,9 +486,10 @@ final class PianoRollView: NSView {
                 result.append(m)
                 moved.insert(key(m))
             }
-            if let first = result.first(where: { moved.contains(key($0)) }), first.pitch != (d.previewed ?? d.original.first { d.moving.contains(key($0)) }?.pitch) {
-                previewNote(first.pitch, first.velocity)
-                d.previewed = first.pitch
+            // The grabbed note sounds at its new pitch as it moves.
+            if let grabbed = d.previewed, let now = UInt8(exactly: Int(grabbed) + dp), heldPreview?.pitch != now,
+               let n = result.first(where: { moved.contains(key($0)) }) {
+                holdPreview(now, n.velocity)
             }
         case .resize:
             let dl = Int64(bypass ? dxFrames.rounded() : (dxFrames / snapFrames).rounded() * snapFrames)
@@ -499,6 +514,8 @@ final class PianoRollView: NSView {
     }
 
     override func mouseUp(with event: NSEvent) {
+        releasePreview()
+        playingKeys = false
         if drag != nil { session.engine.endGroup() }
         drag = nil
         marquee = nil
@@ -597,11 +614,34 @@ final class PianoRollView: NSView {
     }
 
     /// Plays the note on the instrument when this clip's track is the armed (live) one.
+    // Auditioning, as in other DAWs: notes sound through the clip's track instrument while you click, hold, move or
+    // resize them, armed or not, playing or stopped, and are never recorded (dalnok_track_preview_note).
+    private var heldPreview: (track: DalnokTrackId, pitch: UInt8)?
+    private var playingKeys = false
+
+    /// Sample-based instruments finish loading during their first processing calls, so the first note heard after
+    /// opening a project came late or not at all. A release of no note makes the track's instrument process for a
+    /// moment (2 s) without a sound, before anything is clicked.
+    func warmInstrument() {
+        if let t = track?.id { _ = dalnok_track_preview_note(session.engine.handle, t, 0, 0, false) }
+    }
+    /// A short note: created, transposed or step-entered notes.
     func previewNote(_ pitch: UInt8, _ velocity: UInt8) {
-        guard track?.armed == true else { return }
+        guard let t = track?.id else { return }
         let h = session.engine.handle
-        dalnok_midi_inject(h, 0x90, pitch, velocity)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) { dalnok_midi_inject(h, 0x80, pitch, 0) }
+        guard dalnok_track_preview_note(h, t, pitch, velocity, true) == DALNOK_OK else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { _ = dalnok_track_preview_note(h, t, pitch, 0, false) }
+    }
+    /// A note held for as long as the mouse is down on it; moving it to another pitch plays the new one.
+    func holdPreview(_ pitch: UInt8, _ velocity: UInt8) {
+        if heldPreview?.pitch == pitch { return }
+        releasePreview()
+        guard let t = track?.id, dalnok_track_preview_note(session.engine.handle, t, pitch, max(1, velocity), true) == DALNOK_OK else { return }
+        heldPreview = (t, pitch)
+    }
+    func releasePreview() {
+        if let held = heldPreview { _ = dalnok_track_preview_note(session.engine.handle, held.track, held.pitch, 0, false) }
+        heldPreview = nil
     }
 
     // MARK: Navigation

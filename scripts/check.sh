@@ -17,6 +17,9 @@ scripts/ci/plugin-host.sh
 if [[ "${DALNOK_SANITIZE:-0}" == "1" ]]; then
   swift test --sanitize=address
   swift test --sanitize=thread
+else
+  # Untrusted-file parsers always run under AddressSanitizer (audit A-10); the full sanitizer pass is opt-in.
+  swift test --sanitize=address --filter 'ProjectParsingRobustness|ReaperImport|AbletonImport|FcpxmlImport|StemsImport|LogicImport|Dawproject|LogicPluginImport|LogicMixerImport|Persistence'
   DALNOK_CAPTURE_TSAN=1 scripts/ci/capture-ring.sh
   DALNOK_MIDI_TSAN=1 scripts/ci/midi-parser.sh
 fi

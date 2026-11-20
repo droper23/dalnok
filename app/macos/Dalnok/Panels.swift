@@ -87,6 +87,8 @@ final class TransportBar: NSView {
     let titleLabel = NSTextField(labelWithString: "Untitled")
     /// Secondary line under the title: audio status, or a transient message.
     let statusLabel = NSTextField(labelWithString: "")
+    /// Shown beside the status while a project's plug-ins load (ADR-0013); stops loading the rest.
+    let stopLoadingButton = NSButton(title: "Stop", target: nil, action: nil)
     let timeLabel = NSTextField(labelWithString: "0:00.000")
     /// Small second readout under the main one: real time when the main shows bars, and bars when it shows time.
     let subTimeLabel = NSTextField(labelWithString: "")
@@ -142,7 +144,16 @@ final class TransportBar: NSView {
         statusLabel.font = Theme.ui(11)
         statusLabel.textColor = Theme.textDim
         statusLabel.lineBreakMode = .byTruncatingTail
-        let titles = NSStackView(views: [titleLabel, statusLabel])
+        stopLoadingButton.bezelStyle = .inline
+        stopLoadingButton.controlSize = .small
+        stopLoadingButton.font = Theme.ui(10)
+        stopLoadingButton.isHidden = true
+        stopLoadingButton.toolTip = "Stop loading plug-ins; the rest stay unloaded with their settings"
+        stopLoadingButton.setAccessibilityLabel("Stop loading plug-ins")
+        let statusRow = NSStackView(views: [statusLabel, stopLoadingButton])
+        statusRow.orientation = .horizontal
+        statusRow.spacing = 6
+        let titles = NSStackView(views: [titleLabel, statusRow])
         titles.orientation = .vertical
         titles.alignment = .leading
         titles.spacing = 1

@@ -145,10 +145,21 @@ struct RenderSlot {
     std::vector<RenderNote> notes, noteEnds; // MIDI, relative to the loop start, sorted by start / by end
 };
 
+// Everything a track plays that is derived from its clips. Immutable once built, so snapshots share it: a
+// structural edit rebuilds only the tracks whose clips changed (A-04).
+struct TrackContent {
+    std::vector<RenderSlot> slots;    // launcher clips, sorted by slot
+    std::vector<RenderClip> clips;    // z-order: later clips overwrite earlier ones
+    std::vector<RenderNote> notes;    // sorted by start
+    std::vector<RenderNote> noteEnds; // the same notes sorted by end (plugin note-offs)
+    bool stereoClip = false;          // some audio clip has more than one channel
+    uint64_t mutedMidiSignature = 0;
+};
+
 struct RenderTrack {
     int32_t id = 0; // DalnokTrackId
     std::shared_ptr<TrackRuntime> runtime;
-    std::vector<RenderSlot> slots; // launcher clips on this track
+    std::shared_ptr<const TrackContent> content; // never null in a compiled snapshot
     bool bus = false;      // mixes its input slot instead of clips
     int32_t busSlot = -1;  // this bus's input slot
     int32_t output = -1;   // destination bus slot, -1 = master
@@ -163,12 +174,9 @@ struct RenderTrack {
     // Plug-in parameter automation, applied once per block (block-rate) before the plug-in runs.
     struct PluginLane { PluginProcessor *plugin = nullptr; uint32_t param = 0; double lo = 0, hi = 1; std::vector<std::pair<int64_t, float>> pts; };
     std::vector<PluginLane> pluginAuto;
-    std::vector<RenderClip> clips; // z-order: later clips overwrite earlier ones
     bool monoSource = true;        // every clip is mono -> constant-power pan law
     uint64_t mutedMidiSignature = 0;
     bool instrument = false;       // MIDI track (built-in synth unless instrumentPlugin is set)
-    std::vector<RenderNote> notes; // sorted by start
-    std::vector<RenderNote> noteEnds; // the same notes sorted by end (plugin note-offs)
     PluginProcessor *instrumentPlugin = nullptr;
     std::vector<PluginProcessor *> inserts;               // processing order
     std::vector<std::shared_ptr<PluginProcessor>> keep;   // keeps instances alive while this snapshot exists
@@ -241,6 +249,12 @@ struct Scratch {
     // Live-input notes for the live track's plugin instrument in this block (set by the live path).
     const PluginNote *liveNotes = nullptr;
     int liveNoteCount = 0;
+    // The track playing live input in this callback: the armed instrument track, or the one being auditioned from the
+    // piano roll (Engine::previewNote). -1 = none (offline renders).
+    int32_t liveTrack = -1;
+    // Live callbacks: when every isolated plug-in in this callback must have answered (one shared budget; 0 = none,
+    // as for offline renders). Set once per callback by Engine::process.
+    uint64_t deadlineNs = 0;
 };
 
 // Mixes `frames` (<= kMaxBlock) of `state` at timeline position `pos` into
@@ -250,6 +264,8 @@ struct Scratch {
 // playback voices in each TrackRuntime.
 void renderBlock(const RenderState &state, int64_t pos, int frames, float *left, float *right,
                  Scratch &scratch, bool smooth, bool anySolo, SynthState *synths = nullptr) DALNOK_NONBLOCKING;
+// While the transport is stopped: gives every plug-in its idle call (parameter flushes), within the callback's budget.
+void idlePlugins(const RenderState &state, Scratch &scratch) DALNOK_NONBLOCKING;
 // Adds live-input instrument voices (independent of the transport) through the track's gain and pan.
 // While the transport is stopped this also runs a plugin instrument (and its inserts) for live notes.
 void renderLiveInput(const RenderState &state, int frames, float *left, float *right, Scratch &scratch,

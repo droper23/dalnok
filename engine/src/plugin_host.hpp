@@ -84,7 +84,13 @@ public:
     // this block's sidechain signal (frames long); nullptr feeds silence.
     virtual bool hasSidechain() const { return false; }
     void setSidechain(const float *l, const float *r) DALNOK_NONBLOCKING { scL_ = l; scR_ = r; }
+    // The callback's shared deadline for isolated plug-ins (CLOCK_UPTIME_RAW ns; 0 = none). Audio thread, before process.
+    void setDeadline(uint64_t ns) DALNOK_NONBLOCKING { deadlineNs_ = ns; }
+    // Audio thread, while the transport is stopped and `process` is not called: lets a plug-in exchange parameter
+    // changes with the host (a CLAP plug-in's request_flush, so edits in its editor reach Dalnok at once).
+    virtual void idle() DALNOK_NONBLOCKING {}
 protected:
+    uint64_t deadlineNs_ = 0;
     const float *scL_ = nullptr, *scR_ = nullptr;
     static constexpr int kMaxAuto = 64;
     struct AutoChange { uint32_t id; double value; };
@@ -94,10 +100,51 @@ public:
 
     // The plugin's own editor (main thread). `parent` is an NSView on macOS. `onResize` is called
     // when the editor asks for a new size.
+    // Out-of-process instances (ADR-0014): why the instance stopped working (empty = fine), a control-thread health
+    // check that may set it, and whether this instance runs in its own process.
+    virtual std::string failure() const { return {}; }
+    virtual void poll() {}
+    virtual bool isolated() const { return false; }
+
     virtual bool hasEditor() = 0;
     virtual bool openEditor(void *parent, int32_t &width, int32_t &height, void (*onResize)(void *ctx, int32_t w, int32_t h),
                             void *ctx, std::string &err) = 0;
     virtual void closeEditor() = 0;
+
+    // Isolated instances (ADR-0015): the editor opens in a window owned by the host process instead of `openEditor`.
+    // `x`, `y`: the window's top-left in screen coordinates (NaN centers). Main thread.
+    struct EditorWindowInfo {
+        bool visible = false, open = false;
+        double x = 0, y = 0, width = 0, height = 0, contentWidth = 0, contentHeight = 0;
+        int64_t windowNumber = 0, level = 0;
+        int32_t processId = 0;
+    };
+    virtual bool showEditorWindow(const std::string &title, double x, double y, std::string &err) {
+        (void)title; (void)x; (void)y;
+        err = "this plug-in's editor opens inside Dalnok";
+        return false;
+    }
+    virtual bool editorWindow(EditorWindowInfo &out) { (void)out; return false; }
+    // A key the isolated editor's window did not use (its window has the keyboard while Dalnok stays active), passed
+    // back so Dalnok's own shortcuts still work. Main thread; false when there is none.
+    struct EditorKey {
+        uint16_t keyCode = 0;
+        uint64_t modifiers = 0;       // NSEventModifierFlags
+        char characters[16] = {}, charactersIgnoringModifiers[16] = {};
+    };
+    virtual bool takeEditorKey(EditorKey &out) { (void)out; return false; }
+    virtual bool editorSnapshot(const std::string &pngPath) { (void)pngPath; return false; }
+
+    // Isolated instances: the audio device's workgroup for the host's processing thread to join (a Mach send right,
+    // copied; 0 = leave), and how the instance is doing. Control thread.
+    virtual void shareWorkgroup(uint32_t port) { (void)port; }
+    struct IsolationStats {
+        uint64_t missedBlocks = 0, budgetSkips = 0;
+        bool workgroupJoined = false;
+        int32_t workgroupError = 0; // os_workgroup_join's result for the last workgroup offered (0 = joined)
+        uint32_t workgroupJoins = 0;
+    };
+    virtual bool isolationStats(IsolationStats &out) { (void)out; return false; }
 };
 
 // Loads a VST3 bundle in this process. `classId` (32 hex digits) picks a class; empty = the first

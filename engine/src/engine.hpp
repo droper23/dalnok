@@ -2,12 +2,18 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include "transport.hpp"
+#include "recording_state.hpp"
 #include "dalnok/dalnok.h"
 #include "device.hpp"
 #include "capture_spool.hpp"
 #include "json.hpp"
 #include "midi_parser.hpp"
 #include "plugin_host.hpp"
+#include "plugin_remote.hpp"
+#include "plugin_service.hpp"
+#include "undo_stack.hpp"
+#include "stream_cache.hpp"
 #include "render.hpp"
 #include "stretch_cache.hpp"
 #include "tempo_map.hpp"
@@ -15,9 +21,11 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <filesystem>
 #include <map>
+#include <set>
 #include <memory>
 #include <string>
 #include <vector>
@@ -33,10 +41,25 @@ struct Send {
     DalnokTrackId bus = 0;
     float db = 0;
     bool pre = false;
+    bool operator==(const Send &) const = default;
+};
+
+// Plug-in state as an immutable, shared blob. Every edit and every undo step copies the model, so the
+// state chunk is shared rather than copied; a new state replaces the pointer (audit finding A-07).
+struct SharedPluginState {
+    std::shared_ptr<const std::string> blob;
+    bool empty() const { return !blob || blob->empty(); }
+    const std::string &str() const {
+        static const std::string kNone;
+        return blob ? *blob : kNone;
+    }
+    void assign(std::string s) { blob = s.empty() ? nullptr : std::make_shared<const std::string>(std::move(s)); }
+    void clear() { blob.reset(); }
+    bool operator==(const SharedPluginState &) const = default; // same blob (blobs are immutable)
 };
 
 // A plugin on a track: the instrument (instrument tracks) or an insert effect. The live instance
-// lives in Engine::plugins_ by id, outside the undoable model, so undo never reloads plugin code.
+// lives in Engine::pluginHost_ (PluginHostService) by id, outside the undoable model, so undo never reloads plugin code.
 struct PluginSlot {
     int32_t id = 0;
     std::string format = "vst3", path, classId, name, vendor;
@@ -44,13 +67,15 @@ struct PluginSlot {
     std::vector<uint32_t> controls; // parameters on the device panel's controller (empty = the first automatable ones)
     bool bypassed = false;          // footswitch/bypass: effects pass audio through, instruments go silent (undoable)
     int32_t sidechain = 0;          // DalnokTrackId whose pre-fader signal feeds this plug-in's sidechain input (0 = none)
-    std::string state; // last known plugin state (used when the plugin is missing, and for saving)
+    SharedPluginState state; // last known plugin state (used when the plugin is missing, and for saving)
+    bool operator==(const PluginSlot &) const = default;
 };
 
 // Automation: breakpoints in timeline frames. Volume values are dB; pan values are -1 (left) to 1 (right).
 struct AutoPoint {
     int64_t frame = 0;
     float value = 0;
+    bool operator==(const AutoPoint &) const = default;
 };
 enum AutoTarget : int32_t { kAutoVolume = 0, kAutoPan = 1 };
 // A plug-in parameter lane: values are normalized 0-1 (the plug-in's own range is applied at render).
@@ -58,6 +83,7 @@ struct PluginAuto {
     int32_t slot = 0;
     uint32_t param = 0;
     std::vector<AutoPoint> points;
+    bool operator==(const PluginAuto &) const = default;
 };
 
 // Lane heights a track may have (points; the app's default is 88).
@@ -86,6 +112,7 @@ struct TrackState {
     bool muted = false;
     bool solo = false;
     std::shared_ptr<TrackRuntime> runtime; // shared across model copies
+    bool operator==(const TrackState &) const = default; // used to find which tracks an edit changed (A-05)
 };
 
 // MIDI note in frames, relative to the start of its clip's source (like an audio offset).
@@ -116,6 +143,7 @@ struct ClipState {
     bool stretched() const { return std::fabs(rate - 1.0) > 1e-9 || pitch != 0; }
     int64_t sourceLength() const { return static_cast<int64_t>(std::llround(static_cast<double>(length) * rate)); }
     std::string name;
+    bool operator==(const ClipState &) const = default; // note lists compare by identity (they are immutable)
 };
 
 // Take folder (comping): takes are alternate clips (ClipState::alt, kept but not played); the comp says which
@@ -201,41 +229,31 @@ public:
     };
     bool startRecording(const std::string &inputUid, const std::string &directory, std::string &err);
     bool stopRecording(RecordResult &result, std::string &err);
-    bool recording() const { return recording_; }
+    bool recording() const { return rec_.active; }
     // Record into a launcher slot (-1 = the arrangement): takes go to this slot on each recorded track,
     // trimmed to whole bars (the bars the take fully covers), replacing what was there. Not saved.
-    void setRecordSlot(int32_t slot) { recordSlot_.store(slot, std::memory_order_relaxed); }
-    int32_t recordSlot() const { return recordSlot_.load(std::memory_order_relaxed); }
-    int64_t recordStart() const { return recordStart_.load(std::memory_order_acquire); }
-    bool recordBroken() const { return recordBroken_.load(std::memory_order_acquire); }
-    void setRecordLatencyOffset(int64_t frames) { latencyOffset_ = frames; }
+    void setRecordSlot(int32_t slot) { rec_.recordSlot.store(slot, std::memory_order_relaxed); }
+    int32_t recordSlot() const { return rec_.recordSlot.load(std::memory_order_relaxed); }
+    int64_t recordStart() const { return rec_.recordStart.load(std::memory_order_acquire); }
+    bool recordBroken() const { return rec_.recordBroken.load(std::memory_order_acquire); }
+    void setRecordLatencyOffset(int64_t frames) { rec_.latencyOffset = frames; }
     int64_t recordLatency() const; // device-reported round trip + offset
-    void setMonitoring(bool on) { monitoring_.store(on, std::memory_order_relaxed); }
+    void setMonitoring(bool on) { rec_.monitoring.store(on, std::memory_order_relaxed); }
     // Metronome: a click on every beat (accented on the bar) while the transport rolls. Live path only;
     // offline renders and exports never contain it.
-    void setMetronome(bool on, float level) {
-        metronomeLevel_.store(std::clamp(level, 0.0f, 1.0f), std::memory_order_relaxed);
-        metronome_.store(on, std::memory_order_relaxed);
-    }
-    bool metronome() const { return metronome_.load(std::memory_order_relaxed); }
+    void setMetronome(bool on, float level) { transport_.setMetronome(on, level); }
+    bool metronome() const { return transport_.metronome.load(std::memory_order_relaxed); }
     // Count-in: the click also sounds before `frame` (0 = off), whether or not the metronome is on.
-    void setCountIn(int64_t frame) { countInUntil_.store(std::max<int64_t>(0, frame), std::memory_order_relaxed); }
+    void setCountIn(int64_t frame) { transport_.setCountIn(frame); }
     // Cycle (loop) playback between two frames. Transport state saved with the project, not an undo step.
     // Playback that crosses `end` continues at `start` on the exact sample; recording plays straight through.
-    bool setCycle(bool on, int64_t start, int64_t end, std::string &err);
+    bool setCycle(bool on, int64_t start, int64_t end, std::string &err) { return transport_.setCycle(on, start, end, err); }
     // Punch: a take only records [in, out); the transport rolls before and after (pre- and post-roll).
     // Used for punch in/out and for count-in (in = where recording was started). Not saved.
-    bool setPunch(bool on, int64_t in, int64_t out, std::string &err);
-    void punch(bool &on, int64_t &in, int64_t &out) const {
-        in = punchIn_.load(std::memory_order_relaxed); out = punchOut_.load(std::memory_order_relaxed);
-        on = in != INT64_MIN;
-    }
-    void cycle(bool &on, int64_t &start, int64_t &end) const {
-        on = cycleOn_.load(std::memory_order_relaxed);
-        start = cycleStart_.load(std::memory_order_relaxed);
-        end = cycleEnd_.load(std::memory_order_relaxed);
-    }
-    bool monitoring() const { return monitoring_.load(std::memory_order_relaxed); }
+    bool setPunch(bool on, int64_t in, int64_t out, std::string &err) { return transport_.setPunch(on, in, out, err); }
+    void punch(bool &on, int64_t &in, int64_t &out) const { transport_.punch(on, in, out); }
+    void cycle(bool &on, int64_t &start, int64_t &end) const { transport_.cycle(on, start, end); }
+    bool monitoring() const { return rec_.monitoring.load(std::memory_order_relaxed); }
     void setSimulatedLatency(int64_t frames) { simulatedLatency_ = frames; }
     // Runs one duplex cycle on the simulated input device (tests and simulation).
     bool pumpInput(const float *input, float *left, float *right, int frames);
@@ -244,7 +262,7 @@ public:
     bool openMidiInput(int32_t uniqueId, std::string &err);
     bool injectMidi(uint8_t status, uint8_t data1, uint8_t data2);
     uint64_t midiDropped() const;
-    int32_t recordedMidiEvents() const { return static_cast<int32_t>(midiTake_.size()); }
+    int32_t recordedMidiEvents() const { return static_cast<int32_t>(rec_.midiTake.size()); }
     bool stopCapture(DalnokCaptureStats &stats, std::string &err, bool restoreOutput = true);
     bool captureActive() const { return duplex_ != nullptr; }
     bool captureStatus(DalnokCaptureStats &stats) const;
@@ -265,6 +283,15 @@ public:
     // Model (read)
     const Model &model() const { return model_; }
     uint64_t revision() const { return revision_; }
+    // The revision at which this track's view-relevant state (track fields, its clips) last changed (A-05).
+    uint64_t trackRevision(DalnokTrackId id) const {
+        auto it = trackRevisions_.find(id);
+        // A track never stamped individually has not changed since the last whole-project change.
+        return std::max(globalRevision_, it == trackRevisions_.end() ? 0 : it->second);
+    }
+    bool onlyParametersSince(uint64_t revision) const {
+        return lastParameterRevision_ == revision_ && revision < revision_ && revision >= firstParameterRevision_ - 1;
+    }
     int64_t sessionLength() const;
 
     // Commands (each is an undo step unless inside a group). Return false and
@@ -304,7 +331,7 @@ public:
     bool removeMarker(int32_t id, std::string &err);
     bool moveMarker(int32_t id, int64_t frame, std::string &err);
     bool renameMarker(int32_t id, const std::string &name, std::string &err);
-    bool pluginHasSidechain(int32_t slot) const { auto it = plugins_.find(slot); return it != plugins_.end() && it->second && it->second->hasSidechain(); }
+    bool pluginHasSidechain(int32_t slot) const { const auto *p = pluginHost_.instance(slot); return p && p->hasSidechain(); }
     // Summing stacks: a stack bus placed above its members, which are routed into it. One undo step each.
     DalnokTrackId makeStack(const std::vector<DalnokTrackId> &members, const std::string &name, std::string &err);
     bool setStackCollapsed(DalnokTrackId stack, bool collapsed, std::string &err);
@@ -385,10 +412,10 @@ public:
     // Undo
     bool undo();
     bool redo();
-    bool canUndo() const { return !undo_.empty(); }
-    bool canRedo() const { return !redo_.empty(); }
-    std::string undoName() const { return undo_.empty() ? "" : undo_.back().name; }
-    std::string redoName() const { return redo_.empty() ? "" : redo_.back().name; }
+    bool canUndo() const { return history_.canUndo(); }
+    bool canRedo() const { return history_.canRedo(); }
+    std::string undoName() const { return history_.undoName(); }
+    std::string redoName() const { return history_.redoName(); }
     void beginGroup(const std::string &name);
     void endGroup();
 
@@ -405,7 +432,26 @@ public:
     struct PreparedProject;
     static std::unique_ptr<PreparedProject> prepareProject(const std::string &path, double sampleRate,
                                                            int32_t &missing, std::string &err);
-    void applyProject(std::unique_ptr<PreparedProject> p, bool recovered = false);
+    // load: activate every plug-in now. recover: keep slots unloaded. defer: show the project now and queue its
+    // plug-ins for activateNextPlugin (ADR-0013).
+    enum class ApplyMode { load, recover, defer };
+    bool applyProject(std::unique_ptr<PreparedProject> p, ApplyMode mode = ApplyMode::load);
+    // Deferred activation (control/main thread). Handles the next queued plug-in and returns how many remain (queued
+    // or loading), or -1 if none were; `slot` and `seconds` report the one finished in this call. Isolated plug-ins
+    // load in their own processes without blocking: the call starts their hosts and returns, `slot` is 0 until one
+    // finishes (ADR-0014 stage 2).
+    int32_t activateNextPlugin(int32_t &slot, double &seconds);
+    int32_t pendingPluginCount() const { return static_cast<int32_t>(pluginHost_.pendingCount()); }
+    bool pluginLoading(int32_t slot) const;
+    bool takeEditorKey(int32_t &slot, PluginProcessor::EditorKey &key) { return pluginHost_.takeEditorKey(slot, key); }
+    void noteEditorOpened(int32_t slot) { pluginHost_.noteEditorOpened(slot); }
+    bool previewNote(DalnokTrackId track, uint8_t pitch, uint8_t velocity, bool on);
+    bool pluginEditorStatesChanged() const { return pluginHost_.editorStatesChanged(); }
+    void cancelPendingPlugins();
+    bool reloadPlugin(int32_t slot, std::string &err); // an unloaded or failed slot, from its saved state
+    void setPluginHost(const std::string &path) { pluginHost_.setHostPath(path); }
+    const std::string &pluginHost() const { return pluginHost_.hostPath(); }
+    void setRecoveryDirectory(std::string directory) { recoveryDirectory_ = std::move(directory); }
     // Imports another DAW's project (see import/import.hpp) into a prepared project + JSON report.
     static std::unique_ptr<PreparedProject> prepareImport(const std::string &path, double sampleRate, int32_t &missing,
                                                           std::string &reportJson, std::string &err);
@@ -415,11 +461,11 @@ public:
     json::Value describe() const; // model as JSON (used by save and session.describe)
 
     // Transport
-    void play() { playing_.store(true, std::memory_order_relaxed); }
-    void pause() { playing_.store(false, std::memory_order_relaxed); }
-    void seek(int64_t frame) { seekRequest_.store(std::max<int64_t>(0, frame), std::memory_order_relaxed); }
-    bool playing() const { return playing_.load(std::memory_order_relaxed); }
-    int64_t position() const { return position_.load(std::memory_order_relaxed); }
+    void play() { transport_.play(); }
+    void pause() { transport_.pause(); }
+    void seek(int64_t frame) { transport_.seek(frame); }
+    bool playing() const { return transport_.playing.load(std::memory_order_relaxed); }
+    int64_t position() const { return transport_.position.load(std::memory_order_relaxed); }
 
     // Offline
     bool renderOffline(int64_t start, int64_t frames, float *left, float *right);
@@ -427,24 +473,53 @@ public:
 
     void stats(DalnokStats &out) const;
     void resetStats();
+    int32_t snapshotMismatches() const; // tracks whose reused content differs from a fresh build (tests)
 
 private:
-    struct UndoStep {
-        std::string name;
-        Model model;
-    };
+#ifdef DALNOK_TEST_HOOKS
+    friend void handoffSaturationFixture(uint64_t *out);
+#endif
+    using ParameterField = dalnok::ParameterField;
+    using ParameterValue = dalnok::ParameterValue;
+    bool editParameter(const char *name, DalnokTrackId track, ParameterField field, float value, std::string &err);
+    float parameterValue(DalnokTrackId track, ParameterField field) const;
+    void applyParameter(const ParameterValue &value);
+    void applyUndo(bool undo); // undo (or redo) the top step of its stack
 
     // Runs `fn` against the model; on success records an undo step and publishes.
     template <typename F>
     bool edit(const char *name, bool structural, F &&fn);
     void restore(Model m);
     void syncRuntimes();
-    using PluginMap = std::map<int32_t, std::shared_ptr<PluginProcessor>>;
+    using PluginMap = PluginHostService::PluginMap;
     std::unique_ptr<RenderState> compile(std::vector<StretchJob> *needed = nullptr, const PluginMap *plugins = nullptr) const;
-    PluginMap offlinePlugins() const; // fresh instances with the live state, for offline renders
-    void instantiatePlugins();        // creates missing instances for every slot in the model
-    void captureLiveState(Model &m) const;
+    void instantiatePlugins(); // creates missing instances for every slot in the model
+    void bumpRevisionKeepingSaved(); // a UI-visible change that is not an edit (dirty state unchanged)
     StretchKey stretchKey(const ClipState &c) const;
+    // Per-track content cache for incremental compilation (A-04). A key records every clip input the content
+    // build reads; it holds the media and note lists strongly, so a pointer match can never be a reused address.
+    struct ClipKey {
+        DalnokClipId id = 0;
+        int32_t slot = -1, follow = 0, followLoops = 1, fadeCurve = 0;
+        bool muted = false, alt = false, preservePitch = true;
+        NoteList notes;
+        DalnokMediaId mediaId = 0;
+        std::shared_ptr<const Media> media, derived; // resolved pool media; finished stretch (stretched clips)
+        int64_t start = 0, offset = 0, length = 0, fadeIn = 0, fadeOut = 0;
+        float gainDb = 0, pitch = 0;
+        double rate = 1.0;
+    };
+    struct ContentEntry {
+        bool instrument = false;
+        std::vector<ClipKey> clips;
+        std::shared_ptr<const TrackContent> content;
+        std::vector<StretchJob> needed; // stretch jobs this content is waiting for
+    };
+    const Media *resolvedMedia(const ClipState &c) const;
+    std::shared_ptr<const Media> resolvedStretch(const ClipState &c, const Media *media) const;
+    bool sameInputs(const ClipKey &k, const ClipState &c) const;
+    std::shared_ptr<const TrackContent> buildContent(const std::vector<const ClipState *> &clips, bool instrument,
+                                                     std::vector<StretchJob> &needed) const;
     void renderPendingStretchesNow();
     void commit();
     void resetModel();
@@ -453,7 +528,7 @@ private:
     static void duplexCallback(void *ctx, float *left, float *right, const float *const *inputs, int inputCount,
                                int frames) DALNOK_NONBLOCKING;
     void process(float *left, float *right, int frames) DALNOK_NONBLOCKING;
-    void handleMidiInput(int64_t pos) DALNOK_NONBLOCKING;
+    void handleMidiInput(int64_t pos, int frames) DALNOK_NONBLOCKING;
     void renderClick(float *left, float *right, int frames, int64_t pos) DALNOK_NONBLOCKING;
     void drainRecordedMidi();
     void waitForAudioCycles();
@@ -467,54 +542,46 @@ private:
     std::shared_ptr<TrackRuntime> masterRuntime_ = std::make_shared<TrackRuntime>(); // master fader target + smoothing
     // Live delay-compensation lines by connection and length; shared by snapshots (audio thread only processes them).
     mutable std::map<std::string, std::shared_ptr<DelayLine>> delayCache_;
+    mutable std::map<DalnokTrackId, ContentEntry> contentCache_; // live compiles only (control thread)
     std::map<DalnokMediaId, PoolEntry> pool_;
-    std::vector<UndoStep> undo_, redo_;
-    int groupDepth_ = 0;
-    bool groupRecorded_ = false;
-    std::string groupName_;
+    UndoStack history_; // undo and redo (A-06)
+    std::string recoveryDirectory_; // control thread only; never part of the render snapshot
     uint64_t revision_ = 1, savedRevision_ = 1;
+    // Per-track change tracking (A-05). Edits and undo stamp only the tracks they changed; any other revision
+    // bump (loads, relinks, plug-in loading or editor edits) stamps every track through globalRevision_.
+    std::map<DalnokTrackId, uint64_t> trackRevisions_;
+    uint64_t globalRevision_ = 1;
+    std::vector<DalnokTrackId> changedTracks(const Model &before) const;
+    void stampTracks(const std::vector<DalnokTrackId> &ids) { for (auto id : ids) trackRevisions_[id] = revision_; }
+    void bumpRevisionAll() { ++revision_; globalRevision_ = revision_; }
+    uint64_t firstParameterRevision_ = 0, lastParameterRevision_ = 0;
+    void markParameterRevision() {
+        if (lastParameterRevision_ != revision_ - 1) firstParameterRevision_ = revision_;
+        lastParameterRevision_ = revision_;
+    }
     DalnokTrackId nextTrack_ = 1;
     DalnokClipId nextClip_ = 1;
     struct ClipboardEntry { ClipState clip; int32_t row = 0; };
     std::vector<ClipboardEntry> clipboard_;
     DalnokMediaId nextMedia_ = 1;
     int32_t nextColor_ = 0;
-    std::unique_ptr<CaptureSpool> captureSpool_;
-    std::unique_ptr<CaptureWriter> captureWriter_;
     std::unique_ptr<AudioDuplexDevice> duplex_;
-    CaptureWriter *captureRT_ = nullptr; // published before start; cleared after synchronous stop
-    // Device input channel for each spool channel, and interleaving space (set before the device starts).
-    std::array<int, 64> captureMap_{};
-    int captureChannels_ = 0;
-    std::vector<float> captureScratch_;
     static constexpr int kMaxCaptureBlock = 8192;
-    std::atomic<bool> captureInputFailed_{false};
-    std::atomic<uint64_t> captureMissingFrames_{0};
     std::unique_ptr<AudioDevice> device_;
     std::string outputUid_;
-    PluginMap plugins_;                       // live instances by slot id
-    std::map<int32_t, std::string> pluginErrors_;
+    PluginHostService pluginHost_;        // plug-in instances, loading and isolation (A-06)
+    std::shared_ptr<StreamPlan> streamPlan_; // streamed clips and the playhead, for the stream cache (A-09)
+    void updateStreamPlan(const RenderState &state);
+    // Offline renders: pin the streamed blocks [from, from + n) of `state` needs before rendering it.
+    static void leaseStreams(StreamCache::Lease &lease, const RenderState &state, int64_t from, int64_t n);
+    void updateWorkgroup();               // after the device starts, changes or stops: tell isolated hosts
     int32_t nextPlugin_ = 1;
     int32_t nextMarker_ = 1;
-    uint64_t pluginEdits_ = 0;
     // Recording (control thread)
-    bool recording_ = false;
-    DalnokTrackId recordAudioTrack_ = 0, recordMidiTrack_ = 0; // audio: the first armed audio track
-    // Every armed audio track in this take: spool channel i belongs to recordAudio_[i].
-    struct RecordAudio { DalnokTrackId track; std::string name; int channel; std::string wav; };
-    std::vector<RecordAudio> recordAudio_;
-    std::string recordSpool_, recordWav_, recordJournal_;
-    int64_t latencyOffset_ = 0, simulatedLatency_ = 0;
+    int64_t simulatedLatency_ = 0;
+    RecordingState rec_; // capture, the take in progress and its audio-thread state (A-06)
     bool simulatedInput_ = false;
-    struct RecordedMidi { int64_t pos; uint8_t status, data1, data2; };
-    std::vector<RecordedMidi> midiTake_;
     // Recording (shared with the audio thread)
-    std::atomic<bool> recordArmed_{false}, recordMidi_{false}, recordBroken_{false}, monitoring_{false};
-    std::atomic<int64_t> recordStart_{-1}, recordEnd_{-1};
-    std::atomic<bool> recordSession_{false}; // capture is gated by the transport (audio take in progress)
-    std::atomic<uint32_t> recordTake_{0};
-    std::atomic<uint64_t> midiRecordDropped_{0};
-    SpscQueue<RecordedMidi, 4096> midiRecordQueue_;
     // MIDI input: slot 0 is fed by injectMidi (control thread), others by Core MIDI ports.
     static constexpr int kMidiInputs = 8;
     std::array<std::unique_ptr<MidiParser>, kMidiInputs> midiParsers_;
@@ -533,9 +600,6 @@ private:
     float transportGain_ = 0.0f;
     int64_t pendingSeek_ = -1;
     int64_t rtPosition_ = 0;
-    int64_t rtRecordNext_ = -1;
-    bool rtRecordingBlock_ = false;
-    int rtRecordOffset_ = 0, rtRecordCount_ = 0; // the part of this callback's block that belongs to the take
     uint32_t rtTake_ = 0;
     float clickY1_ = 0, clickY2_ = 0, clickCoefNow_ = 0, clickEnv_ = 0;
     int clickLeft_ = 0;
@@ -543,36 +607,35 @@ private:
     int rtMidiCount_ = 0;
     PluginNote rtLiveNotes_[256]{}; // this callback's live notes for a plugin instrument
     int rtLiveNoteCount_ = 0;
+    // Auditioning from the piano roll (previewNote): notes for one track's instrument, never recorded. While any sounds,
+    // and for 2 s after the last is released (release tails), that track plays live input instead of the armed one.
+    struct PreviewNote { DalnokTrackId track; uint8_t pitch, velocity; bool on; };
+    SpscQueue<PreviewNote, 256> previewNotes_;
+    std::mutex previewProducer_; // control threads (the queue has one producer at a time)
+    DalnokTrackId rtPreviewTrack_ = 0;
+    int rtPreviewHeld_ = 0;
+    int64_t rtPreviewHoldFrames_ = 0;
     std::atomic<float> masterPeakL_{0.0f}, masterPeakR_{0.0f};
     float masterDcL_ = 0, masterDcR_ = 0; // audio thread (meterLevel)
 
     // Shared atomics.
-    std::atomic<bool> playing_{false};
+    Transport transport_; // play state, playhead, cycle, punch, metronome (control and audio threads)
     std::atomic<int32_t> soloCount_{0};
-    std::atomic<bool> metronome_{false};
-    std::atomic<float> metronomeLevel_{0.5f};
     // Click oscillator coefficients (control thread computes them; see syncRuntimes).
     std::atomic<float> clickCoef_{0}, clickAccentCoef_{0}, clickSin_{0}, clickAccentSin_{0}, clickDecay_{0};
-    std::atomic<int64_t> seekRequest_{-1};
-    std::atomic<int64_t> position_{0};
-    std::atomic<bool> cycleOn_{false};
-    std::atomic<int64_t> punchIn_{INT64_MIN}, punchOut_{INT64_MAX};
-    std::atomic<int32_t> recordSlot_{-1};
     // Moves a take (the last of `takes`, trimmed to whole bars) into a launcher slot; removes `takes`.
     DalnokClipId takeToSlot(const std::vector<DalnokClipId> &takes, int32_t slot, std::string &err);
-    std::atomic<int64_t> countInUntil_{0};
-    std::atomic<bool> recordCycle_{false};
     struct LaunchEvent { DalnokTrackId track; int32_t slot; int64_t frame; };
     std::atomic<bool> launcherRecording_{false};
     SpscQueue<LaunchEvent, 4096> launchEvents_;
     std::vector<LaunchEvent> launchLog_; // control thread
     int64_t launcherRecordStart_ = 0;      // this take loops the cycle and becomes one take per pass
-    int64_t recordCycleStart_ = 0, recordCycleEnd_ = 0; // the cycle when that take started (control thread)
-    std::atomic<int64_t> cycleStart_{0}, cycleEnd_{0};
 
     // Diagnostics (written by the audio thread).
     std::atomic<uint64_t> callbacks_{0}, framesRendered_{0}, maxCallbackNs_{0}, lastCallbackNs_{0};
     std::atomic<uint32_t> maxFrames_{0}, overloads_{0}, swaps_{0};
+    std::atomic<uint32_t> retiredHighWater_{0};
+    std::atomic<uint64_t> pendingSnapshotCallbacks_{0}, adoptionSkips_{0};
 };
 
 struct Engine::PreparedProject {

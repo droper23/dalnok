@@ -94,7 +94,43 @@ final class MixerPanel: NSView {
             }
             stack.addArrangedSubview(addBusButton)
         }
-        for (s, t) in zip(strips, tracks) { s.update(t) }
+        // A strip is rebuilt only when something it shows besides its scalars changed (a clip edit changes nothing
+        // here); the rest update their faders and buttons in place. The send menus list every bus, so the
+        // session's track names and kinds are part of each strip's signature.
+        var names = Hasher()
+        for t in session.allTracks { names.combine(t.id); names.combine(t.name); names.combine(t.isBus) }
+        let shared = names.finalize()
+        var signatures: [DalnokTrackId: Int] = [:]
+        for (s, t) in zip(strips, tracks) {
+            let sig = Self.signature(t, shared)
+            signatures[t.id] = sig
+            if stripSignatures[t.id] == sig { s.updateParameters(t) } else { s.update(t) }
+        }
+        stripSignatures = signatures
+        if !master.fader.tracking { master.fader.db = session.masterGainDb; master.dbLabel.stringValue = FaderControl.format(session.masterGainDb) }
+    }
+
+    private var stripSignatures: [DalnokTrackId: Int] = [:]
+    /// Everything a strip shows apart from gain, pan, mute and solo.
+    private static func signature(_ t: TrackView, _ shared: Int) -> Int {
+        var h = Hasher()
+        h.combine(shared)
+        h.combine(t.id); h.combine(t.name); h.combine(t.color.description); h.combine(t.customColor)
+        h.combine(t.isBus); h.combine(t.isInstrument); h.combine(t.output); h.combine(t.armed); h.combine(t.inputChannel)
+        h.combine(t.stack); h.combine(t.isStack); h.combine(t.collapsed)
+        for p in t.plugins {
+            h.combine(p.id); h.combine(p.name); h.combine(p.vendor); h.combine(p.loaded); h.combine(p.error)
+            h.combine(p.bypassed); h.combine(p.loading); h.combine(p.isolated); h.combine(p.latency); h.combine(p.instrument)
+        }
+        for var s in t.sends { withUnsafeBytes(of: &s) { h.combine(bytes: $0) } }
+        return h.finalize()
+    }
+
+    /// After a parameter-only change: update scalars in place; anything else falls back to a full rebuild.
+    func updateParameters() {
+        let tracks = session.tracks
+        guard strips.map(\.trackId) == tracks.map(\.id) else { return rebuild() }
+        for (s, t) in zip(strips, tracks) { s.updateParameters(t) }
         if !master.fader.tracking { master.fader.db = session.masterGainDb; master.dbLabel.stringValue = FaderControl.format(session.masterGainDb) }
     }
 
@@ -129,7 +165,8 @@ final class ChannelStrip: NSView {
     let insertsStack = NSStackView()
     var onOpenPlugin: ((DalnokTrackId, Int32) -> Void)?
     var onAddPlugin: ((DalnokTrackId) -> Void)?
-    private var shownInserts: [Int32] = []
+    private var shownInserts: [String] = []
+    private var shownSendTargets: [String] = [] // the "+ Send" menu, rebuilt only when its buses change
 
     init(session: Session, trackId: DalnokTrackId) {
         self.session = session
@@ -257,6 +294,21 @@ final class ChannelStrip: NSView {
     override var isFlipped: Bool { true }
     override func mouseDown(with event: NSEvent) { onSelect?(trackId) }
 
+    /// Scalar parameters only (gain, pan, mute, solo): the per-frame path while faders and knobs move (A-05).
+    func updateParameters(_ t: TrackView) {
+        let tint = t.muted ? TrackTint(base: t.color).muted : t.color
+        if color != tint { color = tint; needsDisplay = true }
+        if mute.isOn != t.muted {
+            name.textColor = Analog.on ? (t.muted ? Theme.textFaint : OKLCH.adjust(t.color, dl: 0.2, chromaScale: 0.7))
+                                       : (t.muted ? Theme.textDim : Theme.text)
+            scribble.lit = !t.muted
+        }
+        if !fader.tracking, fader.db != t.gainDb { fader.db = t.gainDb; dbLabel.stringValue = FaderControl.format(t.gainDb) }
+        if !pan.tracking, pan.pan != t.pan { pan.pan = t.pan }
+        mute.isOn = t.muted
+        solo.isOn = t.solo
+    }
+
     func update(_ t: TrackView) {
         color = t.muted ? TrackTint(base: t.color).muted : t.color
         needsDisplay = true
@@ -277,7 +329,7 @@ final class ChannelStrip: NSView {
         arm.isOn = t.armed
         arm.isHidden = t.isBus
         // Insert slots: each plug-in (click to open its window), then + to add one.
-        let ids = t.plugins.map(\.id)
+        let ids = t.plugins.map { "\($0.id):\($0.loaded):\($0.error)" } // rebuild when a plug-in finishes loading
         if ids != shownInserts || insertsStack.arrangedSubviews.isEmpty {
             shownInserts = ids
             insertsStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
@@ -285,7 +337,7 @@ final class ChannelStrip: NSView {
                 let b = slotButton((p.instrument ? "♪ " : "") + p.name, dim: !p.loaded)
                 b.tag = Int(p.id)
                 b.action = #selector(openInsert(_:))
-                b.toolTip = p.loaded ? "Open \(p.name)" : "\(p.name) isn't installed: bypassed, settings kept"
+                b.toolTip = p.loaded ? "Open \(p.name)" : p.loading ? "\(p.name) is loading" : "\(p.name) isn't loaded: bypassed, settings kept"
                 insertsStack.addArrangedSubview(b)
             }
             if !t.isBus || true {
@@ -312,9 +364,12 @@ final class ChannelStrip: NSView {
             for snd in t.sends { sendsStack.addArrangedSubview(sendRow(snd)) }
         }
         for (k, snd) in zip(sendKnobs, t.sends) where !k.knob.tracking { k.knob.db = snd.db }
+        let candidates = session.buses.filter { b in b.id != t.id && !t.sends.contains { $0.bus == b.id } }
+        let targets = candidates.map { "\($0.id):\($0.name)" }
+        guard targets != shownSendTargets || addSend.numberOfItems == 0 else { return }
+        shownSendTargets = targets
         addSend.removeAllItems()
         addSend.addItem(withTitle: "+ Send")
-        let candidates = session.buses.filter { b in b.id != t.id && !t.sends.contains { $0.bus == b.id } }
         for b in candidates {
             addSend.addItem(withTitle: "Send to \(b.name)")
             addSend.lastItem?.tag = Int(b.id)

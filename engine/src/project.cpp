@@ -116,11 +116,11 @@ json::Value Engine::describe() const {
         meter.push(model_.meters.front().den);
         root.set("meter", std::move(meter));
     }
-    if (cycleEnd_.load() > cycleStart_.load()) {
+    if (transport_.cycleEnd.load() > transport_.cycleStart.load()) {
         json::Value cyc = json::Value::makeArray();
-        cyc.push(cycleOn_.load());
-        cyc.push(static_cast<double>(cycleStart_.load()));
-        cyc.push(static_cast<double>(cycleEnd_.load()));
+        cyc.push(transport_.cycleOn.load());
+        cyc.push(static_cast<double>(transport_.cycleStart.load()));
+        cyc.push(static_cast<double>(transport_.cycleEnd.load()));
         root.set("cycle", std::move(cyc));
     }
     if (model_.tempo.size() > 1) {
@@ -232,7 +232,7 @@ json::Value Engine::describe() const {
                     pv.set("controls", std::move(ids));
                 }
                 std::string state;
-                if (!pluginState(slot.id, state)) state = slot.state;
+                if (!pluginState(slot.id, state)) state = slot.state.str();
                 pv.set("state", base64Encode(state));
                 list.push(std::move(pv));
             }
@@ -416,7 +416,7 @@ bool Engine::saveProject(const std::string &path, std::string &err, bool copyMed
     }
     for (auto &kv : body.object) doc.set(kv.first, std::move(kv.second));
     if (!writeFileAtomically(path, json::serialize(doc, true), err)) return false;
-    if (markSaved) savedRevision_ = revision_;
+    if (markSaved) { savedRevision_ = revision_; pluginHost_.rememberEditorStates(); }
     return true;
 }
 
@@ -471,11 +471,10 @@ std::unique_ptr<Engine::PreparedProject> Engine::prepareDocument(const json::Val
             if (const auto rel = m.getString("relativePath", ""); !rel.empty())
                 candidates.push_back((projectDir / rel).lexically_normal().string());
             if (!e.path.empty()) candidates.push_back(e.path);
-            std::vector<std::vector<float>> ch;
             std::string decodeErr;
             for (const auto &cand : candidates) {
-                if (fs::exists(cand) && decodeAudioFile(cand, sampleRate, ch, decodeErr)) {
-                    auto decoded = std::make_shared<const Media>(std::move(ch), sampleRate);
+                std::shared_ptr<const Media> decoded;
+                if (fs::exists(cand) && (decoded = Media::loadFile(cand, sampleRate, decodeErr))) {
                     e.path = cand;
                     e.frames = decoded->frames();
                     e.channels = decoded->channelCount();
@@ -567,11 +566,13 @@ std::unique_ptr<Engine::PreparedProject> Engine::prepareDocument(const json::Val
                     if (const json::Value *ids = pv.get("controls"); ids && ids->isArray())
                         for (const auto &c : ids->array)
                             if (c.isNumber() && c.number >= 0 && c.number <= 4294967295.0) slot.controls.push_back(static_cast<uint32_t>(c.number));
+                    std::string state;
                     if (slot.id <= 0 || !seen.insert(slot.id).second || (slot.format != "vst3" && slot.format != "au" && slot.format != "clap" && slot.format != "dalnok") ||
-                        !base64Decode(pv.getString("state", ""), slot.state)) {
+                        !base64Decode(pv.getString("state", ""), state)) {
                         err = "invalid plug-in on track " + t.name;
                         return nullptr;
                     }
+                    slot.state.assign(std::move(state));
                     t.plugins.push_back(std::move(slot));
                 }
             }
@@ -812,23 +813,67 @@ std::unique_ptr<Engine::PreparedProject> Engine::prepareDocument(const json::Val
     return prepared;
 }
 
-void Engine::applyProject(std::unique_ptr<PreparedProject> p, bool recovered) {
+bool Engine::applyProject(std::unique_ptr<PreparedProject> p, ApplyMode mode) {
+    const bool recovered = mode == ApplyMode::recover;
+    if (!recoveryDirectory_.empty()) {
+        std::error_code ec;
+        fs::create_directories(recoveryDirectory_, ec);
+        if (ec) return false;
+        // Stage under a non-project suffix so a crash cannot expose an empty
+        // recovery copy. Publish with link(), which refuses to overwrite a file.
+        std::string pattern = (fs::path(recoveryDirectory_) / "Recovery-XXXXXX.tmp").string();
+        std::vector<char> name(pattern.begin(), pattern.end());
+        name.push_back('\0');
+        const int fd = ::mkstemps(name.data(), 4);
+        if (fd < 0) return false;
+        ::close(fd);
+        Engine staged(sampleRate_);
+        staged.model_ = std::move(p->model);
+        staged.pool_ = std::move(p->pool);
+        staged.transport_.cycleOn.store(p->cycleOn);
+        staged.transport_.cycleStart.store(p->cycleStart);
+        staged.transport_.cycleEnd.store(p->cycleEnd);
+        std::string err;
+        const bool saved = staged.saveProject(name.data(), err, false, false);
+        p->model = std::move(staged.model_);
+        p->pool = std::move(staged.pool_);
+        const std::string staging(name.data());
+        const std::string destination = staging.substr(0, staging.size() - 4) + ".dalnok";
+        const bool published = saved && ::link(staging.c_str(), destination.c_str()) == 0;
+        std::remove(staging.c_str());
+        if (!published) return false;
+        if (!syncDirectory(recoveryDirectory_)) return false;
+    }
     resetModel();
     for (auto &[k, m] : p->stretched) cache_.insert(k, std::move(m));
     model_ = std::move(p->model);
     pool_ = std::move(p->pool);
-    instantiatePlugins(); // loads plugin code on this (control) thread; missing plugins keep their state
+    if (recovered) {
+        // A plug-in may have caused the crash; retain every slot and state but
+        // do not run its code during recovery.
+        for (const auto &t : model_.tracks) for (const auto &slot : t.plugins) {
+            nextPlugin_ = std::max(nextPlugin_, slot.id + 1);
+            pluginHost_.setError(slot.id, "Not loaded in recovery mode; saved state preserved");
+        }
+    } else if (mode == ApplyMode::defer) {
+        // Shown now with every slot unloaded (state kept); the host activates them one at a time (ADR-0013).
+        for (const auto &t : model_.tracks) for (const auto &slot : t.plugins) {
+            nextPlugin_ = std::max(nextPlugin_, slot.id + 1);
+            pluginHost_.queue(slot.id);
+        }
+    } else instantiatePlugins(); // third-party code runs on the control thread
     nextTrack_ = std::max(nextTrack_, p->maxTrack + 1);
     nextClip_ = std::max(nextClip_, p->maxClip + 1);
     nextMedia_ = std::max(nextMedia_, p->maxMedia + 1);
     nextColor_ = p->maxColor + 1;
     for (const auto &mk : model_.markers) nextMarker_ = std::max(nextMarker_, mk.id + 1);
     std::string ignored;
-    if (!setCycle(p->cycleOn, p->cycleStart, p->cycleEnd, ignored)) cycleOn_.store(false, std::memory_order_release);
+    if (!setCycle(p->cycleOn, p->cycleStart, p->cycleEnd, ignored)) transport_.cycleOn.store(false, std::memory_order_release);
     syncRuntimes();
-    ++revision_;
+    bumpRevisionAll();
     savedRevision_ = (p->imported || recovered) ? revision_ - 1 : revision_; // an import is unsaved work
     commit();
+    return true;
 }
 
 std::unique_ptr<Engine::PreparedProject> Engine::prepareImport(const std::string &path, double sampleRate,
@@ -844,7 +889,7 @@ std::unique_ptr<Engine::PreparedProject> Engine::prepareImport(const std::string
 bool Engine::loadProject(const std::string &path, int32_t &missing, std::string &err) {
     auto p = prepareProject(path, sampleRate_, missing, err);
     if (!p) return false;
-    applyProject(std::move(p));
+    if (!applyProject(std::move(p))) { err = "cannot write pre-load recovery snapshot"; return false; }
     return true;
 }
 

@@ -5,6 +5,7 @@
 //   --snapshot  render the window to a PNG after loading, then quit (UI checks)
 //   --selftest  drive menus and mouse gestures end-to-end, print PASS/FAIL, then quit
 import AppKit
+import DalnokEngine
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -80,26 +81,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         if let dir = ProcessInfo.processInfo.environment["DALNOK_WINDOW_DUMP"] { WindowDump.install(dir: URL(fileURLWithPath: dir)) }
-        if let dir = value("--uiwalk") {
-            Motion.override = false
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { UIWalk(app: self, dir: URL(fileURLWithPath: dir)).run() }
-        }
         if let dir = value("--selftest") {
             SelfTest(app: self, files: files, workdir: URL(fileURLWithPath: dir)).run()
             return
+        }
+        // Record the new session before opening a project: plug-in activation can
+        // crash or hang before the delayed recovery alert is presented.
+        let previousRecovery = interactiveLaunch ? main.unfinishedSessionSnapshots() : []
+        if interactiveLaunch {
+            main.beginSessionMarker(carrying: previousRecovery)
+            engine.setRecoveryDirectory(main.recoveryDirectory)
         }
         let projects = files.filter { $0.pathExtension == "dalnok" }
         let foreign = files.filter { MainWindowController.foreignExtensions.contains($0.pathExtension.lowercased()) }
         let audio = files.filter { $0.pathExtension != "dalnok" && !foreign.contains($0) }
 
         if let f = foreign.first { main.importProject(f, confirm: false) }
-        if interactiveLaunch { DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in self?.main.offerCrashRecovery() } }
+        if interactiveLaunch { DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in self?.main.offerCrashRecovery(previousRecovery) } }
         if interactiveLaunch && Analog.on && !Motion.reduced { main.vfdTestUntil = Date().addingTimeInterval(0.6) }
         if files.isEmpty && snapshot == nil && !args.contains("--no-welcome") && !WelcomeController.hasCompleted {
             main.welcome.show()
         }
         let finish = { [weak self] in
             guard let self else { return }
+            if let dir = value("--uiwalk") {
+                Motion.override = false
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    UIWalk(app: self, dir: URL(fileURLWithPath: dir)).run()
+                }
+                return
+            }
             // Developer: --tour <dir> plays a scripted walk through the window and writes its frames (README GIFs).
             if let dir = value("--tour") { return Screenshots.tour(app: self, dir: URL(fileURLWithPath: dir)) }
             if args.contains("--play") { engine.play() }
@@ -115,12 +126,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         if let p = projects.first {
-            main.openProject(p) { _ in finish() } // snapshots wait until the project (and its plug-ins) loaded
+            main.openProject(p) { ok in
+                if !ok && args.contains("--uiwalk") { exit(2) }
+                finish()
+            } // snapshots and UI walks wait until the project (and its plug-ins) loaded
         } else if audio.isEmpty { finish() } else { session.importFiles(audio, completion: finish) }
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard engine.isDirty, main.window?.attachedSheet == nil, !SelfTest.running,
+        guard engine.hasUnsavedChanges, main.window?.attachedSheet == nil, !SelfTest.running,
               !CommandLine.arguments.contains("--snapshot"), !CommandLine.arguments.contains("--screenshots") else {
             return .terminateNow
         }
@@ -447,6 +461,82 @@ app.run()
         s.setEventHandler { dump(dir) }
         s.resume()
         source = s
+        // Worst main-thread gap between dumps: a 5 ms timer in the common modes notices any stall longer than that.
+        lastTickNs = DispatchTime.now().uptimeNanoseconds
+        let t = Timer(timeInterval: 0.005, repeats: true) { _ in
+            MainActor.assumeIsolated { // the main run loop's timer
+                let now = DispatchTime.now().uptimeNanoseconds
+                worstGapNs = max(worstGapNs, now - lastTickNs); lastTickNs = now
+                // Peaks since the last dump: meter reads reset them, and the UI reads every frame, so sample them often.
+                guard let e = (NSApp.delegate as? AppDelegate)?.main?.session.engine.handle else { return }
+                var l: Float = 0, r: Float = 0
+                dalnok_meter_master(e, &l, &r); peaks[0] = max(peaks[0] ?? 0, l, r)
+                for i in 0..<dalnok_track_count(e) {
+                    let id = dalnok_track_at(e, i)
+                    if dalnok_meter_track(e, id, &l, &r) == DALNOK_OK { peaks[Int(id)] = max(peaks[Int(id)] ?? 0, l, r) }
+                }
+            }
+        }
+        RunLoop.main.add(t, forMode: .common)
+    }
+    static var worstGapNs: UInt64 = 0, lastTickNs: UInt64 = 0
+    static var peaks: [Int: Float] = [:] // track id (0 = master) -> peak since the last dump
+    /// Engine diagnostics for real-input checks: transport, callback stats, meters, undo, and every plug-in slot with
+    /// its isolation stats, editor window and parameter values.
+    static func diagnostics() -> [String: Any] {
+        var info: [String: Any] = ["mainThreadWorstGapMs": Double(worstGapNs) / 1e6,
+                                   "frontmostBundle": NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "",
+                                   "frontmostPid": Int(NSWorkspace.shared.frontmostApplication?.processIdentifier ?? 0)]
+        worstGapNs = 0
+        guard let main = (NSApp.delegate as? AppDelegate)?.main else { return info }
+        let e = main.session.engine.handle
+        var st = DalnokStats(); dalnok_engine_stats(e, &st)
+        info["engine"] = ["callbacks": st.callbacks, "overloads": st.overloads, "maxCallbackNs": st.max_callback_ns,
+                          "lastCallbackNs": st.last_callback_ns, "maxFrames": st.max_frames_per_callback]
+        info["playing"] = dalnok_transport_is_playing(e)
+        info["position"] = dalnok_transport_position(e)
+        var ml: Float = 0, mr: Float = 0; dalnok_meter_master(e, &ml, &mr)
+        info["masterMeter"] = [ml, mr]
+        info["peaksSinceLastDump"] = Dictionary(uniqueKeysWithValues: peaks.map { (String($0.key), Double($0.value)) })
+        peaks = [:]
+        var name = [CChar](repeating: 0, count: 256); dalnok_undo_name(e, &name, name.count)
+        info["undo"] = String(cString: name)
+        info["dirty"] = dalnok_project_dirty(e)
+        info["windowEdited"] = main.window?.isDocumentEdited ?? false
+        var tracks: [[String: Any]] = []
+        for i in 0..<dalnok_track_count(e) {
+            let tr = dalnok_track_at(e, i)
+            var tl: Float = 0, trr: Float = 0; dalnok_meter_track(e, tr, &tl, &trr)
+            var slots: [[String: Any]] = []
+            for j in 0..<dalnok_track_plugin_count(e, tr) {
+                var p = DalnokPluginSlotInfo(); guard dalnok_track_plugin_info(e, tr, j, &p) == DALNOK_OK else { continue }
+                var slot: [String: Any] = ["id": p.id, "name": withUnsafeBytes(of: p.name) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) },
+                                           "loaded": p.loaded, "loading": p.loading, "isolated": p.isolated,
+                                           "error": withUnsafeBytes(of: p.error) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }]
+                var iso = DalnokPluginIsolationStats()
+                if dalnok_plugin_isolation_stats(e, p.id, &iso) == DALNOK_OK {
+                    slot["isolation"] = ["missed": iso.missed_blocks, "budgetSkips": iso.budget_skips,
+                                         "workgroupJoined": iso.workgroup_joined, "workgroupError": iso.workgroup_error]
+                }
+                var ed = DalnokPluginEditorWindow()
+                if dalnok_plugin_editor_window(e, p.id, &ed) == DALNOK_OK {
+                    slot["editor"] = ["open": ed.open, "visible": ed.visible, "x": ed.x, "y": ed.y, "w": ed.width, "h": ed.height,
+                                      "pid": ed.process_id, "window": ed.window_number]
+                }
+                var params: [[String: Any]] = []
+                for k in 0..<dalnok_plugin_parameter_count(e, p.id) {
+                    var q = DalnokPluginParameter(); guard dalnok_plugin_parameter(e, p.id, k, &q) == DALNOK_OK else { continue }
+                    params.append(["id": q.id, "v": q.value,
+                                   "t": withUnsafeBytes(of: q.title) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) },
+                                   "d": withUnsafeBytes(of: q.display) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }])
+                }
+                slot["params"] = params
+                slots.append(slot)
+            }
+            tracks.append(["id": tr, "meter": [tl, trr], "plugins": slots])
+        }
+        info["tracks"] = tracks
+        return info
     }
     static func dump(_ dir: URL) {
         let screenHeight = NSScreen.screens.first?.frame.height ?? 0
@@ -462,9 +552,11 @@ app.run()
             list.append(["file": name + ".png", "title": w.title, "key": w.isKeyWindow,
                          "x": f.minX, "y": screenHeight - f.maxY, "w": f.width, "h": f.height])
         }
-        let info: [String: Any] = ["windows": list, "frontmost": NSApp.isActive, "time": Date().timeIntervalSince1970]
+        let info: [String: Any] = ["windows": list, "frontmost": NSApp.isActive, "time": Date().timeIntervalSince1970,
+                                   "diagnostics": diagnostics()]
         if let data = try? JSONSerialization.data(withJSONObject: info, options: [.prettyPrinted]) {
             try? data.write(to: dir.appendingPathComponent("windows.json"))
         }
+        lastTickNs = DispatchTime.now().uptimeNanoseconds // the dump's own time is not a stall
     }
 }

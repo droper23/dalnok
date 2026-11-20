@@ -13,7 +13,7 @@ final class SelfTest {
     let workdir: URL
     private var failures = 0
     /// Preferences the test changes; all are restored at the end so a run never alters the owner's settings.
-    private static let restoredKeys = ["copyAudioOnSave", "comingFrom", "onboardingDone", "recordingInputUID", "rulerBarsAndBeats", "metronome", "showDevicePanel", "countIn", "showMixer", "showLauncher", "automationMode", "pedal.AUDelay", "shortcuts.preset", "shortcuts.overrides", "shortcuts.userPresets"] + PluginLibrary.keys + ["tapeSpeed", "trackHeight", "secondaryClock", "gainRingLevel"] + Faceplate.preferenceKeys
+    private static let restoredKeys = ["copyAudioOnSave", "comingFrom", "onboardingDone", "recordingInputUID", "rulerBarsAndBeats", "metronome", "showDevicePanel", "countIn", "showMixer", "showLauncher", "automationMode", "pedal.AUDelay", "shortcuts.preset", "shortcuts.overrides", "shortcuts.userPresets"] + PluginLibrary.keys + ["tapeSpeed", "trackHeight", "secondaryClock", "gainRingLevel", "isolatePlugins"] + Faceplate.preferenceKeys
     private let previousPreferences: [String: Any]
     private var w: MainWindowController { app.main }
     private var s: Session { app.session }
@@ -49,6 +49,7 @@ final class SelfTest {
         m.update()
         guard it.isEnabled else { return false }
         m.performActionForItem(at: m.index(of: it))
+        s.refresh(onDisplayTick: true) // simulate a display tick between scripted menu actions
         return true
     }
 
@@ -292,14 +293,17 @@ final class SelfTest {
             f.mouseDown(with: mouse(.leftMouseDown, center))
             f.mouseDragged(with: mouse(.leftMouseDragged, CGPoint(x: center.x, y: center.y - 40)))
             f.mouseUp(with: mouse(.leftMouseUp, center))
+            s.refresh(onDisplayTick: true) // simulate the next display tick
             let g = s.track(row.trackId)!.gainDb
             check(g < -2 && e.undoName == "Volume", String(format: "gain knob drag lowered volume to %.1f dB (one undo step)", g))
             f.mouseDown(with: mouse(.leftMouseDown, center, .option))
+            s.refresh(onDisplayTick: true)
             check(s.track(row.trackId)!.gainDb == 0, "⌥-click resets gain to 0 dB")
             let k = row.pan
             k.mouseDown(with: mouse(.leftMouseDown, at(k, k.bounds.midX, k.bounds.midY)))
             k.mouseDragged(with: mouse(.leftMouseDragged, CGPoint(x: at(k, k.bounds.midX, 0).x, y: at(k, k.bounds.midX, k.bounds.midY).y + 30)))
             k.mouseUp(with: mouse(.leftMouseUp, at(k, k.bounds.midX, k.bounds.midY)))
+            s.refresh(onDisplayTick: true)
             check((s.track(row.trackId)?.pan ?? 0) > 0.2, "pan knob drag up pans right (\(s.track(row.trackId)?.pan ?? 0))")
             _ = perform("Undo"); _ = perform("Undo"); _ = perform("Undo")
             check(s.track(row.trackId)!.gainDb == 0 && s.track(row.trackId)!.pan == 0, "undo restores gain and pan")
@@ -316,8 +320,10 @@ final class SelfTest {
         guard let t0 = s.tracks.first?.id else { check(false, "a track exists for track commands"); return finish() }
         w.headers.select(t0)
         check(perform("Solo Track"), "menu Track > Solo Track")
+        s.refresh(onDisplayTick: true)
         check(s.track(t0)?.solo == true, "track soloed")
         _ = perform("Solo Track")
+        s.refresh(onDisplayTick: true)
         check(s.track(t0)?.solo == false, "track unsoloed")
         check(perform("Move Track Down"), "menu Track > Move Track Down")
         check(s.tracks.dropFirst().first?.id == t0, "track moved down")
@@ -468,6 +474,36 @@ final class SelfTest {
             check(w.unfinishedSessionSnapshot() == nil, "no offer while that session is still running")
             writeMarker(pid: 999_999, started: Date().timeIntervalSince1970 + 60) // nothing saved since it started
             check(w.unfinishedSessionSnapshot() == nil, "no offer when that session saved no snapshot")
+            if let recovery {
+                // Simulate a previous snapshot predating this new session, then
+                // another crash before the delayed recovery alert appears.
+                try? FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(-3_600)], ofItemAtPath: recovery.path)
+                w.beginSessionMarker(carrying: [recovery])
+                if let data = try? Data(contentsOf: marker),
+                   var info = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
+                    info["pid"] = 999_999
+                    try? JSONSerialization.data(withJSONObject: info).write(to: marker)
+                }
+                check(w.unfinishedSessionSnapshot()?.resolvingSymlinksInPath() == recovery.resolvingSymlinksInPath(),
+                      "a second crash before the alert keeps the previous recovery offer")
+                w.beginSessionMarker(carrying: [recovery])
+                let incoming = recoveryDir.appendingPathComponent("Recovery-incoming.dalnok")
+                try? Data("new project".utf8).write(to: incoming)
+                let pending = w.unfinishedSessionSnapshots()
+                check(pending.map(\.lastPathComponent) == [incoming.lastPathComponent, recovery.lastPathComponent],
+                      "newer incoming snapshot and previous recovery are both offered after a crash")
+                w.beginSessionMarker(carrying: pending)
+                w.clearPendingRecovery(incoming)
+                check(w.unfinishedSessionSnapshot()?.lastPathComponent == recovery.lastPathComponent,
+                      "handling the newer copy exposes the earlier recovery")
+                w.endSessionMarker()
+                check(w.unfinishedSessionSnapshot()?.lastPathComponent == recovery.lastPathComponent,
+                      "a clean quit preserves an unresolved recovery offer")
+                w.beginSessionMarker(carrying: [recovery])
+                w.clearPendingRecovery(recovery)
+                check(w.unfinishedSessionSnapshots().isEmpty, "handled offers are not repeated")
+                try? FileManager.default.removeItem(at: incoming)
+            }
             w.beginSessionMarker()
             w.endSessionMarker()
             check(!FileManager.default.fileExists(atPath: marker.path) && w.unfinishedSessionSnapshot() == nil,
@@ -480,6 +516,11 @@ final class SelfTest {
         deadControls()
         await tapeMachine()
         await markersAndTrackTools()
+        await partialTimelineRedraw()
+        await realInputChecks()
+        await deferredPluginLoading()
+        await slowIsolatedPluginLoading()
+        await isolatedPluginEditors()
         try? w.snapshot(to: workdir.appendingPathComponent("selftest.png"))
         await migrationSteps()
         // Settings: exercise the menu, appearance selection, and project preference.
@@ -487,6 +528,22 @@ final class SelfTest {
         let oldCopy = MainWindowController.copyAudioOnSave
         check(perform("Settings…"), "Dalnok > Settings opens")
         check(w.settings.window?.isVisible == true, "settings window is visible")
+        // ADR-0014: Settings > Plug-ins > Safety runs plug-ins loaded afterwards in their own processes.
+        let isolation = w.settings.isolatePlugins
+        if isolation.isEnabled, let action = isolation.action, let track = s.tracks.first?.id {
+            isolation.state = .on; _ = NSApp.sendAction(action, to: isolation.target, from: isolation)
+            check(s.engine.pluginHost == Engine.pluginHostPath, "Safety on: new plug-ins go to dalnok-plughost")
+            var err = [CChar](repeating: 0, count: 256)
+            let before = dalnok_track_plugin_count(s.h, track)
+            let slot = dalnok_plugin_add(s.h, track, "au:aufx:dely:appl", nil, &err, 256)
+            var info = DalnokPluginSlotInfo()
+            _ = dalnok_track_plugin_info(s.h, track, before, &info)
+            check(slot != 0 && info.isolated && info.loaded && fixedString(info.name).contains("Delay"),
+                  "an Audio Unit loads in its own process (\(cString(err)))")
+            if slot != 0 { _ = perform("Undo") }
+            isolation.state = .off; _ = NSApp.sendAction(action, to: isolation.target, from: isolation)
+            check(s.engine.pluginHost.isEmpty, "Safety off: plug-ins load in the app again")
+        } else { check(false, "the Safety setting is available (dalnok-plughost next to the app)") }
         for pane in SettingsController.Pane.allCases { w.settings.show(pane) }
         check(w.settings.pane == .shortcuts && w.shortcutsEditor.table.window === w.settings.window,
               "Settings has every pane, keyboard shortcuts included")
@@ -564,7 +621,7 @@ final class SelfTest {
         w.timeline.clampScrollY()
         check(w.timeline.scrollY == w.timeline.maxScrollY && w.headers.scrollY == w.timeline.scrollY, "vertical scrolling stops at the last track")
         for _ in 0..<added { e.undo() }
-        s.refresh(); w.window?.layoutIfNeeded()
+        s.refresh(onDisplayTick: true); w.window?.layoutIfNeeded()
         check(w.timeline.scrollY <= w.timeline.maxScrollY && w.headers.scrollY == w.timeline.scrollY,
               "removing tracks keeps the viewport valid and aligned (\(w.timeline.scrollY))")
         w.timeline.scrollY = 0
@@ -716,6 +773,495 @@ final class SelfTest {
     }
 
     // MARK: Markers, duplicate track, zoom to selection, vertical zoom
+
+    /// ADR-0013: an opened project is shown before its plug-ins load; they load one per run-loop turn with progress,
+    /// Stop leaves the rest unloaded with their settings, and the track menu loads one later.
+    private func deferredPluginLoading() async {
+        let e = s.engine
+        e.pause()
+        let restore = workdir.appendingPathComponent("before-deferred.dalnok")
+        check(w.saveProject(to: restore), "save before the deferred-loading check")
+        e.newProject(); s.refresh()
+        let t = dalnok_track_add(e.handle, "Deferred")
+        for _ in 0..<3 { _ = dalnok_plugin_add(e.handle, t, "dalnok:channel-eq", nil, nil, 0) }
+        let project = workdir.appendingPathComponent("deferred.dalnok")
+        check(w.saveProject(to: project), "save a project with three plug-ins")
+        e.newProject(); s.refresh()
+        let previous = s.onPluginLoadProgress
+        var shownFirst = false, sawProgress = false, stopVisible = false, statusText = ""
+        s.onPluginLoadProgress = { [weak self] p in
+            previous?(p)
+            guard let self, let p else { return }
+            if p.done == 0 {
+                shownFirst = self.s.tracks.count == 1 && self.s.tracks[0].plugins.allSatisfy { $0.loading && !$0.loaded }
+                stopVisible = !self.w.transport.stopLoadingButton.isHidden
+                statusText = self.w.transport.statusLabel.stringValue
+            } else if p.done == 1 {
+                sawProgress = self.s.tracks[0].plugins.map(\.loaded) == [true, false, false]
+                self.w.transport.stopLoadingButton.performClick(nil) // Stop after the first plug-in
+            }
+        }
+        let opened = await withCheckedContinuation { cont in w.openProject(project) { cont.resume(returning: $0) } }
+        s.onPluginLoadProgress = previous
+        check(opened, "deferred open completed")
+        check(shownFirst, "the project is shown before its plug-ins load, each marked loading")
+        check(stopVisible && statusText == "Loading plug-ins 1 of 3…", "status shows progress with a Stop button (\(statusText))")
+        check(sawProgress, "plug-ins load one at a time")
+        let plugins = s.tracks.first?.plugins ?? []
+        check(plugins.map(\.loaded) == [true, false, false] && plugins.dropFirst().allSatisfy { $0.error.contains("cancelled") && !$0.loading },
+              "Stop leaves the remaining plug-ins unloaded with their settings")
+        check(w.transport.stopLoadingButton.isHidden && !e.isDirty, "Stop button hidden afterwards; loading is not an edit")
+        if let track = s.tracks.first {
+            let menu = w.pluginsMenu(for: track)
+            if let load = menu.items.first(where: { $0.title == "Load \(plugins[1].name)" }), let action = load.action {
+                _ = NSApp.sendAction(action, to: load.target, from: load)
+                check(s.tracks.first?.plugins.map(\.loaded) == [true, true, false], "track menu ▸ Load loads one stopped plug-in")
+            } else { check(false, "track menu offers Load for a stopped plug-in") }
+            check(!menu.items.contains { $0.title == "Load \(plugins[0].name)" && $0.representedObject as? Int32 == plugins[0].id },
+                  "no Load item for a loaded plug-in")
+        }
+        _ = await withCheckedContinuation { cont in w.openProject(restore) { cont.resume(returning: $0) } }
+    }
+
+    /// ADR-0014 stage 2 (closes the A-08 gap): with Safety on, plug-ins whose own initialization blocks for seconds load
+    /// in their hosts while the window keeps running, and Stop ends the load at once. Needs DALNOK_TEST_VST3 (the
+    /// test plug-in from scripts/ci/plugin-isolation.sh, whose "slow" mode sleeps in initialize) and dalnok-plughost.
+    private func slowIsolatedPluginLoading() async {
+        guard let bundle = ProcessInfo.processInfo.environment["DALNOK_TEST_VST3"], !bundle.isEmpty, Engine.pluginHostAvailable else {
+            return print("SKIP  slow isolated plug-in loading (set DALNOK_TEST_VST3; dalnok-plughost next to the app)")
+        }
+        let e = s.engine
+        e.pause()
+        let restore = workdir.appendingPathComponent("before-slow.dalnok")
+        check(w.saveProject(to: restore), "save before the slow-loading check")
+        e.newProject(); s.refresh()
+        dalnok_plugins_set_host(e.handle, nil)
+        let t = dalnok_track_add(e.handle, "Slow")
+        for _ in 0..<3 { _ = dalnok_plugin_add(e.handle, t, bundle, "44616C6E6F6B546573744761696E3031", nil, 0) }
+        let project = workdir.appendingPathComponent("slow.dalnok")
+        check(w.saveProject(to: project), "save a project with three test plug-ins")
+        e.newProject(); s.refresh()
+        dalnok_plugins_set_host(e.handle, Engine.pluginHostPath)
+        let realStop = await realInputReady("Stop during slow isolated loading")
+        setenv("DALNOK_TEST_INIT_FAILURE", "slow", 1); setenv("DALNOK_TEST_INIT_SLOW_MS", "4000", 1)
+        // The main thread's longest stall while loading, measured by a 5 ms timer.
+        final class Probe: @unchecked Sendable {
+            var last: UInt64 = 0, started: UInt64 = 0, clicked: UInt64 = 0, worstAt: UInt64 = 0
+            var worst = 0.0, first = 0.0, ticks = 0
+        }
+        let m = Probe()
+        let timer = Timer(timeInterval: 0.005, repeats: true) { _ in
+            let now = DispatchTime.now().uptimeNanoseconds
+            // Until Stop, after the first tick: that one also waits for the window to draw the newly opened project
+            // (no plug-in code runs in this process), which is the open's cost, not loading's.
+            if m.clicked == 0 && m.started > 0 {
+                let gap = Double(now - m.last) / 1e6
+                if m.ticks == 0 { m.first = gap } else if gap > m.worst { m.worst = gap; m.worstAt = now }
+                m.ticks += 1
+            }
+            m.last = now
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        let previous = s.onPluginLoadProgress
+        var stopVisible = false, statusText = ""
+        s.onPluginLoadProgress = { [weak self] p in
+            previous?(p)
+            guard let self, let p, p.done == 0 else { return }
+            stopVisible = !self.w.transport.stopLoadingButton.isHidden
+            statusText = self.w.transport.statusLabel.stringValue
+            m.last = DispatchTime.now().uptimeNanoseconds; m.started = m.last
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { // the plug-ins are 0.6 s into their 4 s initialization
+                m.clicked = DispatchTime.now().uptimeNanoseconds
+                let b = self.w.transport.stopLoadingButton
+                if realStop { RealInput.click(self.screenPoint(b, NSPoint(x: b.bounds.midX, y: b.bounds.midY))) } else { b.performClick(nil) }
+            }
+        }
+        let opened = await withCheckedContinuation { cont in w.openProject(project) { cont.resume(returning: $0) } }
+        let stopToDone = Double(DispatchTime.now().uptimeNanoseconds &- m.clicked) / 1e6
+        timer.invalidate()
+        s.onPluginLoadProgress = previous
+        unsetenv("DALNOK_TEST_INIT_FAILURE"); unsetenv("DALNOK_TEST_INIT_SLOW_MS")
+        print(String(format: "MEASURE slow isolated load: worst main-thread gap %.1f ms over %d ticks before Stop (at %.0f ms; first tick after the open %.1f ms); Stop to done %.1f ms",
+                     m.worst, m.ticks, Double(m.worstAt &- m.started) / 1e6, m.first, stopToDone))
+        check(opened && stopVisible && statusText == "Loading plug-ins 1 of 3…", "slow isolated plug-ins show progress with Stop (\(statusText))")
+        check(m.clicked > 0 && m.worst < 50 && m.ticks > 60, // 0.6 s of loading: ≥ 60 of 120 possible 5 ms ticks
+              "the window keeps running while plug-ins sleep 4 s in initialization (worst gap \(String(format: "%.1f", m.worst)) ms)")
+        check(stopToDone < 250, "\(realStop ? "a real click on " : "")Stop ends the load at once (\(String(format: "%.1f", stopToDone)) ms)")
+        let plugins = s.tracks.first?.plugins ?? []
+        check(plugins.count == 3 && plugins.allSatisfy { !$0.loaded && !$0.loading && $0.error.contains("cancelled") },
+              "Stop leaves all three unloaded with their settings")
+        check(w.transport.stopLoadingButton.isHidden && !e.isDirty, "Stop button hidden; loading is not an edit")
+        if let track = s.tracks.first, let first = plugins.first {
+            let menu = w.pluginsMenu(for: track)
+            if let load = menu.items.first(where: { $0.title == "Load \(first.name)" }), let action = load.action {
+                _ = NSApp.sendAction(action, to: load.target, from: load)
+                let now = s.tracks.first?.plugins.first
+                check(now?.loaded == true && now?.isolated == true, "track menu ▸ Load starts it in its own process")
+            } else { check(false, "track menu offers Load for a stopped isolated plug-in") }
+        }
+        e.applyPluginIsolation()
+        _ = await withCheckedContinuation { cont in w.openProject(restore) { cont.resume(returning: $0) } }
+    }
+
+    /// ADR-0015: an isolated plug-in's editor opens in a floating window of its own process, beside the plug-in window,
+    /// without taking activation from Dalnok; it hides while another application is active and returns with Dalnok;
+    /// closing the plug-in window closes it. The test VST3 (DALNOK_TEST_EDITOR=1) and Apple's AUDelay.
+    private func isolatedPluginEditors() async {
+        guard let bundle = ProcessInfo.processInfo.environment["DALNOK_TEST_VST3"], !bundle.isEmpty, Engine.pluginHostAvailable,
+              let track = s.tracks.first?.id else {
+            return print("SKIP  isolated plug-in editors (set DALNOK_TEST_VST3; dalnok-plughost next to the app)")
+        }
+        let e = s.engine
+        dalnok_plugins_set_host(e.handle, Engine.pluginHostPath)
+        setenv("DALNOK_TEST_EDITOR", "1", 1)
+        defer { unsetenv("DALNOK_TEST_EDITOR"); e.applyPluginIsolation() }
+        let frontBefore = NSWorkspace.shared.frontmostApplication
+        for (path, cls, label) in [(bundle, "44616C6E6F6B546573744761696E3031", "test VST3"), ("au:aufx:dely:appl", "", "AUDelay")] {
+            var err = [CChar](repeating: 0, count: 256)
+            let slot = dalnok_plugin_add(e.handle, track, path, cls.isEmpty ? nil : cls, &err, 256)
+            s.refresh()
+            guard slot != 0 else { check(false, "\(label) loads isolated (\(cString(err)))"); continue }
+            w.openPluginWindow(track: track, slot: slot)
+            guard let pw = w.pluginWindows[slot] else { check(false, "\(label): plug-in window opens"); continue }
+            await wait(0.4)
+            var ed = DalnokPluginEditorWindow()
+            _ = dalnok_plugin_editor_window(e.handle, slot, &ed)
+            let frame = pw.window?.frame ?? .zero
+            check(pw.isolated && pw.hostEditorOpen && ed.open && ed.visible && ed.process_id != getpid() && ed.process_id > 0,
+                  "\(label): the editor opens in its host's window (pid \(ed.process_id))")
+            let roomRight = frame.maxX + 212 < (pw.window?.screen?.visibleFrame.maxX ?? 0)
+            check(!roomRight || (abs(ed.x - Double(frame.maxX + 12)) < 1 && abs(ed.y + ed.height - Double(frame.maxY)) < 1),
+                  "\(label): beside the plug-in window (editor x \(Int(ed.x)), window right \(Int(frame.maxX)))")
+            check(pw.tabs.selectedSegment == 1 && pw.tabs.isEnabled(forSegment: 0),
+                  "\(label): Dalnok's plug-in window keeps the parameter panel; its Editor tab brings the host's window forward")
+            check(NSWorkspace.shared.frontmostApplication?.processIdentifier != ed.process_id, "\(label): showing the editor does not activate the host")
+            let png = workdir.appendingPathComponent("isolated-editor-\(label.replacingOccurrences(of: " ", with: "-")).png").path
+            check(dalnok_plugin_editor_snapshot(e.handle, slot, png) == DALNOK_OK, "\(label): editor snapshot written (\(png))")
+            if label == "AUDelay", ProcessInfo.processInfo.environment["DALNOK_REAL_INPUT"] == "1" { await typeIntoIsolatedEditor(slot, ed) }
+            if label == "test VST3", ProcessInfo.processInfo.environment["DALNOK_REAL_INPUT"] == "1" { await spaceThroughIsolatedEditor(ed) }
+            if label == "AUDelay", let finder = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.finder").first {
+                // Follows Dalnok: hidden while another application is active, back when Dalnok is.
+                NSApp.activate(ignoringOtherApps: true); await wait(0.5)
+                finder.activate(); await wait(0.6)
+                _ = dalnok_plugin_editor_window(e.handle, slot, &ed)
+                let hidden = !ed.visible && ed.open
+                NSApp.activate(ignoringOtherApps: true); await wait(0.6)
+                _ = dalnok_plugin_editor_window(e.handle, slot, &ed)
+                check(hidden && ed.visible, "AUDelay: the editor hides while Finder is active and returns with Dalnok (hidden \(hidden), back \(ed.visible))")
+            }
+            pw.window?.performClose(nil)
+            await wait(0.2)
+            _ = dalnok_plugin_editor_window(e.handle, slot, &ed)
+            check(!ed.open && !ed.visible && w.pluginWindows[slot] == nil, "\(label): closing the plug-in window closes the editor")
+            _ = dalnok_plugin_remove(e.handle, track, slot)
+            s.refresh()
+        }
+        frontBefore?.activate()
+    }
+
+    /// DALNOK_REAL_INPUT=1: a real click in an isolated editor gives its window the keyboard; a real Space then still
+    /// plays and stops Dalnok (keys the editor does not use are passed back, API 39).
+    private func spaceThroughIsolatedEditor(_ ed: DalnokPluginEditorWindow) async {
+        if let session = CGSessionCopyCurrentDictionary() as? [String: Any], session["CGSSessionScreenIsLocked"] as? Bool == true {
+            return print("SKIP  Space through the isolated editor (the screen is locked)")
+        }
+        NSApp.activate(ignoringOtherApps: true); await wait(0.5)
+        guard NSWorkspace.shared.frontmostApplication?.processIdentifier == getpid() else {
+            return print("SKIP  Space through the isolated editor (Dalnok could not be made frontmost)")
+        }
+        let screenHeight = NSScreen.screens.first?.frame.height ?? 0
+        let inside = CGPoint(x: ed.x + ed.width / 2, y: screenHeight - (ed.y + ed.content_height / 2)) // the editor's view
+        let src = CGEventSource(stateID: .hidSystemState)
+        func post(_ e: CGEvent?) { e?.post(tap: .cghidEventTap); usleep(15_000) }
+        for type in [CGEventType.leftMouseDown, .leftMouseUp] { post(CGEvent(mouseEventSource: src, mouseType: type, mouseCursorPosition: inside, mouseButton: .left)) }
+        await wait(0.3)
+        let e = s.engine, wasPlaying = e.isPlaying
+        func space() { for down in [true, false] { post(CGEvent(keyboardEventSource: src, virtualKey: 49, keyDown: down)) } }
+        space(); await wait(0.5)
+        let started = e.isPlaying
+        space(); await wait(0.5)
+        let stopped = !e.isPlaying
+        print("MEASURE Space through the isolated editor: was playing \(wasPlaying), after first Space \(started), after second \(!stopped)")
+        check(!wasPlaying && started && stopped, "Space pressed in an isolated editor's window plays and stops Dalnok")
+        check(NSWorkspace.shared.frontmostApplication?.processIdentifier == getpid(), "clicking in the editor leaves Dalnok active")
+    }
+
+    /// DALNOK_REAL_INPUT=1 (unlocked screen, Accessibility): real OS-level clicks and typing reach an isolated editor.
+    /// Clicks AUDelay's Dry/Wet value field in the host's window, types 25 and Return, and reads the parameter back.
+    /// Dalnok is made frontmost first, so a key that missed the editor would land in Dalnok, never another app.
+    private func typeIntoIsolatedEditor(_ slot: Int32, _ ed: DalnokPluginEditorWindow) async {
+        // Never post input at a lock screen (it would type into the password field).
+        if let session = CGSessionCopyCurrentDictionary() as? [String: Any], session["CGSSessionScreenIsLocked"] as? Bool == true {
+            return print("SKIP  real typing into the isolated editor (the screen is locked)")
+        }
+        NSApp.activate(ignoringOtherApps: true); await wait(0.5)
+        guard NSWorkspace.shared.frontmostApplication?.processIdentifier == getpid() else {
+            return print("SKIP  real typing into the isolated editor (Dalnok could not be made frontmost)")
+        }
+        func dryWet() -> String {
+            for i in 0..<dalnok_plugin_parameter_count(s.h, slot) {
+                var p = DalnokPluginParameter()
+                if dalnok_plugin_parameter(s.h, slot, i, &p) == DALNOK_OK, fixedString(p.title).contains("Dry/Wet") { return fixedString(p.display) }
+            }
+            return ""
+        }
+        let before = dryWet()
+        // The value field sits at (405, 201) points from the content's top-left in AUDelay's 484 × 255 view.
+        let screenHeight = NSScreen.screens.first?.frame.height ?? 0
+        let contentTop = screenHeight - (ed.y + ed.height - (ed.height - ed.content_height))
+        let field = CGPoint(x: ed.x + 405 * ed.content_width / 484, y: contentTop + 201 * ed.content_height / 255)
+        let src = CGEventSource(stateID: .hidSystemState)
+        func post(_ e: CGEvent?) { e?.post(tap: .cghidEventTap); usleep(15_000) }
+        func key(_ code: CGKeyCode, _ flags: CGEventFlags = []) {
+            if flags.contains(.maskCommand) { let d = CGEvent(keyboardEventSource: src, virtualKey: 55, keyDown: true); d?.type = .flagsChanged; d?.flags = .maskCommand; post(d) }
+            let d = CGEvent(keyboardEventSource: src, virtualKey: code, keyDown: true); d?.flags = flags; post(d)
+            let u = CGEvent(keyboardEventSource: src, virtualKey: code, keyDown: false); u?.flags = flags; post(u)
+            if flags.contains(.maskCommand) { let r = CGEvent(keyboardEventSource: src, virtualKey: 55, keyDown: false); r?.type = .flagsChanged; post(r) }
+        }
+        for type in [CGEventType.leftMouseDown, .leftMouseUp] {
+            let e = CGEvent(mouseEventSource: src, mouseType: type, mouseCursorPosition: field, mouseButton: .left); post(e)
+        }
+        await wait(0.3)
+        key(0, .maskCommand)                 // ⌘A selects the field's text
+        for code: CGKeyCode in [19, 23] { key(code) } // 2, 5
+        key(36)                              // Return
+        await wait(0.6)
+        let after = dryWet(), front = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        print("MEASURE real input into isolated AUDelay editor at \(field): Dry/Wet \(before) → \(after)")
+        check(after.hasPrefix("25"), "real clicks and typing reach the isolated editor (Dry/Wet \(before) → \(after))")
+        check(front == getpid(), "typing into the editor leaves Dalnok the active application")
+    }
+
+    // ---- Real OS-level input (DALNOK_REAL_INPUT=1) ------------------------------------------------------------
+
+    /// True when real input may be posted: asked for, the screen unlocked, and Dalnok frontmost (input goes to
+    /// whatever application is in front, so a missed target lands in Dalnok, never another app).
+    private func realInputReady(_ what: String) async -> Bool {
+        guard ProcessInfo.processInfo.environment["DALNOK_REAL_INPUT"] == "1" else { return false }
+        if let session = CGSessionCopyCurrentDictionary() as? [String: Any], session["CGSSessionScreenIsLocked"] as? Bool == true {
+            print("SKIP  \(what) with real input (the screen is locked)"); return false
+        }
+        NSApp.activate(ignoringOtherApps: true); w.window?.makeKeyAndOrderFront(nil); await wait(0.5)
+        guard NSWorkspace.shared.frontmostApplication?.processIdentifier == getpid() else {
+            print("SKIP  \(what) with real input (Dalnok could not be made frontmost)"); return false
+        }
+        return true
+    }
+
+    /// A point in `view` as a global screen point (top-left origin), where CGEvents are posted.
+    private func screenPoint(_ view: NSView, _ p: NSPoint) -> CGPoint {
+        guard let win = view.window else { return .zero }
+        let q = win.convertPoint(toScreen: view.convert(p, to: nil))
+        return CGPoint(x: q.x, y: (NSScreen.screens.first?.frame.height ?? 0) - q.y)
+    }
+
+    private enum RealInput {
+        static var src: CGEventSource? { CGEventSource(stateID: .hidSystemState) }
+        static func post(_ e: CGEvent?) { e?.post(tap: .cghidEventTap); usleep(12_000) }
+        static func mouse(_ t: CGEventType, _ p: CGPoint) {
+            post(CGEvent(mouseEventSource: src, mouseType: t, mouseCursorPosition: p, mouseButton: .left))
+        }
+        static func click(_ p: CGPoint) { mouse(.mouseMoved, p); mouse(.leftMouseDown, p); mouse(.leftMouseUp, p) }
+        static func drag(_ a: CGPoint, _ b: CGPoint) {
+            mouse(.mouseMoved, a); mouse(.leftMouseDown, a)
+            for k in 1...20 {
+                let t = Double(k) / 20
+                mouse(.leftMouseDragged, CGPoint(x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t))
+            }
+            mouse(.leftMouseUp, b)
+        }
+        /// Presses and releases the modifiers around the key, like a hand on the keyboard, so none stays latched.
+        static func key(_ code: CGKeyCode, _ flags: CGEventFlags = []) {
+            let mods: [(CGEventFlags, CGKeyCode)] = [(.maskShift, 56), (.maskCommand, 55)]
+            var held: CGEventFlags = []
+            for (m, c) in mods where flags.contains(m) {
+                held.insert(m)
+                let e = CGEvent(keyboardEventSource: src, virtualKey: c, keyDown: true); e?.type = .flagsChanged; e?.flags = held; post(e)
+            }
+            for down in [true, false] {
+                let e = CGEvent(keyboardEventSource: src, virtualKey: code, keyDown: down); e?.flags = flags; post(e)
+            }
+            for (m, c) in mods.reversed() where flags.contains(m) {
+                held.remove(m)
+                let e = CGEvent(keyboardEventSource: src, virtualKey: c, keyDown: false); e?.type = .flagsChanged; e?.flags = held; post(e)
+            }
+        }
+    }
+
+    /// This branch's work driven by real mouse and keyboard events: a clip drag redraws one lane correctly and ⌘Z / ⇧⌘Z
+    /// move it back and forth (A-03 deltas); Space plays a streamed file and a ruler click seeks into blocks that were
+    /// never resident (A-09).
+    private func realInputChecks() async {
+        guard await realInputReady("timeline drag, undo and streamed playback") else { return }
+        let tl = w.timeline, e = s.engine
+        e.pause()
+        if s.tracks.count >= 2, let clip = s.tracks[1].clips.first, let win = tl.window {
+            for _ in 0..<2 { tl.needsDisplay = true; win.displayIfNeeded(); CATransaction.flush(); await wait(0.05) }
+            let baseline = timelineMismatch()
+            let r = tl.clipRect(clip, laneY: tl.laneY(1)), visible = tl.visibleRect
+            let x0 = max(r.minX, visible.minX) + 10, x1 = min(r.maxX, visible.maxX) - 10
+            guard x1 > x0 + 4 else { return check(false, "real drag: the second track's clip is on screen") }
+            let from = screenPoint(tl, NSPoint(x: (x0 + x1) / 2, y: r.midY + 4))
+            RealInput.drag(from, CGPoint(x: from.x + 60, y: from.y))
+            await wait(0.4)
+            let moved = s.tracks[1].clips.first { $0.id == clip.id }?.start ?? clip.start
+            win.displayIfNeeded(); CATransaction.flush()
+            let lanes = tl.lanesDrawn, partial = timelineMismatch()
+            if partial > baseline { dumpTimeline("real-drag") }
+            print("MEASURE real clip drag: start \(clip.start) → \(moved); \(lanes) lane(s) redrawn; \(partial) vs \(baseline) differing bytes")
+            check(moved > clip.start && s.tracks[1].clips.count == s.tracks[1].clips.count, "a real mouse drag moves the clip right (\(clip.start) → \(moved))")
+            check(partial <= baseline, "after the real drag the timeline matches a full redraw (\(partial) vs \(baseline) differing bytes)")
+            guard await realInputReady("⌘Z / ⇧⌘Z") else { return }
+            RealInput.key(6, .maskCommand); await wait(0.4) // ⌘Z
+            let undone = s.tracks[1].clips.first { $0.id == clip.id }?.start
+            RealInput.key(6, [.maskCommand, .maskShift]); await wait(0.4) // ⇧⌘Z
+            let redone = s.tracks[1].clips.first { $0.id == clip.id }?.start
+            check(undone == clip.start && redone == moved, "real ⌘Z / ⇧⌘Z undo and redo the drag exactly (\(undone ?? -1), \(redone ?? -1))")
+            RealInput.key(6, .maskCommand); await wait(0.4)
+            check(s.tracks[1].clips.first { $0.id == clip.id }?.start == clip.start, "and ⌘Z restores it")
+        } else { check(false, "real drag needs two tracks with clips") }
+
+        // A-09: a 90 s file (streamed above 30 s here) played with Space; a ruler click seeks far into it.
+        let rate = 48_000, seconds = 90, wav = workdir.appendingPathComponent("long-tone.wav")
+        var data = Data()
+        func le<T: FixedWidthInteger>(_ v: T) { withUnsafeBytes(of: v.littleEndian) { data.append(contentsOf: $0) } }
+        let bytes = rate * seconds * 2
+        data.append(contentsOf: Array("RIFF".utf8)); le(UInt32(36 + bytes)); data.append(contentsOf: Array("WAVEfmt ".utf8))
+        le(UInt32(16)); le(UInt16(1)); le(UInt16(1)); le(UInt32(rate)); le(UInt32(rate * 2)); le(UInt16(2)); le(UInt16(16))
+        data.append(contentsOf: Array("data".utf8)); le(UInt32(bytes))
+        data.reserveCapacity(44 + bytes)
+        for i in 0..<(rate * seconds) { le(Int16(sin(Double(i) * 2 * .pi * 220 / Double(rate)) * 8_000)) }
+        try? data.write(to: wav)
+        let streamDir = workdir.appendingPathComponent("stream")
+        setenv("DALNOK_STREAM_DIR", streamDir.path, 1)
+        dalnok_stream_set_limits(30, 64)
+        defer { dalnok_stream_set_limits(60, 256); unsetenv("DALNOK_STREAM_DIR") }
+        let before = s.tracks.count
+        await withCheckedContinuation { cont in s.importFiles([wav]) { cont.resume() } }
+        s.refresh()
+        guard s.tracks.count == before + 1, let clip = s.tracks.last?.clips.first, let media = dalnok_pool_media(s.h, clip.media) else {
+            return check(false, "the 90 s file imports as a new track")
+        }
+        check(dalnok_media_streamed(media), "a 90 s file above the 30 s limit is streamed from disk")
+        func stats() -> DalnokStreamStats { var o = DalnokStreamStats(); dalnok_stream_stats(&o); return o }
+        e.seek(0); await wait(0.3)
+        guard await realInputReady("streamed playback") else { return }
+        let s0 = stats()
+        RealInput.key(49); await wait(3.0) // Space
+        let playing = e.isPlaying, p1 = e.position, s1 = stats()
+        check(playing && Double(p1) > 2.5 * e.sampleRate, "real Space plays the streamed file (\(String(format: "%.2f", Double(p1) / e.sampleRate)) s)")
+        check(s1.missed_frames == s0.missed_frames && s1.blocks_loaded > s0.blocks_loaded,
+              "3 s of streamed playback misses no frames (missed \(s1.missed_frames - s0.missed_frames), blocks loaded \(s1.blocks_loaded - s0.blocks_loaded))")
+        // The ruler's lower half seeks; aim as far right as the view shows, capped at 80 s.
+        let visible = tl.visibleRect
+        let x = min(tl.xPos(forFrame: 80 * e.sampleRate), visible.maxX - 20)
+        RealInput.click(screenPoint(tl, NSPoint(x: x, y: Theme.rulerHeight * 0.75)))
+        await wait(0.3)
+        let landed = e.position
+        let s2 = stats()
+        await wait(2.0)
+        let s3 = stats(), p3 = e.position
+        print(String(format: "MEASURE real seek into streamed audio: landed %.2f s; missed %llu frames while the seek settled, then %llu in 2 s; resident %.1f of %.1f MB",
+                     Double(landed) / e.sampleRate, s2.missed_frames - s1.missed_frames, s3.missed_frames - s2.missed_frames,
+                     Double(s3.resident_bytes) / 1_048_576, Double(s3.budget_bytes) / 1_048_576))
+        check(Double(landed) > 10 * e.sampleRate && p3 > landed, "a real ruler click seeks deep into the file and playback continues")
+        check(s3.missed_frames == s2.missed_frames, "after the seek settles, streamed playback misses nothing")
+        check(s3.resident_bytes <= s3.budget_bytes, "the block cache stays within its budget")
+        RealInput.key(49); await wait(0.3)
+        check(!e.isPlaying, "real Space stops playback")
+        _ = perform("Undo")
+        check(s.tracks.count == before, "undo removes the imported track")
+    }
+
+    /// Writes the timeline's committed layer and a fresh full draw as PNGs (diagnosing a redraw mismatch).
+    private func dumpTimeline(_ name: String) {
+        let tl = w.timeline
+        guard let win = tl.window else { return }
+        let scale = win.backingScaleFactor, pw = Int(tl.bounds.width * scale), ph = Int(tl.bounds.height * scale)
+        func ctx() -> CGContext? {
+            let c = CGContext(data: nil, width: pw, height: ph, bitsPerComponent: 8, bytesPerRow: pw * 4, space: CGColorSpaceCreateDeviceRGB(),
+                              bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+            c?.scaleBy(x: scale, y: scale); return c
+        }
+        func write(_ c: CGContext?, _ suffix: String) {
+            guard let img = c?.makeImage() else { return }
+            let rep = NSBitmapImageRep(cgImage: img)
+            try? rep.representation(using: .png, properties: [:])?.write(to: workdir.appendingPathComponent("\(name)-\(suffix).png"))
+        }
+        let a = ctx()
+        if let a, let layer = tl.layer {
+            let overlays = (layer.sublayers ?? []).filter { !$0.isHidden }
+            overlays.forEach { $0.isHidden = true }; layer.render(in: a); overlays.forEach { $0.isHidden = false }
+        }
+        write(a, "committed")
+        let b = ctx()
+        if let b {
+            NSGraphicsContext.saveGraphicsState(); NSGraphicsContext.current = NSGraphicsContext(cgContext: b, flipped: tl.isFlipped)
+            tl.draw(tl.bounds); NSGraphicsContext.restoreGraphicsState()
+        }
+        write(b, "fresh")
+    }
+
+    /// Bytes by which the timeline's committed layer differs from drawing the whole view afresh (see partialTimelineRedraw).
+    private func timelineMismatch() -> Int {
+        let tl = w.timeline
+        guard let win = tl.window else { return Int.max }
+        func context() -> CGContext? {
+            let scale = win.backingScaleFactor, pw = Int(tl.bounds.width * scale), ph = Int(tl.bounds.height * scale)
+            guard pw > 0, ph > 0, let ctx = CGContext(data: nil, width: pw, height: ph, bitsPerComponent: 8, bytesPerRow: pw * 4,
+                                                     space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+            else { return nil }
+            ctx.scaleBy(x: scale, y: scale)
+            return ctx
+        }
+        func bytes(_ ctx: CGContext) -> Data { Data(bytes: ctx.data!, count: ctx.bytesPerRow * ctx.height) }
+        func committed() -> Data? {
+            guard let layer = tl.layer, let ctx = context() else { return nil }
+            // The playhead and selection glow are sublayers that draw(_:) never paints; compare the drawn content only.
+            let overlays = (layer.sublayers ?? []).filter { !$0.isHidden }
+            overlays.forEach { $0.isHidden = true }
+            layer.render(in: ctx)
+            overlays.forEach { $0.isHidden = false }
+            return bytes(ctx)
+        }
+        func drawnFresh() -> Data? {
+            guard let ctx = context() else { return nil }
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: tl.isFlipped)
+            tl.draw(tl.bounds)
+            NSGraphicsContext.restoreGraphicsState()
+            return bytes(ctx)
+        }
+        func differing(_ a: Data?, _ b: Data?) -> Int {
+            guard let a, let b, a.count == b.count else { return Int.max }
+            var n = 0
+            a.withUnsafeBytes { x in b.withUnsafeBytes { y in for k in 0..<x.count where abs(Int(x[k]) - Int(y[k])) > 2 { n += 1 } } }
+            return n
+        }
+        return differing(committed(), drawnFresh())
+    }
+
+    /// A structural edit on one track redraws only that track's lane, and the result matches drawing everything.
+    /// The reference draws the whole view into an identical offscreen context; even a full redraw differs from it by a
+    /// few rasterized text bytes, so a partial redraw must differ by no more than a full one does.
+    private func partialTimelineRedraw() async {
+        let tl = w.timeline
+        guard s.tracks.count >= 2, let clip = s.tracks[1].clips.first, let win = tl.window else {
+            return check(false, "partial redraw check needs two tracks with clips")
+        }
+        for _ in 0..<2 { tl.needsDisplay = true; win.displayIfNeeded(); CATransaction.flush(); await wait(0.05) }
+        let baseline = timelineMismatch()
+        var ids = [clip.id]
+        _ = dalnok_clips_nudge(s.h, &ids, 1, 4_800)
+        s.refresh()
+        win.displayIfNeeded(); CATransaction.flush() // the partial redraw, as the run loop would draw it
+        let lanes = tl.lanesDrawn, reread = s.rereadTracks
+        let partial = timelineMismatch()
+        check(reread == [s.tracks[1].id] && lanes == 1,
+              "a structural edit on one track redraws only its lane (\(lanes) lane drawn; tracks read \(reread.count))")
+        check(partial <= baseline, "the partially redrawn timeline matches a full redraw (\(partial) vs \(baseline) differing bytes)")
+        _ = perform("Undo")
+    }
 
     private func markersAndTrackTools() async {
         let e = s.engine
@@ -919,9 +1465,17 @@ final class SelfTest {
         await wait(0.15); deck.step(dt: 0.016)
         let wound = Double(e.position - start) / e.sampleRate
         check(abs(wound - TapeDeckView.windSpeed) < 1.5 && deck.model.angles.1 > held.1, "F.FWD winds the playhead forward at \(TapeDeckView.windSpeed)× (\(wound) s)")
+        // Let the reel animation catch the forward seek before testing the opposite direction.
+        for _ in 0..<40 {
+            if abs(deck.model.shown - Double(e.position) / e.sampleRate) < 0.1 { break }
+            await wait(0.05); deck.step(dt: 0.05)
+        }
         let before = deck.model.angles
         deck.wind(-1, seconds: 0.5)
-        await wait(0.15); deck.step(dt: 0.016)
+        for _ in 0..<40 {
+            await wait(0.05); deck.step(dt: 0.05)
+            if deck.model.angles.1 < before.1 { break }
+        }
         check(deck.model.angles.1 < before.1, "REWIND turns the reels backwards")
         deck.play.onPress?(); await wait(0.3)
         deck.stop.onPress?(); await wait(0.15)
@@ -1085,6 +1639,20 @@ final class SelfTest {
 
         // Welcome flow: choosing a DAW applies its preset and starts the project finder.
         w.welcome.show()
+        // Secondary windows open centered on Dalnok's screen (Settings opened at the bottom-left corner).
+        func centered(_ win: NSWindow?) -> Bool {
+            guard let win, let vf = (w.window?.screen ?? NSScreen.main)?.visibleFrame else { return false }
+            return abs(win.frame.midX - vf.midX) < 2 && abs(win.frame.midY - vf.midY) < 2
+        }
+        await wait(0.1)
+        check(centered(w.welcome.window), "welcome window opens centered (frame \(w.welcome.window.frame))")
+        let settingsWasOpen = w.settings.window?.isVisible == true
+        if !settingsWasOpen {
+            w.settings.show()
+            await wait(0.1)
+            check(centered(w.settings.window), "settings window opens centered (frame \(String(describing: w.settings.window?.frame)))")
+            w.settings.window?.orderOut(nil)
+        }
         w.welcome.choose(.ableton)
         check(SourceDAW.preferred == .ableton && menuItem("Split at Playhead")?.keyEquivalent == "e", "welcome: Ableton chosen, preset applied")
         await w.welcome.rescan()
@@ -1355,6 +1923,36 @@ final class SelfTest {
                 check(v > rn.velocity && e.undoName == "Note Velocity", "velocity lane drag raises velocity (\(rn.velocity) → \(v))")
             }
         }
+        // Auditioning: holding the mouse on a note plays it through the track's instrument, unarmed and stopped, and
+        // releasing it stops the sound (dalnok_track_preview_note).
+        if dalnok_engine_device_running(e.handle), let cur = s.clip(clip), let note = cur.notes.first(where: { $0.pitch == 76 }) {
+            let track = cur.track
+            _ = dalnok_track_set_armed(e.handle, track, false)
+            if e.isPlaying { dalnok_transport_pause(e.handle) }
+            func level(over seconds: Double) async -> Float {
+                var peak: Float = 0
+                for _ in 0..<Int(seconds / 0.05) {
+                    await wait(0.05)
+                    var l: Float = 0, r: Float = 0
+                    _ = dalnok_meter_track(e.handle, track, &l, &r)
+                    peak = max(peak, l, r)
+                }
+                return peak
+            }
+            _ = await level(over: 0.6) // anything still ringing
+            let r = roll.rect(note, cur)
+            let at = CGPoint(x: r.minX + 3, y: r.midY)
+            roll.mouseDown(with: ev(.leftMouseDown, at))
+            let held = await level(over: 0.4)
+            roll.mouseUp(with: ev(.leftMouseUp, at))
+            _ = await level(over: 1.2) // the release
+            let after = await level(over: 0.3)
+            print(String(format: "MEASURE audition: held %.4f, after release %.5f", held, after))
+            check(held > 0.01 && after < held * 0.05, "holding a note in the piano roll plays it; releasing stops it (held \(held), after \(after))")
+            check(!e.isPlaying && s.clip(clip)?.notes.count == cur.notes.count, "auditioning neither starts the transport nor edits notes")
+        } else {
+            print("SKIP  piano-roll audition (no output device running)")
+        }
         // Keys: transpose down an octave, nudge right, then delete through Edit > Delete.
         key(125, "", mods: .shift)
         check(s.clip(clip)?.notes.contains { $0.pitch == 64 && $0.start == n.start + beat } == true, "⇧↓ transposes the selection down an octave")
@@ -1552,7 +2150,34 @@ final class SelfTest {
             _ = perform("Show Automation"); tl.pluginLanes = [:]
             pw.window?.close()
         } else { check(false, "AUDelay's window opens") }
+        // Duplicate track names must remain distinct choices in a sidechain menu.
+        let duplicate1 = s.addTrack("Sidechain duplicate")
+        let duplicate2 = s.addTrack("Sidechain duplicate")
+        let namedNone = s.addTrack("None")
+        if let fixture = ProcessInfo.processInfo.environment["DALNOK_TEST_CLAP"], !fixture.isEmpty {
+            let sidechainSlot = (try? s.addPlugin(track, path: fixture)) ?? 0
+            if let device = panel.devices.first(where: { $0.slot == sidechainSlot }), sidechainSlot != 0 {
+                let accepted = dalnok_plugin_set_sidechain(s.engine.handle, track, sidechainSlot, duplicate2) == DALNOK_OK
+                device.refreshControls()
+                check(accepted && !device.sidechain.isHidden && device.sidechain.selectedTag() == Int(duplicate2),
+                      "a hosted sidechain restores the selected duplicate-name track")
+                s.removePlugin(track, sidechainSlot)
+            } else { check(false, "sidechain fixture loads and opens its device") }
+        }
         guard let delay = panel.devices.first else { return }
+        let sidechainWasHidden = delay.sidechain.isHidden
+        delay.sidechain.isHidden = false // AUDelay need not expose a sidechain to exercise the menu.
+        delay.refreshControls()
+        let duplicates = delay.sidechain.itemArray.filter { $0.title == "SC: Sidechain duplicate" }
+        check(duplicates.count == 2 && Set(duplicates.map(\.tag)) == Set([Int(duplicate1), Int(duplicate2)]),
+              "sidechain menu retains duplicate track names with distinct track IDs")
+        let noneChoices = delay.sidechain.itemArray.filter { $0.title == "SC: None" }
+        check(noneChoices.count == 2 && Set(noneChoices.map(\.tag)) == Set([0, Int(namedNone)]),
+              "a track named None remains distinct from no sidechain")
+        delay.sidechain.selectItem(withTag: Int(duplicate2))
+        check(delay.sidechain.selectedTag() == Int(duplicate2), "a duplicate-name sidechain can be selected by track ID")
+        delay.sidechain.isHidden = sidechainWasHidden
+        s.removeTrack(namedNone); s.removeTrack(duplicate2); s.removeTrack(duplicate1)
         let names = delay.knobs.map { $0.label.stringValue }
         check(delay.knobs.count == 4 && names.contains { $0.caseInsensitiveCompare("Dry/Wet Mix") == .orderedSame }, "controller shows AUDelay's parameters (\(names))")
         if let lim = panel.devices.last {
@@ -1766,6 +2391,41 @@ final class SelfTest {
     private func motion() async {
         let e = s.engine
         guard let track = s.tracks.first?.id, let row = w.headers.row(track) else { return check(false, "a track for motion checks") }
+        let clipReads = s.clipReads
+        s.setGain(track, db: -1)
+        check(!s.refresh() && !s.refresh(), "parameter refresh waits for the display tick")
+        s.refresh(onDisplayTick: true)
+        check(s.clipReads == clipReads && abs((s.track(track)?.gainDb ?? 0) + 1) < 1e-6,
+              "parameter refresh updates gain without reading clips")
+        e.undo(); s.refresh(onDisplayTick: true)
+        check(s.clipReads == clipReads, "parameter undo refresh does not read clips")
+        if let other = s.tracks.first(where: { $0.id != track }) {
+            s.setPan(other.id, 0.25)
+            s.refresh(onDisplayTick: true)
+            check(s.clipReads == clipReads && abs((s.track(other.id)?.pan ?? 0) - 0.25) < 1e-6,
+                  "another track's parameter change does not read clips")
+            e.undo(); s.refresh(onDisplayTick: true)
+        }
+        _ = dalnok_track_set_gain_db(s.h, track, -9)
+        s.refresh(onDisplayTick: true)
+        check(s.clipReads == clipReads && abs((s.track(track)?.gainDb ?? 0) + 9) < 1e-6,
+              "scripted gain edit refreshes without reading clips")
+        e.undo(); s.refresh(onDisplayTick: true)
+        // A-05: a structural edit to one track re-reads only that track's clips.
+        if let edited = s.allTracks.first(where: { !$0.clips.isEmpty }), let clip = edited.clips.first {
+            s.refresh() // settle anything pending from the checks above
+            var info = DalnokTrackInfo(); _ = dalnok_track_info(s.h, edited.id, &info)
+            let before = s.clipReads
+            var ids = [clip.id]
+            _ = dalnok_clips_nudge(s.h, &ids, 1, 480)
+            s.refresh()
+            check(s.clipReads - before == Int(info.clip_count) && s.clip(clip.id)?.start == clip.start + 480,
+                  "an edit to one track re-reads only its \(info.clip_count) clip(s) (read \(s.clipReads - before) of \(s.allTracks.reduce(0) { $0 + $1.clips.count }))")
+            let afterEdit = s.clipReads
+            e.undo(); s.refresh()
+            check(s.clipReads - afterEdit == Int(info.clip_count) && s.clip(clip.id)?.start == clip.start,
+                  "undo re-reads only the track it changed")
+        } else { check(false, "a track with clips for the per-track refresh check") }
         Motion.override = true
         defer { Motion.override = false }
         // Knob glide: an undone volume change animates instead of jumping.
@@ -1990,6 +2650,7 @@ final class SelfTest {
         f.mouseDown(with: mouse(.leftMouseDown, a))
         for k in 1...6 { f.mouseDragged(with: mouse(.leftMouseDragged, CGPoint(x: a.x, y: a.y + (b.y - a.y) * CGFloat(k) / 6))) }
         f.mouseUp(with: mouse(.leftMouseUp, b))
+        s.refresh(onDisplayTick: true)
         let after = s.track(src)?.gainDb ?? 0
         check(after < before - 3, "dragging the strip fader down lowers the volume (\(before) → \(after) dB)")
         check(s.engine.undoName == "Volume" && perform("Undo") && abs((s.track(src)?.gainDb ?? 0) - before) < 0.01, "the fader drag is one undo step")
@@ -2034,12 +2695,19 @@ final class SelfTest {
                 let pool = dalnok_pool_add(engine.handle, media, nil)
                 _ = dalnok_clip_add(engine.handle, track, pool, 0, 0, 0)
                 dalnok_media_release(media)
-                session.refresh()
+                session.refresh(onDisplayTick: true)
                 _ = session.setAutomation(track, 0, [DalnokAutoPoint(frame: 0, value: -200), DalnokAutoPoint(frame: 90_000, value: -200)])
                 AutomationWriter.mode = .touch
                 var l = [Float](repeating: 0, count: 512), r = l
                 func pump(_ count: Int) { for _ in 0..<count { _ = dalnok_engine_pump(engine.handle, &l, &r, 512) } }
                 engine.play(); pump(12)
+                writer.touch(track, 0, true)
+                session.setGain(track, db: -6)
+                writer.touch(track, 0, false)
+                check(session.track(track)?.volumeAuto.contains(where: { $0.frame == engine.position && abs($0.value + 6) < 1e-6 }) == true,
+                      "same-frame Touch records the final engine gain")
+                session.setGain(track, db: 0)
+                _ = session.setAutomation(track, 0, [DalnokAutoPoint(frame: 0, value: -200), DalnokAutoPoint(frame: 90_000, value: -200)])
                 writer.touch(track, 0, true); pump(4); writer.tick()
                 engine.seek(0); pump(3); writer.tick()
                 pump(4)

@@ -16,9 +16,17 @@ func flags(_ s: String?) -> CGEventFlags {
 }
 let src = CGEventSource(stateID: .hidSystemState)
 func post(_ e: CGEvent?) { e?.post(tap: .cghidEventTap); usleep(12_000) }
+var lastMouse: CGPoint?
 func mouse(_ t: CGEventType, _ p: CGPoint, _ b: CGMouseButton = .left, _ f: CGEventFlags = [], clicks: Int64 = 1) {
     let e = CGEvent(mouseEventSource: src, mouseType: t, mouseCursorPosition: p, mouseButton: b)
-    e?.flags = f; e?.setIntegerValueField(.mouseEventClickState, value: clicks); post(e)
+    e?.flags = f; e?.setIntegerValueField(.mouseEventClickState, value: clicks)
+    // Movement deltas, as a real mouse reports them: some controls (knobs that read relative motion) ignore positions.
+    if let last = lastMouse {
+        e?.setIntegerValueField(.mouseEventDeltaX, value: Int64((p.x - last.x).rounded()))
+        e?.setIntegerValueField(.mouseEventDeltaY, value: Int64((p.y - last.y).rounded()))
+    }
+    lastMouse = p
+    post(e)
 }
 /// Presses the modifier keys for `f` (like a hand on the keyboard), runs `body`, then releases them, so the
 /// system never believes a modifier is still held afterwards.

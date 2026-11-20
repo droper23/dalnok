@@ -2,6 +2,59 @@
 
 ## [Unreleased]
 
+- Internal: the transport state (play, playhead, cycle, punch, metronome, count-in) is now its own type, `Transport`, outside the engine class. Recording state is likewise grouped as `RecordingState`. No behaviour change: all 225 engine tests pass and the real-time checks are clean.
+
+- Faster redraw after edits:
+  - Clip names are no longer re-typeset every time a lane redraws.
+  - Faders only repaint when their value actually changes; before, every fader repainted on any edit.
+  - On a 4,096-clip project, a one-track edit including drawing went from 12.4 to 10.1 ms, which fits in one 60 Hz frame. Snapshots are pixel-identical.
+  - The UI audit now reports main-thread CPU time per tick, so the time spent waiting on the window server is separated out.
+
+- Long audio clips played from the clip launcher no longer drop out. Previously only their first 1.4 s was guaranteed to be ready in memory; now Dalnok loads the audio ahead of where the playing clip is in its loop. In a test with a small cache, a 12 s clip looped for 26 s went from 13.8 s of silence to none.
+
+- The streaming cache folder no longer grows without limit. It stays under 8 GiB (`DALNOK_STREAM_DISK_MB`) by deleting the least recently used files, and partial files left by a crash are removed. A file still in use keeps playing even after it's deleted.
+- Fixed: `scripts/ci/plugin-recovery.sh` left one stuck test process running after every run (from the plug-in that hangs while loading).
+
+- Tests: `DALNOK_REAL_INPUT=1` now drives this release's changes with real mouse and keyboard input in the self-test. It drags a clip, undoes and redoes with ⌘Z / ⇧⌘Z, plays a streamed 90 s file with Space, seeks with a ruler click and clicks Stop during slow isolated loading. It checks the screen is unlocked and Dalnok is in front first. The timeline redraw check now ignores the playhead overlay, which `draw` never paints, so it compares exactly (0 differing bytes).
+
+- Editing a clip no longer repaints the whole arrangement and mixer: only the changed tracks redraw. On a 4,096-clip project, an edit including drawing went from about 54 ms to 22 ms. The UI timing audit now includes drawing time.
+- Long audio files now play from disk instead of being held in memory (ADR-0016). Files over a minute are decoded once into a cache and played from a bounded memory cache. An hour of stereo audio used 1.39 GB of memory and now uses under 50 MB, with nothing dropped in testing. Reopening a project reuses the cache, so it opens instantly.
+- Time-stretched clips now render identically every time. The stretcher used a random seed, so the last few milliseconds of a stretched clip could differ between renders.
+- Internal: the engine's 3,000-line implementation is split by concern. Plug-in hosting (`PluginHostService`) and undo (`UndoStack`) are now their own classes, and the remaining code is in eight files of at most about 1,000 lines. No behaviour change.
+- Undo history for structural edits is about 80 times smaller: steps keep only the clips they changed. On a 4,096-clip project, 500 clip moves used to add 269 MB of memory and now add about 3 MB. Edits and undo take about the same time (0.30 ms and 0.36 ms).
+- Isolated plug-ins now share one time budget per audio callback, so several plug-ins stalling at once can no longer make the callback overrun. With three hung plug-ins the worst callback fell from 13.1 ms, longer than its 10.7 ms period, to 4.5 ms. Plug-ins skipped because others used the budget are not reported as unresponsive. Each plug-in process's audio thread also joins the output device's audio workgroup, so macOS schedules it with Dalnok's audio thread (C API 37).
+- Isolated plug-ins now show their own editors (ADR-0015, C API 36). The editor opens in a floating window beside the plug-in window, owned by the plug-in's process. Dalnok stays the active app, the editor hides while you're in another app, and closing the plug-in window closes it. Dalnok's plug-in window keeps the parameter list, and its Editor tab brings the editor forward.
+- With Safety on (Settings ▸ Plug-ins), a project's plug-ins now load in their own processes in the background, up to four at a time (ADR-0014 stage 2, C API 35): a plug-in that takes seconds to initialize no longer freezes the window, and Stop ends loading at once. In a self-test with three plug-ins that each sleep 4 s while initializing, the window never paused for more than 13 ms and Stop took effect in about 0.15 s. A plug-in that crashes while loading is now reported within milliseconds instead of after the load timeout.
+- Crash isolation for plug-ins (experimental, Settings ▸ Plug-ins ▸ Safety; ADR-0014, C API 34): each third-party plug-in can run in its own `dalnok-plughost` process. A plug-in that crashes or stops responding is switched off and reported instead of taking Dalnok down, and Load restarts it. Audio stays sample-identical to in-process hosting; each isolated plug-in costs about 34 µs per block. Plug-in editor windows aren't available in this mode yet.
+- The window now re-reads only the tracks an edit changed (per-track revisions, C API 33), and the mixer updates faders and buttons in place while they move. On a generated 4,096-clip project, refresh after a fader change fell from about 4 ms to 0.16 ms and after a one-clip edit from 24.6 ms to 0.56 ms.
+- Fuzzing for every project and import parser (`scripts/ci/fuzz.sh`, libFuzzer + AddressSanitizer). Fixed what it found: a damaged `.dawproject` could make the ZIP reader allocate gigabytes, and a malformed escape or volume in an FCPXML file crashed the app. Parser errors can no longer escape the engine as exceptions. `scripts/check.sh` always runs the parser tests under AddressSanitizer.
+- Opening or importing a project no longer waits for its plug-ins (ADR-0013, C API 32): the project appears at once, plug-ins load one at a time with “Loading plug-ins n of N” and a Stop button, and stopped or recovered plug-ins can be loaded later from the track menu (Load). Slow plug-ins are named afterwards.
+- Incremental snapshot compilation (A-04): each track's clip-derived render content is shared between snapshots and rebuilt only when that track's clips change. Randomized edit/undo/redo sequences compare reused content with a fresh build (`dalnok_engine_snapshot_mismatches`, C API 31). On a generated 4,096-clip project, structural edit p50 0.238 → 0.163 ms and undo p50 0.257 → 0.173 ms.
+- Project application now writes an atomic, uniquely named recovery snapshot before incoming plug-in activation. If the snapshot cannot be written the existing project stays open; recovery retains plug-in state without loading the plug-ins. Synchronous load reports a snapshot-write failure as an I/O error. Generated VST3 crash and hang fixtures compare the complete normalized incoming model and pass normally and with AddressSanitizer, as does the existing recovery smoke. Recovery markers preserve pending copies across repeated crashes and clean quits; the self-test covers selecting both older and newer copies. The final full sanitizer check passed with 197 tests in normal, ASan and TSan runs, live audio smoke and self-test. Plug-in hosting remains in-process.
+- Mixer scalar edits use compact grouped undo, with snapshot promotion for mixed groups (ADR-0012). On a generated 4,096-clip project, 500 gain edits measured p50 0.058 ms → below 0.001 ms display precision and final RSS 302.6 MB → 34.5 MB. Randomized full-undo, mixed-group and failed-edit checks pass.
+- Added parameter revision hints and handoff health counters (C API 30). Parameter-only reads avoid clip traversal. Matching 4,096-clip AppKit drag dispatch p50/p95/p99/max was 27.771875/30.493334/31.077125/31.706958 → 0.025000/0.031333/0.033625/0.037625 ms; parameter refresh was 28.385333/29.191209/29.532209/29.715750 → 3.865959/3.934792/3.967375/3.967375 ms. Graphite, mixer visible, 30 warmups and 100 samples; drag events were a tight burst and refresh includes synchronous callbacks, with deferred drawing excluded. Self-tests verify display-tick coalescing, unrelated-track edits with zero clip reads, and same-frame Touch; final generated-project UI walks in both themes cover gain drag, undo and scripted changes. The UI walk now waits for project load, and the reel self-test waits for forward animation to settle. An instrumented saturation test verifies queue depth, skipped adoptions and recovery after collection.
+
+- Added an independent engineering audit on `audit/2026-11-codebase`: `docs/audits/codebase-audit-2026-11.md`
+  (findings with evidence), `findings.json`, `modernization-roadmap.md`, reproducible benchmark data and an
+  interactive dashboard. It measures the real-time path, model/edit/undo scaling and memory instead of
+  estimating them, and adds two measurement-only `dalnok-cli` subcommands. No product behaviour changed.
+
+- Audit follow-ups (branch `fix/audit-followups`): render-snapshot compilation is linear in clips (4,096-clip
+  structural edits 0.77 -> 0.26 ms, clip-by-clip build 1.27 s -> 0.53 s), plug-in state is an immutable shared
+  blob so model copies and undo snapshots no longer copy it, the live and offline render paths flush denormals
+  to zero, and new property/mutation tests exercise the project parser. `CURRENT_STATE.md` was corrected: it
+  listed already-tested features as missing. Autosave/recovery already existed; the audit misread its timer.
+
+- Retested the import path in the built app with a generated Logic project (three tracks, duplicate channel-strip names including a track named None): the import completed through Open ▸ Import and the app stayed responsive. The owner's real projects were not available on this machine, so that retest remains outstanding.
+- MODO BASS 2 loads in 3.2 s headlessly and did not stall the built app on a generated project; the earlier app-only stall is still unexplained and is not claimed as fixed. Plug-in initialization runs on the main thread during project apply, which is where such a block would come from.
+- Fixed a device-panel crash when sidechain choices have duplicate track names, including a track named None. Sidechain choices retain their distinct track IDs.
+- Added a hosted sidechain regression using the generated CLAP fixture.
+- Both reported Guitar Rig cases were retested in a diagnostic build; a separate MODO BASS load stall remains under investigation.
+- Logic import reports now state that tempo and meter changes are not imported.
+- Investigating Logic project opening crashes and audio parity; no compatibility fix is claimed yet.
+- Reproduced a Logic import crash through the published app UI; two other projects reached their import reports.
+- Tested and rejected an import scheduling workaround after a repeated import crashed; no crash fix is claimed.
+
 ## [0.1.0] - 2026-11-18
 First preview release (pre-alpha): recording and editing, MIDI, mixing, VST3/CLAP/AU hosting, project import from
 Logic, Ableton, REAPER and Final Cut, the clip launcher, and the Graphite and Warm Analog appearances. The entries below

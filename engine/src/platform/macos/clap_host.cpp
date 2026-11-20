@@ -10,6 +10,7 @@
 #include <dispatch/dispatch.h>
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <cstring>
 #include <map>
 #include <mutex>
@@ -64,6 +65,7 @@ public:
             if (!std::strcmp(id, CLAP_EXT_GUI)) return &self->hostGui_;
             if (!std::strcmp(id, CLAP_EXT_LATENCY)) return &self->hostLatency_;
             if (!std::strcmp(id, CLAP_EXT_PARAMS)) return &self->hostParams_;
+            if (!std::strcmp(id, CLAP_EXT_STATE)) return &self->hostState_;
             return nullptr;
         };
         host_.request_restart = [](const clap_host_t *) {};
@@ -87,7 +89,13 @@ public:
         hostLatency_.changed = [](const clap_host_t *) {};
         hostParams_.rescan = [](const clap_host_t *, clap_param_rescan_flags) {};
         hostParams_.clear = [](const clap_host_t *, clap_id, clap_param_clear_flags) {};
-        hostParams_.request_flush = [](const clap_host_t *) {};
+        hostParams_.request_flush = [](const clap_host_t *h) {
+            static_cast<ClapProcessor *>(h->host_data)->flushWanted_.store(true, std::memory_order_release);
+        };
+        // Edits in the plug-in's own editor: it marks its state dirty, or reports parameter changes it made.
+        hostState_.mark_dirty = [](const clap_host_t *h) {
+            static_cast<ClapProcessor *>(h->host_data)->edits_.fetch_add(1, std::memory_order_relaxed);
+        };
         alive_ = std::make_shared<Alive>();
         alive_->self = this;
 
@@ -121,8 +129,14 @@ public:
         // Parameter ranges for automation and normalized values.
         for (uint32_t i = 0; params_ && i < params_->count(plugin_); ++i) {
             clap_param_info_t info{};
-            if (params_->get_info(plugin_, i, &info)) ranges_[info.id] = {info.min_value, info.max_value};
+            if (params_->get_info(plugin_, i, &info)) {
+                ranges_[info.id] = {info.min_value, info.max_value};
+                cookies_.push_back({info.id, info.cookie});
+            }
         }
+        std::sort(cookies_.begin(), cookies_.end(), [](const auto &a, const auto &b) { return a.first < b.first; });
+        values_ = std::vector<std::atomic<double>>(cookies_.size());
+        refreshValues();
         return true;
     }
 
@@ -166,7 +180,7 @@ public:
         clap_audio_buffer_t out = {outPtr, nullptr, 2, 0, 0};
         clap_input_events_t in = {this, [](const clap_input_events_t *l) -> uint32_t { return static_cast<uint32_t>(static_cast<const ClapProcessor *>(l->ctx)->eventCount_); },
                                   [](const clap_input_events_t *l, uint32_t i) -> const clap_event_header_t * { return &static_cast<const ClapProcessor *>(l->ctx)->events_[i].header(); }};
-        clap_output_events_t outEvents = {this, [](const clap_output_events_t *, const clap_event_header_t *) { return true; }};
+        clap_output_events_t outEvents = {this, countOutputEvent};
         clap_process_t p{};
         p.steady_time = -1;
         p.frames_count = static_cast<uint32_t>(frames);
@@ -181,6 +195,27 @@ public:
         // Plugin code (ADR-0009): the one unverifiable call on the audio thread.
         if (!processing_) processing_ = plugin_->start_processing(plugin_);
         if (plugin_->process(plugin_, &p) == CLAP_PROCESS_ERROR) for (int i = 0; i < frames; ++i) left[i] = right[i] = 0.0f;
+#pragma clang diagnostic pop
+    }
+
+    // Stopped transport: a flush the plug-in asked for (its editor changed a parameter), or panel changes, without
+    // audio. An active CLAP plug-in's flush belongs on the audio thread.
+    void idle() DALNOK_NONBLOCKING override {
+        // Also about every 50 ms without a request: some plug-ins queue their editor's changes for the next process or
+        // flush and never ask for one, so edits made while stopped reached Dalnok only at the next Play.
+        const bool wanted = flushWanted_.exchange(false, std::memory_order_acq_rel);
+        const bool due = ++idleCalls_ >= 5;
+        if (!params_ || !params_->flush || (!wanted && !due && changes_.size() == 0)) return;
+        idleCalls_ = 0;
+        eventCount_ = 0;
+        ParamChange c;
+        while (changes_.pop(c)) pushParam(c.id, c.value, 0);
+        clap_input_events_t in = {this, [](const clap_input_events_t *l) -> uint32_t { return static_cast<uint32_t>(static_cast<const ClapProcessor *>(l->ctx)->eventCount_); },
+                                  [](const clap_input_events_t *l, uint32_t i) -> const clap_event_header_t * { return &static_cast<const ClapProcessor *>(l->ctx)->events_[i].header(); }};
+        clap_output_events_t out = {this, countOutputEvent};
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wfunction-effects"
+        params_->flush(plugin_, &in, &out); // plug-in code, as process
 #pragma clang diagnostic pop
     }
 
@@ -203,7 +238,9 @@ public:
                              rd->at += n;
                              return static_cast<int64_t>(n);
                          }};
-        return state_->load(plugin_, &s);
+        const bool ok = state_->load(plugin_, &s);
+        refreshValues(); // values the plug-in reports for this state are not edits
+        return ok;
     }
 
     std::string categories() const override { return categories_; }
@@ -252,7 +289,7 @@ public:
             out.push_back({id, r.second > r.first ? (plain - r.first) / (r.second - r.first) : 0});
         }
     }
-    uint64_t editCount() const override { return 0; }
+    uint64_t editCount() const override { return edits_.load(std::memory_order_relaxed); }
     bool automationRange(uint32_t id, double &lo, double &hi) override {
         auto it = ranges_.find(id);
         if (it == ranges_.end()) return false;
@@ -291,17 +328,53 @@ private:
         clap_event_param_value_t param;
         const clap_event_header_t &header() const { return note.header; }
     };
+    // Parameter changes the plug-in reports (its editor) are edits to the project. Plug-ins also report values to
+    // synchronize (after loading or restoring), so a value counts only when it differs from the one last known.
+    static bool countOutputEvent(const clap_output_events_t *l, const clap_event_header_t *e) DALNOK_NONBLOCKING {
+        auto *self = static_cast<const ClapProcessor *>(l->ctx);
+        if (e->space_id != CLAP_CORE_EVENT_SPACE_ID) return true;
+        if (e->type == CLAP_EVENT_PARAM_GESTURE_END) self->edits_.fetch_add(1, std::memory_order_relaxed);
+        if (e->type == CLAP_EVENT_PARAM_VALUE) {
+            const auto *v = reinterpret_cast<const clap_event_param_value_t *>(e);
+            const size_t i = self->indexOf(v->param_id);
+            if (i < self->values_.size() && std::abs(self->values_[i].exchange(v->value, std::memory_order_relaxed) - v->value) > 1e-9)
+                self->edits_.fetch_add(1, std::memory_order_relaxed);
+        }
+        return true;
+    }
+    void refreshValues() {
+        for (size_t i = 0; params_ && i < cookies_.size(); ++i) {
+            double v = 0;
+            if (params_->get_value(plugin_, cookies_[i].first, &v)) values_[i].store(v, std::memory_order_relaxed);
+        }
+    }
+    size_t indexOf(clap_id id) const DALNOK_NONBLOCKING {
+        size_t lo = 0, hi = cookies_.size();
+        while (lo < hi) {
+            const size_t mid = (lo + hi) / 2;
+            if (cookies_[mid].first < id) lo = mid + 1; else hi = mid;
+        }
+        return lo < cookies_.size() && cookies_[lo].first == id ? lo : cookies_.size();
+    }
+    // The cookie the plug-in gave in clap_param_info. The spec lets hosts pass NULL, but some plug-in wrappers
+    // dereference it unconditionally (a NULL cookie crashed one in its process call), so always pass it.
+    void *cookie(clap_id id) const DALNOK_NONBLOCKING {
+        const size_t i = indexOf(id);
+        return i < cookies_.size() ? cookies_[i].second : nullptr;
+    }
     void pushParam(clap_id id, double value, uint32_t time) DALNOK_NONBLOCKING {
         if (eventCount_ >= kMaxEvents) return;
         Event &e = events_[eventCount_++];
         e.param = clap_event_param_value_t{};
         e.param.header = {sizeof(clap_event_param_value_t), time, CLAP_CORE_EVENT_SPACE_ID, CLAP_EVENT_PARAM_VALUE, 0};
         e.param.param_id = id;
+        e.param.cookie = cookie(id);
         e.param.note_id = -1;
         e.param.port_index = -1;
         e.param.channel = -1;
         e.param.key = -1;
         e.param.value = value;
+        if (const size_t i = indexOf(id); i < values_.size()) values_[i].store(value, std::memory_order_relaxed); // not an edit when echoed
     }
 
     CFBundleRef bundle_ = nullptr;
@@ -311,6 +384,11 @@ private:
     clap_host_gui_t hostGui_{};
     clap_host_latency_t hostLatency_{};
     clap_host_params_t hostParams_{};
+    clap_host_state_t hostState_{};
+    mutable std::atomic<uint64_t> edits_{0};
+    std::atomic<bool> flushWanted_{false};
+    int idleCalls_ = 0; // audio thread
+    mutable std::vector<std::atomic<double>> values_; // last known plain value per parameter, in cookies_ order
     std::shared_ptr<Alive> alive_;
     const clap_plugin_params_t *params_ = nullptr;
     const clap_plugin_state_t *state_ = nullptr;
@@ -328,6 +406,7 @@ private:
     std::mutex producer_;
     std::map<uint32_t, double> touched_; // plain values set from the control thread
     std::map<uint32_t, std::pair<double, double>> ranges_;
+    std::vector<std::pair<clap_id, void *>> cookies_; // sorted by id; read on the audio thread
     void (*onResize_)(void *, int32_t, int32_t) = nullptr;
     void *resizeCtx_ = nullptr;
 };

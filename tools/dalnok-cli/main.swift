@@ -2,9 +2,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import DalnokEngine
 import Foundation
+import Darwin
 
 func cstr(_ a: [CChar]) -> String { String(decoding: a.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self) }
-func fail(_ msg: String) -> Never { FileHandle.standardError.write(Data("error: \(msg)\n".utf8)); exit(1) }
+/// Ends the process without running library teardown: some plug-ins crash or hang in their own static destructors
+/// during exit() (seen with a Qt-based VST3), long after Dalnok's work is done and its files are closed.
+func leave(_ code: Int32) -> Never { fflush(stdout); fflush(stderr); _exit(code) }
+func fail(_ msg: String) -> Never { FileHandle.standardError.write(Data("error: \(msg)\n".utf8)); leave(1) }
 
 func load(_ path: String, rate: Double) -> OpaquePointer {
     var m: OpaquePointer?
@@ -22,6 +26,7 @@ usage:
   dalnok-cli play <audio-file> [--seconds N] [--churn]   live playback on the default device
   dalnok-cli render <audio-file> <out.wav> [--bits 16|24|32]
   dalnok-cli render-project <project.dalnok> <out.wav> [--bits 16|24|32]
+  dalnok-cli dirty-check <project.dalnok>                               does opening and playing mark it edited? (which tracks)
   dalnok-cli export-dawproject <project.dalnok> <out.dawproject>
   dalnok-cli recover-capture <spool> <new-output.wav>
   dalnok-cli command <project.dalnok> <command> [args-json] [--save]   run a catalog command
@@ -35,15 +40,19 @@ usage:
   dalnok-cli midi-play <source-id> <seconds> [--record]                  play (and record) the built-in synth from MIDI
   dalnok-cli make-test-project <folder> [--preset demo|band|midi|states|large] [--rate R] [--bpm B] [--tracks N] [--seconds S]
                                                                          generate a deterministic test project (no external files)
-  dalnok-cli plugins [--no-au] [--folder F]                              list VST3, CLAP and Audio Unit plugins (no code loaded)
+  dalnok-cli plugins [--no-au] [--folder F] [--json]                       list VST3, CLAP and Audio Unit plugins (no code loaded)
   dalnok-cli plugins --validate [--match NAME] [--folder F --only-folder] [--au] [--timeout S] [--rescan] [--cache FILE]
                                                                          load each plugin in a separate scanner process
   dalnok-cli bench [--tracks N] [--seconds S]                          render-cost benchmark (no device)
+  dalnok-cli audit-bench <project.dalnok> [--edits N]                   audit-only: model-read, edit and undo cost
+  dalnok-cli audit-ui <project.dalnok>                               audit-only: AppKit drag and refresh timings
+  dalnok-cli stream-bench <file.wav> --mode memory|stream [--seconds S]  audit-only: RSS and misses playing one long file
+  dalnok-cli audit-scale [--tracks N] [--clips N]                       audit-only: edit cost vs model size
   dalnok-cli import <project.rpp|.als|.logicx|.fcpxml|stems-folder> [--save out.dalnok] [--render out.wav] [--quiet]
 """
 
 let args = Array(CommandLine.arguments.dropFirst())
-guard let cmd = args.first, args.count >= 2 || cmd == "commands" || cmd == "bench" || cmd == "inputs" || cmd == "midi-inputs" || cmd == "recover-takes" || cmd == "plugins" else { print(usage); exit(2) }
+guard let cmd = args.first, args.count >= 2 || cmd == "commands" || cmd == "bench" || cmd == "inputs" || cmd == "midi-inputs" || cmd == "recover-takes" || cmd == "plugins" else { print(usage); leave(2) }
 
 func openProject(_ path: String) -> OpaquePointer {
     let engine = dalnok_engine_create(48_000)!
@@ -58,7 +67,7 @@ func opt(_ name: String) -> String? { args.firstIndex(of: name).flatMap { $0 + 1
 switch cmd {
 case "capture-test":
     guard args.count == 5, let channel = Int32(args[2]), channel > 0,
-          let seconds = Double(args[3]), seconds > 0, seconds <= 60 else { print(usage); exit(2) }
+          let seconds = Double(args[3]), seconds > 0, seconds <= 60 else { print(usage); leave(2) }
     let count = dalnok_input_devices(nil, 0)
     var devices = [DalnokInputDeviceInfo](repeating: DalnokInputDeviceInfo(), count: Int(max(count, 0)))
     let current = devices.withUnsafeMutableBufferPointer { dalnok_input_devices($0.baseAddress, Int32($0.count)) }
@@ -87,11 +96,11 @@ case "capture-test":
 
 case "record", "simulate-record":
     let simulated = cmd == "simulate-record"
-    guard simulated ? args.count == 3 : args.count >= 5 else { print(usage); exit(2) }
+    guard simulated ? args.count == 3 : args.count >= 5 else { print(usage); leave(2) }
     let channel = simulated ? 1 : (Int32(args[2]) ?? 0)
     let seconds = Double(simulated ? args[2] : args[3]) ?? 0
     let folder = simulated ? args[1] : args[4]
-    guard channel > 0, seconds > 0, seconds <= 3_600 else { print(usage); exit(2) }
+    guard channel > 0, seconds > 0, seconds <= 3_600 else { print(usage); leave(2) }
     var uid = DALNOK_SIMULATED_INPUT, rate = 48_000.0
     if !simulated {
         let count = dalnok_input_devices(nil, 0)
@@ -161,10 +170,10 @@ case "recover-takes":
             print("\((journal as NSString).lastPathComponent): \(cstr(err))")
         }
     }
-    if failures > 0 { exit(1) }
+    if failures > 0 { leave(1) }
 
 case "midi-play":
-    guard args.count >= 3, let source = Int32(args[1]), let seconds = Double(args[2]) else { print(usage); exit(2) }
+    guard args.count >= 3, let source = Int32(args[1]), let seconds = Double(args[2]) else { print(usage); leave(2) }
     let engine = dalnok_engine_create(0)!
     defer { dalnok_engine_destroy(engine) }
     var err = [CChar](repeating: 0, count: 512)
@@ -224,6 +233,7 @@ case "plugins":
     let n = dalnok_plugins_scan(folder, !args.contains("--no-au"), nil, 0)
     var buf = [CChar](repeating: 0, count: n + 1)
     dalnok_plugins_scan(folder, !args.contains("--no-au"), &buf, buf.count)
+    if args.contains("--json") { print(cstr(buf)); break }
     let list = (try? JSONSerialization.jsonObject(with: Data(cstr(buf).utf8))) as? [[String: Any]] ?? []
     var counts: [String: Int] = [:]
     for p in list {
@@ -299,10 +309,10 @@ case "play":
     dalnok_engine_destroy(engine)
     let ok = s.callbacks > 0 && abs(Double(pos) / expected - 1) < 0.05 && s.overloads == 0
     print(ok ? "RESULT: PASS" : "RESULT: FAIL")
-    exit(ok ? 0 : 1)
+    leave(ok ? 0 : 1)
 
 case "render":
-    guard args.count >= 3 else { print(usage); exit(2) }
+    guard args.count >= 3 else { print(usage); leave(2) }
     let bits = Int32(opt("--bits") ?? "24") ?? 24
     let engine = dalnok_engine_create(48_000)!
     let media = load(args[1], rate: 48_000)
@@ -318,14 +328,94 @@ case "render":
     dalnok_engine_destroy(engine)
 
 case "recover-capture":
-    guard args.count == 3 else { print(usage); exit(2) }
+    guard args.count == 3 else { print(usage); leave(2) }
     var frames: UInt64 = 0, trailing: UInt32 = 0
     var err = [CChar](repeating: 0, count: 512)
     guard dalnok_capture_recover_wav(args[1], args[2], &frames, &trailing, &err, err.count) == DALNOK_OK else { fail(cstr(err)) }
     print("recovered \(frames) frames; omitted \(trailing) incomplete trailing bytes; source preserved")
 
+case "dirty-check":
+    // Opens a project, runs live blocks with the transport stopped and then playing (no device), and reports whether
+    // it became dirty and which tracks changed: finds plug-ins that report edits nobody made.
+    let engine = openProject(args[1])
+    var tracks: [(DalnokTrackId, UInt64)] = []
+    for i in 0..<dalnok_track_count(engine) { let t = dalnok_track_at(engine, i); tracks.append((t, dalnok_track_revision(engine, t))) }
+    var l = [Float](repeating: 0, count: 512), r = l
+    func report(_ phase: String) {
+        let changed = tracks.filter { dalnok_track_revision(engine, $0.0) != $0.1 }.map { t -> String in
+            var info = DalnokPluginSlotInfo(), names: [String] = []
+            for j in 0..<dalnok_track_plugin_count(engine, t.0) where dalnok_track_plugin_info(engine, t.0, j, &info) == DALNOK_OK {
+                let err = withUnsafeBytes(of: info.error) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }
+                names.append(withUnsafeBytes(of: info.name) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) } +
+                             (info.loaded ? "" : " (not loaded: \(err))"))
+            }
+            return "track \(t.0) [\(names.joined(separator: ", "))]"
+        }
+        print("\(phase): dirty \(dalnok_project_dirty(engine)); changed: \(changed.isEmpty ? "none" : changed.joined(separator: "; "))")
+    }
+    print("opened: dirty \(dalnok_project_dirty(engine))")
+    for (t, _) in tracks {
+        var info = DalnokPluginSlotInfo()
+        for j in 0..<dalnok_track_plugin_count(engine, t) where dalnok_track_plugin_info(engine, t, j, &info) == DALNOK_OK && !info.loaded {
+            print("  track \(t): \(withUnsafeBytes(of: info.name) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }) not loaded: \(withUnsafeBytes(of: info.error) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) })")
+        }
+    }
+    for _ in 0..<300 { _ = dalnok_engine_pump(engine, &l, &r, 512); usleep(10_000) }
+    report("stopped 3 s")
+    dalnok_transport_play(engine)
+    for _ in 0..<40 { _ = dalnok_engine_pump(engine, &l, &r, 512); usleep(10_000) }
+    report("playing 0.4 s")
+    dalnok_engine_destroy(engine)
+    leave(0)
+
+case "preview-check":
+    // Auditions a note on a track (dalnok_track_preview_note) with the transport stopped and reports the output peak.
+    let engine = openProject(args[1])
+    let track = DalnokTrackId(Int32(args.count > 2 ? args[2] : "1") ?? 1), pitch = UInt8(Int(args.count > 3 && !args[3].hasPrefix("-") ? args[3] : "60") ?? 60)
+    var l = [Float](repeating: 0, count: 512), r = l
+    func peak(_ blocks: Int) -> Float {
+        var m: Float = 0
+        for _ in 0..<blocks { _ = dalnok_engine_pump(engine, &l, &r, 512); m = max(m, l.map(abs).max() ?? 0, r.map(abs).max() ?? 0); usleep(10_000) }
+        return m
+    }
+    if args.contains("--device") {
+        // The real output device: time from note-on to the first level on the track's meter (polled every 2 ms).
+        var err = [CChar](repeating: 0, count: 256)
+        guard dalnok_engine_start_device(engine, &err, 256) == DALNOK_OK else { fail(cstr(err)) }
+        usleep(1_000_000)
+        if args.contains("--warm") { _ = dalnok_track_preview_note(engine, track, 0, 0, false); usleep(500_000) }
+        for round in 1...3 {
+            var ml: Float = 0, mr: Float = 0
+            _ = dalnok_meter_track(engine, track, &ml, &mr)
+            let t0 = DispatchTime.now().uptimeNanoseconds
+            _ = dalnok_track_preview_note(engine, track, pitch, 100, true)
+            var first = -1.0
+            while DispatchTime.now().uptimeNanoseconds - t0 < 1_500_000_000 {
+                _ = dalnok_meter_track(engine, track, &ml, &mr)
+                if first < 0 && max(ml, mr) > 0.001 { first = Double(DispatchTime.now().uptimeNanoseconds - t0) / 1e6 }
+                usleep(2_000)
+            }
+            _ = dalnok_track_preview_note(engine, track, pitch, 0, false)
+            print(String(format: "device round %d: first level after %.1f ms", round, first))
+            usleep(1_000_000)
+        }
+        dalnok_engine_stop_device(engine)
+        leave(0)
+    }
+    if args.contains("--warm") { _ = dalnok_track_preview_note(engine, track, 0, 0, false) } // what opening the piano roll does
+    let before = peak(50)
+    for round in 1...3 {
+        let st = dalnok_track_preview_note(engine, track, pitch, 100, true)
+        let held = peak(50)
+        _ = dalnok_track_preview_note(engine, track, pitch, 0, false)
+        let after = peak(100)
+        print(String(format: "preview %d track %d pitch %d: status %d, peak before %.4f, held %.4f, after release %.4f", round, track, pitch, st.rawValue, before, held, after))
+    }
+    dalnok_engine_destroy(engine)
+    leave(0)
+
 case "render-project":
-    guard args.count >= 3 else { print(usage); exit(2) }
+    guard args.count >= 3 else { print(usage); leave(2) }
     let engine = openProject(args[1])
     var err = [CChar](repeating: 0, count: 512)
     let frames = dalnok_session_length(engine)
@@ -336,7 +426,7 @@ case "render-project":
     dalnok_engine_destroy(engine)
 
 case "export-dawproject":
-    guard args.count >= 3 else { print(usage); exit(2) }
+    guard args.count >= 3 else { print(usage); leave(2) }
     let engine = openProject(args[1])
     var notes = [CChar](repeating: 0, count: 8192), err = [CChar](repeating: 0, count: 512)
     guard dalnok_project_export_dawproject(engine, args[2], &notes, notes.count, &err, 512) == DALNOK_OK else { fail(cstr(err)) }
@@ -353,7 +443,7 @@ case "commands":
     }
 
 case "command":
-    guard args.count >= 3 else { print(usage); exit(2) }
+    guard args.count >= 3 else { print(usage); leave(2) }
     let engine = openProject(args[1])
     let json = args.count >= 4 && !args[3].hasPrefix("--") ? args[3] : "{}"
     var out = [CChar](repeating: 0, count: 1 << 20)
@@ -364,7 +454,7 @@ case "command":
         guard dalnok_project_save(engine, args[1], &err, 512) == DALNOK_OK else { fail(cstr(err)) }
     }
     dalnok_engine_destroy(engine)
-    exit(st == DALNOK_OK ? 0 : 1)
+    leave(st == DALNOK_OK ? 0 : 1)
 
 case "import" where args.contains("--report-only"):
     var report = [CChar](repeating: 0, count: 1 << 16)
@@ -398,6 +488,241 @@ case "import":
         print("rendered \(out)")
     }
     dalnok_engine_destroy(engine)
+
+case "audit-ui":
+    guard args.count >= 2 else { print(usage); leave(2) }
+    let executable = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL.deletingLastPathComponent().appendingPathComponent("Dalnok")
+    let process = Process()
+    process.executableURL = executable
+    process.arguments = [args[1], "--uiwalk", NSTemporaryDirectory(), "--no-welcome"]
+    var environment = ProcessInfo.processInfo.environment
+    environment["DALNOK_AUDIT_UI"] = "1"
+    environment["DALNOK_RECOVERY_DIR"] = NSTemporaryDirectory() + "dalnok-audit-recovery-" + UUID().uuidString
+    process.environment = environment
+    do { try process.run(); process.waitUntilExit() } catch { fail("AppKit audit launch failed: \(error)") }
+    if process.terminationStatus != 0 { leave(process.terminationStatus) }
+
+case "audit-bench":
+    // Audit instrumentation only (docs/audits): measures what the app pays per model read and per edit on a
+    // real project. It adds no engine or app behaviour; it only calls the public C API.
+    guard args.count >= 2 else { print(usage); leave(2) }
+    let engine = openProject(args[1])
+    let edits = Int(opt("--edits") ?? "200") ?? 200
+    func rssMB() -> Double {
+        var info = mach_task_basic_info()
+        var count = mach_msg_type_number_t(MemoryLayout<mach_task_basic_info>.size / MemoryLayout<natural_t>.size)
+        let kr = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                task_info(mach_task_self_, task_flavor_t(MACH_TASK_BASIC_INFO), $0, &count)
+            }
+        }
+        return kr == KERN_SUCCESS ? Double(info.resident_size) / 1_048_576 : -1
+    }
+    // One pass over everything the Swift UI's Session.refresh() reads.
+    func readModel() -> (tracks: Int, clips: Int, notes: Int) {
+        var tracks = 0, clips = 0, notes = 0
+        for i in 0..<max(0, dalnok_track_count(engine)) {
+            let tid = dalnok_track_at(engine, i)
+            var ti = DalnokTrackInfo()
+            guard dalnok_track_info(engine, tid, &ti) == DALNOK_OK else { continue }
+            tracks += 1
+            for k in 0..<max(0, ti.clip_count) {
+                var ci = DalnokClipInfo()
+                guard dalnok_clip_info(engine, dalnok_track_clip_at(engine, tid, k), &ci) == DALNOK_OK else { continue }
+                clips += 1
+                if ci.midi && ci.note_count > 0 {
+                    var n = [DalnokNote](repeating: DalnokNote(), count: Int(ci.note_count))
+                    _ = dalnok_midi_clip_notes(engine, ci.id, &n, ci.note_count)
+                    notes += Int(ci.note_count)
+                }
+            }
+            for k in 0..<max(0, dalnok_track_plugin_count(engine, tid)) {
+                var pi = DalnokPluginSlotInfo()
+                _ = dalnok_track_plugin_info(engine, tid, k, &pi)
+            }
+            _ = dalnok_track_hidden(engine, tid)
+            var sends = [DalnokSend](repeating: DalnokSend(), count: 16)
+            _ = dalnok_track_sends(engine, tid, &sends, 16)
+            for target in 0..<2 {
+                let c = dalnok_track_automation(engine, tid, Int32(target), nil, 0)
+                if c > 0 {
+                    var pts = [DalnokAutoPoint](repeating: DalnokAutoPoint(), count: Int(c))
+                    _ = dalnok_track_automation(engine, tid, Int32(target), &pts, c)
+                }
+            }
+        }
+        return (tracks, clips, notes)
+    }
+    func summarize(_ label: String, _ samples: [Double]) {
+        guard !samples.isEmpty else { return }
+        let s = samples.sorted()
+        func pct(_ p: Double) -> Double { s[min(s.count - 1, Int((Double(s.count - 1) * p).rounded()))] }
+        print(String(format: "%@: n=%d p50=%.3f ms p95=%.3f ms p99=%.3f ms max=%.3f ms", label, s.count,
+                     pct(0.50), pct(0.95), pct(0.99), s[s.count - 1]))
+    }
+    let model = readModel()
+    var reads: [Double] = []
+    for _ in 0..<20 {
+        let t0 = DispatchTime.now().uptimeNanoseconds
+        _ = readModel()
+        reads.append(Double(DispatchTime.now().uptimeNanoseconds - t0) / 1e6)
+    }
+    summarize("model read (one Session.refresh pass)", reads)
+    print("model: \(model.tracks) tracks, \(model.clips) clips, \(model.notes) MIDI notes")
+
+    let firstTrack = dalnok_track_at(engine, 0)
+    var firstClip: DalnokClipId = 0
+    for i in 0..<max(0, dalnok_track_count(engine)) where firstClip == 0 {
+        let tid = dalnok_track_at(engine, i)
+        if dalnok_track_clip_at(engine, tid, 0) != 0 { firstClip = dalnok_track_clip_at(engine, tid, 0) }
+    }
+    var gains: [Double] = []
+    let rssBefore = rssMB()
+    for i in 0..<edits {
+        let t0 = DispatchTime.now().uptimeNanoseconds
+        _ = dalnok_track_set_gain_db(engine, firstTrack, -Double(i % 24) * 0.5 > -96 ? Float(-Double(i % 24) * 0.5) : -96)
+        gains.append(Double(DispatchTime.now().uptimeNanoseconds - t0) / 1e6)
+    }
+    summarize("parameter edit (track gain, undoable)", gains)
+    print(String(format: "undo memory: RSS %.1f MB -> %.1f MB after %d undoable parameter edits (%.2f MB/edit)",
+                 rssBefore, rssMB(), edits, (rssMB() - rssBefore) / Double(edits)))
+    let trackIds = (0..<max(0, dalnok_track_count(engine))).map { dalnok_track_at(engine, $0) }
+    func readParameters() {
+        for tid in trackIds {
+            var gain: Float = 0, pan: Float = 0, muted = false, solo = false
+            _ = dalnok_track_parameters(engine, tid, &gain, &pan, &muted, &solo)
+        }
+    }
+    var scalarReads: [Double] = [], dragEvents: [Double] = []
+    for i in 0..<100 {
+        var start = DispatchTime.now().uptimeNanoseconds
+        readParameters()
+        scalarReads.append(Double(DispatchTime.now().uptimeNanoseconds - start) / 1e6)
+        start = DispatchTime.now().uptimeNanoseconds
+        _ = dalnok_track_set_gain_db(engine, firstTrack, Float(-(i % 20)))
+        readParameters()
+        dragEvents.append(Double(DispatchTime.now().uptimeNanoseconds - start) / 1e6)
+    }
+    summarize("scalar read (C API only)", scalarReads)
+    summarize("gain edit plus scalar read (C API only)", dragEvents)
+    if firstClip != 0 {
+        var moves: [Double] = []
+        let rssStructural = rssMB()
+        for i in 0..<edits {
+            let t0 = DispatchTime.now().uptimeNanoseconds
+            _ = dalnok_clips_nudge(engine, [firstClip], 1, i % 2 == 0 ? 1 : -1)
+            moves.append(Double(DispatchTime.now().uptimeNanoseconds - t0) / 1e6)
+        }
+        summarize("structural edit (nudge one clip, recompile)", moves)
+        print(String(format: "undo memory: RSS %.1f MB -> %.1f MB after %d undoable structural edits (%.2f MB/edit)",
+                     rssStructural, rssMB(), edits, (rssMB() - rssStructural) / Double(edits)))
+    }
+    var undo: [Double] = []
+    for _ in 0..<20 {
+        let t0 = DispatchTime.now().uptimeNanoseconds
+        _ = dalnok_undo(engine)
+        undo.append(Double(DispatchTime.now().uptimeNanoseconds - t0) / 1e6)
+    }
+    summarize("undo (whole-model restore + recompile)", undo)
+    dalnok_engine_destroy(engine)
+
+case "stream-bench":
+    // A-09 measurement: dalnok-cli stream-bench <file.wav> --mode memory|stream [--seconds S]. Loads one long file into a
+    // track (in memory, or streamed through the block cache) and plays S seconds of it through the live path at about 4x
+    // real time, reporting resident memory, load time and frames missed. Run once per mode, in separate processes.
+    guard args.count > 1 else { print("usage: dalnok-cli stream-bench <file.wav> --mode memory|stream [--seconds S]"); leave(2) }
+    func rss() -> Double {
+        var info = mach_task_basic_info()
+        var count = mach_msg_type_number_t(MemoryLayout<mach_task_basic_info>.size / MemoryLayout<natural_t>.size)
+        let kr = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { task_info(mach_task_self_, task_flavor_t(MACH_TASK_BASIC_INFO), $0, &count) }
+        }
+        return kr == KERN_SUCCESS ? Double(info.resident_size) / 1_048_576 : -1
+    }
+    let streamMode = opt("--mode") == "stream"
+    let seconds = Double(opt("--seconds") ?? "60") ?? 60
+    dalnok_stream_set_limits(streamMode ? 60 : 1e9, 256)
+    let rssStart = rss()
+    let t0 = DispatchTime.now().uptimeNanoseconds
+    var media: OpaquePointer?
+    var err = [CChar](repeating: 0, count: 512)
+    guard dalnok_media_load(args[1], 48_000, &media, &err, 512) == DALNOK_OK, let media else { print("load failed: \(String(cString: err))"); leave(1) }
+    let loadSeconds = Double(DispatchTime.now().uptimeNanoseconds - t0) / 1e9
+    let engine = dalnok_engine_create(48_000)!
+    let track = dalnok_track_add(engine, "Long")
+    _ = dalnok_clip_add(engine, track, dalnok_pool_add(engine, media, args[1]), 0, 0, 0)
+    let mediaFrames = dalnok_media_frames(media)
+    dalnok_media_release(media)
+    let rssLoaded = rss()
+    var s0 = DalnokStreamStats(); dalnok_stream_stats(&s0)
+    dalnok_transport_play(engine)
+    var l = [Float](repeating: 0, count: 512), r = l, peak = rssLoaded
+    let blocks = Int(seconds * 48_000 / 512)
+    for i in 0..<blocks {
+        _ = dalnok_engine_pump(engine, &l, &r, 512)
+        if i % 4 == 0 { usleep(10_000) } // 4 blocks (42.7 ms of audio) per 10 ms: about 4x real time
+        if i % 200 == 0 { peak = max(peak, rss()) }
+    }
+    // Then a jump to the middle of the file and another 10 s.
+    dalnok_transport_seek(engine, mediaFrames / 2)
+    for i in 0..<(48_000 * 10 / 512) { _ = dalnok_engine_pump(engine, &l, &r, 512); if i % 4 == 0 { usleep(10_000) } }
+    peak = max(peak, rss())
+    var s1 = DalnokStreamStats(); dalnok_stream_stats(&s1)
+    print(String(format: "stream-bench %@: %.1f min file, load %.2f s, RSS start %.1f MB, after load %.1f MB, peak while playing %.1f MB; stream cache %.1f MB, missed %llu frames, blocks loaded %llu",
+                 streamMode ? "stream" : "memory", Double(mediaFrames) / 48_000 / 60, loadSeconds, rssStart, rssLoaded, peak,
+                 Double(s1.resident_bytes) / 1_048_576, s1.missed_frames - s0.missed_frames, s1.blocks_loaded - s0.blocks_loaded))
+    dalnok_engine_destroy(engine)
+
+case "audit-scale":
+    // Audit instrumentation only: builds T tracks x C clips in memory and measures the cost of one model read,
+    // one structural edit (which recompiles the render snapshot) and one undo at that size.
+    let tracks = Int(opt("--tracks") ?? "64") ?? 64
+    let clipsPer = Int(opt("--clips") ?? "16") ?? 16
+    let rate = 48_000.0
+    guard let e = dalnok_engine_create(rate) else { fail("engine creation failed") }
+    var samples = (0..<4_800).map { Float(sin(Double($0) * 0.01)) * 0.1 }
+    let media = samples.withUnsafeMutableBufferPointer { p in
+        var chans: [UnsafePointer<Float>?] = [UnsafePointer(p.baseAddress)]
+        return chans.withUnsafeMutableBufferPointer { dalnok_media_from_samples($0.baseAddress, 1, 4_800, rate)! }
+    }
+    let mid = dalnok_pool_add(e, media, nil)
+    dalnok_media_release(media)
+    func measure(_ label: String, _ body: (Int) -> Void, n: Int = 30) {
+        var s: [Double] = []
+        for i in 0..<n {
+            let t0 = DispatchTime.now().uptimeNanoseconds
+            body(i)
+            s.append(Double(DispatchTime.now().uptimeNanoseconds - t0) / 1e6)
+        }
+        s.sort()
+        func pct(_ p: Double) -> Double { s[min(s.count - 1, Int((Double(s.count - 1) * p).rounded()))] }
+        print(String(format: "%@: n=%d p50=%.3f ms p95=%.3f ms p99=%.3f ms max=%.3f ms", label, s.count,
+                     pct(0.50), pct(0.95), pct(0.99), s[s.count - 1]))
+    }
+    let t0 = DispatchTime.now().uptimeNanoseconds
+    for t in 0..<tracks {
+        let tr = dalnok_track_add(e, "T\(t)")
+        for c in 0..<clipsPer { _ = dalnok_clip_add(e, tr, mid, Int64(c) * 4_800, 0, 4_800) }
+    }
+    let build = Double(DispatchTime.now().uptimeNanoseconds - t0) / 1e6
+    print(String(format: "model: %d tracks x %d clips = %d clips, built in %.0f ms", tracks, clipsPer, tracks * clipsPer, build))
+    func readModel() {
+        for i in 0..<max(0, dalnok_track_count(e)) {
+            let tid = dalnok_track_at(e, i)
+            var ti = DalnokTrackInfo()
+            guard dalnok_track_info(e, tid, &ti) == DALNOK_OK else { continue }
+            for k in 0..<max(0, ti.clip_count) {
+                var ci = DalnokClipInfo()
+                _ = dalnok_clip_info(e, dalnok_track_clip_at(e, tid, k), &ci)
+            }
+        }
+    }
+    measure("model read (one Session.refresh pass)", { _ in readModel() })
+    let firstClip = dalnok_track_clip_at(e, dalnok_track_at(e, 0), 0)
+    measure("structural edit (nudge one clip, recompile)", { i in _ = dalnok_clips_nudge(e, [firstClip], 1, i % 2 == 0 ? 1 : -1) })
+    measure("parameter edit (track gain, undoable)", { i in _ = dalnok_track_set_gain_db(e, dalnok_track_at(e, 0), Float(-(i % 20))) })
+    measure("undo (whole-model restore + recompile)", { _ in _ = dalnok_undo(e) })
+    dalnok_engine_destroy(e)
 
 case "bench":
     // N stereo tracks, each with a fully-faded clip over shared media; measures the
@@ -440,8 +765,9 @@ case "bench":
 
 default:
     print(usage)
-    exit(2)
+    leave(2)
 }
+leave(0)
 
 func clipStart(_ e: OpaquePointer, _ clip: DalnokClipId) -> Int64 {
     var info = DalnokClipInfo()

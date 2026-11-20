@@ -41,10 +41,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
     /// Opens (or brings forward) a hosted plug-in's window: its editor and the generic parameter panel.
     func openPluginWindow(track: DalnokTrackId, slot: Int32) {
-        if let existing = pluginWindows[slot] { existing.window?.makeKeyAndOrderFront(nil); return }
+        if let existing = pluginWindows[slot] { existing.window?.makeKeyAndOrderFront(nil); existing.showHostEditor(); return }
         guard let t = session.track(track), let p = t.plugins.first(where: { $0.id == slot }) else { return }
         guard p.loaded else { return flash("\(p.name) is not loaded: \(p.error)") }
-        let w = PluginWindowController(engine: session.engine, slot: slot, title: "\(p.name) — \(t.name)")
+        let w = PluginWindowController(engine: session.engine, slot: slot, title: "\(p.name) — \(t.name)", isolated: p.isolated)
         w.onAutomate = { [weak self] slot, param, name in
             guard let self else { return }
             self.timeline.pluginLanes[track] = .plugin(slot: slot, param: param, name: "\(p.name): \(name)")
@@ -88,6 +88,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         session.removePlugin(track, slot)
     }
 
+    @objc func loadPluginItem(_ sender: NSMenuItem) {
+        guard let slot = sender.representedObject as? Int32 else { return }
+        session.loadPlugin(slot)
+    }
+
     /// Track context menu: the track's plug-ins (remove) and a way to add more.
     func pluginsMenu(for track: TrackView) -> NSMenu {
         let m = NSMenu(title: "Plug-ins")
@@ -97,6 +102,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             open.target = self
             open.isEnabled = p.loaded
             m.addItem(open)
+            if !p.loaded && !p.loading { // cancelled, recovered or failed: load it from its saved settings
+                let load = NSMenuItem(title: "Load \(p.name)", action: #selector(loadPluginItem(_:)), keyEquivalent: "")
+                load.representedObject = p.id
+                load.target = self
+                m.addItem(load)
+            }
         }
         if !track.plugins.isEmpty { m.addItem(.separator()) }
         for p in track.plugins {
@@ -306,6 +317,21 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         }
         palette.onOpenGuide = { [weak self] c in self?.conceptGuide.show(daw: c.daw, query: c.term) }
         session.onChange = { [weak self] in self?.modelChanged() }
+        transport.stopLoadingButton.target = self
+        transport.stopLoadingButton.action = #selector(stopLoadingPlugins(_:))
+        session.onPluginLoadProgress = { [weak self] progress in
+            guard let self else { return }
+            self.transport.stopLoadingButton.isHidden = progress == nil
+            if progress != nil { self.transientMessageUntil = .distantPast } // progress replaces "Opening…"
+            if self.transientMessageUntil < Date() { self.updateStatus() }
+        }
+        session.onParameterChange = { [weak self] muteChanged in
+            guard let self else { return }
+            self.headers.sync()
+            if !self.mixer.isHidden { self.mixer.updateParameters() }
+            if muteChanged { self.timeline.needsDisplay = true } // muted tracks change clip tint
+            self.updateTitle()
+        }
         session.onMessage = { [weak self] msg in self?.flash(msg) }
         emptyState.isHidden = true // modelChanged shows it if the project has no tracks (also for a rebuilt window)
         modelChanged()
@@ -327,7 +353,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     }
 
     private var lastRecoveryRevision: UInt64?
-    private var recoveryDirectory: URL? {
+    var recoveryDirectory: URL? {
         if let override = ProcessInfo.processInfo.environment["DALNOK_RECOVERY_DIR"], !override.isEmpty {
             return URL(fileURLWithPath: override, isDirectory: true)
         }
@@ -353,47 +379,82 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     /// that is gone means the last session ended unexpectedly.
     private var sessionMarker: URL? { recoveryDirectory?.appendingPathComponent("running.json") }
 
-    /// The newest recovery snapshot written by a session that didn't quit cleanly, if any (and that session's
-    /// process isn't still running). Call before `beginSessionMarker`.
-    func unfinishedSessionSnapshot() -> URL? {
+    /// Recover the latest snapshot of the interrupted session plus any earlier
+    /// offers that were still pending when it began. Call before writing the marker.
+    func unfinishedSessionSnapshots() -> [URL] {
         guard let marker = sessionMarker, let dir = recoveryDirectory,
               let data = try? Data(contentsOf: marker),
-              let info = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+              let info = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return [] }
         let pid = (info["pid"] as? NSNumber)?.int32Value ?? 0
-        if pid > 0 && pid != getpid() && (kill(pid, 0) == 0 || errno == EPERM) { return nil } // that session is still open
+        if pid > 0 && pid != getpid() && (kill(pid, 0) == 0 || errno == EPERM) { return [] }
         let started = (info["started"] as? NSNumber)?.doubleValue ?? 0
         let snapshots = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
-        return snapshots
-            .filter { $0.pathExtension == "dalnok" && $0.lastPathComponent.hasPrefix("Recovery-") }
-            .compactMap { url -> (URL, Date)? in
-                guard let d = try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate,
-                      d.timeIntervalSince1970 >= started else { return nil }
-                return (url, d)
-            }
-            .max { $0.1 < $1.1 }?.0
+        let eligible = snapshots.filter { $0.pathExtension == "dalnok" && $0.lastPathComponent.hasPrefix("Recovery-") }
+        let handled = Set(info["handledRecoveries"] as? [String] ?? [])
+        let pendingNames = (info["pendingRecoveries"] as? [String] ?? []) + ((info["pendingRecovery"] as? String).map { [$0] } ?? [])
+        let pending = pendingNames.compactMap { name in eligible.first { $0.lastPathComponent == name && !handled.contains(name) } }
+        let newest = eligible.compactMap { url -> (URL, Date)? in
+            guard !handled.contains(url.lastPathComponent),
+                  let date = try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate,
+                  date.timeIntervalSince1970 >= started else { return nil }
+            return (url, date)
+        }.max { $0.1 < $1.1 }?.0
+        var seen = Set<String>()
+        return ([newest].compactMap { $0 } + pending).filter { seen.insert($0.lastPathComponent).inserted }
     }
 
+    func unfinishedSessionSnapshot() -> URL? { unfinishedSessionSnapshots().first }
+
     /// Records this session as running and prunes recovery snapshots older than two weeks.
-    func beginSessionMarker() {
+    func beginSessionMarker(carrying snapshots: [URL] = []) {
         guard let marker = sessionMarker, let dir = recoveryDirectory else { return }
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let info: [String: Any] = ["pid": Int(getpid()), "started": Date().timeIntervalSince1970]
+        let carried = snapshots.compactMap { url -> String? in
+            guard url.deletingLastPathComponent().standardizedFileURL == dir.standardizedFileURL,
+                  url.pathExtension == "dalnok", url.lastPathComponent.hasPrefix("Recovery-") else { return nil }
+            return url.lastPathComponent
+        }
+        var info: [String: Any] = ["pid": Int(getpid()), "started": Date().timeIntervalSince1970]
+        if !carried.isEmpty { info["pendingRecoveries"] = carried }
         try? JSONSerialization.data(withJSONObject: info).write(to: marker, options: .atomic)
         let cutoff = Date().addingTimeInterval(-14 * 86_400)
         for url in (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
-        where url.lastPathComponent.hasPrefix("Recovery-") {
+        where url.lastPathComponent.hasPrefix("Recovery-") && !carried.contains(url.lastPathComponent) {
             if let d = try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate, d < cutoff {
                 try? FileManager.default.removeItem(at: url)
             }
         }
     }
-    func endSessionMarker() { if let m = sessionMarker { try? FileManager.default.removeItem(at: m) } }
+    func endSessionMarker() {
+        guard let marker = sessionMarker else { return }
+        if let data = try? Data(contentsOf: marker),
+           var info = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+           let pending = info["pendingRecoveries"] as? [String], !pending.isEmpty {
+            // A successfully opened recovery is dirty. Keep the other offers
+            // for the next launch, even when this session quits cleanly.
+            info["pid"] = 0
+            info["started"] = Date().timeIntervalSince1970 + 1
+            if let updated = try? JSONSerialization.data(withJSONObject: info) { try? updated.write(to: marker, options: .atomic) }
+        } else { try? FileManager.default.removeItem(at: marker) }
+    }
 
-    /// At launch: if the last session ended unexpectedly and left a snapshot, offer to open it.
-    func offerCrashRecovery() {
-        let snapshot = unfinishedSessionSnapshot()
-        beginSessionMarker()
-        guard let snapshot, let window else { return }
+    func clearPendingRecovery(_ snapshot: URL) {
+        guard let marker = sessionMarker, let data = try? Data(contentsOf: marker),
+              var info = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              (info["pid"] as? NSNumber)?.int32Value == getpid() else { return }
+        let name = snapshot.lastPathComponent
+        var pending = info["pendingRecoveries"] as? [String] ?? []
+        pending.removeAll { $0 == name }
+        info["pendingRecoveries"] = pending
+        var handled = info["handledRecoveries"] as? [String] ?? []
+        if !handled.contains(name) { handled.append(name) }
+        info["handledRecoveries"] = handled
+        if let updated = try? JSONSerialization.data(withJSONObject: info) { try? updated.write(to: marker, options: .atomic) }
+    }
+
+    /// Offer each unresolved copy; cancelling or a failed open leaves the rest in the marker.
+    func offerCrashRecovery(_ snapshots: [URL]) {
+        guard let snapshot = snapshots.first, let window else { return }
         let when = (try? snapshot.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? Date()
         let alert = NSAlert()
         alert.messageText = "Dalnok quit unexpectedly"
@@ -401,8 +462,18 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         alert.addButton(withTitle: "Open Recovered Project")
         alert.addButton(withTitle: "Not Now")
         alert.beginSheetModal(for: window) { [weak self] resp in
-            guard resp == .alertFirstButtonReturn else { return }
-            MainActor.assumeIsolated { self?.confirmDiscard { self?.openRecovery(snapshot) } }
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                let next = { self.offerCrashRecovery(Array(snapshots.dropFirst())) }
+                guard resp == .alertFirstButtonReturn else { self.clearPendingRecovery(snapshot); next(); return }
+                self.confirmDiscard {
+                    self.openRecovery(snapshot) { opened in
+                        // Opening a copy makes it dirty; do not immediately ask
+                        // the user to discard it to open the next one.
+                        if opened { self.clearPendingRecovery(snapshot) }
+                    }
+                }
+            }
         }
     }
 
@@ -471,7 +542,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             timeline.zoomToFit()
             fitOnNextChange = false
         }
-        timeline.needsDisplay = true
+        invalidateTimeline()
         updateTitle()
         updateTempoDisplay()
         applyCycle()
@@ -482,6 +553,30 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         if !mixer.isHidden { mixer.rebuild(); mixer.select(selectedTrack) }
         if !launcher.isHidden { launcher.needsDisplay = true }
         if transientMessageUntil < Date() { updateStatus() }
+    }
+
+    private var timelineLayout: Int?, timelineGlobals: Int?
+    /// After a structural change: redraw only the lanes of the tracks that changed, unless the lane layout or anything
+    /// drawn across every lane (markers, tempo and meter grid, cycle) changed, or no track was read again.
+    private func invalidateTimeline() {
+        var layout = Hasher()
+        for (i, t) in session.tracks.enumerated() {
+            layout.combine(t.id); layout.combine(session.laneHeight(i)); layout.combine(t.isStack); layout.combine(t.collapsed)
+        }
+        var globals = Hasher()
+        for m in session.markers { globals.combine(m.id); globals.combine(m.frame); globals.combine(fixedString(m.name)) }
+        for p in session.tempoPoints { globals.combine(p.beat); globals.combine(p.bpm) }
+        for p in session.meterPoints { globals.combine(p.bar); globals.combine(p.numerator); globals.combine(p.denominator) }
+        let c = session.cycle
+        globals.combine(c.on); globals.combine(c.start); globals.combine(c.end)
+        let l = layout.finalize(), g = globals.finalize()
+        if l != timelineLayout || g != timelineGlobals || session.rereadTracks.isEmpty {
+            timeline.needsDisplay = true
+        } else {
+            timeline.invalidateLanes(of: session.rereadTracks)
+        }
+        timelineLayout = l
+        timelineGlobals = g
     }
 
     func updateTitle() {
@@ -500,7 +595,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         transientMessageUntil = Date().addingTimeInterval(4)
     }
 
+    @objc func stopLoadingPlugins(_ sender: Any?) { session.cancelPluginLoading() }
+
     private func updateStatus() {
+        if let p = session.pluginLoadProgress {
+            transport.statusLabel.stringValue = "Loading plug-ins \(min(p.done + 1, p.total)) of \(p.total)…"
+            return
+        }
         let e = session.engine
         let sr = e.sampleRate
         let n = session.tracks.count
@@ -530,7 +631,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     func tick() {
         let e = session.engine
         e.collectGarbage()
-        session.refresh() // picks up changes from any source (e.g. scripts)
+        replayEditorKeys()
+        session.refresh(onDisplayTick: true) // picks up changes from any source (e.g. scripts)
         _ = session.pollJobs() // installs finished time-stretch renders
         followTempoSegment()
         automationWriter.tick()
@@ -788,13 +890,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     }
 
     @objc func toggleMuteTrack(_ sender: Any?) {
-        guard let t = selectedTrack, let tv = session.track(t) else { return }
-        session.setMute(t, !tv.muted)
+        guard let t = selectedTrack else { return }
+        var gain: Float = 0, pan: Float = 0, muted = false, solo = false
+        guard dalnok_track_parameters(session.h, t, &gain, &pan, &muted, &solo) == DALNOK_OK else { return }
+        session.setMute(t, !muted)
     }
 
     @objc func toggleSoloTrack(_ sender: Any?) {
-        guard let t = selectedTrack, let tv = session.track(t) else { return }
-        session.setSolo(t, !tv.solo)
+        guard let t = selectedTrack else { return }
+        var gain: Float = 0, pan: Float = 0, muted = false, solo = false
+        guard dalnok_track_parameters(session.h, t, &gain, &pan, &muted, &solo) == DALNOK_OK else { return }
+        session.setSolo(t, !solo)
     }
 
     @objc func renameTrack(_ sender: Any?) {
@@ -1140,7 +1246,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     /// Asks to save unsaved changes. `cancelled` runs when the person cancels (or saving fails), so callers
     /// waiting on an answer (like quitting) always get one.
     func confirmDiscard(_ proceed: @escaping () -> Void, cancelled: (() -> Void)? = nil) {
-        guard session.engine.isDirty else { proceed(); return }
+        guard session.engine.hasUnsavedChanges else { proceed(); return }
         let alert = NSAlert()
         alert.messageText = "Save changes to “\(window?.title ?? "Untitled")”?"
         alert.informativeText = "Your changes will be lost if you don't save them."
@@ -1201,11 +1307,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         }
         if session.setCycle(true, range.0, range.1) { flash("Cycle \(timeline.positionText(range.0)) – \(timeline.positionText(range.1))") }
     }
+    private var drawnCycle: (on: Bool, start: Int64, end: Int64)?
     func applyCycle() {
-        let on = session.cycle.on
-        transport.cycleButton.setSymbol("repeat", tint: on ? Theme.cycle : Theme.textDim)
-        transport.cycleButton.setAccessibilityValue(on ? "on" : "off")
-        timeline.needsDisplay = true
+        let cycle = session.cycle
+        transport.cycleButton.setSymbol("repeat", tint: cycle.on ? Theme.cycle : Theme.textDim)
+        transport.cycleButton.setAccessibilityValue(cycle.on ? "on" : "off")
+        // The cycle region spans every lane: redraw only when it changed (modelChanged calls this on every edit).
+        if drawnCycle.map({ $0 != cycle }) ?? true { timeline.needsDisplay = true }
+        drawnCycle = cycle
     }
 
     func applyMetronome() {
@@ -1631,7 +1740,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
     /// True while a text field is being edited (track rename, palette search…).
     /// Unmodified shortcuts (Space, ↩, ⌫) must then reach the text, not the menu.
+    /// True while a key passed back from an isolated editor is replayed: it was typed in the editor, not in a field.
+    static var replayingEditorKey = false
     static var isTyping: Bool {
+        if replayingEditorKey { return false }
         if let key = NSApp.keyWindow { return key.firstResponder is NSText }
         // App not active (e.g. driven by automation): any visible window editing text.
         return NSApp.windows.contains { $0.isVisible && $0.firstResponder is NSText }
@@ -1850,5 +1962,29 @@ final class DropView: NSView {
         guard !urls.isEmpty else { return false }
         onDrop?(urls)
         return true
+    }
+}
+
+extension MainWindowController {
+    /// An isolated plug-in's editor window (ADR-0015) has the keyboard while Dalnok stays active. Keys it did not use
+    /// come back through the engine and are replayed here as Dalnok's own key events, so Space, ⌘S and the rest work
+    /// as they do with an editor inside Dalnok.
+    func replayEditorKeys() {
+        var k = DalnokEditorKey()
+        while dalnok_plugin_take_editor_key(session.engine.handle, &k) {
+            let chars = withUnsafeBytes(of: k.characters) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }
+            let bare = withUnsafeBytes(of: k.characters_ignoring_modifiers) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }
+            guard let window = window, let event = NSEvent.keyEvent(with: .keyDown, location: .zero,
+                                                           modifierFlags: NSEvent.ModifierFlags(rawValue: UInt(k.modifiers)),
+                                                           timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                                                           context: nil, characters: chars, charactersIgnoringModifiers: bare,
+                                                           isARepeat: false, keyCode: k.key_code) else { continue }
+            // The key was pressed in the editor, not in one of Dalnok's text fields (a focused search field in the
+            // plug-in window must not swallow it): the shortcut registry decides, then the menu for ⌘ items it leaves.
+            Self.replayingEditorKey = true
+            defer { Self.replayingEditorKey = false }
+            if ShortcutRegistry.shared.handle(event) { continue }
+            if !event.modifierFlags.intersection([.command, .control]).isEmpty { _ = NSApp.mainMenu?.performKeyEquivalent(with: event) }
+        }
     }
 }

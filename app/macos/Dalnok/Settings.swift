@@ -51,6 +51,7 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
     let metronome = NSButton(checkboxWithTitle: "Metronome click", target: nil, action: nil)
     // Plug-ins
     let deviceMeters = NSButton(checkboxWithTitle: "Show input and output meters on plug-ins (Graphite)", target: nil, action: nil)
+    let isolatePlugins = NSButton(checkboxWithTitle: "Run plug-ins in separate processes (experimental)", target: nil, action: nil)
     /// How worn the plug-in units look (Graphite): 0 new … 1 well used.
     let wear = NSSlider(value: 0.25, minValue: 0, maxValue: 1, target: nil, action: nil)
     let peakHold = NSSlider(value: 1.5, minValue: 0, maxValue: 3, target: nil, action: nil)
@@ -133,9 +134,10 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
     func show(_ pane: Pane? = nil) {
         if let pane { select(pane) }
         refresh()
-        showWindow(nil)
-        if window?.isVisible == false { window?.center() }
-        window?.makeKeyAndOrderFront(nil)
+        // Placed before it shows: showWindow made it visible first, so the old check never centered it and it opened at
+        // its creation origin, the screen's bottom-left corner.
+        guard let window else { return }
+        if window.isVisible { window.makeKeyAndOrderFront(nil) } else { showCentered(window) }
     }
     func windowDidBecomeKey(_ notification: Notification) { refresh() }
     func windowWillClose(_ notification: Notification) { shortcuts.windowWillClose(notification) }
@@ -308,6 +310,8 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
         ])
         // Plug-ins
         deviceMeters.target = self; deviceMeters.action = #selector(metersChanged(_:))
+        isolatePlugins.target = self; isolatePlugins.action = #selector(isolationChanged(_:))
+        isolatePlugins.toolTip = "Each third-party plug-in runs in its own process, so a crash or hang can't take Dalnok down"
         deviceMeters.toolTip = "Thin level meters on each plug-in's faceplate in the device panel"
         wear.toolTip = "Scratches and grime on the metal, dust and smudges on the displays' glass"
         wear.setAccessibilityLabel("Plug-in wear")
@@ -330,6 +334,7 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
             ("Selection", selectionGlow, nil),
             ("Displays", smallButton("Reset Display Choices", #selector(resetDisplays)), "Back to the display Dalnok picks for each plug-in (right-click a unit ▸ Display to choose one)."),
             ("Library", smallButton("Open Plug-in Manager…", #selector(openPlugins)), "Scan, validate, favourite and tag your VST3, CLAP and Audio Unit plug-ins."),
+            ("Safety", isolatePlugins, "A plug-in that crashes or stops responding is switched off and reported instead of stopping Dalnok; Load restarts it. Applies to plug-ins loaded from now on. Each plug-in's editor opens in its own window beside the plug-in window."),
             ("", smallButton("Restore Plug-in Defaults", #selector(restorePluginDefaults)), nil),
         ])
     }
@@ -357,6 +362,8 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
         countIn.state = MainWindowController.countIn ? .on : .off
         metronome.state = MainWindowController.metronomeOn ? .on : .off
         deviceMeters.state = Faceplate.showMeters ? .on : .off
+        isolatePlugins.state = Engine.isolatePlugins ? .on : .off
+        isolatePlugins.isEnabled = Engine.pluginHostAvailable
         wear.doubleValue = Faceplate.wear
         peakHold.doubleValue = Faceplate.peakHold
         vuBallistics.selectItem(at: Faceplate.fastVU ? 1 : 0)
@@ -445,6 +452,7 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
         refresh()
     }
     @objc func metersChanged(_ sender: Any?) { Faceplate.showMeters = deviceMeters.state == .on }
+    @objc func isolationChanged(_ sender: Any?) { Engine.isolatePlugins = isolatePlugins.state == .on }
     @objc func wearChanged(_ sender: Any?) { Faceplate.wear = wear.doubleValue; showSliderValues() }
     @objc func peakHoldChanged(_ sender: Any?) { Faceplate.peakHold = peakHold.doubleValue; showSliderValues() }
     @objc func vuChanged(_ sender: Any?) { Faceplate.fastVU = vuBallistics.indexOfSelectedItem == 1 }

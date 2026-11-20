@@ -298,6 +298,10 @@ func skipped(_ r: [String: Any], _ key: String) -> Int { (r["skipped"] as? [Stri
         var file = Data([0x23, 0x47, 0xc0, 0xab]); file.append(Data(repeating: 0, count: 12))
         file.append(contentsOf: le(UInt64(body.count))); file.append(body)
         try file.write(to: alt.appendingPathComponent("ProjectData"))
+        // scripts/ci/fuzz.sh seeds its Logic variant (format byte 3) with this generated layout.
+        if let seeds = ProcessInfo.processInfo.environment["DALNOK_FUZZ_SEED_DIR"] {
+            try (Data([3]) + file).write(to: URL(fileURLWithPath: seeds).appendingPathComponent("logic-generated"))
+        }
         let plist = ["BeatsPerMinute": 90, "SampleRate": 48_000, "SongKey": "A", "SongGenderKey": "minor",
                      "SongSignatureNumerator": 3, "SongSignatureDenominator": 8] as [String: Any]
         try PropertyListSerialization.data(fromPropertyList: plist, format: .binary, options: 0)
@@ -309,6 +313,7 @@ func skipped(_ r: [String: Any], _ key: String) -> Int { (r["skipped"] as? [Stri
         dalnok_meter(e, &num, &den)
         #expect(dalnok_tempo_bpm(e) == 90 && num == 3 && den == 8)
         #expect((r["notes"] as? [String])?.first?.contains("key A minor") == true)
+        #expect((r["notes"] as? [String])?.contains { $0.contains("Only a constant tempo and meter") } == true)
         let c = clips(e).map(\.info)
         #expect(clips(e).first?.track == "Audio 2")
         // 7680 quarter-note ticks at 90 BPM = 256000 frames.

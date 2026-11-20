@@ -31,6 +31,24 @@ private func backed(_ content: NSView) -> NSView {
     return bg
 }
 
+/// Shows a secondary window (Welcome, Settings, Concept Guide) centered on the screen Dalnok's main window is on.
+/// It is laid out first, and centered again on the next turn of the run loop if its size settled after showing, so it
+/// never stays at its creation origin (the screen's bottom-left corner) or drifts there as its content grows.
+@MainActor
+func showCentered(_ w: NSWindow) {
+    func place() {
+        let screen = (NSApp.delegate as? AppDelegate)?.main?.window?.screen ?? NSScreen.main ?? w.screen
+        guard let vf = screen?.visibleFrame else { w.center(); return }
+        let f = w.frame
+        w.setFrameOrigin(NSPoint(x: (vf.midX - f.width / 2).rounded(), y: (vf.midY - f.height / 2).rounded()))
+    }
+    w.contentView?.layoutSubtreeIfNeeded()
+    place()
+    w.makeKeyAndOrderFront(nil)
+    let size = w.frame.size
+    DispatchQueue.main.async { if w.frame.size != size { place() } }
+}
+
 @MainActor
 private func panelWindow(_ title: String, size: NSSize) -> NSWindow {
     let w = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.titled, .closable, .resizable],
@@ -188,8 +206,7 @@ final class ConceptGuideController: NSObject, NSTableViewDataSource, NSTableView
         if let daw, let i = SourceDAW.allCases.firstIndex(of: daw) { picker.selectedSegment = i }
         search.stringValue = query
         reload()
-        window.center()
-        window.makeKeyAndOrderFront(nil)
+        showCentered(window)
     }
 
     @objc func reload() {
@@ -286,8 +303,7 @@ final class WelcomeController: NSObject, NSTableViewDataSource, NSTableViewDeleg
 
     func show() {
         showChooseDAW()
-        window.center()
-        window.makeKeyAndOrderFront(nil)
+        showCentered(window)
     }
 
     private func reset(_ views: [NSView]) {

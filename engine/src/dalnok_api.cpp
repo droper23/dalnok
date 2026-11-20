@@ -4,6 +4,7 @@
 #include "commands.hpp"
 #include "capture_recovery.hpp"
 #include "engine.hpp"
+#include "stream_cache.hpp"
 #include "fx/builtin.hpp"
 #include "midi.hpp"
 #include "record.hpp"
@@ -287,9 +288,12 @@ DalnokStatus dalnok_track_plugin_info(const DalnokEngine *e, DalnokTrackId t, in
     copyOut(out->path, sizeof out->path, slot.path);
     out->instrument = slot.instrument;
     PluginProcessor *p = e->impl.pluginInstance(slot.id);
-    out->loaded = p != nullptr;
-    out->latency = p ? p->latency() : 0;
-    copyOut(out->error, sizeof out->error, e->impl.pluginError(slot.id));
+    const std::string failure = p ? p->failure() : std::string();
+    out->loaded = p != nullptr && failure.empty();
+    out->loading = !p && e->impl.pluginLoading(slot.id);
+    out->isolated = p && p->isolated();
+    out->latency = out->loaded ? p->latency() : 0;
+    copyOut(out->error, sizeof out->error, failure.empty() ? e->impl.pluginError(slot.id) : failure + "; Load restarts it");
     return DALNOK_OK;
 }
 size_t dalnok_plugin_get_state(const DalnokEngine *e, int32_t slot, char *out, size_t len) {
@@ -333,6 +337,24 @@ DalnokStatus dalnok_plugin_parameter(const DalnokEngine *e, int32_t slot, int32_
     out->hidden = pp.hidden;
     return DALNOK_OK;
 }
+DalnokStatus dalnok_track_preview_note(DalnokEngine *e, DalnokTrackId track, uint8_t pitch, uint8_t velocity, bool on) {
+    if (!e) return DALNOK_ERR_INVALID_ARG;
+    return e->impl.previewNote(track, pitch, velocity, on) ? DALNOK_OK : DALNOK_ERR_NOT_FOUND;
+}
+bool dalnok_project_plugins_changed(const DalnokEngine *e) { return e && e->impl.pluginEditorStatesChanged(); }
+bool dalnok_plugin_take_editor_key(DalnokEngine *e, DalnokEditorKey *out) {
+    if (!e || !out) return false;
+    int32_t slot = 0;
+    dalnok::PluginProcessor::EditorKey k;
+    if (!e->impl.takeEditorKey(slot, k)) return false;
+    *out = DalnokEditorKey{};
+    out->slot = slot;
+    out->key_code = k.keyCode;
+    out->modifiers = k.modifiers;
+    std::memcpy(out->characters, k.characters, sizeof out->characters);
+    std::memcpy(out->characters_ignoring_modifiers, k.charactersIgnoringModifiers, sizeof out->characters_ignoring_modifiers);
+    return true;
+}
 DalnokStatus dalnok_plugin_set_parameter(DalnokEngine *e, int32_t slot, uint32_t id, double v) {
     PluginProcessor *p = e ? e->impl.pluginInstance(slot) : nullptr;
     if (!p) return DALNOK_ERR_NOT_FOUND;
@@ -365,6 +387,7 @@ DalnokStatus dalnok_plugin_open_editor(DalnokEngine *e, int32_t slot, void *pare
     if (!p || !parent) return DALNOK_ERR_INVALID_ARG;
     int32_t width = 0, height = 0;
     std::string msg;
+    e->impl.noteEditorOpened(slot); // its state before the editor can change it
     if (!p->openEditor(parent, width, height, onResize, ctx, msg)) { copyOut(err, len, msg); return DALNOK_ERR_UNSUPPORTED; }
     if (w) *w = width;
     if (h) *h = height;
@@ -372,6 +395,37 @@ DalnokStatus dalnok_plugin_open_editor(DalnokEngine *e, int32_t slot, void *pare
 }
 void dalnok_plugin_close_editor(DalnokEngine *e, int32_t slot) {
     if (PluginProcessor *p = e ? e->impl.pluginInstance(slot) : nullptr) p->closeEditor();
+}
+DalnokStatus dalnok_plugin_show_editor_window(DalnokEngine *e, int32_t slot, const char *title, double x, double y,
+                                              char *err, size_t len) {
+    PluginProcessor *p = e ? e->impl.pluginInstance(slot) : nullptr;
+    if (!p) return DALNOK_ERR_INVALID_ARG;
+    std::string msg;
+    e->impl.noteEditorOpened(slot); // its state before the editor can change it
+    if (!p->showEditorWindow(title ? title : "", x, y, msg)) { copyOut(err, len, msg); return DALNOK_ERR_UNSUPPORTED; }
+    return DALNOK_OK;
+}
+DalnokStatus dalnok_plugin_editor_window(DalnokEngine *e, int32_t slot, DalnokPluginEditorWindow *out) {
+    PluginProcessor *p = e ? e->impl.pluginInstance(slot) : nullptr;
+    if (!p || !out) return DALNOK_ERR_INVALID_ARG;
+    PluginProcessor::EditorWindowInfo i;
+    if (!p->editorWindow(i)) return DALNOK_ERR_UNSUPPORTED;
+    *out = DalnokPluginEditorWindow{i.open, i.visible, i.x, i.y, i.width, i.height, i.contentWidth, i.contentHeight,
+                                    i.windowNumber, i.level, i.processId};
+    return DALNOK_OK;
+}
+DalnokStatus dalnok_plugin_isolation_stats(DalnokEngine *e, int32_t slot, DalnokPluginIsolationStats *out) {
+    PluginProcessor *p = e ? e->impl.pluginInstance(slot) : nullptr;
+    if (!p || !out) return DALNOK_ERR_INVALID_ARG;
+    PluginProcessor::IsolationStats s;
+    if (!p->isolationStats(s)) return DALNOK_ERR_UNSUPPORTED;
+    *out = DalnokPluginIsolationStats{s.missedBlocks, s.budgetSkips, s.workgroupJoined, s.workgroupError, s.workgroupJoins};
+    return DALNOK_OK;
+}
+DalnokStatus dalnok_plugin_editor_snapshot(DalnokEngine *e, int32_t slot, const char *path) {
+    PluginProcessor *p = e ? e->impl.pluginInstance(slot) : nullptr;
+    if (!p || !path) return DALNOK_ERR_INVALID_ARG;
+    return p->editorSnapshot(path) ? DALNOK_OK : DALNOK_ERR_UNSUPPORTED;
 }
 
 size_t dalnok_plugins_validate(const char *scanner, const char *cache, const char *extra, bool onlyExtra, bool au,
@@ -802,13 +856,13 @@ void dalnok_meter_master(DalnokEngine *e, float *l, float *r) {
 DalnokStatus dalnok_media_load(const char *path, double sample_rate, DalnokMedia **out, char *err, size_t err_len) {
     if (!path || !out) return DALNOK_ERR_INVALID_ARG;
     *out = nullptr;
-    std::vector<std::vector<float>> ch;
     std::string msg;
-    if (!decodeAudioFile(path, sample_rate, ch, msg)) {
+    auto media = Media::loadFile(path, sample_rate, msg); // long files stream from a cache file (A-09)
+    if (!media) {
         copyOut(err, err_len, msg);
         return DALNOK_ERR_IO;
     }
-    *out = new DalnokMedia{std::make_shared<const Media>(std::move(ch), sample_rate)};
+    *out = new DalnokMedia{std::move(media)};
     return DALNOK_OK;
 }
 
@@ -820,6 +874,13 @@ DalnokMedia *dalnok_media_from_samples(const float *const *channels, int32_t cou
 }
 
 void dalnok_media_release(DalnokMedia *m) { delete m; }
+void dalnok_stream_set_limits(double seconds, int32_t mb) { dalnok::StreamCache::shared().setLimits(seconds, mb); }
+void dalnok_stream_stats(DalnokStreamStats *out) {
+    if (!out) return;
+    const auto s = dalnok::StreamCache::shared().stats();
+    *out = DalnokStreamStats{s.residentBytes, s.budgetBytes, s.blocksLoaded, s.blocksEvicted, s.missedFrames, s.residentBlocks};
+}
+bool dalnok_media_streamed(const DalnokMedia *m) { return m && m->impl && m->impl->streamed(); }
 int64_t dalnok_media_frames(const DalnokMedia *m) { return m && m->impl ? m->impl->frames() : 0; }
 int32_t dalnok_media_channels(const DalnokMedia *m) { return m && m->impl ? m->impl->channelCount() : 0; }
 double dalnok_media_sample_rate(const DalnokMedia *m) { return m && m->impl ? m->impl->sampleRate() : 0; }
@@ -859,6 +920,17 @@ size_t dalnok_pool_path(const DalnokEngine *e, DalnokMediaId id, char *buf, size
 // ---- Queries --------------------------------------------------------------
 
 uint64_t dalnok_model_revision(const DalnokEngine *e) { return e ? e->impl.revision() : 0; }
+uint64_t dalnok_track_revision(const DalnokEngine *e, DalnokTrackId t) { return e ? e->impl.trackRevision(t) : 0; }
+bool dalnok_model_only_parameters_since(const DalnokEngine *e, uint64_t revision) {
+    return e && e->impl.onlyParametersSince(revision);
+}
+DalnokStatus dalnok_track_parameters(const DalnokEngine *e, DalnokTrackId id, float *gain, float *pan, bool *muted, bool *solo) {
+    if (!e || !gain || !pan || !muted || !solo) return DALNOK_ERR_INVALID_ARG;
+    const TrackState *t = e->impl.model().track(id);
+    if (!t) return DALNOK_ERR_NOT_FOUND;
+    *gain = t->gainDb; *pan = t->pan; *muted = t->muted; *solo = t->solo;
+    return DALNOK_OK;
+}
 int32_t dalnok_track_count(const DalnokEngine *e) {
     return e ? static_cast<int32_t>(e->impl.model().tracks.size()) : 0;
 }
@@ -1150,7 +1222,8 @@ DalnokStatus dalnok_project_load(DalnokEngine *e, const char *path, int32_t *mis
     int32_t missing = 0;
     if (!e->impl.loadProject(path, missing, msg)) {
         copyOut(err, err_len, msg);
-        return msg.rfind("cannot open", 0) == 0 ? DALNOK_ERR_IO : DALNOK_ERR_FORMAT;
+        return msg.rfind("cannot open", 0) == 0 || msg == "cannot write pre-load recovery snapshot"
+                   ? DALNOK_ERR_IO : DALNOK_ERR_FORMAT;
     }
     if (missing_out) *missing_out = missing;
     return DALNOK_OK;
@@ -1163,7 +1236,14 @@ DalnokStatus dalnok_project_prepare(const char *path, double sr, DalnokProjectDa
     *out = nullptr;
     std::string msg;
     int32_t missing = 0;
-    auto p = Engine::prepareProject(path, sr, missing, msg);
+    std::unique_ptr<Engine::PreparedProject> p;
+    try { // untrusted file: nothing may throw across the C API (audit A-10)
+        p = Engine::prepareProject(path, sr, missing, msg);
+    } catch (const std::exception &x) {
+        msg = std::string("project file is damaged (") + x.what() + ")";
+    } catch (...) {
+        msg = "project file is damaged";
+    }
     if (!p) {
         copyOut(err, err_len, msg);
         return msg.rfind("cannot open", 0) == 0 ? DALNOK_ERR_IO : DALNOK_ERR_FORMAT;
@@ -1172,19 +1252,49 @@ DalnokStatus dalnok_project_prepare(const char *path, double sr, DalnokProjectDa
     *out = new DalnokProjectData{std::move(p)};
     return DALNOK_OK;
 }
+void dalnok_project_set_recovery_directory(DalnokEngine *e, const char *path) {
+    if (e) e->impl.setRecoveryDirectory(path ? path : "");
+}
 DalnokStatus dalnok_project_apply(DalnokEngine *e, DalnokProjectData *data) {
     std::unique_ptr<DalnokProjectData> owned(data);
     if (!e || !data || !data->impl) return DALNOK_ERR_INVALID_ARG;
     if (data->impl->sampleRate != e->impl.sampleRate()) return DALNOK_ERR_INVALID_ARG;
-    e->impl.applyProject(std::move(data->impl));
-    return DALNOK_OK;
+    return e->impl.applyProject(std::move(data->impl)) ? DALNOK_OK : DALNOK_ERR_IO;
 }
 DalnokStatus dalnok_project_apply_recovery(DalnokEngine *e, DalnokProjectData *data) {
     std::unique_ptr<DalnokProjectData> owned(data);
     if (!e || !data || !data->impl) return DALNOK_ERR_INVALID_ARG;
     if (data->impl->sampleRate != e->impl.sampleRate()) return DALNOK_ERR_INVALID_ARG;
-    e->impl.applyProject(std::move(data->impl), true);
-    return DALNOK_OK;
+    return e->impl.applyProject(std::move(data->impl), Engine::ApplyMode::recover) ? DALNOK_OK : DALNOK_ERR_IO;
+}
+DalnokStatus dalnok_project_apply_deferred(DalnokEngine *e, DalnokProjectData *data) {
+    std::unique_ptr<DalnokProjectData> owned(data);
+    if (!e || !data || !data->impl) return DALNOK_ERR_INVALID_ARG;
+    if (data->impl->sampleRate != e->impl.sampleRate()) return DALNOK_ERR_INVALID_ARG;
+    return e->impl.applyProject(std::move(data->impl), Engine::ApplyMode::defer) ? DALNOK_OK : DALNOK_ERR_IO;
+}
+int32_t dalnok_plugins_pending(const DalnokEngine *e) { return e ? e->impl.pendingPluginCount() : 0; }
+int32_t dalnok_plugins_activate_next(DalnokEngine *e, int32_t *slot_out, double *seconds_out) {
+    if (!e) return -1;
+    int32_t slot = 0;
+    double seconds = 0;
+    const int32_t left = e->impl.activateNextPlugin(slot, seconds);
+    if (slot_out) *slot_out = slot;
+    if (seconds_out) *seconds_out = seconds;
+    return left;
+}
+void dalnok_plugins_set_host(DalnokEngine *e, const char *host) {
+    if (e) e->impl.setPluginHost(host ? host : "");
+}
+void dalnok_plugins_cancel_pending(DalnokEngine *e) {
+    if (e) e->impl.cancelPendingPlugins();
+}
+DalnokStatus dalnok_plugin_reload(DalnokEngine *e, int32_t slot, char *err, size_t err_len) {
+    if (!e) return DALNOK_ERR_INVALID_ARG;
+    std::string why;
+    if (e->impl.reloadPlugin(slot, why)) return DALNOK_OK;
+    copyOut(err, err_len, why);
+    return why == "no such plug-in slot" ? DALNOK_ERR_NOT_FOUND : DALNOK_ERR_UNSUPPORTED;
 }
 void dalnok_project_data_release(DalnokProjectData *data) { delete data; }
 
@@ -1280,6 +1390,9 @@ void dalnok_engine_stats(const DalnokEngine *e, DalnokStats *out) {
 }
 void dalnok_engine_reset_stats(DalnokEngine *e) {
     if (e) e->impl.resetStats();
+}
+int32_t dalnok_engine_snapshot_mismatches(DalnokEngine *e) {
+    return e ? e->impl.snapshotMismatches() : -1;
 }
 
 } // extern "C"

@@ -1,9 +1,52 @@
 ---
-updated: 2026-11-18
+updated: 2026-11-19
 phase: Phases 1 and 3 complete; 2 and 4 in progress
-milestone: M11 VST3 hosting (ADR-0009 stage 3) done; editors, parameters and AU hosting next
+milestone: hosting complete (VST3/AU/CLAP, editors, parameters, automation, delay compensation); isolation and streaming next
 ---
 # Current State
+
+## Current priorities (2026-11-19)
+- **A-03 done:** undo steps below the top are clip deltas against the state they'll be applied to (`Engine::ModelDelta`). 500 structural edits at 4,096 clips: RSS growth 268.9 → 3.3 MB; edit p50 0.274 → 0.299 ms, undo 0.27 → 0.36 ms. `UndoDeltas` random-history test. 
+- **A-06 partial:** `PluginHostService` and `UndoStack` extracted; Engine definitions split across engine.cpp (1,024 lines), engine_clips, engine_takes, engine_launcher, engine_device, engine_compile, engine_audio and engine_offline; layout in [[System Overview]]. `Transport` (transport.hpp) extracted too, and recording state is grouped as `RecordingState` (recording_state.hpp; its logic is still in record.cpp). Render compilation is still Engine members.
+- **A-09 done:** files over 60 s stream from a decoded cache file through a bounded block cache (ADR-0016, C API 38). One hour of stereo: RSS 1,390 MB → 48.6 MB peak while playing, 0 missed frames. The time stretcher now uses a fixed seed (renders were not reproducible). Launched slots are prefetched along their own loop (a 2 MB-budget test went from 660,480 missed frames to 0). Cache files: least recently used first, kept within `DALNOK_STREAM_DISK_MB` (default 8 GiB), tested. 
+- **Drawing time measured:** `audit-ui` includes drawing and the layer commit. A one-track structural edit cost 53.7 / 51.5 ms (Graphite / Warm Analog) with drawing. The timeline now redraws only changed lanes (applyCycle had invalidated it on every change), and mixer strips update in place unless their contents changed: 22.2 / 23.4 ms. Still above one frame; about 15 ms of the commit is unattributed. Self-tests: Graphite 539 / Warm Analog 522 (572 / 553 with the plug-in fixtures).
+- **A-01 stage 2** (owner's wave-4 list: isolated deferred loading, editors out of process, shared deadline budget + audio workgroup, before/after measurements; then A-03, A-06, A-09, drawing time). **Item 1 done:** with Safety on, deferred activation starts isolated hosts (up to 4 in parallel) and returns at once; the host restores saved state before answering; Stop kills hosts still loading (C API 35, ADR-0014 amendment). Slow fixture (`DALNOK_TEST_INIT_FAILURE=slow`): 3 × 1.5 s load in 1.52 s, worst activate call 1.1 ms; GUI self-test with 3 × 4 s: worst main-thread gap 10–13 ms, Stop to done ≈0.15 s. Host crash handler reports crashes at once (fixed a baseline failure in `crashOrHangWhileLoadingFailsTheLoadOnly`). Isolation stays opt-in until verified on the owner's plug-in library. **Item 2 done:** isolated editors open in a non-activating floating window owned by the host (ADR-0015, C API 36). Tested with the test VST3 and Apple's AUDelay (engine tests plus self-test). Real input confirmed (`DALNOK_REAL_INPUT=1`): click, ⌘A and typing in AUDelay's field in the host window set Dry/Wet 50 → 25, and Dalnok stays active. **Item 3 done:** one deadline per callback shared by all isolated plug-ins (worst callback with 3 hung plug-ins 13.1 → 4.5 ms of a 10.67 ms period). The host processing thread joins the device's audio workgroup via a Mach rendezvous (real device: joined, and joins again after restart). C API 37 `dalnok_plugin_isolation_stats`. **Item 4:** before/after in `docs/audits/benchmarks/results.json` (`a01Stage2`). Isolation overhead unchanged (≈31–37 µs p50 per block), self-tests 538/520 both before and after, and with fixtures 572/552. **Real input (`DALNOK_REAL_INPUT=1`, both themes, PASS):**
+  - Drag and undo: a real drag moved a clip 0 → 24000 frames. The redrawn timeline matched a full draw exactly (0 bytes, playhead overlay excluded). ⌘Z and ⇧⌘Z undid and redid it exactly.
+  - Streaming: Space played a streamed 90 s file with 0 missed frames. A ruler click seeked to about 11.6 s, with 0 missed frames while it settled and after. The cache stayed at 7.0 of 63.8 MB.
+  - Stop: a real click on Stop during slow isolated loading ended it in 92 ms. The worst main-thread gap was 37 ms (under the 50 ms limit), 38 ms after loading started, which suggests it was drawing the newly opened project.
+  - AUDelay: typing into its field still gives Dry/Wet 50 → 25.
+- **Audit follow-ups, wave 3** (owner asked for roadmap items A-04, A-08, A-10, A-05, A-01 in that order). **A-04 done:** per-track render content is shared between snapshots and rebuilt only for tracks whose clips changed; a random-edit test compares it with a fresh build (`dalnok_engine_snapshot_mismatches`, C API 31). 4,096 clips: structural edit p50 0.238 → 0.163 ms, undo 0.257 → 0.173 ms. **A-08 done for isolated plug-ins:** projects open and import with plug-ins queued and loaded one per run-loop turn (progress, Stop, track-menu Load; ADR-0013, C API 32); isolated ones load in their hosts without blocking (stage 2 above). In-process, a plug-in that blocks its own initialization still blocks the UI for that long. **A-10 done:** `scripts/ci/fuzz.sh` fuzzes the project reader and every importer (libFuzzer + ASan; 10-minute run clean after fixing a ZIP over-allocation and an FCPXML abort it found) and runs 1,000 random save/load round-trips; `scripts/check.sh` always runs parser tests under ASan. **A-05 done:** per-track revisions (C API 33) let the window re-read only changed tracks; mixer parameter path. 4,096 clips: parameter refresh ≈4.0 → 0.155 ms, one-track structural refresh 24.6 → 0.56 ms (drawing not measured). **A-01 stage 1:** opt-in out-of-process hosting (`dalnok-plughost`, Settings ▸ Plug-ins ▸ Safety, ADR-0014, C API 34); crash and hang contained and reloadable; existing hosting suites pass isolated (`scripts/ci/plugin-isolation.sh`). Not yet: default-on (needs a pass over the owner's plug-in library).
+- **Audit follow-ups, wave 2.** Before activating incoming plug-ins, project apply writes a unique atomic recovery copy; if the write fails, the current project remains open. Recovery opens plug-in slots unloaded with their saved state. A crashing or hanging VST3 initialization fixture leaves a reloadable snapshot (`scripts/ci/plugin-recovery.sh`, normal and AddressSanitizer); `scripts/ci/recovery-smoke.sh` also passes. Synchronous project load now reports snapshot-write failure as an I/O error, with failure atomicity covered by `preactivationRecoveryAndFailure`. The crash/hang fixture compares the full normalized incoming model. Recovery markers retain unresolved copies across repeated crashes and clean quits; the self-test covers selection of both an older recovery and a newer incoming snapshot. This bounds the project-apply exposure; plug-ins remain in-process and A-01 crash isolation is open.
+- Scalar gain, pan, mute, solo and master-gain edits use compact coalesced undo; mixed groups promote to a snapshot (ADR-0012). On the same generated 16-track × 256-clip project, `audit-bench --edits 500` measured gain-edit p50 0.058 ms → below its 0.001 ms display precision, and RSS after 500 edits 302.6 MB → 34.5 MB (starting RSS 34.2 MB and 34.4 MB). Snapshot undo and failure rollback remain for other edits; structural sharing remains open (A-03).
+- Parameter-revision hints and a clip-free scalar refresh path are implemented; scalar setters and undo/redo defer refresh to the display tick. On the same generated 16 × 256 project, release `dalnok-cli audit-ui` measured AppKit drag p50/p95/p99/max 27.771875/30.493334/31.077125/31.706958 → 0.025000/0.031333/0.033625/0.037625 ms and parameter refresh 28.385333/29.191209/29.532209/29.715750 → 3.865959/3.934792/3.967375/3.967375 ms. Each used 30 warmups and 100 samples, Graphite and a visible mixer. Drag events were a tight burst; refresh includes synchronous UI callbacks but excludes deferred drawing/compositing and normal frame pacing. A-05a is **fixed**: the self-test verifies display-tick coalescing, unrelated-track edits without clip reads, scripted changes, undo and same-frame Touch recording; final generated-project walks in both themes cover gain drag, undo and scripted change.
+- A-14 is **fixed**: an instrumented test withheld automatic collection for 100 callbacks, measured depth/high-water 64 and age/skips 36, then verified reset, collection and adoption on the next callback. A structural edit became audible within one 256-frame callback. `commit()` and the public pump normally collect automatically. If the queue is full and collection stops, adoption has no finite bound; no free-list was added.
+- Verification: `DALNOK_SANITIZE=1 scripts/check.sh` passed on the final recovery changes: 197 tests in normal, ASan and TSan runs, live audio smoke and self-test. The self-test covers coalescing, unrelated-track clip reads, same-frame Touch and recovery-marker selection. `scripts/ci/recovery-smoke.sh` passed after the marker changes; the normal and ASan plug-in recovery fixtures passed the full normalized-model crash/hang comparison. Final corrected UI walks in both themes loaded a generated project and captured gain drag, undo and scripted changes for review. Full-frame drawing/compositing timing remains open. The UI walk now waits for project load; the reel self-test waits for the forward animation to settle before testing rewind.
+- **Audit follow-ups (branch `fix/audit-followups`).** Wave 1 landed: linear snapshot compilation (A-04),
+  shared plug-in state blobs (A-07), a flush-to-zero render environment (A-12), property and mutated-project
+  parser tests (A-10, partial), and corrected status documentation (A-23). A-02 turned out to be already
+  implemented — periodic recovery snapshot, launch prompt and `scripts/ci/recovery-smoke.sh` — and was
+  misread in the audit. Measured at 4,096 clips: structural edit 0.770 -> 0.255 ms, clip-by-clip build
+  1,272 -> 527 ms, undo 0.745 -> 0.238 ms. 191 engine tests pass. The remaining findings stay sequenced in
+  `docs/audits/modernization-roadmap.md`. The later wave-2 update above supersedes the count and next steps here.
+- **Independent audit (branch `audit/2026-11-codebase`).** Findings, measurements and an ordered plan are in
+  `docs/audits/` (report, `findings.json`, roadmap, `benchmarks/`, dashboard). Headline results: the audio path
+  is well inside budget (1.11 ms per 512-frame block at 512 tracks), while one UI model read costs 15.9 ms at
+  4,096 clips, structural edits recompile in O(tracks × clips), every edit deep-copies the model, plug-ins run
+  in-process with no autosave behind them, and media is fully decoded into RAM. Two P0 items: project autosave
+  and out-of-process plug-in hosting. Note that the tables below are stale: plug-in editors, parameters and
+  automation, latency compensation, AU/CLAP hosting, punch, count-in and multi-input recording are implemented
+  and tested (audit finding A-23).
+- **Release-app retest (later 2026-11-18).** A generated Logic project (three audio tracks, two audio files, duplicate channel-strip names including a track named `None`) imported through the built app's Open ▸ Import UI: the report appeared, the window showed the three tracks, the main thread returned to its run loop and the process stayed up. `scripts/make-test-project.sh` and a generated `.logicx` fixture supplied the material; nothing from the owner's projects was written or committed.
+- **MODO BASS did not stall here.** `dalnok-cli render-project` instantiates MODO BASS 2 on a generated project in 3.2 s, and opening the same project in the built app left the main thread idle (sampled) with the project shown. The earlier multi-minute app-only stall therefore is not reproduced and is **not** fixed. Structure worth knowing: `dalnok_project_apply` calls `Engine::instantiatePlugins()` synchronously on the caller's thread, and `EngineBridge.importForeign` applies on the main actor, so plug-in initialization runs on the AppKit main thread — the arrangement that would turn a plug-in's main-queue wait into an app block. Changing that needs a designed, measured change (or the separate host process), not a quick move.
+- **The owner's two reported projects were not available on this machine** (no paths in the repo, preferences or scratch space), so the full real-project import retest is still outstanding; it is the one remaining step for the crash report.
+- **Logic import gaps are blocked on sample data.** Tempo and meter changes, automation, routing, stacks and native processors all need Logic-saved projects (or Logic renders) to decode; the importer's event layouts will not be guessed from public notes, because a wrong tempo map or routing guess would silently change timing. Next: a disposable Logic project with a tempo change, a meter change and a stack, saved from Logic, kept in the scratchpad.
+- Owner's goal: Logic projects should sound the same in both DAWs, including plug-ins. Import, routing, automation and native processor parity need measured verification; this is not yet achieved.
+- Logic import/device-panel crash: the debugger caught an AppKit assertion in the sidechain menu when tracks have duplicate names. `NSPopUpButton.addItems` silently de-duplicates titles; indexing the missing entries raises an Objective-C exception that unwinds through Swift and leaves its executor record stale. Constructing menu items directly preserves duplicate names and distinct track IDs. Generated self-tests pass in both themes, including a track named None. Full real-project retest is pending: an unrelated MODO BASS initialization blocked the main thread for several minutes, and desktop access then became unavailable.
+- Both theme self-tests also pass with the generated CLAP sidechain fixture: a device is created with duplicate-name tracks and restores the chosen track by ID.
+- UI retest: both reported projects imported and Guitar Rig devices opened in a diagnostic build with only MODO BASS omitted; its original state was retained. Without that omission, MODO BASS blocked the main thread while enumerating its pattern folders, including when loaded before the other plug-ins. The normal build has no exclusion. Headless import of the same project completed in about six seconds. The cause of the app-only stall is not yet established.
+- The 44.1 kHz timing issue remains open. The display floors ticks after converting integer frames to beats; some self-test expectations also multiply rounded beat lengths, so diagnose those separately from quantization.
+- A test that dispatched project application outside the importing Swift task did not fix the crash and was reverted. In-process plug-in hosting remains uncontained; crash isolation requires a separately designed and tested host process. Logic's import report now explicitly warns that tempo and meter changes are omitted; importing those changes remains work to do.
+- Verification: `swift test --disable-sandbox` outside the sandbox: 188 tests pass; `scripts/ci/plugin-host.sh` and `scripts/ci/rt-effects.sh` pass. Both theme self-tests pass, with hosted plug-in UI checks skipped (test plug-in not configured).
 
 ## Latest session (0.1.0 follow-ups; 2026-11-18, later)
 - Bypass is animated and configurable (explicit CA animations on the unit layer plus a veil; light levels driven by a 60 Hz fade in `DeviceView`). `PlateButton` keys track their own presses so they work while the unit is drawn shrunk.
@@ -12,7 +55,7 @@ milestone: M11 VST3 hosting (ADR-0009 stage 3) done; editors, parameters and AU 
 - **Settings overhaul**: `Settings.swift` is a sidebar window with General, Appearance, Audio & MIDI, Recording, Plug-ins and Keyboard Shortcuts panes. The shortcut editor's content moved into the Shortcuts pane (`shortcutsEditor` now returns `settings.shortcuts`; its sheets attach to the Settings window).
 - **Track heights**: per-track (engine `TrackState.height`, saved, undoable, C API 29) plus the default height (48–400 pt). All lane math goes through `Session.laneTop/laneHeight/laneIndex`. ⌥-scroll sizes all tracks (⌘-scroll still zooms time). Rows under 76 pt hide their knobs.
 - Secondary clock, tape reels that stop transferring past the last clip, visible VU glass wear, header input label truncates before the pan knob.
-- **Open: Guitar Rig crash.** Loading oviii with three Guitar Rig 7 AUs (with their saved state) plus its instrument tracks, and showing a Guitar Rig unit in the device panel, crashes in Swift's main-executor check (the main thread's executor record is corrupted). It reproduces on the 0.1.0 build too. ASan finds no bad write in Dalnok code; one Guitar Rig alone doesn't crash. Next: isolate further (Guitar Rig's Qt event dispatcher on the main thread is the main suspect) and consider hosting such plug-ins out of process.
+- **Guitar Rig/device-panel crash:** the matching import crash was traced to duplicate track names in the sidechain menu and fixed; generated regression checks pass. Retest the original project in the fixed UI when desktop access is available. Out-of-process hosting is still needed to contain third-party plug-in crashes.
 - **Open: "1 FX" with no plug-ins** (owner report). Every oviii track's count matched its plug-ins in testing; ask the owner for a project where it happens.
 
 ## Earlier session (0.1.0 release preparation; 2026-11-18)
@@ -222,9 +265,9 @@ milestone: M11 VST3 hosting (ADR-0009 stage 3) done; editors, parameters and AU 
 - **Public parity page:** https://droper23.github.io/dalnok-status/ (source in `site/`, published by `scripts/publish-site.sh`).
 
 ## Architecture (now)
-C++20 engine (`engine/`) → C API (`dalnok.h`, v11) → AppKit UI (`app/macos/`). The **engine owns the
+C++20 engine (`engine/`) → C API (`dalnok.h`, v30) → AppKit UI (`app/macos/`). The **engine owns the
 project model**: tracks, clips in z-order, and a media pool. Every edit is a named, undoable command with
-whole-model snapshot undo, also reachable as JSON through the command catalog. The UI is a read-only view
+compact scalar undo and whole-model snapshot undo for other edits, also reachable as JSON through the command catalog. The UI is a read-only view
 that refreshes on `dalnok_model_revision`. Render snapshots reach the audio thread through an atomic
 slot, and retired ones come back through an SPSC queue. See [[System Overview]],
 [[Real-Time Processing]], [[ADR-0005 Project model and commands]], and [[Project Format]].
@@ -273,11 +316,19 @@ slot, and retired ones come back through an SPSC queue. See [[System Overview]],
 | Live MIDI input and MIDI recording | Core MIDI virtual-source test (TSan clean), self-test via running device |
 | Plugin discovery (no code loaded) | `PluginDiscovery` tests; 217 bundles + 230 AUs on the dev Mac |
 | Onboarding: "Coming from…", shortcut presets, project finder with preview, import report, Concept Guide, old-DAW words in ⌘K | Self-test |
+| Plug-in editors: VST3/AU/CLAP windows plus the generic parameter panel | `PluginHostingTests`, `AudioUnitHostingTests`, `ClapHostingTests`; self-test (test plug-in) |
+| Plug-in parameters, device-panel controls and parameter automation (block-rate), Touch/Latch | `PluginHostingTests`, `AutomationTests`, `BuiltinPluginTests` |
+| Plug-in delay compensation (per connection, render-ahead live, export pre-roll) | `DelayCompensationTests` |
+| Punch in/out, count-in, and several armed audio tracks each recording its own input | `PunchTests`, `CycleTests`, `MultiInputTests` |
+| Audio Units and CLAP host like VST3 (state, missing plug-in keeps state, sidechain) | `AudioUnitHostingTests`, `AudioUnitDocumentTests`, `ClapHostingTests`; `scripts/ci/plugin-host.sh` |
 
 ## Not yet / incomplete
-- Loopback latency measurement, power-loss validation, punch in/out, multiple armed audio tracks, separate input/output devices (built-in mic + speakers is refused with an explanation).
-- Count-in, tempo ramps, importing tempo maps, sample-accurate MIDI input timing.
-- Plug-in editors, parameters and automation, latency compensation, AU/CLAP hosting, out-of-process hosting.
+Every row in "Verified working" names the test, self-test or command behind it. This list is what has no such evidence yet.
+- Out-of-process plug-in hosting (crash isolation); plug-ins still run in-process (ADR-0009, audit A-01).
+- Recovery snapshots do not isolate the app from plug-in crashes or hangs; power-loss durability has not been verified.
+- Loopback latency measurement and power-loss validation.
+- Separate input/output devices (built-in mic + speakers is refused with an explanation).
+- Tempo ramps, importing tempo maps, sample-accurate MIDI input timing.
 - Live theme switching (Relaunch Now is the stopgap).
 - Disk streaming. Media is fully decoded into RAM, about 23 MB per stereo minute at 48 kHz.
 - Input selection in the UI and handling sample-rate changes; the engine rate is fixed at launch.
@@ -290,13 +341,13 @@ slot, and retired ones come back through an SPSC queue. See [[System Overview]],
 - Peak meters only. No LUFS or RMS yet.
 
 ## Active objective
-Finish validating recording (loopback latency, power loss, real keyboard), then Phase 3 editing (piano roll, tempo map, metronome) and Phase 4 plugin hosting (sandboxed scan, then VST3). Recording integrity still outranks everything else.
+Work the audit's ordered plan (`docs/audits/modernization-roadmap.md`): autosave and plug-in crash containment first, then model/sync scaling, reliability, module shape, and media/DSP headroom. Recording integrity still outranks everything else.
 
 ## Next recommended action
-1. With a cable from the Scarlett's output to input 1, add and run a loopback latency measurement (`dalnok-cli`), then decide whether reported latency is trustworthy.
-2. Owner: play the MiniLab with `dalnok-cli midi-play <id> 20 --record`, and try recording in the app.
-3. Piano roll marquee selection and keyboard note entry; tempo map; count-in.
-4. Owner review of Warm Analog and the device panel; then automation lanes driving plug-in parameters, then latency compensation.
+1. Autosave and crash recovery, then the pre-plug-in-init snapshot and out-of-process plug-in hosting (audit A-02, A-01a, A-01).
+2. Model scaling: linear compile, no whole-model copy per parameter edit, change-set refresh (A-04, A-03, A-05).
+3. Reliability: fuzz/property tests, handoff health metrics, project schema and migrations (A-10, A-14, A-16).
+4. Media and DSP: disk streaming, denormal guard, SIMD (A-09, A-12, A-13).
 
 ## Open migration items
 - Expand Logic `.logicx` validation and decode mixer settings, routing, track stacks and take folders.

@@ -22,7 +22,7 @@ The engine owns the model. The UI re-queries it whenever `dalnok_model_revision`
 ## Subsystem boundaries (target)
 | # | Responsibility | Where | Status |
 |---|---|---|---|
-| 1 | Real-time execution | `engine.cpp` (`process`), `render.cpp` | implemented |
+| 1 | Real-time execution | `engine_audio.cpp` (`process`), `render.cpp` | implemented |
 | 2 | Audio/MIDI processing graph | `render.cpp` (flat track sum today) | partial |
 | 3 | Project/session model | `engine.hpp` `Model`, `PoolEntry` | implemented |
 | 4 | Timeline and arrangement logic | engine | partial |
@@ -36,3 +36,16 @@ The engine owns the model. The UI re-queries it whenever `dalnok_model_revision`
 ## Why a C API instead of Swift↔C++ interop
 It's a stable ABI for any future front end (Windows or Linux UI, scripting, tests), it keeps engine
 headers out of Swift compilation, and it forces a deliberate, small surface.
+
+## Engine source layout (A-06, 2026-11-19)
+`Engine` (engine.hpp) is the facade the C API calls. Its state and logic are split by concern:
+- `plugin_service.*`: `PluginHostService`, which owns plug-in instances, load errors, deferred and isolated activation,
+  offline copies, the device workgroup for isolated hosts, and their health.
+- `undo_stack.*`: `UndoStack`, which owns undo and redo, groups, compact parameter steps and clip-delta compaction.
+- `recording_state.hpp`: `RecordingState`, which holds device capture, the take in progress and the audio thread's record state. Its logic is the Engine methods in `record.cpp`.
+- `transport.hpp`: `Transport`, the play state, playhead, seek request, cycle, punch, metronome and count-in shared with the audio thread, plus their validation.
+- `engine.cpp` (model edits: tracks, MIDI, markers, routing, plug-in slots, mixer), `engine_clips.cpp`, `engine_takes.cpp`,
+  `engine_launcher.cpp`, `engine_device.cpp` (devices, capture, workgroup), `engine_compile.cpp` (RenderState snapshots),
+  `engine_audio.cpp` (the real-time path), `engine_offline.cpp` (offline render, export, stats).
+- `engine_internal.hpp`: helpers shared by those files, and the `edit()` template every edit goes through.
+- `stream_cache.*` and `media.*`: long files stream from disk through a bounded block cache (ADR-0016).

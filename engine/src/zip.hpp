@@ -36,6 +36,7 @@ public:
     bool extract(const Entry &e, const std::string &toPath, std::string &err);
 private:
     std::FILE *f_ = nullptr;
+    uint64_t size_ = 0; // file size: every offset and length read from the archive is checked against it
     std::vector<Entry> entries_;
 };
 

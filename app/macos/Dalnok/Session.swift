@@ -38,15 +38,15 @@ struct TrackView {
     let name: String
     let color: NSColor
     let customColor: Int32
-    let gainDb: Float
-    let pan: Float
-    let muted: Bool
-    let solo: Bool
+    var gainDb: Float
+    var pan: Float
+    var muted: Bool
+    var solo: Bool
     let clips: [ClipView] // z-order
     var isInstrument = false
     var armed = false
     var inputChannel: Int32 = 0
-    struct Plugin { let id: Int32; let name: String; let vendor: String; let instrument: Bool; let loaded: Bool; let error: String; let latency: UInt32; let bypassed: Bool; var path = "" }
+    struct Plugin { let id: Int32; let name: String; let vendor: String; let instrument: Bool; let loaded: Bool; let error: String; let latency: UInt32; let bypassed: Bool; var path = ""; var loading = false; var isolated = false }
     var plugins: [Plugin] = []
     var isBus = false
     var output: DalnokTrackId = 0 // 0 = master
@@ -77,9 +77,16 @@ final class Session {
     /// Takes inside take folders (not shown in the arrangement), by clip id.
     private(set) var takeClips: [DalnokClipId: ClipView] = [:]
     private var revision: UInt64 = 0 // reset to force a rebuild
+    /// Per-track views at the engine's track revision (A-05): a refresh re-reads only tracks whose revision moved.
+    private struct CachedTrack { let revision: UInt64; let style: Theme.Style; let view: TrackView; let takes: [ClipView]; let slots: [ClipView] }
+    private var trackCache: [DalnokTrackId: CachedTrack] = [:]
+    private(set) var clipReads = 0 // self-test verifies scalar refreshes do not read clips
     var projectURL: URL?
     /// Called after the model changed (any source: UI, undo, scripts).
     var onChange: (() -> Void)?
+    /// The tracks the last structural refresh read again (their revision changed); the others reused cached views.
+    private(set) var rereadTracks: Set<DalnokTrackId> = []
+    var onParameterChange: ((Bool) -> Void)?
     var onMessage: ((String) -> Void)?
 
     init(engine: Engine) {
@@ -92,19 +99,60 @@ final class Session {
 
     /// Rebuilds the view if the engine's revision moved. Returns true if it did.
     @discardableResult
-    func refresh() -> Bool {
+    func refresh(onDisplayTick: Bool = false) -> Bool {
         let rev = engine.revision
         guard rev != revision else { return false }
+        if revision != 0 && dalnok_model_only_parameters_since(h, revision) {
+            guard onDisplayTick else { return false }
+            var updated = allTracks
+            var valid = true
+            for i in updated.indices {
+                var gain: Float = 0, pan: Float = 0, muted = false, solo = false
+                if dalnok_track_parameters(h, updated[i].id, &gain, &pan, &muted, &solo) != DALNOK_OK {
+                    valid = false; break
+                }
+                updated[i].gainDb = gain; updated[i].pan = pan
+                updated[i].muted = muted; updated[i].solo = solo
+            }
+            if valid && engine.revision == rev {
+                let muteChanged = zip(allTracks, updated).contains { $0.0.muted != $0.1.muted }
+                allTracks = updated
+                // Only scalars changed and every track's were just re-read, so cached views stay exact (A-05).
+                for t in updated {
+                    guard let cached = trackCache[t.id] else { continue }
+                    trackCache[t.id] = CachedTrack(revision: dalnok_track_revision(h, t.id), style: cached.style, view: t,
+                                                   takes: cached.takes, slots: cached.slots)
+                }
+                let byId = Dictionary(uniqueKeysWithValues: updated.map { ($0.id, $0) })
+                tracks = tracks.compactMap { byId[$0.id] }
+                revision = rev
+                onParameterChange?(muteChanged)
+                return true
+            }
+        }
         revision = rev
         var out: [TrackView] = []
+        var reread: Set<DalnokTrackId> = []
         takeClips = [:]
         slotClips = []
+        var cache: [DalnokTrackId: CachedTrack] = [:]
+        let style = Theme.activeStyle // track colors are resolved per theme
         for i in 0..<dalnok_track_count(h) {
             let tid = dalnok_track_at(h, i)
+            let trackRevision = dalnok_track_revision(h, tid)
+            if let cached = trackCache[tid], cached.revision == trackRevision, cached.style == style {
+                out.append(cached.view)
+                for c in cached.takes { takeClips[c.id] = c }
+                slotClips += cached.slots
+                cache[tid] = cached
+                continue
+            }
             var ti = DalnokTrackInfo()
             guard dalnok_track_info(h, tid, &ti) == DALNOK_OK else { continue }
-            var clips: [ClipView] = []
+            reread.insert(tid)
+            var clips: [ClipView] = [], takes: [ClipView] = [], slots: [ClipView] = []
             for k in 0..<ti.clip_count {
+                clipReads += 1
                 var ci = DalnokClipInfo()
                 guard dalnok_clip_info(h, dalnok_track_clip_at(h, tid, k), &ci) == DALNOK_OK else { continue }
                 var clip = ClipView(id: ci.id, track: ci.track, media: ci.media, start: ci.start, offset: ci.offset,
@@ -117,8 +165,8 @@ final class Session {
                 clip.slot = ci.slot
                 clip.follow = ci.follow
                 clip.followLoops = ci.follow_loops
-                if ci.alt { takeClips[ci.id] = clip; continue } // takes live in their folder, not the arrangement
-                if ci.slot >= 0 { slotClips.append(clip); continue } // launcher slots, beside the arrangement
+                if ci.alt { takeClips[ci.id] = clip; takes.append(clip); continue } // takes live in their folder, not the arrangement
+                if ci.slot >= 0 { slotClips.append(clip); slots.append(clip); continue } // launcher slots, beside the arrangement
                 if ci.midi {
                     clip.isMidi = true
                     clip.notes = [DalnokNote](repeating: DalnokNote(), count: Int(ci.note_count))
@@ -131,7 +179,8 @@ final class Session {
                 var pi = DalnokPluginSlotInfo()
                 guard dalnok_track_plugin_info(h, tid, k, &pi) == DALNOK_OK else { continue }
                 plugins.append(.init(id: pi.id, name: fixedString(pi.name), vendor: fixedString(pi.vendor), instrument: pi.instrument, loaded: pi.loaded,
-                                     error: fixedString(pi.error), latency: pi.latency, bypassed: dalnok_plugin_bypassed(h, tid, pi.id), path: fixedString(pi.path)))
+                                     error: pi.loading ? "Loading…" : fixedString(pi.error), latency: pi.latency, bypassed: dalnok_plugin_bypassed(h, tid, pi.id),
+                                     path: fixedString(pi.path), loading: pi.loading, isolated: pi.isolated))
             }
             var sends = [DalnokSend](repeating: DalnokSend(), count: 16)
             let sendCount = Int(dalnok_track_sends(h, tid, &sends, 16))
@@ -144,7 +193,9 @@ final class Session {
                                  stack: ti.stack, isStack: ti.is_stack, collapsed: ti.collapsed,
                                  sends: Array(sends.prefix(min(sendCount, 16))),
                                  volumeAuto: automationPoints(tid, 0), panAuto: automationPoints(tid, 1)))
+            cache[tid] = CachedTrack(revision: trackRevision, style: style, view: out[out.count - 1], takes: takes, slots: slots)
         }
+        trackCache = cache // tracks that are gone drop out
         for k in out.indices { out[k].hidden = dalnok_track_hidden(h, out[k].id) }
         for k in out.indices { var ti = DalnokTrackInfo(); dalnok_track_info(h, out[k].id, &ti); out[k].height = CGFloat(ti.height) }
         allTracks = out
@@ -156,6 +207,7 @@ final class Session {
             return false
         }
         tracks = out.filter { !hidden($0) && !$0.hidden }
+        rereadTracks = reread
         onChange?()
         return true
     }
@@ -229,9 +281,9 @@ final class Session {
     // MARK: Edits (each is an engine command)
 
     func setClipMuted(_ clip: DalnokClipId, _ muted: Bool) { dalnok_clip_set_muted(h, clip, muted); refresh() }
-    func setGain(_ t: DalnokTrackId, db: Float) { dalnok_track_set_gain_db(h, t, db); refresh() }
+    func setGain(_ t: DalnokTrackId, db: Float) { dalnok_track_set_gain_db(h, t, db) }
     var masterGainDb: Float { dalnok_master_gain_db(h) }
-    func setMasterGain(_ db: Float) { dalnok_master_set_gain_db(h, db); refresh() }
+    func setMasterGain(_ db: Float) { dalnok_master_set_gain_db(h, db) }
     // Routing
     @discardableResult func addBus(_ name: String = "") -> DalnokTrackId { let id = dalnok_track_add_bus(h, name); refresh(); return id }
     @discardableResult func setOutput(_ t: DalnokTrackId, _ bus: DalnokTrackId) -> Bool {
@@ -308,9 +360,9 @@ final class Session {
         let pa = FaderControl.position(for: a.value), pb = FaderControl.position(for: b.value)
         return FaderControl.db(for: pa + (pb - pa) * Double(f))
     }
-    func setPan(_ t: DalnokTrackId, _ p: Float) { dalnok_track_set_pan(h, t, p); refresh() }
-    func setMute(_ t: DalnokTrackId, _ m: Bool) { dalnok_track_set_mute(h, t, m); refresh() }
-    func setSolo(_ t: DalnokTrackId, _ on: Bool) { dalnok_track_set_solo(h, t, on); refresh() }
+    func setPan(_ t: DalnokTrackId, _ p: Float) { dalnok_track_set_pan(h, t, p) }
+    func setMute(_ t: DalnokTrackId, _ m: Bool) { dalnok_track_set_mute(h, t, m) }
+    func setSolo(_ t: DalnokTrackId, _ on: Bool) { dalnok_track_set_solo(h, t, on) }
     func moveTrack(_ t: DalnokTrackId, to index: Int) { dalnok_track_move(h, t, Int32(index)); refresh() }
     func renameTrack(_ t: DalnokTrackId, _ name: String) { dalnok_track_rename(h, t, name); refresh() }
     func setTrackColor(_ t: DalnokTrackId, rgb: Int32) { dalnok_track_set_color(h, t, rgb); refresh() }
@@ -425,7 +477,7 @@ final class Session {
         if n != lastPending { lastPending = n; forceRefresh() }
         return n
     }
-    func forceRefresh() { revision = 0; refresh() }
+    func forceRefresh() { revision = 0; trackCache = [:]; refresh() }
 
     func setFades(_ c: DalnokClipId, fadeIn: Int64, fadeOut: Int64, curve: DalnokFadeCurve) {
         dalnok_clip_set_fades(h, c, fadeIn, fadeOut, curve); refresh()
@@ -496,8 +548,8 @@ final class Session {
         refresh()
         return ok
     }
-    func undo() { engine.undo(); refresh() }
-    func redo() { engine.redo(); refresh() }
+    func undo() { engine.undo(); if !dalnok_model_only_parameters_since(h, revision) { refresh() } }
+    func redo() { engine.redo(); if !dalnok_model_only_parameters_since(h, revision) { refresh() } }
 
     /// Decodes off the main thread, then adds one track per file as a single undo step.
     func importFiles(_ urls: [URL], completion: (() -> Void)? = nil) {
@@ -540,9 +592,69 @@ final class Session {
         onMessage?("Opening \(url.lastPathComponent)…")
         let missing = try await engine.loadInBackground(from: url)
         projectURL = url
+        refresh() // the project is shown now; its plug-ins load next (ADR-0013)
+        let slow = await activatePendingPlugins()
+        let opened = missing > 0 ? "\(missing) audio file\(missing == 1 ? "" : "s") missing — File ▸ Relink Missing Audio…"
+                                 : "Opened \(url.lastPathComponent)"
+        onMessage?(slow.isEmpty ? opened : opened + "; slow to load: " + slow)
+    }
+
+    // MARK: Deferred plug-in activation (ADR-0013)
+
+    /// (loaded so far, total) while a project's plug-ins load; nil otherwise. The window shows it with a Stop button.
+    private(set) var pluginLoadProgress: (done: Int, total: Int)?
+    var onPluginLoadProgress: (((done: Int, total: Int)?) -> Void)?
+    private var pluginLoadCancelled = false
+    /// Plug-ins slower than this are named when loading finishes.
+    static let slowPluginSeconds = 2.0
+
+    /// Loads queued plug-ins one at a time on the main thread, returning to the run loop between them so the
+    /// window draws and Stop works. Isolated plug-ins load in their own processes: the engine starts their hosts and
+    /// returns at once, so a slow plug-in never holds the main thread (ADR-0014 stage 2).
+    /// Returns the slow ones ("Name (3.1 s), …"), empty if none.
+    func activatePendingPlugins() async -> String {
+        let total = Int(dalnok_plugins_pending(h))
+        guard total > 0 else { return "" }
+        pluginLoadCancelled = false
+        var done = 0, slow: [String] = []
+        func progress(_ p: (done: Int, total: Int)?) { pluginLoadProgress = p; onPluginLoadProgress?(p) }
+        progress((0, total))
+        while !pluginLoadCancelled {
+            try? await Task.sleep(nanoseconds: 1_000_000) // one run-loop turn: draw, handle Stop
+            if pluginLoadCancelled { break }
+            var slot: Int32 = 0, seconds = 0.0
+            let left = dalnok_plugins_activate_next(h, &slot, &seconds)
+            if left < 0 { break }
+            if slot == 0 { // isolated hosts still loading: check again shortly
+                if left == 0 { break }
+                try? await Task.sleep(nanoseconds: 10_000_000)
+                continue
+            }
+            done += 1
+            if seconds >= Self.slowPluginSeconds, let p = allTracks.lazy.flatMap(\.plugins).first(where: { $0.id == slot }) {
+                slow.append("\(p.name) (\(String(format: "%.1f", seconds)) s)")
+            }
+            refresh()
+            progress((done, total))
+            if left == 0 { break }
+        }
+        if pluginLoadCancelled {
+            dalnok_plugins_cancel_pending(h)
+            refresh()
+        }
+        progress(nil)
+        return slow.joined(separator: ", ")
+    }
+
+    /// Stop loading the remaining plug-ins; they stay unloaded with their settings and can be loaded later.
+    func cancelPluginLoading() { if pluginLoadProgress != nil { pluginLoadCancelled = true } }
+
+    /// Loads one unloaded plug-in (cancelled, recovered or failed) from its saved settings.
+    func loadPlugin(_ slot: Int32) {
+        var err = [CChar](repeating: 0, count: 512)
+        let status = dalnok_plugin_reload(h, slot, &err, err.count)
         refresh()
-        onMessage?(missing > 0 ? "\(missing) audio file\(missing == 1 ? "" : "s") missing — File ▸ Relink Missing Audio…"
-                                : "Opened \(url.lastPathComponent)")
+        if status != DALNOK_OK { onMessage?("Couldn't load the plug-in: \(cString(err))") }
     }
 
     /// Recovery copies are opened as unsaved projects; the snapshot is never overwritten by Save.
@@ -563,6 +675,7 @@ final class Session {
         let json = try await engine.importForeign(from: url)
         projectURL = nil
         refresh()
+        _ = await activatePendingPlugins()
         let unavailable = allTracks.flatMap { track in
             track.plugins.filter { !$0.loaded }.map { plugin in
                 "\(track.name) — \(plugin.name): \(plugin.error.isEmpty ? "not loaded; settings are kept" : plugin.error)"

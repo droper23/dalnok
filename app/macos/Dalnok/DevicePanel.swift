@@ -157,7 +157,8 @@ final class DevicePanel: NSView {
     func rebuild() {
         let t = track.flatMap { session.track($0) }
         let plugins = t?.plugins ?? []
-        if devices.map(\.slot) == plugins.map(\.id), devices.allSatisfy({ $0.trackId == t?.id }) {
+        if devices.map(\.slot) == plugins.map(\.id), devices.map(\.loaded) == plugins.map(\.loaded),
+           devices.map(\.error) == plugins.map(\.error), devices.allSatisfy({ $0.trackId == t?.id }) {
             devices.forEach { $0.refreshControls() }
         } else {
             devices.forEach { $0.removeFromSuperview() }
@@ -325,6 +326,7 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
     let trackId: DalnokTrackId
     let slot: Int32
     let loaded: Bool
+    let error: String
     private let unavailableMessage: String
     private let color: NSColor
     private let title = NSTextField(labelWithString: "")
@@ -366,6 +368,7 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         self.trackId = track
         self.slot = slot
         self.loaded = loaded
+        self.error = error
         self.unavailableMessage = (instrument ? "Not loaded: instrument silent." : "Not loaded: effect bypassed.")
             + (error.isEmpty ? " Settings are kept." : " " + error)
         self.color = color
@@ -640,7 +643,11 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         guard !sidechain.isHidden else { return }
         let others = session.allTracks.filter { $0.id != trackId }
         let titles = ["SC: None"] + others.map { "SC: \($0.name)" }
-        if sidechain.itemTitles != titles { sidechain.removeAllItems(); sidechain.addItems(withTitles: titles) }
+        if sidechain.itemTitles != titles {
+            sidechain.removeAllItems()
+            // NSPopUpButton.addItems drops duplicate titles; tracks can share a name.
+            for title in titles { sidechain.menu?.addItem(NSMenuItem(title: title, action: nil, keyEquivalent: "")) }
+        }
         sidechain.item(at: 0)?.tag = 0
         for (i, t) in others.enumerated() { sidechain.item(at: i + 1)?.tag = Int(t.id) }
         sidechain.selectItem(withTag: Int(dalnok_plugin_sidechain(session.engine.handle, trackId, slot)))

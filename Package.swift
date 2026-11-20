@@ -10,6 +10,7 @@ let package = Package(
         .executable(name: "Dalnok", targets: ["Dalnok"]),
         .executable(name: "dalnok-cli", targets: ["dalnok-cli"]),
         .executable(name: "dalnok-scan", targets: ["dalnok-scan"]),
+        .executable(name: "dalnok-plughost", targets: ["dalnok-plughost"]),
     ],
     targets: [
         // Offline DSP (time-stretch). Always compiled optimized: the algorithm is
@@ -73,6 +74,12 @@ let package = Package(
                 .headerSearchPath("../../engine/third_party/clap/include"),
             ],
             linkerSettings: [.linkedFramework("CoreFoundation"), .linkedFramework("AudioToolbox")]
+        ),
+        // Out-of-process plug-in host (ADR-0014): one plug-in instance per process, driven by the engine.
+        .executableTarget(
+            name: "dalnok-plughost",
+            dependencies: ["DalnokEngine"],
+            path: "tools/dalnok-plughost"
         ),
         .testTarget(
             name: "DalnokEngineTests",

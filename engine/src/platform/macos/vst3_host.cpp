@@ -25,6 +25,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cstring>
 #include <map>
 #include <mutex>
@@ -323,11 +324,16 @@ std::string hexId(const TUID id) {
 class Vst3Processor;
 
 // Receives edits from the plugin's controller (its editor) and forwards them to the processor.
-class ComponentHandler final : public IComponentHandler {
+// IComponentHandler2: plug-ins report changes that are not parameters (a sound picked in the editor) with setDirty.
+class ComponentHandler final : public IComponentHandler, public IComponentHandler2 {
 public:
     Vst3Processor *owner = nullptr;
     tresult PLUGIN_API queryInterface(const TUID iid, void **obj) override {
-        if (FUnknownPrivate::iidEqual(iid, IComponentHandler::iid) || FUnknownPrivate::iidEqual(iid, FUnknown::iid)) { *obj = this; return kResultOk; }
+        if (FUnknownPrivate::iidEqual(iid, IComponentHandler::iid) || FUnknownPrivate::iidEqual(iid, FUnknown::iid)) {
+            *obj = static_cast<IComponentHandler *>(this);
+            return kResultOk;
+        }
+        if (FUnknownPrivate::iidEqual(iid, IComponentHandler2::iid)) { *obj = static_cast<IComponentHandler2 *>(this); return kResultOk; }
         *obj = nullptr;
         return kNoInterface;
     }
@@ -337,6 +343,10 @@ public:
     tresult PLUGIN_API performEdit(ParamID id, ParamValue v) override;
     tresult PLUGIN_API endEdit(ParamID) override { return kResultOk; }
     tresult PLUGIN_API restartComponent(int32) override { return kResultOk; }
+    tresult PLUGIN_API setDirty(TBool dirty) override;
+    tresult PLUGIN_API requestOpenEditor(FIDString) override { return kResultFalse; }
+    tresult PLUGIN_API startGroupEdit() override { return kResultOk; }
+    tresult PLUGIN_API finishGroupEdit() override { return kResultOk; }
 };
 
 // Hosts the editor view and passes its resize requests to the window.
@@ -461,6 +471,7 @@ public:
         scratchR_.assign(static_cast<size_t>(maxBlock), 0.0f);
         silence_.assign(static_cast<size_t>(maxBlock), 0.0f);
         syncController();
+        rememberState();
         return true;
     }
 
@@ -544,6 +555,7 @@ public:
         s.data = bytes;
         if (component_->setState(&s) != kResultOk) return false;
         syncController();
+        rememberState();
         std::lock_guard<std::mutex> g(producer_);
         touched_.clear();
         return true;
@@ -584,6 +596,25 @@ public:
         out.assign(touched_.begin(), touched_.end());
     }
     uint64_t editCount() const override { return edits_.load(std::memory_order_relaxed); }
+    // setDirty is also sent with nothing changed (some plug-ins send it a moment after loading), so it counts only
+    // when the plug-in's state differs from the one last known (after loading, restoring, or the last counted edit).
+    // Some finish loading in the background and then report their completed state the same way, so for 2 s after
+    // loading or restoring a changed state only becomes the known one.
+    void markEdited() {
+        const size_t now = stateHash();
+        if (now == knownState_) return;
+        knownState_ = now;
+        if (std::chrono::steady_clock::now() - settledFrom_ < std::chrono::seconds(2)) return;
+        edits_.fetch_add(1, std::memory_order_relaxed);
+    }
+    void rememberState() {
+        knownState_ = stateHash();
+        settledFrom_ = std::chrono::steady_clock::now();
+    }
+    size_t stateHash() {
+        std::string bytes;
+        return getState(bytes) ? std::hash<std::string>{}(bytes) : 0;
+    }
 
     bool hasEditor() override { return controller_ != nullptr; }
     bool openEditor(void *parent, int32_t &w, int32_t &h, void (*onResize)(void *, int32_t, int32_t), void *ctx,
@@ -633,6 +664,8 @@ private:
     std::mutex producer_;
     std::map<uint32_t, double> touched_;
     std::atomic<uint64_t> edits_{0}, dropped_{0};
+    size_t knownState_ = 0; // main thread
+    std::chrono::steady_clock::time_point settledFrom_{};
     BlockEvents events_;
     std::vector<float> scratchL_, scratchR_, silence_;
     bool sidechain_ = false; // an auxiliary input bus is active and fed by setSidechain
@@ -641,6 +674,10 @@ private:
 };
 tresult PLUGIN_API ComponentHandler::performEdit(ParamID id, ParamValue v) {
     if (owner) owner->pushChange(id, v, true);
+    return kResultOk;
+}
+tresult PLUGIN_API ComponentHandler::setDirty(TBool dirty) {
+    if (owner && dirty) owner->markEdited();
     return kResultOk;
 }
 } // namespace

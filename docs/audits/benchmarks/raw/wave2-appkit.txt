@@ -1,0 +1,18 @@
+Wave 2 AppKit audit, 2026-11-19
+Fixture: generated 16 tracks x 256 clips, 48 kHz; same fixture for both runs.
+Build: release. Theme: graphite. Mixer visible.
+30 warmup and 100 recorded samples. Drag events dispatched in a tight burst.
+Refresh timings include synchronous UI callbacks; deferred drawing/compositing and normal display pacing are excluded.
+Both builds and benchmark runs were outside the sandbox.
+
+Baseline revision: bab598b, isolated source archive with the same audit instrumentation.
+Command: DALNOK_THEME=graphite .build/release/dalnok-cli audit-ui /tmp/dalnok-a03-fixture/scale.dalnok
+AUDIT 16 tracks 4096 clips; mixer visible; 30 warmup + 100 samples; synchronous callbacks included; deferred drawing/compositing excluded
+AUDIT AppKit drag event n=100 p50=27.771875 ms p95=30.493334 ms p99=31.077125 ms max=31.706958 ms
+AUDIT AppKit parameter refresh n=100 p50=28.385333 ms p95=29.191209 ms p99=29.532209 ms max=29.715750 ms
+
+After: uncommitted wave 2 working tree.
+Command: DALNOK_THEME=graphite .build/release/dalnok-cli audit-ui /tmp/dalnok-a03-fixture/scale.dalnok
+AUDIT 16 tracks 4096 clips; mixer visible; 30 warmup + 100 samples; synchronous callbacks included; deferred drawing/compositing excluded
+AUDIT AppKit drag event n=100 p50=0.025000 ms p95=0.031333 ms p99=0.033625 ms max=0.037625 ms
+AUDIT AppKit parameter refresh n=100 p50=3.865959 ms p95=3.934792 ms p99=3.967375 ms max=3.967375 ms

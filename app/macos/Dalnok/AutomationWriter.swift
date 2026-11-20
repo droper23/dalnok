@@ -34,8 +34,10 @@ final class AutomationWriter {
             passes[k]?.released = false
             sample(track, target)
         } else if Self.mode == .touch {
+            sample(track, target)
             commit(k)
         } else {
+            sample(track, target)
             passes[k]?.released = true // latch: keep writing until the transport stops
         }
     }
@@ -51,12 +53,14 @@ final class AutomationWriter {
     }
 
     private func sample(_ track: DalnokTrackId, _ target: Int32) {
-        guard let t = session.track(track) else { return }
+        var gain: Float = 0, pan: Float = 0, muted = false, solo = false
+        guard dalnok_track_parameters(session.h, track, &gain, &pan, &muted, &solo) == DALNOK_OK else { return }
         let k = key(track, target), frame = session.engine.position
-        let value = target == 1 ? t.pan : max(-200, t.gainDb.isFinite ? t.gainDb : -200)
+        let value = target == 1 ? pan : max(-200, gain.isFinite ? gain : -200)
         guard var p = passes[k] else { return }
         if let last = p.points.last {
             if frame < last.frame { commit(k, releaseHold: false); passes[k] = Pass(); p = Pass() } // the playhead jumped back (cycle): start a new pass
+            else if frame == last.frame { p.points[p.points.count - 1].value = value; passes[k] = p; return }
             else if abs(last.value - value) < 0.01 && frame - last.frame < Int64(session.engine.sampleRate / 10) { return } // thin
         }
         p.points.append(DalnokAutoPoint(frame: frame, value: value))

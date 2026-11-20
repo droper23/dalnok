@@ -1,0 +1,614 @@
+{
+  "environment": {
+    "machine": "Apple M3 Max, 16 cores, 64 GB",
+    "os": "macOS 27.3 (build 26C5035r)",
+    "toolchain": "Apple Swift 6.4.2 (swiftlang-6.4.2.1.9, clang-2100.4.1.1)",
+    "build": "swift build -c release (optimized, no sanitizers)",
+    "sampleRate": 48000,
+    "internalBlock": 512,
+    "date": "2026-11-18",
+    "revision": "b15410a621f7ce25f6f73f2738f8108c47ea184f"
+  },
+  "notes": [
+    "All figures are measured on this machine by the commands in method.md; nothing here is an estimate.",
+    "The machine was otherwise idle but a desktop GUI session was running; wall-clock launch figures include process start-up.",
+    "Live-path figures come from dalnok-cli bench, which pumps the real render path without a device."
+  ],
+  "engineScaling": {
+    "command": ".build/release/dalnok-cli bench --tracks N --seconds 20",
+    "blocks": 1875,
+    "budgetUsPerBlock": 10667,
+    "runs": [
+      {
+        "tracks": 8,
+        "avgUs": 31.3,
+        "worstUs": 52.2,
+        "loadPercent": 0.3,
+        "offlineRealtime": 642
+      },
+      {
+        "tracks": 64,
+        "avgUs": 141.7,
+        "worstUs": 272.5,
+        "loadPercent": 1.3,
+        "offlineRealtime": 80
+      },
+      {
+        "tracks": 256,
+        "avgUs": 560.7,
+        "worstUs": 1111.0,
+        "loadPercent": 5.3,
+        "offlineRealtime": 20
+      },
+      {
+        "tracks": 512,
+        "avgUs": 1113.9,
+        "worstUs": 2148.3,
+        "loadPercent": 10.4,
+        "offlineRealtime": 10
+      }
+    ],
+    "repeatability": [
+      {
+        "tracks": 64,
+        "runsAvgUs": [
+          141.3,
+          141.2,
+          141.1
+        ],
+        "runsWorstUs": [
+          254.4,
+          267.2,
+          278.8
+        ]
+      },
+      {
+        "tracks": 256,
+        "runsAvgUs": [
+          556.8,
+          558.9,
+          592.3
+        ],
+        "runsWorstUs": [
+          964.7,
+          987.2,
+          1370.7
+        ]
+      }
+    ]
+  },
+  "modelScaling": {
+    "command": ".build/release/dalnok-cli audit-scale --tracks T --clips C",
+    "legend": "p50 milliseconds per operation, 30 samples",
+    "runs": [
+      {
+        "tracks": 8,
+        "clipsPerTrack": 8,
+        "clips": 64,
+        "buildMs": 1,
+        "modelReadMs": 0.006,
+        "structuralEditMs": 0.012,
+        "parameterEditMs": 0.003,
+        "undoMs": 0.011
+      },
+      {
+        "tracks": 32,
+        "clipsPerTrack": 32,
+        "clips": 1024,
+        "buildMs": 49,
+        "modelReadMs": 0.673,
+        "structuralEditMs": 0.098,
+        "parameterEditMs": 0.031,
+        "undoMs": 0.086
+      },
+      {
+        "tracks": 64,
+        "clipsPerTrack": 32,
+        "clips": 2048,
+        "buildMs": 230,
+        "modelReadMs": 3.386,
+        "structuralEditMs": 0.257,
+        "parameterEditMs": 0.054,
+        "undoMs": 0.244
+      },
+      {
+        "tracks": 128,
+        "clipsPerTrack": 32,
+        "clips": 4096,
+        "buildMs": 1272,
+        "modelReadMs": 15.931,
+        "structuralEditMs": 0.77,
+        "parameterEditMs": 0.075,
+        "undoMs": 0.745
+      }
+    ]
+  },
+  "projectEdit": {
+    "command": ".build/release/dalnok-cli audit-bench <project> --edits 200",
+    "runs": [
+      {
+        "project": "band (generated)",
+        "tracks": 8,
+        "clips": 8,
+        "midiNotes": 176,
+        "modelReadMs": 0.002,
+        "parameterEditMs": 0.0,
+        "structuralEditMs": 0.008,
+        "undoMs": 0.008,
+        "rssBeforeMB": 57.6,
+        "rssAfterMB": 58.3
+      },
+      {
+        "project": "large 64 x 30 s",
+        "tracks": 64,
+        "clips": 64,
+        "midiNotes": 0,
+        "modelReadMs": 0.021,
+        "parameterEditMs": 0.004,
+        "structuralEditMs": 0.039,
+        "undoMs": 0.041,
+        "rssBeforeMB": 381.7,
+        "rssAfterMB": 387.0
+      },
+      {
+        "project": "large 256 x 10 s",
+        "tracks": 256,
+        "clips": 256,
+        "midiNotes": 0,
+        "modelReadMs": 0.216,
+        "parameterEditMs": 0.018,
+        "structuralEditMs": 0.223,
+        "undoMs": 0.228,
+        "rssBeforeMB": 541.3,
+        "rssAfterMB": 543.2
+      }
+    ]
+  },
+  "projectLoadAndMemory": {
+    "command": "/usr/bin/time -l .build/release/dalnok-cli command <project> undo",
+    "runs": [
+      {
+        "project": "band",
+        "realSeconds": 0.22,
+        "maxRssMB": 77.6
+      },
+      {
+        "project": "large 64 x 30 s",
+        "realSeconds": 0.16,
+        "maxRssMB": 382.6
+      },
+      {
+        "project": "large 256 x 10 s",
+        "realSeconds": 0.22,
+        "maxRssMB": 542.1
+      }
+    ],
+    "render": [
+      {
+        "project": "large 64 x 30 s",
+        "frames": 1440000,
+        "seconds": 0.332,
+        "realtimeMultiple": 90,
+        "maxRssMB": 382.4
+      },
+      {
+        "project": "band",
+        "frames": 2304000,
+        "seconds": null,
+        "realtimeMultiple": null,
+        "maxRssMB": 77.7
+      }
+    ]
+  },
+  "appSnapshots": {
+    "command": "DALNOK_SNAPSHOT_DELAY=0 .build/release/Dalnok <project> --snapshot out.png",
+    "note": "Wall time from process start to exit, including NSApplication launch, project load, window construction, drawing and PNG encoding.",
+    "runs": [
+      {
+        "theme": "graphite",
+        "project": "band",
+        "ms": [
+          807,
+          751,
+          741
+        ]
+      },
+      {
+        "theme": "warmAnalog",
+        "project": "states",
+        "ms": [
+          784,
+          805,
+          718
+        ]
+      }
+    ]
+  },
+  "build": {
+    "command": "swift build --scratch-path <clean>",
+    "cleanDebugSeconds": 21,
+    "cleanReleaseSeconds": 69,
+    "incrementalCliOnlySeconds": 6.9,
+    "noOpSeconds": 0.44,
+    "note": "Clean figures use a fresh scratch directory to avoid measuring a warm cache."
+  },
+  "tests": {
+    "command": "swift test",
+    "engineTests": 188,
+    "engineSuites": 57,
+    "wallSeconds": 11.6,
+    "selfTestChecks": 497,
+    "selfTestNote": "Self-test check count from CURRENT_STATE.md (Graphite 497 / Warm Analog 481 at 48 kHz); not re-run in this audit."
+  },
+  "notMeasured": [
+    "Timeline scroll and zoom frame time in a real window (no instrumented harness; requires a UI session).",
+    "Cold vs warm app launch without snapshot overhead.",
+    "Plug-in discovery and instantiation time on the installed library (plugins vary by machine).",
+    "Foreign project import time (Logic/Ableton/REAPER) beyond the reported 1.7 s for a 334-clip Ableton set in CURRENT_STATE.",
+    "RSS under a multi-hour session (no soak test).",
+    "Denormal and SIMD deltas (hypotheses in A-12 and A-13, not measured).",
+    "Out-of-process hosting overhead (A-01 is a design, not a measurement)."
+  ],
+  "wave2": {
+    "fixture": "generated, 16 tracks x 256 clips, 48000 Hz",
+    "command": ".build/release/dalnok-cli audit-bench /tmp/dalnok-a03-fixture/scale.dalnok --edits 500",
+    "gainEditP50MsBefore": 0.058,
+    "gainEditP50MsAfter": "<0.001 (display precision)",
+    "rssBeforeRunMB": [
+      34.2,
+      302.6
+    ],
+    "rssAfterRunMB": [
+      34.4,
+      34.5
+    ],
+    "parameterReadP50Ms": "<0.001 (C API only)",
+    "gainEditAndParameterReadP50Ms": 0.003,
+    "note": "Parameter-read and combined measurements exclude AppKit refresh and rendering. The audit-scale run after a full structural undo history measured 0.038 ms gain p50 as old snapshots were evicted; model read 48.009 ms, structural edit 0.507 ms, undo 0.000 ms rounded. The earlier matching before audit-bench model read was 15.629 ms; later model-read timing was 42.564 ms, indicating noisy conditions.",
+    "appKit": {
+      "command": "DALNOK_THEME=graphite .build/release/dalnok-cli audit-ui /tmp/dalnok-a03-fixture/scale.dalnok",
+      "baselineRevision": "bab598b",
+      "currentRevision": "uncommitted wave 2 changes",
+      "fixture": "generated 16 tracks x 256 clips, 48000 Hz",
+      "build": "release",
+      "theme": "graphite",
+      "mixer": "visible",
+      "warmupSamples": 30,
+      "recordedSamples": 100,
+      "dragEventMs": {
+        "before": {
+          "p50": 27.771875,
+          "p95": 30.493334,
+          "p99": 31.077125,
+          "max": 31.706958
+        },
+        "after": {
+          "p50": 0.025,
+          "p95": 0.031333,
+          "p99": 0.033625,
+          "max": 0.037625
+        }
+      },
+      "parameterRefreshMs": {
+        "before": {
+          "p50": 28.385333,
+          "p95": 29.191209,
+          "p99": 29.532209,
+          "max": 29.71575
+        },
+        "after": {
+          "p50": 3.865959,
+          "p95": 3.934792,
+          "p99": 3.967375,
+          "max": 3.967375
+        }
+      },
+      "notes": "Synthetic AppKit drag events are dispatched in a tight burst; parameter refreshes are separately forced after engine edits. Refresh time includes synchronous UI callbacks. Deferred AppKit drawing/compositing, normal display pacing and full frame latency are not measured. A gain change and at least 100 model revisions were asserted. Both releases were built and run outside the sandbox using the same generated fixture.",
+      "rawOutput": "docs/audits/benchmarks/raw/wave2-appkit.txt"
+    },
+    "finalVerification": {
+      "fixture": "generated 16 tracks x 256 clips, 48000 Hz",
+      "auditBench": {
+        "gainEditP50Ms": "<0.001 (display precision)",
+        "rssStartMB": 34.4,
+        "rssAfter500MB": 34.5,
+        "fullModelReadP50Ms": 15.592,
+        "gainEditAndScalarReadP50Ms": 0.002
+      },
+      "auditScale": {
+        "buildMs": 330,
+        "fullModelReadP50Ms": 15.458,
+        "structuralEditP50Ms": 0.146,
+        "gainEditP50Ms": 0.012,
+        "undoP50Ms": "<0.001 (display precision)"
+      },
+      "note": "audit-scale gain edits evict structural snapshots already in the 500-step history; do not compare directly with audit-bench compact-only history."
+    }
+  },
+  "a04Incremental": {
+    "fixture": "generated, 16 tracks x 256 clips, 48000 Hz",
+    "command": ".build/release/dalnok-cli audit-bench /tmp/dalnok-a03-fixture/scale.dalnok --edits 500",
+    "structuralEditP50MsBefore": 0.238,
+    "structuralEditP50MsAfter": [
+      0.163,
+      0.163,
+      0.164
+    ],
+    "undoP50MsBefore": 0.257,
+    "undoP50MsAfter": [
+      0.174,
+      0.173,
+      0.172
+    ],
+    "compileOnlyMsBefore": {
+      "mean": 0.149
+    },
+    "compileOnlyMsAfter": {
+      "p50": 0.098,
+      "p95": 0.103
+    },
+    "note": "Compile-only figures come from a temporary timer around compile() in commit(), removed after measuring. Structural edit includes the whole-model undo copy (about 0.06 ms)."
+  },
+  "a05PerTrackRefresh": {
+    "fixture": "generated, 16 tracks x 256 clips, 48000 Hz, Graphite, mixer visible",
+    "command": "DALNOK_THEME=graphite .build/release/dalnok-cli audit-ui /tmp/dalnok-a03-fixture/scale.dalnok",
+    "samples": "30 warmups + 100 samples, three runs",
+    "parameterRefreshP50MsBefore": [
+      4.150708,
+      3.973125
+    ],
+    "parameterRefreshP50MsAfter": [
+      0.155667,
+      0.154875,
+      0.15375
+    ],
+    "structuralRefreshAllTracksP50Ms": [
+      24.522458,
+      24.598458,
+      24.701334
+    ],
+    "structuralRefreshOneTrackP50Ms": [
+      0.560833,
+      0.560792,
+      0.559209
+    ],
+    "dragEventP50Ms": [
+      0.033833,
+      0.034583,
+      0.032667
+    ],
+    "note": "Structural refresh is a one-clip nudge followed by the full refresh callback; the all-tracks series uses forceRefresh in the same binary (the pre-A-05 behavior). 'Before' parameter figures are this branch before the mixer parameter path. Deferred drawing/compositing excluded."
+  },
+  "a01Isolation": {
+    "what": "live block cost with the test gain VST3, in-process vs isolated (dalnok-plughost)",
+    "command": "swift test -c release --filter PluginIsolation/isolationOverheadPerBlock (DALNOK_TEST_VST3, DALNOK_PLUGIN_HOST=.build/release/dalnok-plughost)",
+    "samples": "2,500 blocks after 500 warmups",
+    "framesPerBlock": [
+      64,
+      128,
+      256
+    ],
+    "inProcessP50Us": [
+      1.2,
+      2.2,
+      4.2
+    ],
+    "inProcessP99Us": [
+      1.6,
+      2.9,
+      5.6
+    ],
+    "isolatedP50Us": [
+      33.6,
+      34.3,
+      34.7
+    ],
+    "isolatedP99Us": [
+      47.0,
+      45.1,
+      46.9
+    ],
+    "note": "One plug-in, one track, 48 kHz. The isolated cost is about one wake/wait round trip and is nearly independent of block size."
+  },
+  "a01Stage2": {
+    "what": "A-01 stage 2 before/after (2026-11-19), same machine and harnesses",
+    "overheadCommand": "swift test -c release --filter PluginIsolation/isolationOverheadPerBlock",
+    "framesPerBlock": [
+      64,
+      128,
+      256
+    ],
+    "isolatedP50UsBefore": [
+      [
+        33.8,
+        33.2,
+        34.2
+      ],
+      [
+        30.6,
+        32.4,
+        34.2
+      ]
+    ],
+    "isolatedP99UsBefore": [
+      [
+        49.9,
+        44.0,
+        46.8
+      ],
+      [
+        41.6,
+        43.0,
+        44.6
+      ]
+    ],
+    "isolatedP50UsAfter": [
+      [
+        31.7,
+        32.3,
+        34.4
+      ],
+      [
+        31.3,
+        32.8,
+        36.8
+      ]
+    ],
+    "isolatedP99UsAfter": [
+      [
+        42.0,
+        43.8,
+        44.7
+      ],
+      [
+        42.8,
+        48.6,
+        47.5
+      ]
+    ],
+    "overheadNote": "Two runs each. The shared deadline and workgroup hand-off add no measurable per-block cost (within run-to-run spread).",
+    "budgetCommand": "PluginIsolation/hungPluginsShareOneDeadlinePerCallback (debug), 3 hung + 1 healthy, 512 frames, 10.67 ms period",
+    "worstCallbackMsBefore": [
+      13.06,
+      13.09
+    ],
+    "worstCallbackMsAfter": [
+      4.46,
+      4.54
+    ],
+    "slowLoad": {
+      "engine": "3 x 1.5 s initialize: total 1.52 s (serial would be 4.5 s), worst activate call 1.02-1.16 ms; Stop with 3 hosts initializing 2.3-2.9 ms",
+      "selfTest": "3 x 4 s initialize, 5 ms timer: worst main-thread gap before Stop 10.4-10.6 ms Graphite / 13.2-16.3 ms Warm Analog (first tick after the open, which draws the new project, excluded: 34-36 / 101-105 ms); Stop to load finished 143-159 ms"
+    },
+    "isolationScript": "scripts/ci/plugin-isolation.sh before: hosting 17/17, PluginIsolation 4/5 (crash while loading misreported as timeout); after: 17/17 and 12/12",
+    "selfTests": "plain (no fixtures) before Graphite 538 / Warm Analog 520 PASS, after 538 / 520 PASS; with DALNOK_TEST_VST3 after: Graphite 572 (with DALNOK_REAL_INPUT=1) / Warm Analog 552 PASS"
+  },
+  "a03Structural": {
+    "fixture": "generated, 16 tracks x 256 clips (/tmp/dalnok-a03-fixture/scale.dalnok)",
+    "command": ".build/release/dalnok-cli audit-bench <fixture> --edits 500",
+    "rssGrowthMBBefore": [
+      268.9,
+      269.0
+    ],
+    "rssGrowthMBAfter": [
+      3.3,
+      3.4
+    ],
+    "structuralEditP50MsBefore": [
+      0.274,
+      0.273
+    ],
+    "structuralEditP50MsAfter": [
+      0.3,
+      0.298
+    ],
+    "undoP50MsBefore": [
+      0.281,
+      0.269
+    ],
+    "undoP50MsAfter": [
+      0.358,
+      0.373
+    ],
+    "note": "History keeps clip deltas below the top step. An edit still copies the model transiently for rollback."
+  },
+  "a09Streaming": {
+    "fixture": "generated 60-minute stereo 16-bit 48 kHz WAV (noise), deleted afterwards",
+    "command": ".build/release/dalnok-cli stream-bench <file> --mode memory|stream --seconds 60 (separate processes)",
+    "memory": {
+      "loadSeconds": 0.97,
+      "rssAfterLoadMB": 1389.9,
+      "peakWhilePlayingMB": 1389.9
+    },
+    "streamFirstLoad": {
+      "loadSeconds": 1.75,
+      "rssAfterLoadMB": 19.1,
+      "peakWhilePlayingMB": 48.6,
+      "cacheMB": 30.5,
+      "missedFrames": 0
+    },
+    "streamReopen": {
+      "loadSeconds": 0.01,
+      "rssAfterLoadMB": 14.8,
+      "peakWhilePlayingMB": 47.4,
+      "missedFrames": 0
+    },
+    "note": "60 s of live playback at about 4x real time plus a jump to the middle and 10 s more."
+  },
+  "uiDrawing": {
+    "fixture": "generated, 16 tracks x 256 clips, mixer visible",
+    "command": "DALNOK_THEME=<theme> .build/release/dalnok-cli audit-ui /tmp/dalnok-a03-fixture/scale.dalnok",
+    "method": "the same refresh cases followed by NSWindow.displayIfNeeded and CATransaction.flush (layer-backed views draw during the commit); window-server compositing excluded; 30 warmups, 100 samples",
+    "p50MsBefore": {
+      "graphite": {
+        "dragPlusDraw": 1.82,
+        "parameterRefreshPlusDraw": 1.7,
+        "structuralOneTrackPlusDraw": 53.7
+      },
+      "warmAnalog": {
+        "dragPlusDraw": 3.31,
+        "parameterRefreshPlusDraw": 3.09,
+        "structuralOneTrackPlusDraw": 51.5
+      }
+    },
+    "p50MsAfter": {
+      "graphite": {
+        "dragPlusDraw": 1.77,
+        "parameterRefreshPlusDraw": 1.65,
+        "structuralOneTrackPlusDraw": 22.2
+      },
+      "warmAnalog": {
+        "dragPlusDraw": 3.17,
+        "parameterRefreshPlusDraw": 3.04,
+        "structuralOneTrackPlusDraw": 23.4
+      }
+    },
+    "structuralCommitAfter": "layer commit about 20 ms, of which the timeline's own draw 5.4 ms (one lane); the rest is not attributed yet",
+    "partialRedrawCheck": "10 of 10 one-lane redraws per theme differ from a fresh full draw by no more bytes than a full redraw does (1,397 Graphite / 1,275 Warm Analog of about 2.7 M)",
+    "followUp": {
+      "date": "2026-11-19",
+      "changes": "typeset clip titles cached (CTLine) instead of re-shaped on every redraw; FaderControl repaints only when db/tint/colorCap change; audit reports main-thread CPU per tick",
+      "pixelCheck": "snapshots of a generated states project and the 4,096-clip fixture identical before/after in both themes (max channel difference 0)",
+      "graphite": {
+        "structuralPlusDrawP50Ms": {
+          "before": 12.41,
+          "after": 10.12
+        },
+        "timelineLaneDrawMs": {
+          "before": 5.54,
+          "after": 4.06
+        },
+        "mixerRebuildPlusDrawMs": {
+          "before": 0.467,
+          "after": 0.074
+        },
+        "mainThreadCpuP50Ms": {
+          "drag": 2.8,
+          "parameter": 1.33,
+          "structural": 6.65
+        },
+        "wallP50Ms": {
+          "drag": 6.62,
+          "parameter": 1.34,
+          "structural": 10.12
+        }
+      },
+      "warmAnalog": {
+        "structuralPlusDrawP50Ms": {
+          "after": 11.13
+        },
+        "mainThreadCpuP50Ms": {
+          "drag": 3.13,
+          "parameter": 3.11,
+          "structural": 7.83
+        },
+        "wallP50Ms": {
+          "drag": 5.07,
+          "parameter": 6.94,
+          "structural": 11.13
+        }
+      },
+      "note": "Today's 'before' is 12.4 ms, not the earlier 22.2 ms, because the display setup differed between sessions; compare within a session. Wall time minus main-thread CPU is mostly waiting on the window server during CATransaction.flush. During a fader drag the timeline draws 0 times."
+    }
+  }
+}

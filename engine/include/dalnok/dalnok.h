@@ -28,7 +28,7 @@
 extern "C" {
 #endif
 
-#define DALNOK_API_VERSION 29
+#define DALNOK_API_VERSION 39
 
 typedef enum {
     DALNOK_OK = 0,
@@ -242,6 +242,21 @@ DalnokStatus dalnok_media_load(const char *path, double sample_rate,
 DalnokMedia *dalnok_media_from_samples(const float *const *channels, int32_t channel_count,
                                        int64_t frames, double sample_rate);
 void dalnok_media_release(DalnokMedia *media);   /* [any thread] */
+/* Streaming from disk (A-09, API 38). Audio files longer than `stream_after_seconds` (default 60) are decoded once into
+ * a cache file at the engine rate and played from a process-wide block cache of at most `cache_mb` (default 256).
+ * The audio thread only reads blocks already in memory; a block not loaded in time plays silence and is counted.
+ * Applies to media loaded afterwards. DALNOK_STREAM_SECONDS, DALNOK_STREAM_CACHE_MB and DALNOK_STREAM_DIR (cache
+ * folder; default the user's cache directory) set the defaults. [any thread] */
+void dalnok_stream_set_limits(double stream_after_seconds, int32_t cache_mb);
+typedef struct {
+    uint64_t resident_bytes;  /* block memory held by the cache */
+    uint64_t budget_bytes;
+    uint64_t blocks_loaded, blocks_evicted;
+    uint64_t missed_frames;   /* frames played as silence because their block was not resident */
+    uint32_t resident_blocks;
+} DalnokStreamStats;
+void dalnok_stream_stats(DalnokStreamStats *out);
+bool dalnok_media_streamed(const DalnokMedia *media);
 int64_t dalnok_media_frames(const DalnokMedia *media);
 int32_t dalnok_media_channels(const DalnokMedia *media);
 double dalnok_media_sample_rate(const DalnokMedia *media);
@@ -273,6 +288,14 @@ DalnokStatus dalnok_pool_relink(DalnokEngine *engine, DalnokMediaId id, DalnokMe
 /* ---- Model queries --------------------------------------------------- */
 
 uint64_t dalnok_model_revision(const DalnokEngine *engine);
+/* True only when every change since revision was a scalar track/master parameter. */
+bool dalnok_model_only_parameters_since(const DalnokEngine *engine, uint64_t revision);
+/* The model revision at which this track's own state or its clips last changed. A view that cached a track at
+ * revision r can reuse it while this stays <= r. Changes outside edits (loading, relinking, plug-in loading)
+ * move every track. */
+uint64_t dalnok_track_revision(const DalnokEngine *engine, DalnokTrackId track);
+DalnokStatus dalnok_track_parameters(const DalnokEngine *engine, DalnokTrackId track,
+                                     float *gain_db, float *pan, bool *muted, bool *solo);
 int32_t dalnok_track_count(const DalnokEngine *engine);
 DalnokTrackId dalnok_track_at(const DalnokEngine *engine, int32_t index);
 
@@ -547,6 +570,8 @@ typedef struct {
     bool loaded;
     uint32_t latency;  /* frames, as reported (not compensated yet) */
     char error[256];   /* why it is not loaded */
+    bool loading;      /* queued for deferred activation (dalnok_project_apply_deferred) */
+    bool isolated;     /* runs in its own dalnok-plughost process (ADR-0014) */
 } DalnokPluginSlotInfo;
 int32_t dalnok_plugin_add(DalnokEngine *engine, DalnokTrackId track, const char *bundle_path, const char *class_id,
                           char *err, size_t err_len); /* returns the slot id, 0 on failure */
@@ -587,6 +612,35 @@ DalnokStatus dalnok_plugin_open_editor(DalnokEngine *engine, int32_t slot, void 
                                        int32_t *height, void (*on_resize)(void *ctx, int32_t width, int32_t height),
                                        void *ctx, char *err, size_t err_len);
 void dalnok_plugin_close_editor(DalnokEngine *engine, int32_t slot);
+/* Isolated plug-ins (DalnokPluginSlotInfo.isolated; ADR-0015) cannot be embedded: their editor opens in a window
+ * owned by the plug-in's own process, a floating panel that follows Dalnok (hidden while another application is
+ * active). Shows it, or brings it to the front, titled `title`, with its top-left at (x, y) in AppKit screen
+ * coordinates (NaN centers it). dalnok_plugin_close_editor closes it. Main thread. (API 36) */
+DalnokStatus dalnok_plugin_show_editor_window(DalnokEngine *engine, int32_t slot, const char *title, double x, double y,
+                                              char *err, size_t err_len);
+typedef struct {
+    bool open;                 /* opened and not closed by the user */
+    bool visible;              /* on screen now (an open editor hides while another application is active) */
+    double x, y, width, height;            /* window frame, AppKit screen coordinates */
+    double content_width, content_height;  /* the editor's area */
+    int64_t window_number;     /* the window server's number (CGWindowList), owned by process_id */
+    int64_t level;
+    int32_t process_id;        /* the plug-in's dalnok-plughost process */
+} DalnokPluginEditorWindow;
+DalnokStatus dalnok_plugin_editor_window(DalnokEngine *engine, int32_t slot, DalnokPluginEditorWindow *out);
+/* An isolated editor's window has the keyboard while Dalnok stays active, so keys it does not use (Space, ⌘S, ⌘Z
+ * outside a text field) are passed back here, oldest first. Returns false when there are none. The front end replays
+ * each one as its own key event. Main thread. (API 39) */
+typedef struct {
+    int32_t slot;
+    uint16_t key_code;                       /* virtual key code */
+    uint64_t modifiers;                      /* NSEventModifierFlags */
+    char characters[16];                     /* UTF-8 */
+    char characters_ignoring_modifiers[16];  /* UTF-8 */
+} DalnokEditorKey;
+bool dalnok_plugin_take_editor_key(DalnokEngine *engine, DalnokEditorKey *out);
+/* Writes the editor window's pixels to a PNG (visual checks, self-tests). */
+DalnokStatus dalnok_plugin_editor_snapshot(DalnokEngine *engine, int32_t slot, const char *png_path);
 
 /* ---- Instruments, MIDI clips, tempo --------------------------------- */
 
@@ -596,6 +650,15 @@ DalnokTrackId dalnok_track_add_instrument(DalnokEngine *engine, const char *name
 /* Record-enable. Arming a track disarms other tracks of the same kind. */
 DalnokStatus dalnok_track_set_armed(DalnokEngine *engine, DalnokTrackId track, bool armed);
 DalnokStatus dalnok_track_set_input(DalnokEngine *engine, DalnokTrackId track, int32_t input_channel);
+
+/* Auditions a note on an instrument track (piano-roll edits, as other DAWs do): `on` starts it at `velocity`, and the
+ * same pitch with on = false releases it. It plays through the track's instrument (built-in or plug-in, isolated or not)
+ * and its inserts whether or not the transport plays, without arming the track, and is never recorded. While notes
+ * sound, and for 2 s after the last release, the track takes live MIDI input in place of the armed one. A release
+ * (on = false) of a note that is not sounding is silent but still processes the instrument for those 2 s: sample-based
+ * plug-ins that finish loading in their first blocks are then ready for the first note (open a piano roll with one).
+ * DALNOK_ERR_NOT_FOUND: no such instrument track. [control thread] (API 39) */
+DalnokStatus dalnok_track_preview_note(DalnokEngine *engine, DalnokTrackId track, uint8_t pitch, uint8_t velocity, bool on);
 
 /* A note in frames relative to the clip's source origin (timeline = clip start + start - clip offset). */
 typedef struct {
@@ -677,9 +740,43 @@ DalnokStatus dalnok_project_load(DalnokEngine *engine, const char *path, int32_t
 typedef struct DalnokProjectData DalnokProjectData;
 DalnokStatus dalnok_project_prepare(const char *path, double sample_rate, DalnokProjectData **out,
                                     int32_t *missing_out, char *err, size_t err_len); /* [any thread] */
+/* Set a directory for pre-activation recovery copies; NULL disables it. [control thread] */
+void dalnok_project_set_recovery_directory(DalnokEngine *engine, const char *directory);
 DalnokStatus dalnok_project_apply(DalnokEngine *engine, DalnokProjectData *data);
-/* Apply a prepared recovery copy as an unsaved project; consumes data. */
+/* Apply as an unsaved project without activating its plug-ins; consumes data. */
 DalnokStatus dalnok_project_apply_recovery(DalnokEngine *engine, DalnokProjectData *data);
+/* Apply without blocking on plug-ins (ADR-0013): the project is live at once with every plug-in slot unloaded
+ * and queued (DalnokPluginSlotInfo.loading); consumes data. Then call dalnok_plugins_activate_next repeatedly
+ * on the main thread, returning to the run loop between calls. [control thread] */
+DalnokStatus dalnok_project_apply_deferred(DalnokEngine *engine, DalnokProjectData *data);
+int32_t dalnok_plugins_pending(const DalnokEngine *engine);
+/* Loads the next queued plug-in; returns how many remain (queued or loading), or -1 if none was. `slot_out` and
+ * `seconds_out` (optional) report the slot finished in this call and how long its initialization took. Isolated
+ * plug-ins (dalnok_plugins_set_host) load in their own processes without blocking: the call starts up to four hosts
+ * and returns at once with *slot_out = 0 until one finishes; keep calling from the run loop (API 35). */
+int32_t dalnok_plugins_activate_next(DalnokEngine *engine, int32_t *slot_out, double *seconds_out);
+/* Leaves the remaining queued plug-ins unloaded with their saved state (reloadable); hosts still loading are killed. */
+void dalnok_plugins_cancel_pending(DalnokEngine *engine);
+/* Out-of-process hosting (ADR-0014): plug-ins loaded from now on run in their own `host` process (dalnok-plughost);
+ * NULL or "" runs them in this process. Built-in plug-ins always run here. A crashed or unresponsive isolated
+ * plug-in is reported as not loaded with its reason; dalnok_plugin_reload restarts it. [control thread] */
+void dalnok_plugins_set_host(DalnokEngine *engine, const char *host);
+/* How an isolated plug-in is doing on the live path (API 37). All isolated plug-ins in one callback share a deadline
+ * of 40 % of its period; once it is spent the rest pass a block untouched (budget_skips, never counted as missed).
+ * While an output device runs, the host's processing thread joins the device's audio workgroup. */
+typedef struct {
+    uint64_t missed_blocks;   /* the host answered late or was still busy */
+    uint64_t budget_skips;    /* passed because other isolated plug-ins spent the callback's budget */
+    bool workgroup_joined;    /* the processing thread is in the running device's audio workgroup */
+    int32_t workgroup_error;  /* os_workgroup_join's result for the last workgroup offered (0 = joined) */
+    uint32_t workgroup_joins; /* workgroups joined so far (one per device start or change) */
+} DalnokPluginIsolationStats;
+DalnokStatus dalnok_plugin_isolation_stats(DalnokEngine *engine, int32_t slot, DalnokPluginIsolationStats *out);
+/* The host process's entry point (tools/dalnok-plughost). */
+int dalnok_plughost_main(int argc, char **argv);
+/* Loads an unloaded slot (cancelled, recovery mode, or failed) from its saved state. Not undoable.
+ * DALNOK_ERR_NOT_FOUND: no such slot; DALNOK_ERR_UNSUPPORTED: it did not load (reason in err). */
+DalnokStatus dalnok_plugin_reload(DalnokEngine *engine, int32_t slot, char *err, size_t err_len);
 void dalnok_project_data_release(DalnokProjectData *data); /* [any thread] */
 
 /* Imports another DAW's project: REAPER (.rpp), Ableton Live (.als), Logic Pro
@@ -697,6 +794,10 @@ DalnokStatus dalnok_project_import(const char *path, double sample_rate, DalnokP
 
 /* True if the model changed since the last save/load/new. */
 bool dalnok_project_dirty(const DalnokEngine *engine);
+/* Some plug-in editors change their plug-in's state without telling the host. True when a plug-in whose editor was
+ * opened since the last save now has a different state: ask before closing, as for dalnok_project_dirty. Asks those
+ * plug-ins for their state, so call it when closing, not on every frame. Main thread. (API 39) */
+bool dalnok_project_plugins_changed(const DalnokEngine *engine);
 
 /* ---- Command catalog (scripting / command palette) ------------------- */
 
@@ -750,10 +851,18 @@ typedef struct {
     uint32_t max_frames_per_callback;
     uint32_t overloads;          /* callbacks that exceeded their time budget */
     uint32_t snapshot_swaps;
+    uint32_t retired_queue_depth;
+    uint32_t retired_queue_high_water;
+    uint64_t pending_snapshot_callbacks;
+    uint64_t snapshot_adoption_skips;
 } DalnokStats;
 
 void dalnok_engine_stats(const DalnokEngine *engine, DalnokStats *out); /* [any thread] */
 void dalnok_engine_reset_stats(DalnokEngine *engine);
+
+/* Diagnostics (tests): compiles the live snapshot, which reuses unchanged per-track content, and returns how
+ * many tracks' reused content differs from a fresh build. 0 means incremental compilation matches. [control] */
+int32_t dalnok_engine_snapshot_mismatches(DalnokEngine *engine);
 
 #ifdef __cplusplus
 }

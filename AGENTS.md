@@ -44,6 +44,12 @@ Swift/AppKit front end on macOS. GPL-3.0-or-later. This repo is also the project
   owner's material, for screenshots, UI checks and bug repros.
 - Plugins: `tools/dalnok-scan` loads one plugin per process; never load third-party plugin code in the app or
   engine process for scanning. `scripts/ci/plugin-scan.sh` builds fake plugins (incl. crashing and hanging ones).
+- Out-of-process hosting (ADR-0014): `tools/dalnok-plughost` runs one plug-in instance per process. `DALNOK_PLUGIN_HOST=<path>`
+  makes every engine isolate non-built-in plug-ins (tests, CLI); the app uses Settings ▸ Plug-ins ▸ Safety.
+  `scripts/ci/plugin-isolation.sh` runs the hosting suites isolated plus crash/hang fixtures.
+- Streaming (ADR-0016): files over `DALNOK_STREAM_SECONDS` (default 60) decode into a cache file in `DALNOK_STREAM_DIR`
+  (default: the user cache directory, kept within `DALNOK_STREAM_DISK_MB`, least recently used first) and play from a block cache of `DALNOK_STREAM_CACHE_MB`. The audio thread reads
+  only resident blocks (`stream_cache.*`). `dalnok-cli stream-bench <wav> --mode memory|stream` measures RSS and misses.
 - Animations go through `app/macos/Dalnok/Motion.swift` (respects Reduce Motion; off during snapshots and tests
   unless a test turns it on).
 - Tests record through `DALNOK_SIMULATED_INPUT` + `dalnok_engine_pump_input`, which runs the real duplex callback.
@@ -52,6 +58,8 @@ Swift/AppKit front end on macOS. GPL-3.0-or-later. This repo is also the project
 - Importers live in `engine/src/import/`. They translate to a Dalnok document plus a report (ADR-0006).
   Never commit or publish anything derived from the owner's projects. Tests use generated fixtures.
 - `scripts/ci/rt-effects.sh` runs the real-time effect analysis (uses Homebrew LLVM on CI).
+- `scripts/ci/fuzz.sh [seconds]` fuzzes the project reader and every importer (libFuzzer + ASan, Homebrew LLVM) and then
+  runs 1,000 random save/load round-trips. Run it after touching any parser; new crashes land in `.build/fuzz/artifacts`.
 - `Dalnok <audio files> --screenshots site/screenshots` regenerates the parity-page screenshots from the real app.
 - `Dalnok <project> --tour <dir>` records a scripted walk through the window as TIFF frames plus `times.txt` (README GIFs in `assets/screenshots/`). Use generated projects with built-in or Apple plug-ins only.
 - `scripts/publish-site.sh` publishes `site/` (only) to the public repo `droper23/dalnok-status` (GitHub Pages).

@@ -51,8 +51,17 @@ void mixClip(const RenderClip &clip, int64_t pos, int frames, float *l, float *r
     const int64_t src = clip.offset + (a - clip.start);
     const int n = static_cast<int>(e - a);
     const int o = static_cast<int>(a - pos);
-    const float *sl = m.channel(0) + src;
-    const float *sr = m.channelCount() > 1 ? m.channel(1) + src : sl;
+    // Streamed media (A-09): copy from the stream cache's resident blocks; a block not loaded in time plays silence.
+    float streamL[kMaxBlock], streamR[kMaxBlock];
+    const float *sl, *sr;
+    if (m.streamed()) {
+        m.readResident(src, n, streamL, streamR);
+        sl = streamL;
+        sr = streamR;
+    } else {
+        sl = m.channel(0) + src;
+        sr = m.channelCount() > 1 ? m.channel(1) + src : sl;
+    }
     const int64_t t0 = a - clip.start, len = clip.length;
     const bool faded = t0 < clip.fadeIn || t0 + n > len - clip.fadeOut;
     const float g = clip.gain;
@@ -149,6 +158,7 @@ void renderPluginNotes(PluginProcessor *plugin, const RenderNote *starts, const 
     sortEvents(0);
     clear(s.trackL, frames);
     clear(s.trackR, frames);
+    plugin->setDeadline(s.deadlineNs);
     plugin->process(s.trackL, s.trackR, frames, s.events, count);
     raisePeaks(plugin->meterOut, s.trackL, s.trackR, frames);
     if (PluginProcessor::Tap *tap = plugin->tap.load(std::memory_order_acquire)) {
@@ -162,6 +172,7 @@ void runInserts(const RenderTrack &t, int frames, Scratch &s) DALNOK_NONBLOCKING
         PluginProcessor::Tap *tap = p->tap.load(std::memory_order_acquire);
         raisePeaks(p->meterIn, s.trackL, s.trackR, frames);
         if (tap) writeTap(tap->in, tap->pos, s.trackL, s.trackR, frames, false);
+        p->setDeadline(s.deadlineNs);
         p->process(s.trackL, s.trackR, frames, nullptr, 0);
         raisePeaks(p->meterOut, s.trackL, s.trackR, frames);
         if (tap) {
@@ -174,8 +185,8 @@ void runInserts(const RenderTrack &t, int frames, Scratch &s) DALNOK_NONBLOCKING
 
 void renderLiveInput(const RenderState &state, int frames, float *left, float *right, Scratch &s,
                      bool anySolo, bool transportStopped) DALNOK_NONBLOCKING {
-    if (state.liveTrack < 0 || state.liveTrack >= static_cast<int32_t>(state.tracks.size())) return;
-    const RenderTrack &t = state.tracks[static_cast<size_t>(state.liveTrack)];
+    if (s.liveTrack < 0 || s.liveTrack >= static_cast<int32_t>(state.tracks.size())) return;
+    const RenderTrack &t = state.tracks[static_cast<size_t>(s.liveTrack)];
     TrackRuntime &rt = *t.runtime;
     if (!t.instrument && !t.instrumentPlugin) return;
     bool stereo = false;
@@ -282,9 +293,9 @@ void renderBlock(const RenderState &state, int64_t pos, int frames, float *left,
         bool any = false;
         // Clip launcher (live only): a playing slot replaces this track's timeline clips and notes.
         const RenderSlot *slot = nullptr;
-        if (!synths && !t.slots.empty()) {
+        if (!synths && !t.content->slots.empty()) {
             const int32_t ps = rt.playingSlot.load(std::memory_order_relaxed);
-            for (const RenderSlot &sl : t.slots) if (sl.slot == ps && sl.length > 0) slot = &sl;
+            for (const RenderSlot &sl : t.content->slots) if (sl.slot == ps && sl.length > 0) slot = &sl;
         }
         if (slot) {
             const int64_t start0 = rt.slotStart.load(std::memory_order_relaxed);
@@ -293,7 +304,7 @@ void renderBlock(const RenderState &state, int64_t pos, int frames, float *left,
                 clear(s.trackL, frames); clear(s.trackR, frames);
                 if (t.instrumentPlugin) {
                     const PluginNote *live = s.liveNotes; const int liveCount = s.liveNoteCount;
-                    if (static_cast<int32_t>(index - 1) != state.liveTrack) { s.liveNotes = nullptr; s.liveNoteCount = 0; }
+                    if (static_cast<int32_t>(index - 1) != s.liveTrack) { s.liveNotes = nullptr; s.liveNoteCount = 0; }
                     renderPluginNotes(t.instrumentPlugin, nullptr, nullptr, 0, synth, rel, frames, s);
                     s.liveNotes = live; s.liveNoteCount = liveCount;
                 }
@@ -305,7 +316,7 @@ void renderBlock(const RenderState &state, int64_t pos, int frames, float *left,
             } else if (t.instrumentPlugin) {
                 const PluginNote *live = s.liveNotes;
                 const int liveCount = s.liveNoteCount;
-                if (static_cast<int32_t>(index - 1) != state.liveTrack) { s.liveNotes = nullptr; s.liveNoteCount = 0; }
+                if (static_cast<int32_t>(index - 1) != s.liveTrack) { s.liveNotes = nullptr; s.liveNoteCount = 0; }
                 renderPluginNotes(t.instrumentPlugin, slot->notes.data(), slot->noteEnds.data(), slot->notes.size(), synth, rel, frames, s);
                 s.liveNotes = live; s.liveNoteCount = liveCount;
                 any = true;
@@ -319,19 +330,19 @@ void renderBlock(const RenderState &state, int64_t pos, int frames, float *left,
             any = true;
         } else if (t.instrumentPlugin) {
             // Plugin instruments run every block (tails, internal state); live notes join on the live track.
-            const bool liveHere = !synths && static_cast<int32_t>(index - 1) == state.liveTrack;
+            const bool liveHere = !synths && static_cast<int32_t>(index - 1) == s.liveTrack;
             const PluginNote *live = s.liveNotes;
             const int liveCount = s.liveNoteCount;
             if (!liveHere) { s.liveNotes = nullptr; s.liveNoteCount = 0; }
-            renderPluginNotes(t.instrumentPlugin, t.notes.data(), t.noteEnds.data(), t.notes.size(), synth, pos, frames, s);
+            renderPluginNotes(t.instrumentPlugin, t.content->notes.data(), t.content->noteEnds.data(), t.content->notes.size(), synth, pos, frames, s);
             s.liveNotes = live;
             s.liveNoteCount = liveCount;
             any = true;
-        } else if (t.instrument && renderNotes(t.notes, state.synth, synth, pos, frames, s.trackL)) {
+        } else if (t.instrument && renderNotes(t.content->notes, state.synth, synth, pos, frames, s.trackL)) {
             for (int i = 0; i < frames; ++i) s.trackR[i] = s.trackL[i];
             any = true;
         }
-        for (const RenderClip &c : t.clips) {
+        for (const RenderClip &c : t.content->clips) {
             if (slot) break; // the launcher clip plays instead of the arrangement
             if (c.start >= pos + frames || c.start + c.length <= pos) continue;
             if (!any) {
@@ -344,7 +355,7 @@ void renderBlock(const RenderState &state, int64_t pos, int frames, float *left,
         if (!t.inserts.empty()) {
             if (!any) { clear(s.trackL, frames); clear(s.trackR, frames); any = true; }
             // Live input on a built-in-synth track with inserts goes through the inserts too.
-            if (!synths && static_cast<int32_t>(index - 1) == state.liveTrack && t.instrument && !t.instrumentPlugin && rt.live.active()) {
+            if (!synths && static_cast<int32_t>(index - 1) == s.liveTrack && t.instrument && !t.instrumentPlugin && rt.live.active()) {
                 clear(s.tmp, frames);
                 rt.live.render(state.synth, s.tmp, frames, -1);
                 for (int i = 0; i < frames; ++i) { s.trackL[i] += s.tmp[i]; s.trackR[i] += s.tmp[i]; }
@@ -467,6 +478,13 @@ void renderBlock(const RenderState &state, int64_t pos, int frames, float *left,
         if (from != 1.0f || g != 1.0f)
             for (int i = 0; i < frames; ++i) { const float k = from + step * static_cast<float>(i + 1); left[i] *= k; right[i] *= k; }
         m.curL = g;
+    }
+}
+
+void idlePlugins(const RenderState &state, Scratch &s) DALNOK_NONBLOCKING {
+    for (const RenderTrack &t : state.tracks) {
+        if (t.instrumentPlugin) { t.instrumentPlugin->setDeadline(s.deadlineNs); t.instrumentPlugin->idle(); }
+        for (PluginProcessor *p : t.inserts) { p->setDeadline(s.deadlineNs); p->idle(); }
     }
 }
 

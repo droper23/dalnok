@@ -35,9 +35,36 @@ final class Engine {
     let handle: OpaquePointer
     let sampleRate: Double
 
+    private var isolationObserver: NSObjectProtocol?
+
     init() {
         handle = dalnok_engine_create(0)
         sampleRate = dalnok_engine_sample_rate(handle)
+        applyPluginIsolation()
+        isolationObserver = NotificationCenter.default.addObserver(forName: Engine.isolationChanged, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.applyPluginIsolation() }
+        }
+    }
+
+    // MARK: Out-of-process plug-ins (ADR-0014)
+
+    static let isolationChanged = Notification.Name("DalnokPluginIsolationChanged")
+    /// Settings > Plug-ins: run third-party plug-ins in their own processes. Applies to plug-ins loaded afterwards.
+    static var isolatePlugins: Bool {
+        get { UserDefaults.standard.bool(forKey: "isolatePlugins") }
+        set { UserDefaults.standard.set(newValue, forKey: "isolatePlugins"); NotificationCenter.default.post(name: isolationChanged, object: nil) }
+    }
+    static var pluginHostPath: String {
+        (Bundle.main.executableURL ?? URL(fileURLWithPath: CommandLine.arguments[0]))
+            .deletingLastPathComponent().appendingPathComponent("dalnok-plughost").path
+    }
+    static var pluginHostAvailable: Bool { FileManager.default.isExecutableFile(atPath: pluginHostPath) }
+    /// The host this engine uses for new plug-ins ("" = in this process).
+    private(set) var pluginHost = ""
+    func applyPluginIsolation() {
+        if ProcessInfo.processInfo.environment["DALNOK_PLUGIN_HOST"] != nil { return } // developer override, read by the engine
+        pluginHost = Engine.isolatePlugins && Engine.pluginHostAvailable ? Engine.pluginHostPath : ""
+        dalnok_plugins_set_host(handle, pluginHost)
     }
 
     func startDevice() throws {
@@ -83,7 +110,13 @@ final class Engine {
     func endGroup() { dalnok_undo_end_group(handle) }
 
     // Project
+    func setRecoveryDirectory(_ directory: URL?) {
+        if let directory { dalnok_project_set_recovery_directory(handle, directory.path) }
+        else { dalnok_project_set_recovery_directory(handle, nil) }
+    }
     var isDirty: Bool { dalnok_project_dirty(handle) }
+    /// Before closing: also plug-ins whose editors changed their state without telling (asks them; not per frame).
+    var hasUnsavedChanges: Bool { isDirty || dalnok_project_plugins_changed(handle) }
     func newProject() { dalnok_project_new(handle) }
     func save(to url: URL, copyAudio: Bool = false) throws {
         var err = [CChar](repeating: 0, count: 512)
@@ -208,9 +241,9 @@ final class Engine {
             }
             return Prepared(data: data, missing: Int(missing))
         }.value
-        let status = recovering ? dalnok_project_apply_recovery(handle, prepared.data) : dalnok_project_apply(handle, prepared.data)
+        let status = recovering ? dalnok_project_apply_recovery(handle, prepared.data) : dalnok_project_apply_deferred(handle, prepared.data)
         guard status == DALNOK_OK else {
-            throw EngineError(description: "project could not be applied")
+            throw EngineError(description: status == DALNOK_ERR_IO ? "Could not write the recovery snapshot; the current project was left open." : "project could not be applied")
         }
         return prepared.missing
     }
@@ -226,7 +259,8 @@ final class Engine {
                   let data else { throw EngineError(description: cString(err)) }
             return Prepared(data: data, report: cString(report))
         }.value
-        guard dalnok_project_apply(handle, prepared.data) == DALNOK_OK else { throw EngineError(description: "import could not be applied") }
+        let status = dalnok_project_apply_deferred(handle, prepared.data) // plug-ins load afterwards (ADR-0013)
+        guard status == DALNOK_OK else { throw EngineError(description: status == DALNOK_ERR_IO ? "Could not write the recovery snapshot; the current project was left open." : "import could not be applied") }
         return prepared.report
     }
 
