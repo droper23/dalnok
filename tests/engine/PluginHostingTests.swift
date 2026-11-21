@@ -115,14 +115,33 @@ struct PluginHosting {
         #expect(renderStereo(e, 2_000).0[1_200] == 0.5)
         dalnok_plugin_remove(e, t, gain)
         // Live MIDI reaches the plugin instrument while stopped, starting at the next block.
+        // Live blocks have a deadline. An isolated instrument that misses it (a loaded machine: this test failed once
+        // with the screen locked at load 10-14) plays that block silent and the miss is counted; that is the designed
+        // behaviour, not a timing error, so a missed block is checked as such and the note is expected on the next
+        // block that is answered. In-process, and isolated on time, the check is exact.
         var lb = [Float](repeating: 0, count: 512), rb = lb
-        dalnok_engine_pump(e, &lb, &rb, 512)
+        let slot = { () -> Int32 in var i = DalnokPluginSlotInfo(); _ = dalnok_track_plugin_info(e, t, 0, &i); return i.id }()
+        func misses() -> UInt64 {
+            var st = DalnokPluginIsolationStats()
+            return dalnok_plugin_isolation_stats(e, slot, &st) == DALNOK_OK ? st.missed_blocks + st.budget_skips : 0
+        }
+        func pumpAnswered(_ what: String) {
+            for _ in 0..<20 {
+                let before = misses()
+                dalnok_engine_pump(e, &lb, &rb, 512)
+                if misses() == before { return }
+                #expect(lb.allSatisfy { $0 == 0 }, "\(what): a block the isolated instrument missed is silent")
+                usleep(10_667) // the next block comes one device period later, as from a device
+            }
+            Issue.record("\(what): the instrument missed 20 blocks in a row")
+        }
+        pumpAnswered("before the note")
         #expect(lb.allSatisfy { $0 == 0 })
         dalnok_midi_inject(e, 0x90, 67, 127)
-        dalnok_engine_pump(e, &lb, &rb, 512)
+        pumpAnswered("note-on")
         #expect(lb.allSatisfy { $0 == 1 }, "live note-on applies from the start of the next block")
         dalnok_midi_inject(e, 0x80, 67, 0)
-        dalnok_engine_pump(e, &lb, &rb, 512)
+        pumpAnswered("note-off")
         #expect(lb.allSatisfy { $0 == 0 })
         // Instrument plugins only go on instrument tracks.
         let audio = dalnok_track_add(e, "Audio")
