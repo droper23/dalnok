@@ -1,0 +1,59 @@
+# The model views shared by the C API, the engine and the app, defined once (A-15).
+# scripts/gen-api.py turns each block into:
+#   - the C struct in engine/include/dalnok/dalnok.h (between its GENERATED markers),
+#   - the code that fills it, engine/src/generated/<struct>.inc (included by the C API),
+#   - a Swift struct of decoded fields, app/macos/Dalnok/Generated/ModelViews.swift.
+# Run scripts/gen-api.py after editing; CI runs it with --check.
+#
+# struct <C name> <Swift name> : <C++ context the fill code can use>
+# <C type> <c_name> | <swiftName> | <C++ expression> | <comment>
+#   C types: bool, int32_t, int64_t, float, double, char[N] (a NUL-terminated string; Swift String), and the id types.
+
+struct DalnokTrackInfo TrackFields : const TrackState *t (the track), const Model &m (the model)
+DalnokTrackId id            | id           | t->id                       |
+char[128]     name          | name         | t->name                     |
+int32_t       color         | colorStep    | t->color                    | gradient step (automatic color)
+int32_t       custom_color  | customColor  | t->customColor              | 0xRRGGBB pinned by the user, or -1 = automatic
+float         gain_db       | gainDb       | t->gainDb                   | -INFINITY for silence
+float         pan           | pan          | t->pan                      |
+bool          muted         | muted        | t->muted                    |
+bool          solo          | solo         | t->solo                     |
+int32_t       clip_count    | clipCount    | clipCount(m, t->id)         | clips on the track, takes and launcher slots included
+int32_t       kind          | kind         | t->kind                     | DalnokTrackKind
+bool          armed         | armed        | t->armed                    | record-enabled
+int32_t       input_channel | inputChannel | t->inputChannel             | zero-based audio input (audio tracks)
+DalnokTrackId stack         | stack        | t->stack                    | the summing stack this track belongs to (0 = none)
+bool          is_stack      | isStack      | t->isStack                  | a bus that is a summing stack
+bool          collapsed     | collapsed    | t->collapsed                | stack shown closed
+float         height        | laneHeight   | t->height                   | lane height in points, view only (0 = the default height)
+bool          hidden        | hidden       | t->hidden                   | hidden from the arrangement and mixer (still plays)
+DalnokTrackId output        | output       | t->output                   | the bus this track plays into (0 = master)
+end
+
+struct DalnokClipInfo ClipFields : const ClipState *c (the clip), const PoolEntry *pe (its media, or null), const Engine &impl
+DalnokClipId  id             | id            | c->id                                                    |
+DalnokTrackId track          | track         | c->track                                                 |
+DalnokMediaId media          | media         | c->media                                                 |
+int64_t       start          | start         | c->start                                                 | timeline frame
+int64_t       offset         | offset        | c->offset                                                | frame within media
+int64_t       length         | length        | c->length                                                | frames
+int64_t       media_frames   | mediaFrames   | pe ? pe->frames : 0                                      | total frames of the source media
+bool          offline        | offline       | !c->midi() && (!pe || !pe->handle->impl)                 | source missing: renders silence
+int64_t       fade_in        | fadeIn        | c->fadeIn                                                | frames
+int64_t       fade_out       | fadeOut       | c->fadeOut                                               | frames
+int32_t       fade_curve     | fadeCurve     | c->fadeCurve                                             | DalnokFadeCurve
+float         gain_db        | gainDb        | c->gainDb                                                | clip gain; -INFINITY = silent
+double        rate           | rate          | c->rate                                                  | source frames per timeline frame (1 = normal speed)
+float         pitch          | pitch         | c->pitch                                                 | semitones (time-stretch mode only)
+bool          preserve_pitch | preservePitch | c->preservePitch                                         | false = varispeed
+bool          processing     | processing    | impl.clipProcessing(*c)                                  | stretched audio still rendering in the background (silent until ready)
+char[128]     name           | name          | c->name                                                  |
+bool          midi           | isMidi        | c->midi()                                                | MIDI clip (media = 0; see dalnok_midi_clip_notes)
+int32_t       note_count     | noteCount     | c->midi() ? static_cast<int32_t>(c->notes->size()) : 0   |
+int32_t       folder         | folder        | c->folder                                                | take folder (0 = none)
+bool          alt            | alt           | c->alt                                                   | a take inside a folder: kept, not played (the comp's pieces play)
+int32_t       slot           | slot          | c->slot                                                  | clip launcher slot (>= 0: not on the timeline), -1 = timeline
+int32_t       follow         | follow        | c->follow                                                | launcher follow action: 0 none, 1 next filled slot, 2 stop
+int32_t       follow_loops   | followLoops   | c->followLoops                                           | after this many loops
+bool          muted          | muted         | c->muted                                                 | clip muted
+end

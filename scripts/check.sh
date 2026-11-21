@@ -5,6 +5,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 set -euo pipefail
 cd "$(dirname "$0")/.."
+python3 scripts/gen-api.py --check # model views match engine/api/views.def (A-15)
 swift build
 swift test
 scripts/ci/tempo-map.sh

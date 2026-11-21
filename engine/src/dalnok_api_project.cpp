@@ -107,27 +107,26 @@ DalnokTrackId dalnok_track_at(const DalnokEngine *e, int32_t i) {
     return e->impl.model().tracks[static_cast<size_t>(i)].id;
 }
 
+namespace {
+int32_t clipCount(const Model &m, DalnokTrackId track) {
+    int32_t n = 0;
+    for (const auto &c : m.clips) n += c.track == track;
+    return n;
+}
+void fillTrackInfo(const Model &m, const TrackState *t, DalnokTrackInfo *out) {
+#include "generated/DalnokTrackInfo.inc"
+}
+void fillClipInfo(const Engine &impl, const ClipState *c, DalnokClipInfo *out) {
+    const PoolEntry *pe = impl.poolEntry(c->media);
+#include "generated/DalnokClipInfo.inc"
+}
+} // namespace
+
 DalnokStatus dalnok_track_info(const DalnokEngine *e, DalnokTrackId id, DalnokTrackInfo *out) {
     if (!e || !out) return DALNOK_ERR_INVALID_ARG;
     const TrackState *t = e->impl.model().track(id);
     if (!t) return DALNOK_ERR_NOT_FOUND;
-    *out = DalnokTrackInfo{};
-    out->id = t->id;
-    copyOut(out->name, sizeof out->name, t->name);
-    out->color = t->color;
-    out->custom_color = t->customColor;
-    out->gain_db = t->gainDb;
-    out->pan = t->pan;
-    out->muted = t->muted;
-    out->solo = t->solo;
-    out->kind = t->kind;
-    out->armed = t->armed;
-    out->input_channel = t->inputChannel;
-    out->stack = t->stack;
-    out->is_stack = t->isStack;
-    out->collapsed = t->collapsed;
-    out->height = t->height;
-    for (const auto &c : e->impl.model().clips) out->clip_count += c.track == id;
+    fillTrackInfo(e->impl.model(), t, out);
     return DALNOK_OK;
 }
 
@@ -143,36 +142,19 @@ DalnokStatus dalnok_clip_info(const DalnokEngine *e, DalnokClipId id, DalnokClip
     if (!e || !out) return DALNOK_ERR_INVALID_ARG;
     const ClipState *c = e->impl.model().clip(id);
     if (!c) return DALNOK_ERR_NOT_FOUND;
-    const PoolEntry *pe = e->impl.poolEntry(c->media);
-    *out = DalnokClipInfo{};
-    out->id = c->id;
-    out->track = c->track;
-    out->media = c->media;
-    out->start = c->start;
-    out->offset = c->offset;
-    out->length = c->length;
-    out->media_frames = pe ? pe->frames : 0;
-    out->offline = !pe || !pe->handle->impl;
-    out->fade_in = c->fadeIn;
-    out->fade_out = c->fadeOut;
-    out->fade_curve = c->fadeCurve;
-    out->gain_db = c->gainDb;
-    out->rate = c->rate;
-    out->pitch = c->pitch;
-    out->preserve_pitch = c->preservePitch;
-    out->processing = e->impl.clipProcessing(*c);
-    copyOut(out->name, sizeof out->name, c->name);
-    out->midi = c->midi();
-    out->folder = c->folder;
-    out->alt = c->alt;
-    out->slot = c->slot;
-    out->follow = c->follow;
-    out->follow_loops = c->followLoops;
-    if (c->midi()) {
-        out->offline = false;
-        out->note_count = static_cast<int32_t>(c->notes->size());
-    }
+    fillClipInfo(e->impl, c, out);
     return DALNOK_OK;
+}
+
+int32_t dalnok_track_clips(const DalnokEngine *e, DalnokTrackId track, DalnokClipInfo *out, int32_t capacity) {
+    if (!e || !e->impl.model().track(track)) return -1;
+    int32_t n = 0;
+    for (const auto &c : e->impl.model().clips) {
+        if (c.track != track) continue;
+        if (out && n < capacity) fillClipInfo(e->impl, &c, &out[n]);
+        ++n;
+    }
+    return n;
 }
 
 int64_t dalnok_session_length(const DalnokEngine *e) { return e ? e->impl.sessionLength() : 0; }

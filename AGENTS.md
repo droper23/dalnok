@@ -10,6 +10,8 @@ Swift/AppKit front end on macOS. GPL-3.0-or-later. This repo is also the project
 
 ## Layout
 - `engine/include/dalnok/dalnok.h` is the only public engine surface. Keep it plain C, versioned with `DALNOK_API_VERSION`.
+  `DalnokTrackInfo` and `DalnokClipInfo` are generated: edit `engine/api/views.def` and run `scripts/gen-api.py`
+  (it writes the C struct, the engine code that fills it and the app's Swift fields; CI runs it with `--check`).
 - `engine/src/`: C++20 internals. `platform/macos/` holds the only OS-specific engine code.
 - `app/macos/Dalnok/` is the AppKit UI, which talks to the engine only through the C API.
 - `tools/dalnok-cli/` is a headless driver for smoke tests, rendering, and benchmarks.

@@ -755,7 +755,7 @@
       "priority": "P2",
       "category": "Architecture",
       "subsystem": "C API / front end",
-      "status": "open",
+      "status": "fixed",
       "summary": "dalnok_api.cpp is 1,285 lines of repetitive argument marshalling against a 761-line header with 211 functions and a manually maintained DALNOK_API_VERSION. The Swift side then rebuilds view structs field by field, so every model field crosses three hand-edited copies.",
       "evidence": [
         "Inventory: 211 C API functions declared in engine/include/dalnok/dalnok.h; DALNOK_API_VERSION is a hand-edited constant.",
@@ -789,7 +789,8 @@
         "reliability": 3,
         "value": 3
       },
-      "measured": false
+      "measured": false,
+      "resolution": "2026-11-20: DalnokTrackInfo and DalnokClipInfo are defined once in engine/api/views.def (type, C name, Swift name, C++ fill expression, comment per field); scripts/gen-api.py writes the C structs into dalnok.h between GENERATED markers, the engine fill code (engine/src/generated/*.inc) and the Swift field structs (app/macos/Dalnok/Generated/ModelViews.swift). ClipView and TrackView hold the generated fields and forward them by dynamic member lookup, so adding a field is one line in views.def. CI and check.sh run gen-api.py --check. C API 41: dalnok_track_clips reads a track's clips in one pass (the old path scanned the whole project per clip); clip mute and track hidden/output are in the structs, and the app no longer re-reads every track's info for height and hidden on each refresh (those changes already move the track revision). ModelViews/batchClipReadMatchesAndIsFaster (debug): 1,638 clips on a track of a 2,048-clip project, clip by clip 28.84 ms vs one pass 0.284 ms (102x), identical fields. Not generated yet: DalnokPluginSlotInfo and the other C API structs (hand-written as before); the C facade's per-function marshalling is unchanged."
     },
     {
       "id": "A-16",

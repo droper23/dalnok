@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+- Internal (A-15): the clip and track structs of the C API are defined once, in `engine/api/views.def`. `scripts/gen-api.py` generates the C structs, the engine code that fills them and the app's Swift fields, and CI checks that the generated files are current.
+  - Reading a track's clips takes one pass (C API 41, `dalnok_track_clips`): about 100x faster for a track with 1,638 clips.
+  - The app no longer re-reads every track's info on each refresh.
+- Internal (A-19): CI runs the release build, AddressSanitizer and ThreadSanitizer as parallel jobs. Before, ASan and TSan ran one after the other in a single job. `scripts/dev/compile-commands.sh` writes `compile_commands.json` for clangd.
+
 ## [0.2.1] - 2026-11-20
 
 - Fixed: a dragged clip grew in proportion to its length, so a long clip swelled by 100 pt or more, swung far when it leaned and squashed hard when dropped. The lift, lean, squash and pop are now sized in points: every clip grows by the same few points (6.5 pt at the default Clip bounce).
