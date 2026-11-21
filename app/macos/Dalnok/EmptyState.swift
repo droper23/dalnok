@@ -1,42 +1,14 @@
-// The start page an empty project shows: templates for what people come to make (Logic's project chooser, Bitwig's
-// dashboard and Studio One's start page all lead with these), recent projects, the other ways in, and three tips that
-// unlock the rest of the app. The whole page is still a drop zone for audio files and projects.
+// What an empty project shows: the two ways to add a track, the handful of keys that get someone around a project,
+// and the other ways in. The whole page is still a drop zone for audio files and projects.
 // SPDX-License-Identifier: GPL-3.0-or-later
 import AppKit
 
-/// A starting point: named tracks, ready to record or play. Templates only add tracks (one undo step), so nothing
-/// about them is hidden: delete a track and it's gone, exactly as if it had been added by hand.
-struct ProjectTemplate {
-    struct Track { let name: String; let instrument: Bool }
-    let id: String, title: String, detail: String, symbol: String
-    let tracks: [Track]
-
-    private static func a(_ n: String) -> Track { Track(name: n, instrument: false) }
-    private static func i(_ n: String) -> Track { Track(name: n, instrument: true) }
-    static let all: [ProjectTemplate] = [
-        ProjectTemplate(id: "record", title: "Record Audio", detail: "One track for a mic or guitar", symbol: "mic.fill",
-                        tracks: [a("Audio 1")]),
-        ProjectTemplate(id: "instrument", title: "Play an Instrument", detail: "A synth for a MIDI keyboard", symbol: "pianokeys",
-                        tracks: [i("Keys")]),
-        ProjectTemplate(id: "beat", title: "Make a Beat", detail: "Drums, bass, chords, melody", symbol: "square.grid.3x3.fill",
-                        tracks: [i("Drums"), i("Bass"), i("Chords"), i("Melody")]),
-        ProjectTemplate(id: "band", title: "Record a Band", detail: "Drums, bass, guitar, keys, vocal", symbol: "music.mic",
-                        tracks: [a("Drums"), a("Bass"), a("Guitar"), i("Keys"), a("Vocal")]),
-        ProjectTemplate(id: "songwriter", title: "Write a Song", detail: "Vocal and guitar, plus piano", symbol: "music.quarternote.3",
-                        tracks: [a("Vocal"), a("Guitar"), i("Piano")]),
-        ProjectTemplate(id: "voice", title: "Podcast or Voice-over", detail: "Two voice tracks", symbol: "waveform.and.mic",
-                        tracks: [a("Host"), a("Guest")]),
-    ]
-}
-
-/// A large, clickable template card. Hovering lifts it (border, shadow, a 2 pt rise); pressing sinks it.
+/// A large, clickable choice. Hovering lifts it (border, shadow, a 2 pt rise); pressing sinks it.
 @MainActor
-final class TemplateCard: NSButton {
-    let template: ProjectTemplate
+final class StartCard: NSButton {
     private var hovering = false { didSet { if hovering != oldValue { restyle(animated: true) } } }
 
-    init(_ t: ProjectTemplate, target: AnyObject, action: Selector) {
-        template = t
+    init(title t: String, detail d: String, keys: String, symbol: String, target: AnyObject, action: Selector) {
         super.init(frame: .zero)
         self.target = target
         self.action = action
@@ -48,23 +20,23 @@ final class TemplateCard: NSButton {
         layer?.masksToBounds = false
         layer?.shadowColor = NSColor.black.cgColor
         layer?.shadowOffset = CGSize(width: 0, height: -3)
-        setAccessibilityLabel(t.title)
-        setAccessibilityHelp("\(t.detail). Creates \(t.tracks.count) track\(t.tracks.count == 1 ? "" : "s").")
-        toolTip = "Tracks: " + t.tracks.map { $0.name + ($0.instrument ? " (instrument)" : "") }.joined(separator: ", ")
+        setAccessibilityLabel(t)
+        setAccessibilityHelp(d)
+        toolTip = "\(t) (\(keys))"
 
-        let icon = NSImageView(image: NSImage(systemSymbolName: t.symbol, accessibilityDescription: nil)!
+        let icon = NSImageView(image: NSImage(systemSymbolName: symbol, accessibilityDescription: nil)!
             .withSymbolConfiguration(.init(pointSize: 20, weight: .regular))!)
         icon.contentTintColor = Theme.accent
         icon.setAccessibilityElement(false)
-        let name = NSTextField(labelWithString: t.title)
+        let name = NSTextField(labelWithString: t)
         name.font = Theme.ui(14, .semibold)
         name.textColor = Theme.text
-        let detail = NSTextField(labelWithString: t.detail)
+        let detail = NSTextField(labelWithString: d)
         detail.font = Theme.ui(11.5)
         detail.textColor = Theme.textDim
         detail.lineBreakMode = .byTruncatingTail
-        let count = NSTextField(labelWithString: "\(t.tracks.count) track\(t.tracks.count == 1 ? "" : "s")")
-        count.font = Theme.ui(10, .medium)
+        let count = NSTextField(labelWithString: keys)
+        count.font = Theme.mono(10, .medium)
         count.textColor = Theme.textFaint
         for v in [name, detail, count, icon] as [NSView] { v.setAccessibilityElement(false) }
         let text = NSStackView(views: [name, detail, count])
@@ -82,7 +54,7 @@ final class TemplateCard: NSButton {
             row.leadingAnchor.constraint(equalTo: leadingAnchor), row.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor),
             row.topAnchor.constraint(equalTo: topAnchor),
             icon.widthAnchor.constraint(equalToConstant: 26),
-            widthAnchor.constraint(equalToConstant: 256), heightAnchor.constraint(equalToConstant: 92),
+            widthAnchor.constraint(equalToConstant: 280), heightAnchor.constraint(equalToConstant: 92),
         ])
         restyle(animated: false)
     }
@@ -173,29 +145,29 @@ final class EmptyStateView: NSView {
     var onMigrate: (() -> Void)?
     var onNewInstrument: (() -> Void)?
     var onNewAudioTrack: (() -> Void)?
-    var onTemplate: ((ProjectTemplate) -> Void)?
-    var onOpenRecent: ((URL) -> Void)?
-
-    /// Automated runs (snapshots, screenshots, self-test, tours) never show recent projects: their names are the
-    /// owner's and must not land in a picture.
-    static let showsRecents: Bool = {
-        let a = CommandLine.arguments
-        return !["--snapshot", "--screenshots", "--selftest", "--uiwalk", "--tour"].contains(where: a.contains)
-    }()
 
     private let emblem = BreathingBars()
-    private(set) var cards: [TemplateCard] = []
-    private let recentsStack = NSStackView()
+    private(set) var cards: [StartCard] = []
     /// Views that rise into place, in order, when the page appears.
     private var entrance: [NSView] = []
+
+    /// The keys that get someone around a project, in the order they need them.
+    static let essentials: [(keys: String, what: String)] = [
+        ("Space", "Play and stop"),
+        ("R", "Record on the tracks with R lit"),
+        ("⌘K", "Find any command by name"),
+        ("X", "Show the mixer"),
+        ("⌘Z", "Undo anything"),
+        ("Hover", "The line under the project name explains it"),
+    ]
 
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
-        let title = NSTextField(labelWithString: "What do you want to make?")
+        let title = NSTextField(labelWithString: "Your project is empty")
         title.font = Theme.ui(22, .semibold)
         title.textColor = Theme.text
-        let sub = NSTextField(labelWithString: "Pick a starting point, or drop audio files anywhere in this window.")
+        let sub = NSTextField(labelWithString: "Add a track to start, or drop audio files anywhere in this window.")
         sub.font = Theme.ui(12.5)
         sub.textColor = Theme.textDim
         let head = NSStackView(views: [emblem, title, sub])
@@ -203,66 +175,63 @@ final class EmptyStateView: NSView {
         head.spacing = 6
         head.setCustomSpacing(12, after: emblem)
 
-        cards = ProjectTemplate.all.map { TemplateCard($0, target: self, action: #selector(templateTapped(_:))) }
-        let grid = NSGridView(views: stride(from: 0, to: cards.count, by: 3).map { Array(cards[$0..<min($0 + 3, cards.count)]) })
-        grid.rowSpacing = 12
-        grid.columnSpacing = 12
+        cards = [
+            StartCard(title: "New Audio Track", detail: "Record a microphone or guitar", keys: "⌥⌘N", symbol: "waveform",
+                      target: self, action: #selector(newAudioTapped)),
+            StartCard(title: "New Instrument Track", detail: "Play a synth from a MIDI keyboard", keys: "⌥⇧⌘N", symbol: "pianokeys",
+                      target: self, action: #selector(newInstrumentTapped)),
+        ]
+        let choices = NSStackView(views: cards)
+        choices.spacing = 12
 
-        // Recent projects (left) and the other ways in (right).
-        recentsStack.orientation = .vertical
-        recentsStack.alignment = .leading
-        recentsStack.spacing = 2
-        let recentBox = section("Recent", recentsStack)
-        func link(_ title: String, _ symbol: String, _ keys: String, _ sel: Selector) -> NSButton {
-            // Symbols differ in width; centre each in the same 18 pt box so the labels line up.
-            let glyph = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)!.withSymbolConfiguration(.init(pointSize: 12, weight: .regular))!
-            let boxed = NSImage(size: NSSize(width: 18, height: 16), flipped: false) { r in
-                glyph.draw(in: NSRect(x: (r.width - glyph.size.width) / 2, y: (r.height - glyph.size.height) / 2,
-                                      width: glyph.size.width, height: glyph.size.height))
-                return true
-            }
-            boxed.isTemplate = true
-            let b = NSButton(title: "  " + title, image: boxed, target: self, action: sel)
+        // Getting around: a key and what it does, two columns.
+        let keyFont = Theme.mono(11, .semibold)
+        let rows: [[NSView]] = Self.essentials.map { k, w in
+            let key = NSTextField(labelWithString: k)
+            key.font = keyFont
+            key.textColor = Theme.text
+            key.alignment = .right
+            let what = NSTextField(labelWithString: w)
+            what.font = Theme.ui(12)
+            what.textColor = Theme.textDim
+            return [key, what]
+        }
+        let half = (rows.count + 1) / 2
+        let grid = NSGridView(views: (0..<half).map { i in rows[i] + (i + half < rows.count ? rows[i + half] : [NSGridCell.emptyContentView, NSGridCell.emptyContentView]) })
+        grid.rowSpacing = 8
+        grid.columnSpacing = 10
+        grid.column(at: 0).width = 56
+        grid.column(at: 2).width = 64
+        grid.column(at: 1).trailingPadding = 22
+        grid.column(at: 0).xPlacement = .trailing
+        grid.column(at: 2).xPlacement = .trailing
+        let around = section("Getting around", grid)
+
+        func link(_ title: String, _ keys: String, _ sel: Selector) -> NSButton {
+            let b = NSButton(title: title, target: self, action: sel)
             b.isBordered = false
-            b.imagePosition = .imageLeading
-            b.contentTintColor = Theme.textDim
-            b.font = Theme.ui(12.5)
+            b.contentTintColor = Theme.accent
+            b.attributedTitle = NSAttributedString(string: title, attributes: [.font: Theme.ui(12), .foregroundColor: Theme.accent])
             b.toolTip = keys.isEmpty ? nil : "\(title) (\(keys))"
-            b.setAccessibilityLabel(title)
             return b
         }
-        let ways = NSStackView(views: [
-            link("Open Project…", "folder", "⌘O", #selector(openTapped)),
-            link("Import Audio…", "square.and.arrow.down", "⌘I", #selector(importTapped)),
-            link("Bring In a Logic, Ableton or REAPER Project…", "arrow.triangle.branch", "", #selector(migrateTapped)),
-            link("Empty Audio Track", "waveform", "⌥⌘N", #selector(newAudioTapped)),
-            link("Empty Instrument Track", "pianokeys", "⌥⇧⌘N", #selector(newInstrumentTapped)),
-        ])
-        ways.orientation = .vertical
-        ways.alignment = .leading
-        ways.spacing = 6
-        let waysBox = section("More ways to start", ways)
-        let lower = NSStackView(views: [recentBox, waysBox])
-        lower.alignment = .top
-        lower.distribution = .fillEqually
-        lower.spacing = 24
+        let dot = { () -> NSTextField in let d = NSTextField(labelWithString: "·"); d.textColor = Theme.textFaint; return d }
+        let links = NSStackView(views: [link("Open Project…", "⌘O", #selector(openTapped)), dot(),
+                                        link("Import Audio…", "⌘I", #selector(importTapped)), dot(),
+                                        link("Bring in a Logic, Ableton or REAPER project…", "", #selector(migrateTapped))])
+        links.spacing = 8
 
-        let tips = NSTextField(labelWithAttributedString: Self.tips())
-        tips.setAccessibilityLabel("Tips: Command K finds any command. X shows the mixer. Space plays and stops.")
-
-        let stack = NSStackView(views: [head, grid, lower, tips])
+        let stack = NSStackView(views: [head, choices, around, links])
         stack.orientation = .vertical
         stack.alignment = .centerX
-        stack.spacing = 26
+        stack.spacing = 28
         stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
         NSLayoutConstraint.activate([
             stack.centerXAnchor.constraint(equalTo: centerXAnchor),
             stack.centerYAnchor.constraint(equalTo: centerYAnchor, constant: -10),
-            lower.widthAnchor.constraint(equalTo: grid.widthAnchor),
         ])
-        entrance = [head, grid, lower, tips]
-        reloadRecents()
+        entrance = [head, choices, around, links]
     }
     required init?(coder: NSCoder) { fatalError() }
 
@@ -272,61 +241,17 @@ final class EmptyStateView: NSView {
         l.textColor = Theme.textFaint
         let s = NSStackView(views: [l, content])
         s.orientation = .vertical
-        s.alignment = .leading
-        s.spacing = 8
+        s.alignment = .centerX
+        s.spacing = 10
         return s
-    }
-
-    private static func tips() -> NSAttributedString {
-        let out = NSMutableAttributedString()
-        let key: [NSAttributedString.Key: Any] = [.font: Theme.mono(11, .semibold), .foregroundColor: Theme.text]
-        let text: [NSAttributedString.Key: Any] = [.font: Theme.ui(11.5), .foregroundColor: Theme.textDim]
-        for (i, (k, t)) in [("⌘K", "finds any command"), ("X", "shows the mixer"), ("Space", "plays and stops")].enumerated() {
-            if i > 0 { out.append(NSAttributedString(string: "     ·     ", attributes: text)) }
-            out.append(NSAttributedString(string: k, attributes: key))
-            out.append(NSAttributedString(string: " " + t, attributes: text))
-        }
-        return out
-    }
-
-    /// Recent projects that still exist, newest first (at most five).
-    func reloadRecents() {
-        recentsStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        let urls = Self.showsRecents
-            ? NSDocumentController.shared.recentDocumentURLs.filter { FileManager.default.fileExists(atPath: $0.path) }.prefix(5)
-            : []
-        if urls.isEmpty {
-            let none = NSTextField(labelWithString: "Projects you save appear here.")
-            none.font = Theme.ui(12)
-            none.textColor = Theme.textFaint
-            recentsStack.addArrangedSubview(none)
-            return
-        }
-        let fmt = RelativeDateTimeFormatter()
-        fmt.unitsStyle = .short
-        for url in urls {
-            let date = (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate).map { fmt.localizedString(for: $0, relativeTo: Date()) } ?? ""
-            let b = NSButton(title: "", target: self, action: #selector(recentTapped(_:)))
-            b.isBordered = false
-            b.alignment = .left
-            let s = NSMutableAttributedString(string: url.deletingPathExtension().lastPathComponent,
-                                              attributes: [.font: Theme.ui(12.5, .medium), .foregroundColor: Theme.text])
-            if !date.isEmpty { s.append(NSAttributedString(string: "   " + date, attributes: [.font: Theme.ui(11), .foregroundColor: Theme.textFaint])) }
-            b.attributedTitle = s
-            b.toolTip = url.path
-            b.identifier = NSUserInterfaceItemIdentifier(url.path)
-            b.setAccessibilityLabel("Open \(url.deletingPathExtension().lastPathComponent)")
-            recentsStack.addArrangedSubview(b)
-        }
     }
 
     // MARK: Appearing
 
     override var isHidden: Bool { didSet { if oldValue && !isHidden { appear() } else if isHidden { emblem.breathe(false) } } }
     override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); if window != nil && !isHidden { appear() } }
-    /// The sections rise 10 pt and fade in one after another (40 ms apart), the way Final Cut and Bitwig open panels.
+    /// The sections rise 10 pt and fade in one after another (45 ms apart).
     private func appear() {
-        reloadRecents()
         emblem.breathe(true)
         guard !Motion.reduced else { return }
         layoutSubtreeIfNeeded()
@@ -366,8 +291,6 @@ final class EmptyStateView: NSView {
         return v === self ? nil : v
     }
 
-    @objc private func templateTapped(_ sender: TemplateCard) { onTemplate?(sender.template) }
-    @objc private func recentTapped(_ sender: NSButton) { if let p = sender.identifier?.rawValue { onOpenRecent?(URL(fileURLWithPath: p)) } }
     @objc private func importTapped() { onImportAudio?() }
     @objc private func openTapped() { onOpen?() }
     @objc private func migrateTapped() { onMigrate?() }

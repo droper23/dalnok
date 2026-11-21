@@ -1,49 +1,44 @@
-// Self-test steps (first run and navigation): the start page and its templates, the control bar's view buttons, the
+// Self-test steps (first run and navigation): the start page, the control bar's view buttons, the
 // hint line, the undo toast, gliding zoom and the new-lane glow. The harness (check, perform, mouse) is SelfTest.swift.
 // SPDX-License-Identifier: GPL-3.0-or-later
 import AppKit
 import DalnokEngine
 
 extension SelfTest {
-    /// Runs on an empty project (File ▸ New): the start page, then a template, then undo back to the start page.
+    /// Runs on an empty project (File ▸ New): the start page, its two tracks, and undo back to it.
     func startPage() async {
         let e = s.engine
         let page = w.emptyState
-        check(page.cards.count == ProjectTemplate.all.count && ProjectTemplate.all.count == 6, "start page shows \(page.cards.count) templates")
-        check(page.subviewsDeep.compactMap { $0 as? NSButton }.filter { $0.toolTip.map { $0.hasPrefix("/") } ?? false }.isEmpty,
-              "an automated run lists no recent projects (names stay private)")
-        let ways = page.subviewsDeep.compactMap { $0 as? NSButton }
-        check(ways.allSatisfy { $0.action != nil && $0.target != nil }, "every start page button has an action")
-        if let b = ways.first(where: { $0.accessibilityLabel() == "Empty Instrument Track" }) {
-            b.performClick(nil)
-            check(s.tracks.count == 1 && s.tracks.first?.isInstrument == true, "start page's Empty Instrument Track adds one")
-            _ = perform("Undo")
-        } else { check(false, "start page offers Empty Instrument Track") }
+        check(page.cards.count == 2 && EmptyStateView.essentials.count == 6, "start page: two ways to add a track, six essential keys")
+        let buttons = page.subviewsDeep.compactMap { $0 as? NSButton }
+        check(buttons.allSatisfy { $0.action != nil && $0.target != nil }, "every start page button has an action")
+        guard let audio = page.cards.first(where: { $0.accessibilityLabel() == "New Audio Track" }),
+              let inst = page.cards.first(where: { $0.accessibilityLabel() == "New Instrument Track" }) else {
+            return check(false, "start page offers New Audio Track and New Instrument Track")
+        }
+        inst.performClick(nil)
+        check(s.tracks.count == 1 && s.tracks.first?.isInstrument == true, "start page's New Instrument Track adds one")
+        _ = perform("Undo")
 
-        guard let beat = page.cards.first(where: { $0.template.id == "beat" }) else { return check(false, "a Make a Beat template") }
         Motion.override = true
         defer { Motion.override = false }
-        beat.performClick(nil)
-        let want = beat.template.tracks.map(\.name)
-        check(s.tracks.map(\.name) == want && s.tracks.allSatisfy(\.isInstrument),
-              "Make a Beat adds \(want.joined(separator: ", ")) (got \(s.tracks.map(\.name).joined(separator: ", ")))")
-        check(e.undoName == "New Make a Beat Project", "a template is one undo step (\(e.undoName))")
-        check(w.headers.selectedTrack == s.tracks.first?.id, "the template's first track is selected")
-        check(w.toast.text.hasPrefix("Make a Beat: 4 tracks"), "a toast confirms the template (\(w.toast.text))")
-        check(Set(w.timeline.laneFlash.keys) == Set(s.tracks.map(\.id)), "new lanes glow (\(w.timeline.laneFlash.count) of \(s.tracks.count))")
+        audio.performClick(nil)
+        check(s.tracks.count == 1 && s.tracks.first?.isInstrument == false, "start page's New Audio Track adds one")
+        check(Set(w.timeline.laneFlash.keys) == Set(s.tracks.map(\.id)), "the new lane glows (\(w.timeline.laneFlash.count))")
         await wait(0.6)
         check(page.isHidden && !w.timeline.isHidden, "the arrangement replaces the start page")
         await wait(0.4)
-        check(w.timeline.laneFlash.isEmpty, "and settle after \(TimelineView.laneFlashSeconds) s")
+        check(w.timeline.laneFlash.isEmpty, "and settles after \(TimelineView.laneFlashSeconds) s")
 
         // Undo names what it undid, and takes the project back to the start page.
-        check(perform("Undo"), "menu Edit > Undo after a template")
-        check(s.tracks.isEmpty, "undo removes the template's tracks")
-        check(w.toast.text == "Undo New Make a Beat Project", "undo toast names the step (\(w.toast.text))")
+        let step = e.undoName
+        check(perform("Undo"), "menu Edit > Undo after adding a track")
+        check(s.tracks.isEmpty, "undo removes the track")
+        check(w.toast.text == "Undo \(step)", "undo toast names the step (\(w.toast.text))")
         await wait(0.6)
         check(!page.isHidden, "the start page returns for the empty project")
         _ = perform("Redo")
-        check(w.toast.text == "Redo New Make a Beat Project" && s.tracks.count == 4, "redo toast and tracks (\(w.toast.text))")
+        check(w.toast.text == "Redo \(step)" && s.tracks.count == 1, "redo toast and track (\(w.toast.text))")
         await wait(1.8)
         check(w.toast.text.isEmpty, "the toast goes away by itself")
         _ = perform("Undo")
@@ -104,7 +99,12 @@ extension SelfTest {
         tl.zoom(by: 1, around: x) // a gesture takes over
         check(!tl.isGliding && tl.glideTarget == nil, "a pinch or scroll stops a glide")
 
-        // Count-in: big beat numbers over the arrangement.
+        // Count-in: an optional toolbar button, lit while on, and big beat numbers over the arrangement.
+        let countIn = MainWindowController.countIn
+        t.countInButton.performClick(nil)
+        check(MainWindowController.countIn != countIn && t.countInButton.isActive == !countIn, "Count-In button toggles count-in and lights")
+        t.countInButton.performClick(nil)
+        check(MainWindowController.countIn == countIn && t.countInButton.isActive == countIn, "and toggles it back")
         w.countInOverlay.show(3, beat: 0.5)
         check(w.countInOverlay.shown == 3, "count-in overlay shows the beat")
         w.countInOverlay.show(nil, beat: 0)

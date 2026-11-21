@@ -44,6 +44,7 @@ extension MainWindowController {
     /// Transport ▸ Count-In (⇧K): recording starts one bar early with clicks; the take starts where you pressed Record.
     @objc func toggleCountIn(_ sender: Any?) {
         Self.countIn.toggle()
+        syncViewButtons()
         flash(Self.countIn ? "Count-in on: one bar of clicks before recording" : "Count-in off")
     }
     /// Transport ▸ Autopunch: record only inside the red punch range (from the cycle, the selection, or 4 bars).

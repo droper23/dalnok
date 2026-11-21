@@ -118,6 +118,9 @@ final class TransportBar: NSView {
     let playButton = IconButton("play.fill", help: "Play / Pause (Space)")
     let recordButton = IconButton("circle.fill", help: "Record (R)")
     let metronomeButton = IconButton("metronome.fill", help: "Metronome (K)")
+    /// Optional count-in, lit while on (Logic's control bar has the same pair: metronome and count-in).
+    let countInButton = IconButton("123.rectangle", help: "Count-In (⇧K): one bar of clicks before recording starts")
+    var onCountIn: (() -> Void)?
     var onMetronome: (() -> Void)?
     let cycleButton = IconButton("repeat", help: "Cycle (C): loop playback between the yellow markers in the ruler")
     var onCycle: (() -> Void)?
@@ -214,6 +217,7 @@ final class TransportBar: NSView {
         playButton.target = self; playButton.action = #selector(playTapped)
         recordButton.target = self; recordButton.action = #selector(recordTapped)
         metronomeButton.target = self; metronomeButton.action = #selector(metronomeTapped)
+        countInButton.target = self; countInButton.action = #selector(countInTapped)
         cycleButton.target = self; cycleButton.action = #selector(cycleTapped)
         recordButton.contentTintColor = Theme.recordOn.withAlphaComponent(0.75)
         paletteButton.target = self; paletteButton.action = #selector(paletteTapped)
@@ -234,7 +238,7 @@ final class TransportBar: NSView {
         meterPopup.font = Theme.mono(12, .medium)
         meterPopup.toolTip = "Time signature"
         meterPopup.setAccessibilityLabel("Time signature")
-        let tempo = NSStackView(views: [tempoField, bpmLabel, meterPopup, metronomeButton])
+        let tempo = NSStackView(views: [tempoField, bpmLabel, meterPopup, metronomeButton, countInButton])
         tempo.spacing = 3
         tempo.edgeInsets = NSEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
         tempoField.widthAnchor.constraint(equalToConstant: 44).isActive = true
@@ -307,6 +311,7 @@ final class TransportBar: NSView {
     @objc private func playTapped() { onPlayPause?() }
     @objc private func recordTapped() { onRecord?() }
     @objc private func metronomeTapped() { onMetronome?() }
+    @objc private func countInTapped() { onCountIn?() }
     @objc private func cycleTapped() { onCycle?() }
 
     /// Recording: red record symbol and position display; otherwise the normal look.

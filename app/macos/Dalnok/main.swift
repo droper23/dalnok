@@ -41,7 +41,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let args = Array(CommandLine.arguments.dropFirst())
         func value(_ flag: String) -> String? { args.firstIndex(of: flag).flatMap { $0 + 1 < args.count ? args[$0 + 1] : nil } }
-        let flagValues = Set(["--snapshot", "--selftest", "--screenshots", "--plugin-snapshot", "--uiwalk", "--plugin-report", "--tour"].compactMap(value))
+        let flagValues = Set(["--perf", "--snapshot", "--selftest", "--screenshots", "--plugin-snapshot", "--uiwalk", "--plugin-report", "--tour"].compactMap(value))
         let files = args.filter { !$0.hasPrefix("-") && !flagValues.contains($0) }.map { URL(fileURLWithPath: $0) }
         let snapshot = value("--snapshot").map { URL(fileURLWithPath: $0) }
 
@@ -113,6 +113,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             // Developer: --tour <dir> plays a scripted walk through the window and writes its frames (README GIFs).
             if let dir = value("--tour") { return Screenshots.tour(app: self, dir: URL(fileURLWithPath: dir)) }
+            if let s = value("--perf"), let seconds = Double(s) { return PerfProbe.run(app: self, seconds: seconds) }
             if args.contains("--play") { engine.play() }
             if let snapshot {
                 let wait = Double(ProcessInfo.processInfo.environment["DALNOK_SNAPSHOT_DELAY"] ?? "") ?? (args.contains("--play") ? 1.5 : 0.4) // seconds
@@ -196,7 +197,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// A normal launch (not a snapshot, screenshot, self-test or UI walk run).
     var interactiveLaunch: Bool {
         let a = CommandLine.arguments
-        return !["--snapshot", "--screenshots", "--selftest", "--uiwalk", "--plugin-snapshot", "--tour"].contains { a.contains($0) }
+        return !["--snapshot", "--screenshots", "--selftest", "--uiwalk", "--plugin-snapshot", "--tour", "--perf"].contains { a.contains($0) }
     }
     /// Set by Settings ▸ "Relaunch Now": start a fresh instance (with the saved project) once this one quits.
     var relaunchOnQuit = false

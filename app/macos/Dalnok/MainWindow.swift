@@ -312,8 +312,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         emptyState.onMigrate = { [weak self] in self?.showMigrationAssistant(nil) }
         emptyState.onNewInstrument = { [weak self] in self?.newInstrumentTrack(nil) }
         emptyState.onNewAudioTrack = { [weak self] in self?.newTrack(nil) }
-        emptyState.onTemplate = { [weak self] t in self?.start(from: t) }
-        emptyState.onOpenRecent = { [weak self] url in self?.openSelectedProject(url) }
 
         transport.onPlayPause = { [weak self] in self?.togglePlay() }
         transport.onRecord = { [weak self] in self?.toggleRecord(nil) }
@@ -331,6 +329,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         transport.onImport = { [weak self] in self?.importAudio() }
         transport.onPalette = { [weak self] in self?.showCommandPalette(nil) }
         transport.onLauncher = { [weak self] in self?.toggleLauncher(nil) }
+        transport.onCountIn = { [weak self] in self?.toggleCountIn(nil) }
         transport.onAutomation = { [weak self] in self?.toggleAutomation(nil) }
         transport.onMixer = { [weak self] in self?.toggleMixer(nil) }
         transport.onDevices = { [weak self] in self?.toggleDevicePanel(nil) }
@@ -708,6 +707,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     }
 
     func tick() {
+        let began = PerfProbe.current == nil ? 0 : CACurrentMediaTime()
+        defer { if began > 0 { PerfProbe.current?.noteTick((CACurrentMediaTime() - began) * 1000) } }
         let e = session.engine
         e.collectGarbage()
         replayEditorKeys()
@@ -953,21 +954,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     @objc func newTrack(_ sender: Any?) {
         let id = session.addTrack()
         headers.selectedTrack = id
-    }
-
-    /// Start page templates: their tracks, added as one undo step, with the first one selected.
-    func start(from t: ProjectTemplate) {
-        var first: DalnokTrackId?
-        session.engine.group("New \(t.title) Project") {
-            for tr in t.tracks {
-                let id = tr.instrument ? session.addInstrumentTrack(tr.name) : session.addTrack(tr.name)
-                if first == nil { first = id }
-            }
-        }
-        session.refresh()
-        if t.tracks.contains(where: \.instrument) { connectMidiInputs() }
-        if let first { headers.select(first) }
-        toast.show("\(t.title): \(t.tracks.count) track\(t.tracks.count == 1 ? "" : "s") ready", symbol: t.symbol)
     }
 
     @objc func deleteTrack(_ sender: Any?) {
@@ -1454,6 +1440,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         transport.mixerButton.isActive = Self.showMixer
         transport.devicesButton.isActive = Self.showDevicePanel
         transport.automationButton.isActive = timeline.showAutomation
+        transport.countInButton.isActive = Self.countIn
     }
 
     @objc func toggleLauncher(_ sender: Any?) {
