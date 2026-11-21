@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-20
+
 - Fixed: a dragged clip grew in proportion to its length, so a long clip swelled by 100 pt or more, swung far when it leaned and squashed hard when dropped. The lift, lean, squash and pop are now sized in points: every clip grows by the same few points (6.5 pt at the default Clip bounce).
 
 ## [0.2.0] - 2026-11-20

@@ -8,7 +8,7 @@ recording, editing, and mixing in a fast, focused native app.
 
 > **Feature parity tracker:** https://droper23.github.io/dalnok-status/
 >
-> **Status: 0.2.0, preview release (pre-alpha).** Expect rough edges and save often.
+> **Status: 0.2.1, preview release (pre-alpha).** Expect rough edges and save often.
 > What works and what doesn't is in [CURRENT_STATE.md](CURRENT_STATE.md); changes are in [CHANGELOG.md](CHANGELOG.md).
 
 ![Dalnok in the Graphite appearance: arrangement, mixer and the device panel with plug-in faceplates](assets/screenshots/graphite.png)
