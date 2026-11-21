@@ -14,6 +14,7 @@ final class EmptyStateView: NSView {
         super.init(frame: frame)
         let cfg = NSImage.SymbolConfiguration(pointSize: 34, weight: .light)
         let icon = NSImageView(image: NSImage(systemSymbolName: "waveform", accessibilityDescription: nil)!.withSymbolConfiguration(cfg)!)
+        icon.setAccessibilityElement(false) // decorative: the heading and buttons beside it say what this is
         icon.contentTintColor = Theme.textFaint
         let title = NSTextField(labelWithString: "Start your session")
         title.font = Theme.ui(17, .semibold)

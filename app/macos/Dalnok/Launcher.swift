@@ -57,7 +57,7 @@ final class LauncherView: NSView, TrackScrollHost {
 
     override func draw(_ dirtyRect: NSRect) {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
-        (Analog.on ? Theme.hex(0x15100C) : Theme.panel).setFill(); bounds.fill()
+        Theme.hex(Theme.palette.launcher).setFill(); bounds.fill()
         // Scene row: launch a column; the last control stops everything.
         let sceneAttrs: [NSAttributedString.Key: Any] = [.font: Theme.mono(9.5, .semibold), .foregroundColor: Theme.textDim]
         for k in 0..<Int(session.scenes) {

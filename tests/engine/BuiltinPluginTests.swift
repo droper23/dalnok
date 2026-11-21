@@ -212,4 +212,32 @@ private func cascade(_ x: [Float], _ sections: [([Double], [Double])]) -> [Doubl
         #expect(dalnok_plugin_set_state(e2, info.id, Data(#"{"plugin":"other","values":{}}"#.utf8).base64EncodedString()) != DALNOK_OK)
         #expect(renderStereo(e2, 4_800).0 == before.0)
     }
+
+    /// Folding (API 40): a view state of the unit in the device chain. Saved with the project, undoable, run as a
+    /// catalog command, and it changes nothing in the audio.
+    @Test func foldingIsSavedUndoableAndSilent() throws {
+        let (e, t) = audioSession(); defer { dalnok_engine_destroy(e) }
+        let slot = dalnok_plugin_add(e, t, "dalnok:channel-eq", nil, nil, 0)
+        #expect(slot != 0 && !dalnok_plugin_folded(e, t, slot))
+        let before = renderStereo(e, 4_800)
+        #expect(dalnok_plugin_set_folded(e, t, slot, true) == DALNOK_OK && dalnok_plugin_folded(e, t, slot))
+        #expect(dalnok_plugin_set_folded(e, t, slot, true) != DALNOK_OK, "folding twice is refused")
+        #expect(renderStereo(e, 4_800).0 == before.0, "bit-identical output folded")
+        var name = [CChar](repeating: 0, count: 64)
+        _ = dalnok_undo_name(e, &name, 64)
+        #expect(cstr(name) == "Fold Plug-in")
+        #expect(dalnok_undo(e) && !dalnok_plugin_folded(e, t, slot), "undo unfolds")
+        var out = [CChar](repeating: 0, count: 256)
+        #expect(dalnok_command_run(e, "plugin.setFolded", "{\"track\": \(t), \"slot\": \(slot), \"folded\": true}", &out, 256) == DALNOK_OK, "\(cstr(out))")
+        #expect(dalnok_plugin_folded(e, t, slot))
+        let path = tempDir().appendingPathComponent("fold-\(UUID().uuidString).dalnok").path
+        #expect(dalnok_project_save(e, path, nil, 0) == DALNOK_OK)
+        let e2 = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(e2) }
+        var missing: Int32 = 0
+        #expect(dalnok_project_load(e2, path, &missing, nil, 0) == DALNOK_OK)
+        var info = DalnokPluginSlotInfo()
+        let t2 = dalnok_track_at(e2, 0)
+        #expect(dalnok_track_plugin_info(e2, t2, 0, &info) == DALNOK_OK && dalnok_plugin_folded(e2, t2, info.id), "saved and reopened folded")
+        #expect(!dalnok_project_dirty(e2))
+    }
 }

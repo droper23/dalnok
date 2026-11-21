@@ -391,7 +391,9 @@ public:
         std::lock_guard<std::mutex> g(producer_);
         touched_[id] = v;
         if (!changes_.push(ParamChange{id, v})) dropped_.fetch_add(1, std::memory_order_relaxed);
-        if (fromEditor) edits_.fetch_add(1, std::memory_order_relaxed);
+        // Only an open editor can be edited. Some plug-ins (a sampler once its sounds finish loading in the background)
+        // report values through performEdit with no editor open, which would make a freshly opened project look edited.
+        if (fromEditor && editorOpen_.load(std::memory_order_relaxed)) edits_.fetch_add(1, std::memory_order_relaxed);
     }
     bool open(const Module &m, const std::string &wantedId, double rate, int maxBlock, bool offline, std::string &err) {
         IPluginFactory2 *f2 = nullptr;
@@ -599,12 +601,14 @@ public:
     // setDirty is also sent with nothing changed (some plug-ins send it a moment after loading), so it counts only
     // when the plug-in's state differs from the one last known (after loading, restoring, or the last counted edit).
     // Some finish loading in the background and then report their completed state the same way, so for 2 s after
-    // loading or restoring a changed state only becomes the known one.
+    // loading or restoring a changed state only becomes the known one, as it does whenever the editor is closed.
     void markEdited() {
         const size_t now = stateHash();
         if (now == knownState_) return;
         knownState_ = now;
         if (std::chrono::steady_clock::now() - settledFrom_ < std::chrono::seconds(2)) return;
+        // A plug-in can finish loading later than that (14 loading in-process): only an open editor makes it an edit.
+        if (!editorOpen_.load(std::memory_order_relaxed)) return;
         edits_.fetch_add(1, std::memory_order_relaxed);
     }
     void rememberState() {
@@ -631,7 +635,9 @@ public:
         frame_.onResize = onResize;
         frame_.ctx = ctx;
         view_->setFrame(&frame_);
+        editorOpen_.store(true, std::memory_order_relaxed); // edits made while attaching count
         if (view_->attached(parent, kPlatformTypeNSView) != kResultOk) {
+            editorOpen_.store(false, std::memory_order_relaxed);
             view_->release(); view_ = nullptr;
             err = "the editor could not be opened";
             return false;
@@ -644,6 +650,7 @@ public:
     }
     void closeEditor() override {
         if (!view_) return;
+        editorOpen_.store(false, std::memory_order_relaxed);
         view_->removed();
         view_->setFrame(nullptr);
         view_->release();
@@ -664,6 +671,7 @@ private:
     std::mutex producer_;
     std::map<uint32_t, double> touched_;
     std::atomic<uint64_t> edits_{0}, dropped_{0};
+    std::atomic<bool> editorOpen_{false};
     size_t knownState_ = 0; // main thread
     std::chrono::steady_clock::time_point settledFrom_{};
     BlockEvents events_;

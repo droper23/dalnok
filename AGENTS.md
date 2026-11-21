@@ -10,6 +10,8 @@ Swift/AppKit front end on macOS. GPL-3.0-or-later. This repo is also the project
 
 ## Layout
 - `engine/include/dalnok/dalnok.h` is the only public engine surface. Keep it plain C, versioned with `DALNOK_API_VERSION`.
+  `DalnokTrackInfo` and `DalnokClipInfo` are generated: edit `engine/api/views.def` and run `scripts/gen-api.py`
+  (it writes the C struct, the engine code that fills it and the app's Swift fields; CI runs it with `--check`).
 - `engine/src/`: C++20 internals. `platform/macos/` holds the only OS-specific engine code.
 - `app/macos/Dalnok/` is the AppKit UI, which talks to the engine only through the C API.
 - `tools/dalnok-cli/` is a headless driver for smoke tests, rendering, and benchmarks.
@@ -21,6 +23,8 @@ Swift/AppKit front end on macOS. GPL-3.0-or-later. This repo is also the project
 - `scripts/check.sh` builds, tests, and runs a live audio smoke test (needs an output device).
   `DALNOK_SANITIZE=1 scripts/check.sh` also runs the engine tests under ASan and TSan (CI always does).
 - `scripts/bundle.sh` creates `dist/Dalnok.app`.
+- `scripts/dev/compile-commands.sh` writes `compile_commands.json` (gitignored) for clangd and clang-tidy.
+  Incremental builds are already per-file: a one-line change in a hosting adapter rebuilds in about 3 s (debug).
 - `.build/debug/Dalnok <files…> --snapshot out.png [--play]` renders the UI to a PNG for visual checks.
 - `.build/debug/Dalnok <project> --uiwalk <dir>` sends real NSEvents through the windows (clicks, drags, keys,
   palette, piano roll, device panel, plug-in window, secondary windows) and writes a PNG of every visible window
@@ -32,7 +36,10 @@ Swift/AppKit front end on macOS. GPL-3.0-or-later. This repo is also the project
   makes the next real launch offer crash recovery. Restore any preferences the run changed (`defaults read Dalnok`).
   The driver presses and releases modifier keys, so it never leaves ⌘/⌥ latched system-wide.
 - `.build/debug/Dalnok <files…> --selftest <dir>` drives real menus and synthesized drags end to end.
-  Extend `app/macos/Dalnok/SelfTest.swift` for every new UI interaction.
+  Extend the self-test for every new UI interaction: the harness is `app/macos/Dalnok/SelfTest.swift`, steps live in
+  `SelfTest+<Area>.swift`. A check that depends on the machine rather than Dalnok (e.g. becoming the active app)
+  passes `needs: .frontmost` and reports SKIP with the reason instead of failing. `DALNOK_SAMPLE_RATE=44100` runs
+  the engine at 44.1 kHz whatever the device's rate (the self-test must pass at 44.1 and 48 kHz).
 - `.build/debug/dalnok-cli commands`, `command <proj> <name> '<json>' [--save]`, `render-project`,
   `bench --tracks N` (release build for meaningful numbers),
   `import <.rpp|.als|.logicx|.fcpxml|stems-folder> [--report-only] [--save x.dalnok] [--render x.wav]`.

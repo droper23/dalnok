@@ -10,8 +10,46 @@ enum Theme {
 
     enum Style: String, CaseIterable {
         case graphite, warmAnalog
-        var title: String { self == .graphite ? "Graphite" : "Warm Analog" }
+        /// A theme is a title, a palette and a look (A-17). Views read tokens and look capabilities, never the style
+        /// itself, so a third theme is a new case here (the switches below then ask for its three parts).
+        var title: String { switch self { case .graphite: "Graphite"; case .warmAnalog: "Warm Analog" } }
+        var palette: Palette { switch self { case .graphite: .graphite; case .warmAnalog: .warmAnalog } }
+        var look: Look { switch self { case .graphite: .graphite; case .warmAnalog: .warmAnalog } }
     }
+
+    /// The colour tokens of a theme.
+    struct Palette {
+        var window, panel, panelRaised, control, controlHi, laneA, laneB, laneHighlight, lcd: UInt32
+        var text, textDim, textFaint, accent, playhead, cycle, selectedHeader, knobHover: UInt32
+        var launcher: UInt32 // the clip launcher's background
+        static let graphite = Palette(window: 0x111214, panel: 0x17181B, panelRaised: 0x1D1F23, control: 0x2A2D33, controlHi: 0x3A3E46,
+                                      laneA: 0x141518, laneB: 0x16171A, laneHighlight: 0x1C1E22, lcd: 0x0B0C0E,
+                                      text: 0xE8E9EC, textDim: 0x9A9EA6, textFaint: 0x898E97, accent: 0xE8B25C, playhead: 0xF4F4F5,
+                                      cycle: 0xE9C24A, selectedHeader: 0x262930, knobHover: 0x44484F, launcher: 0x17181B)
+        static let warmAnalog = Palette(window: 0x18130F, panel: 0x211A15, panelRaised: 0x2A211A, control: 0x403229, controlHi: 0x584638,
+                                        laneA: 0x1C1713, laneB: 0x201A15, laneHighlight: 0x2A2019, lcd: 0x120D0A,
+                                        text: 0xF2E7D7, textDim: 0xC0AB96, textFaint: 0x9B8876, accent: 0xE6AB69, playhead: 0xF6E5CE,
+                                        cycle: 0xE8B54F, selectedHeader: 0x3A2B21, knobHover: 0x685344, launcher: 0x15100C)
+    }
+
+    /// How a theme draws each part of the window, by area. Views ask for the capability they draw ("is the device
+    /// chain a pedalboard?"), not which theme is on.
+    struct Look {
+        var pedalboard: Bool          // device chain: stomp boxes patched with cables on a board (else rack faceplates)
+        var consoleMixer: Bool        // mixer: a console with walnut cheeks, needle meter and channel modules
+        var channelStripHeaders: Bool // track headers: channel modules with scribble strips (else flat rows)
+        var tapeDeck: Bool            // transport: tape strip, reels and a VFD position display (else an LCD)
+        var hardwareControls: Bool    // knobs with caps, filament lamps, moulded buttons (else flat controls)
+        var ledLadderMeters: Bool     // track meters as LED ladders (else bars)
+        var tapeEditors: Bool         // comp editor as tape on a splicing block, piano roll on ledger paper
+        var consoleTrackColors: Bool  // track colours: vintage console caps (else the OKLCH rainbow)
+        static let graphite = Look(pedalboard: false, consoleMixer: false, channelStripHeaders: false, tapeDeck: false,
+                                   hardwareControls: false, ledLadderMeters: false, tapeEditors: false, consoleTrackColors: false)
+        static let warmAnalog = Look(pedalboard: true, consoleMixer: true, channelStripHeaders: true, tapeDeck: true,
+                                     hardwareControls: true, ledLadderMeters: true, tapeEditors: true, consoleTrackColors: true)
+    }
+    static var palette: Palette { activeStyle.palette }
+    static var look: Look { activeStyle.look }
     private static let preferenceKey = "appearanceStyle"
     static var preferredStyle: Style {
         get { UserDefaults.standard.string(forKey: preferenceKey).flatMap(Style.init(rawValue:)) ?? .graphite }
@@ -23,39 +61,37 @@ enum Theme {
         if let override = ProcessInfo.processInfo.environment["DALNOK_THEME"], let style = Style(rawValue: override) { return style }
         return preferredStyle
     }()
-    private static func tone(_ graphite: UInt32, _ warm: UInt32) -> NSColor {
-        hex(activeStyle == .warmAnalog ? warm : graphite)
-    }
+    private static func tone(_ token: KeyPath<Palette, UInt32>) -> NSColor { hex(palette[keyPath: token]) }
 
     // MARK: Neutrals (cool graphite, 4 elevation steps)
-    static var window: NSColor { tone(0x111214, 0x18130F) }
-    static var panel: NSColor { tone(0x17181B, 0x211A15) }        // ruler, control bar
-    static var panelRaised: NSColor { tone(0x1D1F23, 0x2A211A) }  // track headers
-    static var control: NSColor { tone(0x2A2D33, 0x403229) }      // fader grooves, chip backgrounds
-    static var controlHi: NSColor { tone(0x3A3E46, 0x584638) }
-    static var laneA: NSColor { tone(0x141518, 0x1C1713) }
-    static var laneB: NSColor { tone(0x16171A, 0x201A15) }
-    static var laneHighlight: NSColor { tone(0x1C1E22, 0x2A2019) } // selected track's lane
-    static var lcd: NSColor { tone(0x0B0C0E, 0x120D0A) }           // position display well
+    static var window: NSColor { tone(\.window) }
+    static var panel: NSColor { tone(\.panel) }        // ruler, control bar
+    static var panelRaised: NSColor { tone(\.panelRaised) }  // track headers
+    static var control: NSColor { tone(\.control) }      // fader grooves, chip backgrounds
+    static var controlHi: NSColor { tone(\.controlHi) }
+    static var laneA: NSColor { tone(\.laneA) }
+    static var laneB: NSColor { tone(\.laneB) }
+    static var laneHighlight: NSColor { tone(\.laneHighlight) } // selected track's lane
+    static var lcd: NSColor { tone(\.lcd) }           // position display well
     static let hairline = hex(0xFFFFFF, 0.07)
     static let separator = hex(0x000000, 0.55)
     static let gridMajor = hex(0xFFFFFF, 0.06)
     static let gridMinor = hex(0xFFFFFF, 0.025)
-    static var text: NSColor { tone(0xE8E9EC, 0xF2E7D7) }
-    static var textDim: NSColor { tone(0x9A9EA6, 0xC0AB96) }
-    static var textFaint: NSColor { tone(0x898E97, 0x9B8876) }
+    static var text: NSColor { tone(\.text) }
+    static var textDim: NSColor { tone(\.textDim) }
+    static var textFaint: NSColor { tone(\.textFaint) }
 
     // MARK: Reserved state colors (never used for tracks alone; always paired with form)
-    static var accent: NSColor { tone(0xE8B25C, 0xE6AB69) }        // time display / brand
-    static var playhead: NSColor { tone(0xF4F4F5, 0xF6E5CE) }
+    static var accent: NSColor { tone(\.accent) }        // time display / brand
+    static var playhead: NSColor { tone(\.playhead) }
     static let selection = hex(0xFFFFFF)
-    static var cycle: NSColor { tone(0xE9C24A, 0xE8B54F) } // cycle region in the ruler (Logic users know it as yellow)
+    static var cycle: NSColor { tone(\.cycle) } // cycle region in the ruler (Logic users know it as yellow)
     static let muteOn = hex(0x5B9BFF)        // blue chip (Logic convention)
     static let soloOn = hex(0xF5C451)        // yellow chip
     static let clipRed = hex(0xFF5A4F)
     static let recordOn = hex(0xE5484D)      // record arm / recording (always with an "R" or ● shape)
-    static var selectedHeader: NSColor { tone(0x262930, 0x3A2B21) }
-    static var knobHover: NSColor { tone(0x44484F, 0x685344) }
+    static var selectedHeader: NSColor { tone(\.selectedHeader) }
+    static var knobHover: NSColor { tone(\.knobHover) }
 
     // MARK: Metrics (4-pt grid)
     static let rulerHeight: CGFloat = 28
@@ -95,7 +131,7 @@ enum Theme {
     static func gradientColor(step: Int) -> NSColor {
         let n = gradientSteps
         let i = ((step % n) + n) % n
-        if activeStyle == .warmAnalog {
+        if look.consoleTrackColors {
             // Vintage console cap colours: warm and cool alternate so neighbours separate, and the muddy olive
             // and brown hues are left out (they sink into the brown canvas). Steady lightness, softer chroma.
             let hues: [Double] = [70, 255, 42, 150, 0, 228, 95, 292, 25, 128, 322, 195]

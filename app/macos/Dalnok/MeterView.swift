@@ -75,7 +75,7 @@ final class MeterView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
-        if Analog.on { return drawLadder(ctx) }
+        if Theme.look.ledLadderMeters { return drawLadder(ctx) }
         ctx.setFillColor(Theme.window.cgColor)
         ctx.fill(bounds)
         let gap: CGFloat = 1

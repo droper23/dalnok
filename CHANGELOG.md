@@ -2,6 +2,58 @@
 
 ## [Unreleased]
 
+- Faster mixing (A-13): each track's gain ramp, meter and output now use vector routines (Accelerate's vDSP on macOS).
+  - A 64-track block takes 46 µs instead of 143 µs, and a 256-track block 180 µs instead of 567 µs (about 3x faster).
+  - Offline export is 3.8x faster at 64 and at 256 tracks.
+  - Output matches the previous scalar mix within 1e-7. Only the meters' DC tracking moved from per sample to per block.
+
+- Internal (A-17): a theme is now a palette of colour tokens plus a set of look capabilities (pedalboard devices, console mixer, tape-deck transport, and so on). Views ask for the capability they draw instead of checking whether Warm Analog is on, so a third theme needs no view changes. Both themes render the same as before: 71 of 72 frames are identical or within run-to-run noise, and the remaining one differs only in playhead timing.
+
+- Fixed: at 44.1 kHz the position display could read one tick early on bar and beat lines. For example, bar 2 showed as 2.1.4.239, because a beat at 96 BPM is 27,562.5 frames. Step-entered MIDI notes were also a frame short.
+- Internal (A-18): the self-test is split into a harness and one file per area. It passes at both 44.1 and 48 kHz (`DALNOK_SAMPLE_RATE`). Checks that depend on the machine rather than on Dalnok report SKIP with the reason instead of failing. CI also runs the self-test.
+
+- Fixed: two kinds of project could be written with a format version too old for what they contain. A sidechain alone was written as version 5 (sidechains need 9), and a master-fader change as version 3 (master gain needs 7). An older Dalnok would have opened such a file and played it without the sidechain or at the wrong master level.
+- Internal (A-16): the project format has an explicit migration chain and a machine-readable schema (`engine/api/project-format.json`).
+  - Tests save 150 random projects, reload them and save again: the files come out identical, and every key matches the schema.
+  - A hand-written file for each of the 13 format versions loads.
+
+- Internal (A-15): the clip and track structs of the C API are defined once, in `engine/api/views.def`. `scripts/gen-api.py` generates the C structs, the engine code that fills them and the app's Swift fields, and CI checks that the generated files are current.
+  - Reading a track's clips takes one pass (C API 41, `dalnok_track_clips`): about 100x faster for a track with 1,638 clips.
+  - The app no longer re-reads every track's info on each refresh.
+- Internal (A-19): CI runs the release build, AddressSanitizer and ThreadSanitizer as parallel jobs. Before, ASan and TSan ran one after the other in a single job. `scripts/dev/compile-commands.sh` writes `compile_commands.json` for clangd.
+
+## [0.2.1] - 2026-11-20
+
+- Fixed: a dragged clip grew in proportion to its length, so a long clip swelled by 100 pt or more, swung far when it leaned and squashed hard when dropped. The lift, lean, squash and pop are now sized in points: every clip grows by the same few points (6.5 pt at the default Clip bounce).
+
+## [0.2.0] - 2026-11-20
+
+- **Safety is on by default:** third-party plug-ins run in their own processes, so a crash or hang in one is reported on its track instead of taking Dalnok down. Projects are unchanged. If you had turned Safety off, it stays off. Settings ▸ Plug-ins ▸ Safety is the off switch (ADR-0014). On 24 real projects:
+  - Isolated plug-ins on different tracks now process in parallel. 7 projects that used to drop plug-ins in 29-97 % of blocks now drop none.
+  - Opening a project never blocks the window for more than 13 ms. With plug-ins loading in-process, the worst single block is 0.3-1.7 s.
+  - Loading is faster in 23 of 24 projects.
+  - Fixed: each edit asked every isolated plug-in for its latency and waited for the answer, which caused 47-132 ms stalls while loading.
+  - An isolated plug-in now processes 0.75 s of silence before it starts, so one-off start-up work some instruments do no longer drops blocks on the first play.
+- Clips move with more life, in the spirit of FL Studio's playlist:
+  - A dragged clip lifts off its lane (a little larger, with a shadow) and springs from grid step to grid step and lane to lane as you drag, leaning into the direction it travels.
+  - Settings ▸ Appearance ▸ Clip bounce sets how lively all of this is, from Calm to Bouncy (default a little bouncier than the first tuning).
+  - A dashed ghost shows where it will land on the grid. Dropped, it glides onto the ghost and settles with a small squash.
+  - Pasted, duplicated or recorded clips pop in, and deleted ones shrink away.
+  - All of it follows Reduce Motion.
+- `dalnok-cli load-bench` now runs the main run loop between blocks, as the app does. Its in-process numbers were too optimistic: some plug-ins' main-thread work stalls playback, and the benchmark never let that work run.
+- Plug-ins fold, like Ableton's devices, so a long chain fits the panel (fold chevron, unit menu, or click the strip to unfold; saved with the project and undoable; C API 40). Graphite folds a unit to a slim rack blank with its name, power key and output level column. Warm Analog stands the pedal on its side edge: seen from above, the box tips over (its face foreshortens and darkens while its side panel comes up beside it), the patch cables stay plugged into its sides throughout, and the folded edge keeps its LED, a working footswitch and jack sockets. On/off works while folded.
+- More motion in the device chain: an added plug-in opens its place and settles in (Warm Analog: set down on the board with a small bounce, then its cables are plugged in); a removed one lifts off while the gap closes and the neighbours are re-patched. Units that didn't change are no longer rebuilt. All of it follows Reduce Motion.
+- Each unit has one Open button for the plug-in's own window. That window's title bar has Controls, which shows Dalnok's view of every parameter (searchable, automatable). For an isolated plug-in, Open shows only its own window; before, Dalnok's parameter window opened beside it. Edit Controls… (which parameters the unit shows) is in the unit's menu.
+- Warm Analog pedals show as much as a Graphite faceplate: a backlit readout window in the pedal's LED colour shows the control being turned (name and value), otherwise a gain-reduction LED ladder, the frequency response or the output trace with a one-line reading, and IN/OUT signal LEDs sit by the jacks.
+- Fixed: switching between Graphite and Warm Analog squeezed the arrangement into a few hundred points (the rebuilt window zoomed to fit before it had a width). The zoom and scroll position now carry over.
+- Safety (isolated plug-ins), verified on the owner's plug-in library and 24 real projects (first pass; see the default-on entry above). Fixed on the way, each with a test:
+  - An isolated plug-in's editor could open on another Space and stay invisible.
+  - Opening an Apple sampler's editor isolated crashed its host (a re-entrant resize), and its editor grew to 3,937 pt wide.
+  - Loading a plug-in with a multi-megabyte saved state blocked the main thread for up to 1.2 s (macOS ignores MSG_DONTWAIT on the socket pair).
+  - Projects opened marked Edited when a VST3, Audio Unit or CLAP plug-in reported values on its own after loading (only an open editor's changes count now).
+  - A plug-in crashing during playback marked the project edited.
+- New: `dalnok-cli load-bench <project> [--play S]` opens a project as the app does and reports load time, the worst main-thread block, failures, memory, block cost and isolated misses.
+
 - Internal: the transport state (play, playhead, cycle, punch, metronome, count-in) is now its own type, `Transport`, outside the engine class. Recording state is likewise grouped as `RecordingState`. No behaviour change: all 225 engine tests pass and the real-time checks are clean.
 
 - Faster redraw after edits:

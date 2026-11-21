@@ -40,6 +40,7 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
     let barsAndBeats = NSButton(checkboxWithTitle: "Bars and beats (otherwise minutes and seconds)", target: nil, action: nil)
     let secondaryClock = NSButton(checkboxWithTitle: "Show a small second clock under the position display", target: nil, action: nil)
     let trackHeight = NSSlider(value: 88, minValue: 48, maxValue: 400, target: nil, action: nil)
+    let clipBounce = NSSlider(value: 0.65, minValue: 0, maxValue: 1, target: nil, action: nil)
     private let trackHeightValue = NSTextField(labelWithString: "")
     // Audio & MIDI
     let outputPopup = NSPopUpButton(frame: .zero, pullsDown: true)
@@ -51,7 +52,7 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
     let metronome = NSButton(checkboxWithTitle: "Metronome click", target: nil, action: nil)
     // Plug-ins
     let deviceMeters = NSButton(checkboxWithTitle: "Show input and output meters on plug-ins (Graphite)", target: nil, action: nil)
-    let isolatePlugins = NSButton(checkboxWithTitle: "Run plug-ins in separate processes (experimental)", target: nil, action: nil)
+    let isolatePlugins = NSButton(checkboxWithTitle: "Run plug-ins in separate processes", target: nil, action: nil)
     /// How worn the plug-in units look (Graphite): 0 new … 1 well used.
     let wear = NSSlider(value: 0.25, minValue: 0, maxValue: 1, target: nil, action: nil)
     let peakHold = NSSlider(value: 1.5, minValue: 0, maxValue: 3, target: nil, action: nil)
@@ -286,6 +287,8 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
             ("Track meters", gainRings, nil),
             ("Track height", row([trackHeight, trackHeightValue, smallButton("Reset All Tracks", #selector(resetTrackHeights))]),
              "Drag a track header's bottom edge to size one track (double-click it for the default), or ⌥-scroll over the tracks to size them all."),
+            ("Clip bounce", slider(clipBounce, #selector(clipBounceChanged(_:)), { String(format: "%.0f%%", $0 * 100) }, from: "Calm", to: "Bouncy"),
+             "How lively dragged, dropped, new and deleted clips move: the lift, the spring between grid steps, the lean and the settle."),
             ("Motion", note("Animations follow System Settings ▸ Accessibility ▸ Display ▸ Reduce motion."), nil),
         ])
         // Audio & MIDI
@@ -365,6 +368,7 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
         isolatePlugins.state = Engine.isolatePlugins ? .on : .off
         isolatePlugins.isEnabled = Engine.pluginHostAvailable
         wear.doubleValue = Faceplate.wear
+        clipBounce.doubleValue = Double(ClipLift.bounce)
         peakHold.doubleValue = Faceplate.peakHold
         vuBallistics.selectItem(at: Faceplate.fastVU ? 1 : 0)
         bypassShrink.doubleValue = Faceplate.bypassShrink
@@ -453,6 +457,7 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
     }
     @objc func metersChanged(_ sender: Any?) { Faceplate.showMeters = deviceMeters.state == .on }
     @objc func isolationChanged(_ sender: Any?) { Engine.isolatePlugins = isolatePlugins.state == .on }
+    @objc func clipBounceChanged(_ sender: Any?) { ClipLift.bounce = CGFloat(clipBounce.doubleValue); showSliderValues() }
     @objc func wearChanged(_ sender: Any?) { Faceplate.wear = wear.doubleValue; showSliderValues() }
     @objc func peakHoldChanged(_ sender: Any?) { Faceplate.peakHold = peakHold.doubleValue; showSliderValues() }
     @objc func vuChanged(_ sender: Any?) { Faceplate.fastVU = vuBallistics.indexOfSelectedItem == 1 }

@@ -1,0 +1,496 @@
+// Self-test steps (Arrangement), split out of SelfTest.swift (A-18). The harness (check, perform, mouse) lives there.
+// SPDX-License-Identifier: GPL-3.0-or-later
+import AppKit
+import AVFoundation
+import DalnokEngine
+
+extension SelfTest {
+    /// Writes the timeline's committed layer and a fresh full draw as PNGs (diagnosing a redraw mismatch).
+    func dumpTimeline(_ name: String) {
+        let tl = w.timeline
+        guard let win = tl.window else { return }
+        let scale = win.backingScaleFactor, pw = Int(tl.bounds.width * scale), ph = Int(tl.bounds.height * scale)
+        func ctx() -> CGContext? {
+            let c = CGContext(data: nil, width: pw, height: ph, bitsPerComponent: 8, bytesPerRow: pw * 4, space: CGColorSpaceCreateDeviceRGB(),
+                              bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+            c?.scaleBy(x: scale, y: scale); return c
+        }
+        func write(_ c: CGContext?, _ suffix: String) {
+            guard let img = c?.makeImage() else { return }
+            let rep = NSBitmapImageRep(cgImage: img)
+            try? rep.representation(using: .png, properties: [:])?.write(to: workdir.appendingPathComponent("\(name)-\(suffix).png"))
+        }
+        let a = ctx()
+        if let a, let layer = tl.layer {
+            let overlays = (layer.sublayers ?? []).filter { !$0.isHidden }
+            overlays.forEach { $0.isHidden = true }; layer.render(in: a); overlays.forEach { $0.isHidden = false }
+        }
+        write(a, "committed")
+        let b = ctx()
+        if let b {
+            NSGraphicsContext.saveGraphicsState(); NSGraphicsContext.current = NSGraphicsContext(cgContext: b, flipped: tl.isFlipped)
+            tl.draw(tl.bounds); NSGraphicsContext.restoreGraphicsState()
+        }
+        write(b, "fresh")
+    }
+
+    /// Bytes by which the timeline's committed layer differs from drawing the whole view afresh (see partialTimelineRedraw).
+    func timelineMismatch() -> Int {
+        let tl = w.timeline
+        guard let win = tl.window else { return Int.max }
+        func context() -> CGContext? {
+            let scale = win.backingScaleFactor, pw = Int(tl.bounds.width * scale), ph = Int(tl.bounds.height * scale)
+            guard pw > 0, ph > 0, let ctx = CGContext(data: nil, width: pw, height: ph, bitsPerComponent: 8, bytesPerRow: pw * 4,
+                                                     space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+            else { return nil }
+            ctx.scaleBy(x: scale, y: scale)
+            return ctx
+        }
+        func bytes(_ ctx: CGContext) -> Data { Data(bytes: ctx.data!, count: ctx.bytesPerRow * ctx.height) }
+        func committed() -> Data? {
+            guard let layer = tl.layer, let ctx = context() else { return nil }
+            // The playhead and selection glow are sublayers that draw(_:) never paints; compare the drawn content only.
+            let overlays = (layer.sublayers ?? []).filter { !$0.isHidden }
+            overlays.forEach { $0.isHidden = true }
+            layer.render(in: ctx)
+            overlays.forEach { $0.isHidden = false }
+            return bytes(ctx)
+        }
+        func drawnFresh() -> Data? {
+            guard let ctx = context() else { return nil }
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: tl.isFlipped)
+            tl.draw(tl.bounds)
+            NSGraphicsContext.restoreGraphicsState()
+            return bytes(ctx)
+        }
+        func differing(_ a: Data?, _ b: Data?) -> Int {
+            guard let a, let b, a.count == b.count else { return Int.max }
+            var n = 0
+            a.withUnsafeBytes { x in b.withUnsafeBytes { y in for k in 0..<x.count where abs(Int(x[k]) - Int(y[k])) > 2 { n += 1 } } }
+            return n
+        }
+        return differing(committed(), drawnFresh())
+    }
+
+    /// A structural edit on one track redraws only that track's lane, and the result matches drawing everything.
+    /// The reference draws the whole view into an identical offscreen context; even a full redraw differs from it by a
+    /// few rasterized text bytes, so a partial redraw must differ by no more than a full one does.
+    func partialTimelineRedraw() async {
+        let tl = w.timeline
+        guard s.tracks.count >= 2, let clip = s.tracks[1].clips.first, let win = tl.window else {
+            return check(false, "partial redraw check needs two tracks with clips")
+        }
+        for _ in 0..<2 { tl.needsDisplay = true; win.displayIfNeeded(); CATransaction.flush(); await wait(0.05) }
+        let baseline = timelineMismatch()
+        var ids = [clip.id]
+        _ = dalnok_clips_nudge(s.h, &ids, 1, 4_800)
+        s.refresh()
+        win.displayIfNeeded(); CATransaction.flush() // the partial redraw, as the run loop would draw it
+        let lanes = tl.lanesDrawn, reread = s.rereadTracks
+        let partial = timelineMismatch()
+        check(reread == [s.tracks[1].id] && lanes == 1,
+              "a structural edit on one track redraws only its lane (\(lanes) lane drawn; tracks read \(reread.count))")
+        check(partial <= baseline, "the partially redrawn timeline matches a full redraw (\(partial) vs \(baseline) differing bytes)")
+        _ = perform("Undo")
+    }
+
+    func markersAndTrackTools() async {
+        let e = s.engine
+        e.pause()
+        e.seek(Int64(e.sampleRate * 2)); await wait(0.15)
+        check(perform("Add Marker", exact: true) && s.markers.count == 1 && e.undoName == "Add Marker", "Transport ▸ Add Marker adds one at the playhead")
+        e.seek(Int64(e.sampleRate * 6)); await wait(0.15)
+        _ = perform("Add Marker", exact: true)
+        e.seek(0); await wait(0.15)
+        var ok = perform("Next Marker", exact: true); await wait(0.15)
+        check(ok && abs(e.position - Int64(e.sampleRate * 2)) < 2, "Next Marker jumps to the first marker (\(e.position))")
+        ok = perform("Next Marker", exact: true); await wait(0.15)
+        check(ok && abs(e.position - Int64(e.sampleRate * 6)) < 2, "and then to the next (\(e.position))")
+        ok = perform("Previous Marker", exact: true); await wait(0.15)
+        check(ok && abs(e.position - Int64(e.sampleRate * 2)) < 2, "Previous Marker goes back (\(e.position))")
+        // Drag the first marker's flag on the ruler: it moves (snapped) as one undo step; a click seeks to it.
+        let tl = w.timeline, m0 = s.markers[0]
+        let flag = tl.convert(CGPoint(x: tl.xPos(forFrame: Double(m0.frame)) + 4, y: 6), to: nil)
+        tl.mouseDown(with: mouse(.leftMouseDown, flag))
+        tl.mouseDragged(with: mouse(.leftMouseDragged, CGPoint(x: flag.x + 80, y: flag.y)))
+        tl.mouseUp(with: mouse(.leftMouseUp, CGPoint(x: flag.x + 80, y: flag.y)))
+        let moved = s.markers.first { $0.id == m0.id }
+        check((moved?.frame ?? 0) > m0.frame && e.undoName == "Move Marker", "dragging a marker flag moves it (\(m0.frame) → \(moved?.frame ?? -1))")
+        _ = perform("Undo")
+        check(s.markers.first { $0.id == m0.id }?.frame == m0.frame, "undo puts it back")
+        e.seek(0); await wait(0.15)
+        tl.mouseDown(with: mouse(.leftMouseDown, flag)); tl.mouseUp(with: mouse(.leftMouseUp, flag))
+        await wait(0.15)
+        check(abs(e.position - m0.frame) < 2, "clicking a marker flag moves the playhead there")
+        s.renameMarker(m0.id, "Verse")
+        check(fixedString(s.markers[0].name) == "Verse", "markers can be renamed")
+        check(perform("Delete Marker", exact: true) && s.markers.count == 1, "Delete Marker removes the marker at the playhead")
+        _ = perform("Undo"); _ = perform("Undo")
+        s.markers.forEach { s.removeMarker($0.id) }
+        // Duplicate Track (⌃⇧D): below the original, with its clips; one undo step.
+        if let t = s.tracks.first(where: { !$0.isBus && !$0.isStack && !$0.clips.isEmpty }) {
+            w.headers.select(t.id)
+            let n = s.tracks.count
+            check(perform("Duplicate Track", exact: true) && s.tracks.count == n + 1, "Track ▸ Duplicate Track adds a copy")
+            let i = s.tracks.firstIndex { $0.id == t.id } ?? 0
+            let copy = s.tracks[min(i + 1, s.tracks.count - 1)]
+            check(copy.name == t.name + " copy" && copy.clips.count == t.clips.count && w.selectedTrack == copy.id,
+                  "the copy sits below with the same clips and is selected (\(copy.name))")
+            _ = perform("Undo")
+            check(s.tracks.count == n, "undo removes the copy")
+        }
+        // Hide Track / Show All Tracks: out of view, still playing; the header title counts them.
+        if let t = s.tracks.first {
+            w.headers.select(t.id)
+            let n = s.tracks.count
+            check(perform("Hide Track", exact: true) && s.tracks.count == n - 1 && s.hiddenCount == 1 && w.headers.row(t.id) == nil,
+                  "Track ▸ Hide Track removes it from the arrangement")
+            check(s.allTracks.contains { $0.id == t.id }, "the hidden track is still in the project")
+            check(perform("Show All Tracks", exact: true) && s.tracks.count == n && s.hiddenCount == 0, "Show All Tracks brings it back")
+        }
+        // Zoom to selection and vertical zoom.
+        if let c = s.tracks.flatMap(\.clips).first {
+            tl.selectClips([c.id])
+            check(perform("Zoom to Selection", exact: true), "View ▸ Zoom to Selection")
+            let x0 = tl.xPos(forFrame: Double(c.start)), x1 = tl.xPos(forFrame: Double(c.end))
+            check(x0 >= 0 && x1 <= tl.bounds.width && (x1 - x0) > tl.bounds.width * 0.8, "the selected clip fills the view (\(Int(x0))–\(Int(x1)) of \(Int(tl.bounds.width)))")
+            tl.selectClips([])
+            _ = perform("Zoom to Fit")
+        }
+        let h0 = Theme.trackHeight
+        check(perform("Taller Tracks", exact: true) && Theme.trackHeight > h0, "View ▸ Taller Tracks (\(h0) → \(Theme.trackHeight))")
+        w.window?.layoutIfNeeded()
+        if let row = w.headers.rows.dropFirst().first {
+            check(abs(row.frame.height - Theme.trackHeight) < 0.5 && abs(row.frame.minY - (Theme.trackHeight - w.headers.scrollY)) < 0.5,
+                  "header rows follow the new height and stay aligned with the lanes")
+        }
+        check(perform("Shorter Tracks", exact: true) && abs(Theme.trackHeight - h0) < 0.5, "Shorter Tracks returns to \(h0)")
+        w.window?.layoutIfNeeded()
+        // One track's height: drag its header's bottom edge (one undo step); the lanes below move with it.
+        if w.headers.rows.count >= 2 {
+            let row = w.headers.rows[0], id = row.trackId
+            let edge = row.convert(CGPoint(x: 40, y: row.bounds.height - 2), to: nil)
+            row.mouseDown(with: mouse(.leftMouseDown, edge))
+            row.mouseDragged(with: mouse(.leftMouseDragged, CGPoint(x: edge.x, y: edge.y - 30)))
+            row.mouseDragged(with: mouse(.leftMouseDragged, CGPoint(x: edge.x, y: edge.y - 60)))
+            row.mouseUp(with: mouse(.leftMouseUp, CGPoint(x: edge.x, y: edge.y - 60)))
+            w.window?.layoutIfNeeded()
+            let h = s.track(id)?.height ?? 0
+            check(abs(h - (h0 + 60)) < 1 && s.engine.undoName == "Track Height" && abs(w.headers.rows[0].frame.height - h) < 0.5
+                  && abs(w.timeline.laneY(1) - (Theme.rulerHeight + h - w.timeline.scrollY)) < 0.5 && abs(s.laneHeight(1) - Theme.trackHeight) < 0.5,
+                  "dragging a header's bottom edge sizes that one track; the lanes below follow (\(h))")
+            _ = perform("Undo")
+            check((s.track(id)?.height ?? -1) == 0, "one undo restores it")
+            s.setTrackHeight(id, 56); w.window?.layoutIfNeeded()
+            check(w.headers.rows[0].gain.isHidden && !w.headers.rows[0].nameLabel.isHidden, "a short track shows its name and buttons, not its knobs")
+            s.setTrackHeight(id, 0); w.window?.layoutIfNeeded()
+            check(!w.headers.rows[0].gain.isHidden, "and the knobs return at full height")
+            // ⌥-scroll sizes every track.
+            let before = Theme.trackHeight
+            if let cg = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: 40, wheel2: 0, wheel3: 0) {
+                cg.flags = .maskAlternate
+                if let ev = NSEvent(cgEvent: cg) { w.timeline.scrollWheel(with: ev) }
+            }
+            check(Theme.trackHeight > before + 5, "⌥-scroll makes every track taller (\(before) → \(Theme.trackHeight))")
+            w.setTrackHeight(before); w.window?.layoutIfNeeded()
+        }
+        // A long instrument name never runs over the pan knob.
+        if let row = w.headers.rows.first {
+            let saved = row.inputButton.title
+            row.inputButton.title = "A Very Long Instrument Name · 3 FX"
+            row.layoutSubtreeIfNeeded()
+            check(row.inputButton.frame.minX >= row.pan.frame.maxX + 7, "the input label stops before the pan knob (truncating)")
+            row.inputButton.title = saved
+        }
+        // The small second clock.
+        TransportBar.showsSecondaryClock = true
+        w.tick()
+        check(!w.transport.subTimeLabel.isHidden && !w.transport.subTimeLabel.stringValue.isEmpty
+              && w.transport.subTimeLabel.stringValue != w.transport.timeLabel.stringValue, "the second clock shows the other time format (\(w.transport.subTimeLabel.stringValue))")
+        TransportBar.showsSecondaryClock = false
+        check(w.transport.subTimeLabel.isHidden, "and hides again")
+        UserDefaults.standard.removeObject(forKey: "secondaryClock")
+    }
+
+    // MARK: Dead controls: nothing may look usable while doing nothing
+
+    func deadControls() {
+        var dead: [String] = []
+        for a in ShortcutRegistry.shared.actions {
+            guard let it = a.item, let sel = it.action else { continue }
+            let target: AnyObject? = it.target ?? (NSApp.target(forAction: sel, to: nil, from: it) as AnyObject?) ?? (w.responds(to: sel) ? w : nil)
+                ?? (w.window?.responds(to: sel) == true ? w.window : nil) ?? (NSApp.responds(to: sel) ? NSApp : nil)
+            if target?.responds(to: sel) != true { dead.append(a.title) }
+        }
+        check(dead.isEmpty, "every menu command has a handler (\(dead))")
+        var buttons: [String] = []
+        func walk(_ v: NSView) {
+            if !v.isHidden, let b = v as? NSButton, type(of: b) == NSButton.self, b.isEnabled, b.action == nil, b.target == nil {
+                buttons.append(b.title.isEmpty ? (b.accessibilityLabel() ?? "untitled") : b.title)
+            }
+            v.subviews.forEach(walk)
+        }
+        for win in [w.window, w.pluginManager.window, w.shortcutsEditor.window].compactMap({ $0 }) { if let c = win.contentView { walk(c) } }
+        check(buttons.isEmpty, "no enabled button without an action (\(buttons))")
+        // Accessibility: every visible, enabled control has a name VoiceOver can read.
+        var unnamed: [String] = []
+        func walkNames(_ v: NSView) {
+            guard !v.isHidden else { return } // a hidden container hides everything in it
+            if let c = v as? NSControl, c.isAccessibilityElement(), !(c is NSScroller), c.isEnabled, !(c is NSTextField && !(c as! NSTextField).isEditable) {
+                let label = c.accessibilityLabel() ?? ""
+                let title = (c as? NSButton)?.title ?? (c as? NSPopUpButton)?.titleOfSelectedItem ?? (c as? NSSearchField)?.placeholderString ?? ""
+                let segs = (c as? NSSegmentedControl).map { sc in (0..<sc.segmentCount).compactMap { sc.label(forSegment: $0) }.joined() } ?? ""
+                if label.isEmpty && title.isEmpty && segs.isEmpty && (c as? NSTextField)?.placeholderString?.isEmpty != false {
+                    unnamed.append(String(describing: type(of: c)) + (c.toolTip.map { " (\($0.prefix(30)))" } ?? ""))
+                }
+            }
+            v.subviews.forEach(walkNames)
+        }
+        for win in [w.window, w.pluginManager.window, w.shortcutsEditor.window].compactMap({ $0 }) { if let c = win.contentView { walkNames(c) } }
+        check(unnamed.isEmpty, "every enabled control has an accessible name (\(Set(unnamed).sorted().prefix(12)))")
+    }
+
+    // MARK: Tape machine (Analog Mode transport)
+
+    func tapeMachine() async {
+        let e = s.engine
+        e.pause(); e.seek(0); await wait(0.15)
+        check(perform("Tape Machine", exact: true) && w.tapeDeck?.window?.isVisible == true, "View ▸ Tape Machine opens the deck")
+        guard let deck = w.tapeDeck?.deck else { return }
+        let saved = Motion.override; Motion.override = true; defer { Motion.override = saved }
+        if let window = w.tapeDeck?.window {
+            NSApp.activate()
+            window.makeKeyAndOrderFront(nil)
+            window.makeFirstResponder(deck.loop)
+            await wait(0.15)
+            func deckKey(_ chars: String, _ code: UInt16) -> NSEvent {
+                NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                 windowNumber: window.windowNumber, context: nil, characters: chars, charactersIgnoringModifiers: chars,
+                                 isARepeat: false, keyCode: code)!
+            }
+            let space = deckKey(" ", 49), enter = deckKey("\r", 36)
+            let cycleBefore = s.cycle.on
+            check(!(NSApp.mainMenu?.performKeyEquivalent(with: space) ?? true), "focused tape key keeps Space from the shortcut registry")
+            deck.loop.keyDown(with: space); deck.loop.keyUp(with: space)
+            check(s.cycle.on != cycleBefore && !e.isPlaying, "Space activates focused LOOP instead of starting playback")
+            deck.loop.keyDown(with: enter); deck.loop.keyUp(with: enter)
+            check(s.cycle.on == cycleBefore, "Return activates the focused tape key")
+            window.makeFirstResponder(deck.ffwd)
+            deck.ffwd.keyDown(with: space)
+            check(w.tapeTransport.winding == 1, "keyboard holds FF while pressed")
+            deck.ffwd.keyUp(with: space)
+            check(w.tapeTransport.winding == 0, "releasing the keyboard stops FF")
+        }
+        deck.step(dt: 0.016)
+        let a0 = deck.model.angles
+        deck.play.onPress?()
+        await wait(0.6)
+        deck.step(dt: 0.016)
+        check(e.isPlaying && deck.play.lit, "PLAY starts the shared transport and lights")
+        check(deck.model.angles.0 > a0.0 && deck.model.angles.1 > a0.1, "both reels turn forward while playing (\(a0) → \(deck.model.angles))")
+        let start = e.position
+        deck.pause.onPress?(); await wait(0.15); deck.step(dt: 0.016)
+        let held = deck.model.angles
+        await wait(0.2); deck.step(dt: 0.016)
+        check(!e.isPlaying && deck.model.angles == held, "PAUSE stops the reels where they are")
+        deck.wind(1, seconds: 1)
+        await wait(0.15); deck.step(dt: 0.016)
+        let wound = Double(e.position - start) / e.sampleRate
+        check(abs(wound - TapeDeckView.windSpeed) < 1.5 && deck.model.angles.1 > held.1, "F.FWD winds the playhead forward at \(TapeDeckView.windSpeed)× (\(wound) s)")
+        // Let the reel animation catch the forward seek before testing the opposite direction.
+        for _ in 0..<40 {
+            if abs(deck.model.shown - Double(e.position) / e.sampleRate) < 0.1 { break }
+            await wait(0.05); deck.step(dt: 0.05)
+        }
+        let before = deck.model.angles
+        deck.wind(-1, seconds: 0.5)
+        for _ in 0..<40 {
+            await wait(0.05); deck.step(dt: 0.05)
+            if deck.model.angles.1 < before.1 { break }
+        }
+        check(deck.model.angles.1 < before.1, "REWIND turns the reels backwards")
+        deck.play.onPress?(); await wait(0.3)
+        deck.stop.onPress?(); await wait(0.15)
+        check(!e.isPlaying && abs(e.position - deck.playStartForTests) < Int64(e.sampleRate * 0.05), "STOP returns to where playback started")
+        deck.rtz.onPress?(); await wait(0.15)
+        check(e.position == 0, "RTZ returns to zero")
+        let cycle = s.cycle.on
+        deck.loop.onPress?(); deck.step(dt: 0.016)
+        check(s.cycle.on != cycle && deck.loop.lit == s.cycle.on, "LOOP toggles the same cycle as the main window")
+        deck.loop.onPress?()
+        // The tape speed changes the drawing only.
+        deck.speedSwitch.selectedSegment = 2; _ = deck.speedSwitch.target?.perform(deck.speedSwitch.action, with: deck.speedSwitch)
+        check(deck.model.speedFactor == 2, "the 30 ips switch doubles the tape speed of the drawing")
+        deck.speedSwitch.selectedSegment = 1; _ = deck.speedSwitch.target?.perform(deck.speedSwitch.action, with: deck.speedSwitch)
+        if let v = w.tapeDeck?.window?.contentView, let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) {
+            v.cacheDisplay(in: v.bounds, to: rep)
+            try? rep.representation(using: .png, properties: [:])?.write(to: workdir.appendingPathComponent("tape-machine.png"))
+        }
+        w.tapeDeck?.window?.close()
+        e.seek(0); await wait(0.1)
+        // Warm Analog: the same keys live in the control bar, so the window is optional.
+        if (Theme.activeStyle == .warmAnalog) {
+            let strip = w.transport.tapeStrip
+            check(strip.superview != nil && strip.reels.superview != nil && strip.transport != nil, "the control bar carries the tape strip (reels and keys)")
+            strip.play.onPress?(); await wait(0.4)
+            check(e.isPlaying, "the bar's PLAY key starts the transport")
+            await wait(0.1)
+            check(strip.play.lit, "and its lamp lights")
+            strip.play.onPress?(); await wait(0.2)
+            check(!e.isPlaying, "pressing PLAY again pauses")
+            let p0 = e.position
+            w.tapeTransport.wind(1, seconds: 0.5); await wait(0.15)
+            check(Double(e.position - p0) / e.sampleRate > 5, "the bar's FF winds the playhead (shared with the window)")
+            strip.rtz.onPress?(); await wait(0.15)
+            check(e.position == 0, "RTZ in the bar returns to zero")
+        }
+    }
+
+    // MARK: Cut / copy / paste / duplicate / select all
+
+    func clipEditing() async {
+        let e = s.engine
+        guard let t0 = s.tracks.first, let c = t0.clips.first else { return check(false, "a clip exists for clip editing") }
+        w.window?.makeKeyAndOrderFront(nil)
+        check(menuItem("Copy", exact: true)?.target == nil && menuItem("Paste", exact: true)?.target == nil,
+              "Cut/Copy/Paste go through the responder chain (text fields keep ⌘C/⌘V)")
+        let before = t0.clips.count
+        w.timeline.selectClips([c.id])
+        check(perform("Mute Clip", exact: true) && s.clip(c.id)?.muted == true, "Clip ▸ Mute Clip mutes the selected clip")
+        check(menuItem("Unmute Clip", exact: true)?.isEnabled == true, "the clip menu offers Unmute Clip")
+        check(perform("Unmute Clip", exact: true) && s.clip(c.id)?.muted == false, "Clip ▸ Unmute Clip restores the selected clip")
+        check(perform("Duplicate", exact: true) && s.track(t0.id)?.clips.count == before + 1, "Edit ▸ Duplicate adds a copy")
+        let dup = w.timeline.selectedClip.flatMap { s.clip($0) }
+        check(dup?.start == c.end && dup?.length == c.length && dup?.offset == c.offset && e.undoName == "Duplicate",
+              "the copy starts where the clip ends, same region (\(dup?.start ?? -1) vs \(c.end))")
+        check(perform("Undo") && s.track(t0.id)?.clips.count == before, "undo removes the duplicate")
+        // Cut and paste with real key events.
+        w.timeline.selectClips([c.id])
+        e.seek(c.end + 24_000); await wait(0.15)
+        let at = e.position
+        _ = NSApp.mainMenu?.performKeyEquivalent(with: keyEvent("x", code: 7, .command))
+        check(s.clip(c.id) == nil && e.undoName.hasPrefix("Cut"), "⌘X cuts the clip (\(e.undoName))")
+        w.headers.select(t0.id)
+        _ = NSApp.mainMenu?.performKeyEquivalent(with: keyEvent("v", code: 9, .command))
+        let pasted = w.timeline.selectedClip.flatMap { s.clip($0) }
+        check(pasted?.track == t0.id && pasted?.start == at && pasted?.length == c.length && pasted?.offset == c.offset,
+              "⌘V pastes the cut clip at the playhead (\(pasted?.start ?? -1) vs \(at))")
+        _ = perform("Undo"); _ = perform("Undo")
+        check(s.clip(c.id)?.start == c.start && s.track(t0.id)?.clips.count == before, "undo twice puts the clip back")
+        let all = s.tracks.flatMap(\.clips).count
+        check(ShortcutRegistry.shared.action("edit.select_all").map { ShortcutRegistry.shared.perform($0) } == true && w.timeline.selectedClips.count == all, "Edit ▸ Select All selects \(all) clips")
+        w.timeline.selectClips([])
+        e.seek(0); await wait(0.1)
+    }
+
+    // MARK: Migration & onboarding
+
+    func migrationSteps() async {
+        let e = s.engine
+        let savedDAW = SourceDAW.preferred, savedDone = WelcomeController.hasCompleted
+        defer {
+            SourceDAW.preferred = savedDAW
+            WelcomeController.hasCompleted = savedDone
+            Migration.applyKeymap(savedDAW, to: NSApp.mainMenu)
+        }
+        // Palette speaks other DAWs' languages.
+        w.showCommandPalette(nil)
+        w.palette.filter("bounce")
+        check(w.palette.results.first?.title == "Export Mix…", "palette: 'bounce' → \(w.palette.results.first?.title ?? "-")")
+        w.palette.filter("split region")
+        check(w.palette.results.first?.title == "Split at Playhead", "palette: 'split region' → \(w.palette.results.first?.title ?? "-")")
+        w.palette.filter("collect all and save")
+        check(w.palette.results.first?.title == "Copy Audio into Project on Save", "palette: Ableton's 'collect all and save'")
+        w.palette.filter("flex time")
+        check(w.palette.results.contains { $0.title.hasPrefix("Flex Time") && $0.item == nil }, "palette lists planned 'Flex Time' with status")
+        w.palette.close()
+
+        // Shortcut presets: expected keys, and no collisions in any preset.
+        for daw in [SourceDAW.logic, .ableton, .reaper] {
+            Migration.applyKeymap(daw, to: NSApp.mainMenu)
+            let split = menuItem("Split at Playhead")
+            let expected = daw == .ableton ? ("e", NSEvent.ModifierFlags.command) : daw == .reaper ? ("s", []) : ("t", .command)
+            check(split?.keyEquivalent == expected.0 && split?.keyEquivalentModifierMask == expected.1,
+                  "\(daw.title) preset: Split = \(PaletteIndex.shortcutString(split!))")
+            let conflicts = Migration.shortcutConflicts(NSApp.mainMenu)
+            check(conflicts.isEmpty, "\(daw.title) preset has no shortcut collisions \(conflicts)")
+        }
+        Migration.applyKeymap(nil, to: NSApp.mainMenu)
+        check(menuItem("Split at Playhead")?.keyEquivalent == "t", "Dalnok defaults restored")
+
+        // Concept guide.
+        w.conceptGuide.show(daw: .ableton, query: "warp")
+        check(w.conceptGuide.rows.contains { $0.term == "Warping" }, "concept guide: Ableton 'Warping' → \(w.conceptGuide.rows.first?.dalnok ?? "-")")
+        w.conceptGuide.window.orderOut(nil)
+
+        await recordingAndMidi()
+        await motion()
+        pluginManager()
+        hostedPlugins()
+        devicePanel()
+        await deviceFolding()
+
+        // Import a REAPER project end to end (fixture built from this run's audio files).
+        let media = workdir.appendingPathComponent("Media")
+        try? FileManager.default.createDirectory(at: media, withIntermediateDirectories: true)
+        for f in files { try? FileManager.default.copyItem(at: f, to: media.appendingPathComponent(f.lastPathComponent)) }
+        var rpp = "<REAPER_PROJECT 0.1 \"7.0/macOS\"\n  SAMPLERATE 48000 0 0\n"
+        for (i, f) in files.enumerated() {
+            rpp += "  <TRACK\n    NAME \"Imported \(i + 1)\"\n    VOLPAN 1 0 -1 -1 1\n    <ITEM\n      POSITION \(i)\n      LENGTH 1\n"
+                + "      <SOURCE WAVE\n        FILE \"Media\\\(f.lastPathComponent)\"\n      >\n    >\n  >\n"
+        }
+        rpp += "  <TRACK\n    NAME Keys\n    <ITEM\n      POSITION 0\n      LENGTH 2\n      <SOURCE MIDI\n      >\n    >\n  >\n>\n"
+        let rppURL = workdir.appendingPathComponent("from-reaper.rpp")
+        try? rpp.write(to: rppURL, atomically: true, encoding: .utf8)
+        let logicPackage = workdir.appendingPathComponent("Example.logicx", isDirectory: true)
+        try? FileManager.default.createDirectory(at: logicPackage, withIntermediateDirectories: true)
+        check(w.panel(NSOpenPanel(), shouldEnable: logicPackage), "Open enables Logic project packages")
+        check(menuItem("Import Project from Another DAW") == nil, "foreign projects use the Open menu")
+        check(w.saveProject(to: workdir.appendingPathComponent("before-import.dalnok")), "save before import prompt")
+        let revision = e.revision
+        Task { await wait(0.2); if let sheet = w.window?.attachedSheet { w.window?.endSheet(sheet, returnCode: .alertSecondButtonReturn) } }
+        let cancelled = await withCheckedContinuation { cont in w.openSelectedProject(rppURL) { cont.resume(returning: $0) } }
+        check(!cancelled && e.revision == revision, "cancel import leaves the current project unchanged")
+        Task { await wait(0.2); if let sheet = w.window?.attachedSheet { w.window?.endSheet(sheet, returnCode: .alertFirstButtonReturn) } }
+        let ok = await withCheckedContinuation { cont in w.openSelectedProject(rppURL) { cont.resume(returning: $0) } }
+        check(ok && w.lastImportReport?.app == "REAPER", "Open confirms and imports a REAPER project")
+        check(s.tracks.count == files.count + 1 && s.tracks.flatMap(\.clips).allSatisfy { !$0.offline }, "\(s.tracks.count) tracks, all audio found")
+        check(s.tracks.flatMap(\.clips).map(\.start).sorted() == (0..<files.count).map { Int64($0) * Int64(e.sampleRate) },
+              "clip positions from the RPP")
+        check(w.lastImportReport?.notImported.first?.contains("MIDI") == true, "report explains the skipped MIDI item")
+        let unavailableReport = ImportReport(json: "{}", unavailablePlugins: ["Track — Instrument: state rejected"])
+        check(unavailableReport?.unavailablePlugins.first?.contains("state rejected") == true, "import report retains unavailable plug-in details")
+        check(e.isDirty && s.projectURL == nil && w.window?.title == "Untitled", "import is a new unsaved project")
+
+        // Stems folder.
+        let stems = workdir.appendingPathComponent("Stems")
+        try? FileManager.default.createDirectory(at: stems, withIntermediateDirectories: true)
+        for (i, f) in files.enumerated() { try? FileManager.default.copyItem(at: f, to: stems.appendingPathComponent("Mix#0\(i + 1) \(f.lastPathComponent)")) }
+        let ok2 = await withCheckedContinuation { cont in w.importProject(stems, confirm: false) { cont.resume(returning: $0) } }
+        check(ok2 && s.tracks.count == files.count && s.tracks.allSatisfy { $0.clips.first?.start == 0 }, "stems folder → \(s.tracks.count) aligned tracks")
+        check(s.tracks.first?.name.hasPrefix("01 ") == true, "common stem prefix stripped (\(s.tracks.first?.name ?? "-"))")
+
+        // Welcome flow: choosing a DAW applies its preset and starts the project finder.
+        w.welcome.show()
+        // Secondary windows open centered on Dalnok's screen (Settings opened at the bottom-left corner).
+        func centered(_ win: NSWindow?) -> Bool {
+            guard let win, let vf = (w.window?.screen ?? NSScreen.main)?.visibleFrame else { return false }
+            return abs(win.frame.midX - vf.midX) < 2 && abs(win.frame.midY - vf.midY) < 2
+        }
+        await wait(0.1)
+        check(centered(w.welcome.window), "welcome window opens centered (frame \(w.welcome.window.frame))")
+        let settingsWasOpen = w.settings.window?.isVisible == true
+        if !settingsWasOpen {
+            w.settings.show()
+            await wait(0.1)
+            check(centered(w.settings.window), "settings window opens centered (frame \(String(describing: w.settings.window?.frame)))")
+            w.settings.window?.orderOut(nil)
+        }
+        w.welcome.choose(.ableton)
+        check(SourceDAW.preferred == .ableton && menuItem("Split at Playhead")?.keyEquivalent == "e", "welcome: Ableton chosen, preset applied")
+        await w.welcome.rescan()
+        check(true, "project finder scanned (\(w.welcome.projects.count) projects found)")
+        w.welcome.window.orderOut(nil)
+    }
+}

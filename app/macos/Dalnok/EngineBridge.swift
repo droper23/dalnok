@@ -38,7 +38,9 @@ final class Engine {
     private var isolationObserver: NSObjectProtocol?
 
     init() {
-        handle = dalnok_engine_create(0)
+        // DALNOK_SAMPLE_RATE runs the engine at another rate than the output device's (Core Audio converts), so the
+        // self-test can be run as on a 44.1 kHz machine (A-18). Unset: the device's own rate.
+        handle = dalnok_engine_create(Double(ProcessInfo.processInfo.environment["DALNOK_SAMPLE_RATE"] ?? "") ?? 0)
         sampleRate = dalnok_engine_sample_rate(handle)
         applyPluginIsolation()
         isolationObserver = NotificationCenter.default.addObserver(forName: Engine.isolationChanged, object: nil, queue: .main) { [weak self] _ in
@@ -49,9 +51,10 @@ final class Engine {
     // MARK: Out-of-process plug-ins (ADR-0014)
 
     static let isolationChanged = Notification.Name("DalnokPluginIsolationChanged")
-    /// Settings > Plug-ins: run third-party plug-ins in their own processes. Applies to plug-ins loaded afterwards.
+    /// Settings > Plug-ins > Safety: run third-party plug-ins in their own processes. Applies to plug-ins loaded
+    /// afterwards. On unless turned off (ADR-0014, default since 0.2); an explicit choice, either way, is kept.
     static var isolatePlugins: Bool {
-        get { UserDefaults.standard.bool(forKey: "isolatePlugins") }
+        get { UserDefaults.standard.object(forKey: "isolatePlugins") as? Bool ?? true }
         set { UserDefaults.standard.set(newValue, forKey: "isolatePlugins"); NotificationCenter.default.post(name: isolationChanged, object: nil) }
     }
     static var pluginHostPath: String {

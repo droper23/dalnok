@@ -52,8 +52,8 @@ model copy per parameter edit.
 | 12 | A-08 | Async plug-in activation with progress/cancel/watchdog | L | A-01a | Slow fixture plug-in never freezes the UI |
 | 13 | A-10 | libFuzzer targets + property tests + local sanitizer pass | M | — | 10-minute fuzz run clean; 1,000 random round-trips pass |
 | 14 | A-14 | Handoff health metrics + test | S | — | Backlog observable; edit audible within N callbacks |
-| 15 | A-16 | Project schema + migration chain + round-trip tests | M | A-10 | Versions 1–13 load; save/load stable |
-| 16 | A-18 | Split self-test harness; inject clock and sample rate | M | — | Deterministic at 44.1/48 kHz; check count unchanged |
+| 15 | A-16 | Project schema + migration chain + round-trip tests | M | A-10 | Versions 1–13 load; save/load stable — **Done (2026-11-20): migration table, schema, 150 random round trips, fixtures v1–13; fixed two under-versioned writes** |
+| 16 | A-18 | Split self-test harness; inject clock and sample rate | M | — | Deterministic at 44.1/48 kHz; check count unchanged — **Done (2026-11-20): split by area, 581 PASS at 44.1 and 48 kHz, environment SKIPs, CI job** |
 
 ---
 
@@ -65,9 +65,9 @@ are split.
 | Order | ID | Item | Effort | Depends on | Acceptance |
 |---|---|---|---|---|---|
 | 17 | A-06 | Extract Transport, Recording, PluginHost, RenderCompiler, UndoStack services | L | Phase 1 | 188 tests unchanged; no file > ~1,200 engine lines |
-| 18 | A-15 | Generate or bulk-load the C API model DTOs | L | A-05, A-06 | One definition per field; measured per-clip read cost down |
-| 19 | A-19 | Split engine targets + build cache + compile_commands.json | M | A-06 | Adapter-only change rebuilds < 10 s; CI time down |
-| 20 | A-17 | Inject theme values; enable live switching | M | — | Both themes pixel-identical; switch without relaunch |
+| 18 | A-15 | Generate or bulk-load the C API model DTOs | L | A-05, A-06 | One definition per field; measured per-clip read cost down — **Done (2026-11-20): views.def generates structs, fill code and Swift fields; one-pass clip reads 102x** |
+| 19 | A-19 | Split engine targets + build cache + compile_commands.json | M | A-06 | Adapter-only change rebuilds < 10 s; CI time down — **Done (2026-11-20): adapter change rebuilds in 3 s already; CI parallel jobs ~9 → ~5.5 min; compile_commands.json** |
+| 20 | A-17 | Inject theme values; enable live switching | M | — | Both themes pixel-identical; switch without relaunch — **Done (2026-11-20): palette + look capabilities; 71/72 frames identical or within noise** |
 
 ---
 
@@ -76,9 +76,9 @@ are split.
 | Order | ID | Item | Effort | Depends on | Acceptance |
 |---|---|---|---|---|---|
 | 21 | A-09 | Disk streaming with block cache and guaranteed residency | XL | A-04 | 2-hour file plays, bounded RSS, zero dropouts, bit-identical renders |
-| 22 | A-11 | Skip silent/no-op tracks per block | M | A-04 | 256-track/8-active costs near 8-track; bit-identical output |
+| 22 | A-11 | Skip silent/no-op tracks per block | M | A-04 | 256-track/8-active costs near 8-track; bit-identical output — **Done (2026-11-20): measured; 256 tracks with 8 audible = 24.5 µs vs 19.3 µs for 8** |
 | 23 | A-12 | Denormal/FP-environment guard | S | — | No decay-tail penalty; output unchanged above −140 dBFS |
-| 24 | A-13 | SIMD for copy, fades, ramp, meters | M | A-11 | ≥25% live-path gain at 64–256 tracks (measured) |
+| 24 | A-13 | SIMD for copy, fades, ramp, meters | M | A-11 | ≥25% live-path gain at 64–256 tracks (measured) — **Done (2026-11-20): vDSP kernels + block meters, 64 tracks −67 %, 256 −68 %, within 9e-8** |
 
 ---
 
@@ -153,7 +153,7 @@ Rules the roadmap enforces:
 | A-05 change sets / incremental UI | **Done** | Per-track revisions (C API 33); Session re-reads only changed tracks; mixer parameter-only path. 4,096 clips: parameter refresh p50 ≈4.0 → 0.155 ms; one-track structural refresh 24.6 → 0.56 ms. Randomized revision property test, self-test re-read counts. Drawing/compositing still unmeasured |
 | A-01 out-of-process hosting | **Stage 2** | ADR-0014: opt-in `dalnok-plughost` per instance; existing VST3/CLAP/delay-compensation suites pass isolated; crash and hang mid-session or while loading are contained, reported and reloadable; ≈34 µs per plug-in per block. Stage 2: isolated deferred loading (A-08), editors in a host-owned window (ADR-0015, test VST3 and AUDelay: engine tests and self-test). Shared per-callback deadline (3 hung plug-ins: worst callback 13.1 → 4.5 ms of a 10.67 ms period) and audio-workgroup membership (real device, join = 0, rejoins after restart). Default-on remains |
 | A-03 structural undo | **Done** | Undo steps below the top become clip deltas against the state they will be applied to. 500 structural edits at 4,096 clips: RSS growth 268.9 → 3.3 MB; edit p50 0.274 → 0.299 ms, undo 0.27 → 0.36 ms. `UndoDeltas` random history (3 seeds) |
-| A-06 engine services | **Partial** | `PluginHostService` and `UndoStack` extracted; Engine definitions split into 8 files (engine.cpp 3,037 → 1,024 lines, none over 450 otherwise). Tests unchanged and passing. Transport is now its own type (`transport.hpp`: play state, playhead, seek, cycle, punch, metronome, count-in, with their validation; Engine forwards). Recording state is grouped as `RecordingState` (`recording_state.hpp`: capture, the take, audio-thread record state); its logic is still Engine methods in record.cpp. Render compilation is still Engine members |
+| A-06 engine services | **Done** | `PluginHostService`, `UndoStack`, `Transport`, `RecordingState` and now `RenderCompiler` (render_compiler.*: model → RenderState with the live content and delay-line caches; Engine forwards) are their own types; the model value types are in model.hpp; the C API is split in two files. Largest engine file 1,189 lines (was 3,037 in engine.cpp; dalnok_api.cpp 1,409 → 903 + 500). 242 tests pass; new `RenderCompiler.liveAndOfflineSnapshotsAgree` (≤1e-6). Interleaved release timings unchanged: structural edit p50 4.9/6.0 → 5.3/5.1 ms, live 64-track block 150/214 → 150/216 µs. Recording logic still lives in record.cpp as Engine methods (477 lines) |
 | A-09 disk streaming | **Done** | ADR-0016: files over 60 s decode into a cache file and play from a bounded block cache; the audio thread copies resident blocks only. One hour of stereo: RSS 1,390 MB → 48.6 MB peak while playing, 0 missed frames; `Streaming` tests bit-exact against memory, live included, under a 2 MB budget |
 | UI drawing time | **Measured; partly fixed** | `audit-ui` includes drawing and the layer commit. One-track structural edit with drawing 53.7 → 22.2 ms (Graphite), 51.5 → 23.4 ms (Warm Analog): the timeline redraws only changed lanes and the mixer skips unchanged strips. Follow-up: cached clip-title typesetting and faders that repaint only on change bring it to 10.1 / 11.1 ms (same-session before: 12.4). Fully attributed: 6.7 / 7.8 ms main-thread CPU (lane draw 4.1 ms), the rest waiting on the window server. Within one 60 Hz frame |
 | A-23 status documentation | **Done** | capability table now links tests; C API references corrected to v29 |

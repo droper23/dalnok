@@ -94,6 +94,8 @@ extension PluginHosting {
         for _ in 0..<2 { _ = dalnok_engine_pump(e, &l, &r, 512); first = max(first, l.max() ?? 0) }
         _ = dalnok_track_preview_note(e, t, 60, 0, false)
         if warm { #expect(abs(first - 1) < 1e-3, "warmed: the first note is heard in its first blocks (peak \(first))") }
-        else { #expect(first == 0, "not warmed: the plug-in is still silent (the case warming fixes)") }
+        else if ({ var i = DalnokPluginSlotInfo(); _ = dalnok_track_plugin_info(e, t, 0, &i); return i.isolated }()) { // the host processed silence before reporting ready, which warms it too
+            #expect(abs(first - 1) < 1e-3, "isolated: the host's own warm-up already made it ready (peak \(first))")
+        } else { #expect(first == 0, "not warmed: the plug-in is still silent (the case warming fixes)") }
     }
 }

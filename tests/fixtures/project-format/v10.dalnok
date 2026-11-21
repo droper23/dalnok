@@ -1,0 +1,51 @@
+{
+ "format": "dalnok-project",
+ "version": 10,
+ "sampleRate": 48000,
+ "tempo": 120,
+ "meter": [
+  4,
+  4
+ ],
+ "media": [
+  {
+   "id": 1,
+   "path": "/nonexistent/dalnok-fixture/source1.wav",
+   "relativePath": "Audio Files/source1.wav",
+   "frames": 48000,
+   "channels": 1
+  }
+ ],
+ "tracks": [
+  {
+   "id": 1,
+   "name": "Audio",
+   "color": 0,
+   "gainDb": 0,
+   "pan": 0,
+   "mute": false,
+   "plugins": [
+    {
+     "id": 1,
+     "format": "vst3",
+     "path": "/nonexistent/dalnok-fixture/Effect.vst3",
+     "class": "0123456789ABCDEF0123456789ABCDEF",
+     "name": "Effect",
+     "vendor": "Fixture",
+     "state": "c2F2ZWQgc3RhdGU=",
+     "bypassed": true
+    }
+   ],
+   "clips": [
+    {
+     "id": 1,
+     "media": 1,
+     "start": 0,
+     "offset": 0,
+     "length": 4800,
+     "name": "Clip 1"
+    }
+   ]
+  }
+ ]
+}

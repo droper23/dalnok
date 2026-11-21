@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "render.hpp"
+#include "vec.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -10,6 +11,37 @@ namespace {
 
 void clear(float *p, int n) DALNOK_NONBLOCKING {
     for (int i = 0; i < n; ++i) p[i] = 0.0f;
+}
+
+// Block meters (A-13). The meter's DC tracker (meterLevel's one-pole, k = 5e-4) ran per sample, a serial recursion
+// that kept the fader loop of every track from vectorizing. Per block: the peak is measured against the tracker's
+// value at the block start, and the tracker advances by the same recursion in closed form,
+//   dc_n = a^n dc_0 + k sum(a^(n-1-i) v_i),  a = 1 - k,
+// as a dot product with precomputed weights. Only what the meter shows changes (by at most k of a sample), never
+// the audio.
+struct MeterTables {
+    static constexpr float k = 5e-4f;
+    float decay[kMaxBlock + 1]; // a^n
+    float weight[kMaxBlock];    // weight[m] = k a^(kMaxBlock - 1 - m): a block of n uses weight + kMaxBlock - n
+    MeterTables() {
+        for (int n = 0; n <= kMaxBlock; ++n) decay[n] = static_cast<float>(std::pow(1.0 - k, n));
+        for (int m = 0; m < kMaxBlock; ++m) weight[m] = static_cast<float>(k * std::pow(1.0 - k, kMaxBlock - 1 - m));
+    }
+};
+const MeterTables kMeterTables; // built at load, never on the audio thread
+
+float blockMeter(const float *v, int n, float &dc) DALNOK_NONBLOCKING {
+    if (n <= 0) return 0.0f;
+    if (n > kMaxBlock) { // never happens (blocks are split to kMaxBlock); keep the per-sample form for safety
+        float p = 0;
+        for (int i = 0; i < n; ++i) p = std::max(p, meterLevel(v[i], dc));
+        return p;
+    }
+    float lo, hi;
+    vec::minMax(v, n, lo, hi);
+    const float peak = std::max(std::fabs(hi - dc), std::fabs(lo - dc));
+    dc = kMeterTables.decay[n] * dc + vec::dot(v, kMeterTables.weight + (kMaxBlock - n), n);
+    return peak;
 }
 
 // Constant-power law compensated to unity at center (+3 dB at the extremes),
@@ -66,10 +98,8 @@ void mixClip(const RenderClip &clip, int64_t pos, int frames, float *l, float *r
     const bool faded = t0 < clip.fadeIn || t0 + n > len - clip.fadeOut;
     const float g = clip.gain;
     if (!faded) {
-        for (int i = 0; i < n; ++i) {
-            l[o + i] = sl[i] * g;
-            r[o + i] = sr[i] * g;
-        }
+        vec::scale(sl, g, l + o, n);
+        vec::scale(sr, g, r + o, n);
         return;
     }
     for (int i = 0; i < n; ++i) {
@@ -110,8 +140,23 @@ bool renderNotes(const std::vector<RenderNote> &notes, const SynthParams &p, Syn
 }
 // Timeline notes (and live notes) for a plugin instrument in [pos, pos + frames), in time order.
 // `starts` and `ends` are the same notes sorted by start and by end (may be empty).
-void renderPluginNotes(PluginProcessor *plugin, const RenderNote *starts, const RenderNote *ends, size_t noteCount,
-                       SynthState &state, int64_t pos, int frames, Scratch &s) DALNOK_NONBLOCKING {
+// Starts the instrument's block into outL/outR; returns true while its result is still to come (an isolated plug-in:
+// finishProcess, then afterPlugin). In-process instruments are done on return (afterPlugin has run).
+bool renderPluginNotes(PluginProcessor *plugin, const RenderNote *starts, const RenderNote *ends, size_t noteCount,
+                       SynthState &state, int64_t pos, int frames, Scratch &s, float *outL, float *outR) DALNOK_NONBLOCKING;
+void afterPlugin(PluginProcessor *p, const float *l, const float *r, int frames) DALNOK_NONBLOCKING {
+    raisePeaks(p->meterOut, l, r, frames);
+    if (PluginProcessor::Tap *tap = p->tap.load(std::memory_order_acquire)) {
+        writeTapStereo(*tap, l, r, frames);
+        writeTap(tap->out, tap->pos, l, r, frames, true);
+    }
+}
+void beforeInsert(PluginProcessor *p, const float *l, const float *r, int frames) DALNOK_NONBLOCKING {
+    raisePeaks(p->meterIn, l, r, frames);
+    if (PluginProcessor::Tap *tap = p->tap.load(std::memory_order_acquire)) writeTap(tap->in, tap->pos, l, r, frames, false);
+}
+bool renderPluginNotes(PluginProcessor *plugin, const RenderNote *starts, const RenderNote *ends, size_t noteCount,
+                       SynthState &state, int64_t pos, int frames, Scratch &s, float *outL, float *outR) DALNOK_NONBLOCKING {
     int count = 0;
     constexpr int cap = static_cast<int>(sizeof(s.events) / sizeof(s.events[0]));
     auto push = [&](int offset, bool on, uint8_t pitch, uint8_t velocity) DALNOK_NONBLOCKING {
@@ -156,29 +201,27 @@ void renderPluginNotes(PluginProcessor *plugin, const RenderNote *starts, const 
     count = written;
     for (int i = 0; i < s.liveNoteCount; ++i) push(s.liveNotes[i].offset, s.liveNotes[i].on, s.liveNotes[i].pitch, s.liveNotes[i].velocity);
     sortEvents(0);
-    clear(s.trackL, frames);
-    clear(s.trackR, frames);
+    clear(outL, frames);
+    clear(outR, frames);
     plugin->setDeadline(s.deadlineNs);
-    plugin->process(s.trackL, s.trackR, frames, s.events, count);
-    raisePeaks(plugin->meterOut, s.trackL, s.trackR, frames);
-    if (PluginProcessor::Tap *tap = plugin->tap.load(std::memory_order_acquire)) {
-        writeTapStereo(*tap, s.trackL, s.trackR, frames);
-        writeTap(tap->out, tap->pos, s.trackL, s.trackR, frames, true);
+    if (plugin->beginProcess(outL, outR, frames, s.events, count)) return true;
+    afterPlugin(plugin, outL, outR, frames);
+    return false;
+}
+// Synchronous forms (live input while stopped): wait for an isolated plug-in at once.
+void renderPluginNotesNow(PluginProcessor *plugin, const RenderNote *starts, const RenderNote *ends, size_t noteCount,
+                          SynthState &state, int64_t pos, int frames, Scratch &s) DALNOK_NONBLOCKING {
+    if (renderPluginNotes(plugin, starts, ends, noteCount, state, pos, frames, s, s.trackL, s.trackR)) {
+        plugin->finishProcess(s.trackL, s.trackR, frames);
+        afterPlugin(plugin, s.trackL, s.trackR, frames);
     }
 }
-
 void runInserts(const RenderTrack &t, int frames, Scratch &s) DALNOK_NONBLOCKING {
     for (PluginProcessor *p : t.inserts) {
-        PluginProcessor::Tap *tap = p->tap.load(std::memory_order_acquire);
-        raisePeaks(p->meterIn, s.trackL, s.trackR, frames);
-        if (tap) writeTap(tap->in, tap->pos, s.trackL, s.trackR, frames, false);
+        beforeInsert(p, s.trackL, s.trackR, frames);
         p->setDeadline(s.deadlineNs);
         p->process(s.trackL, s.trackR, frames, nullptr, 0);
-        raisePeaks(p->meterOut, s.trackL, s.trackR, frames);
-        if (tap) {
-            writeTapStereo(*tap, s.trackL, s.trackR, frames);
-            writeTap(tap->out, tap->pos, s.trackL, s.trackR, frames, true);
-        }
+        afterPlugin(p, s.trackL, s.trackR, frames);
     }
 }
 } // namespace
@@ -197,7 +240,7 @@ void renderLiveInput(const RenderState &state, int frames, float *left, float *r
         // (rt.play) is left alone: resuming playback releases what the timeline started.
         SynthState idle;
         idle.pluginExpected = 0;
-        renderPluginNotes(t.instrumentPlugin, nullptr, nullptr, 0, idle, 0, frames, s);
+        renderPluginNotesNow(t.instrumentPlugin, nullptr, nullptr, 0, idle, 0, frames, s);
         runInserts(t, frames, s);
         stereo = true;
     } else {
@@ -258,6 +301,10 @@ void autoGains(const RenderTrack &t, const TrackRuntime &rt, bool mono, bool any
 }
 } // namespace
 
+namespace {
+enum : uint8_t { kStepSource, kStepInstrumentWait, kStepClips, kStepInserts, kStepInsertWait, kStepReady };
+}
+
 void renderBlock(const RenderState &state, int64_t pos, int frames, float *left, float *right,
                  Scratch &s, bool smooth, bool anySolo, SynthState *synths) DALNOK_NONBLOCKING {
     clear(left, frames);
@@ -265,114 +312,157 @@ void renderBlock(const RenderState &state, int64_t pos, int frames, float *left,
     float *busL = state.busL.data(), *busR = state.busR.data();
     const size_t busCount = state.busL.size() / kMaxBlock;
     for (size_t b = 0; b < busCount; ++b) { clear(busL + b * kMaxBlock, frames); clear(busR + b * kMaxBlock, frames); }
-    size_t index = 0;
-    for (const RenderTrack &t : state.tracks) {
-        TrackRuntime &rt = *t.runtime;
-        SynthState &synth = synths ? synths[index] : rt.play;
-        if (synth.mutedMidiSignature != t.mutedMidiSignature) {
-            // Stop notes that may have belonged to a newly muted clip, including hosted instruments.
-            synth.reset(); synth.pluginExpected = -1; synth.mutedMidiSignature = t.mutedMidiSignature;
-        }
-        ++index;
-        // Solo follows routing: a soloed bus keeps what feeds it audible, and a soloed source keeps its buses.
-        bool linkedSolo = false;
-        for (const TrackRuntime *l : t.soloLinks) linkedSolo = linkedSolo || l->solo.load(std::memory_order_relaxed);
-        float gl, gr;
-        // A mono source keeps its pan law through inserts, so a passthrough insert is transparent;
-        // plugin instruments and buses are stereo sources (balance).
-        panGains(rt, t.monoSource && !t.instrumentPlugin, anySolo && !linkedSolo, gl, gr);
+    const size_t count = state.tracks.size();
+    if (state.steps.size() < count || state.chainL.size() < count * kMaxBlock) return; // not compiled for rendering
+    TrackStep *steps = state.steps.data();
+    for (size_t i = 0; i < count; ++i) steps[i] = TrackStep{};
 
-        // Sidechain inputs for this block (their sources were rendered earlier in this block).
-        for (const auto &[plugin, idx] : t.sidechainFeeds)
-            plugin->setSidechain(state.scL.data() + static_cast<size_t>(idx) * kMaxBlock, state.scR.data() + static_cast<size_t>(idx) * kMaxBlock);
-        // Plug-in parameter automation for this block (before the plug-ins run).
-        for (const auto &lane : t.pluginAuto) {
-            const float v = autoAt(lane.pts, pos);
-            lane.plugin->automate(lane.param, lane.lo + static_cast<double>(v) * (lane.hi - lane.lo));
-        }
-        bool any = false;
-        // Clip launcher (live only): a playing slot replaces this track's timeline clips and notes.
-        const RenderSlot *slot = nullptr;
-        if (!synths && !t.content->slots.empty()) {
-            const int32_t ps = rt.playingSlot.load(std::memory_order_relaxed);
-            for (const RenderSlot &sl : t.content->slots) if (sl.slot == ps && sl.length > 0) slot = &sl;
-        }
-        if (slot) {
-            const int64_t start0 = rt.slotStart.load(std::memory_order_relaxed);
-            const int64_t rel = ((pos - start0) % slot->length + slot->length) % slot->length; // block ends by the loop end
-            if (slot->muted) {
-                clear(s.trackL, frames); clear(s.trackR, frames);
-                if (t.instrumentPlugin) {
-                    const PluginNote *live = s.liveNotes; const int liveCount = s.liveNoteCount;
-                    if (static_cast<int32_t>(index - 1) != s.liveTrack) { s.liveNotes = nullptr; s.liveNoteCount = 0; }
-                    renderPluginNotes(t.instrumentPlugin, nullptr, nullptr, 0, synth, rel, frames, s);
-                    s.liveNotes = live; s.liveNoteCount = liveCount;
-                }
-                any = true;
-            } else if (slot->hasAudio) {
-                clear(s.trackL, frames); clear(s.trackR, frames);
-                mixClip(slot->clip, rel, frames, s.trackL, s.trackR);
-                any = true;
-            } else if (t.instrumentPlugin) {
+    // Runs track i as far as it can without waiting: its source (bus input, instrument, notes, launcher slot, clips)
+    // and its inserts. It stops at an isolated plug-in whose block is in flight (waiting) and resumes after
+    // finishPending. Tracks fed by other tracks (buses, sidechain listeners) start only once everything before them
+    // in processing order has been delivered (`cursor`). Returns false when it could not move.
+    auto advance = [&](size_t i, size_t cursor) DALNOK_NONBLOCKING -> bool {
+        const RenderTrack &t = state.tracks[i];
+        TrackStep &st = steps[i];
+        TrackRuntime &rt = *t.runtime;
+        SynthState &synth = synths ? synths[i] : rt.play;
+        float *L = state.chainL.data() + i * kMaxBlock, *R = state.chainR.data() + i * kMaxBlock;
+        if (st.stage == kStepSource) {
+            if ((t.bus || !t.sidechainFeeds.empty()) && i != cursor) return false;
+            if (synth.mutedMidiSignature != t.mutedMidiSignature) {
+                // Stop notes that may have belonged to a newly muted clip, including hosted instruments.
+                synth.reset(); synth.pluginExpected = -1; synth.mutedMidiSignature = t.mutedMidiSignature;
+            }
+            // Solo follows routing: a soloed bus keeps what feeds it audible, and a soloed source keeps its buses.
+            for (const TrackRuntime *l : t.soloLinks) st.linkedSolo = st.linkedSolo || l->solo.load(std::memory_order_relaxed);
+            // A mono source keeps its pan law through inserts, so a passthrough insert is transparent;
+            // plugin instruments and buses are stereo sources (balance).
+            panGains(rt, t.monoSource && !t.instrumentPlugin, anySolo && !st.linkedSolo, st.gl, st.gr);
+            // Sidechain inputs for this block (their sources were rendered earlier in this block).
+            for (const auto &[plugin, idx] : t.sidechainFeeds)
+                plugin->setSidechain(state.scL.data() + static_cast<size_t>(idx) * kMaxBlock, state.scR.data() + static_cast<size_t>(idx) * kMaxBlock);
+            // Plug-in parameter automation for this block (before the plug-ins run).
+            for (const auto &lane : t.pluginAuto) {
+                const float v = autoAt(lane.pts, pos);
+                lane.plugin->automate(lane.param, lane.lo + static_cast<double>(v) * (lane.hi - lane.lo));
+            }
+            // Clip launcher (live only): a playing slot replaces this track's timeline clips and notes.
+            if (!synths && !t.content->slots.empty()) {
+                const int32_t ps = rt.playingSlot.load(std::memory_order_relaxed);
+                for (const RenderSlot &sl : t.content->slots) if (sl.slot == ps && sl.length > 0) st.slot = &sl;
+            }
+            const RenderSlot *slot = st.slot;
+            const bool liveHere = !synths && static_cast<int32_t>(i) == s.liveTrack;
+            // Plugin instruments: live notes join only on the live track.
+            auto instrument = [&](const RenderNote *starts, const RenderNote *ends, size_t n, int64_t at) DALNOK_NONBLOCKING -> bool {
                 const PluginNote *live = s.liveNotes;
                 const int liveCount = s.liveNoteCount;
-                if (static_cast<int32_t>(index - 1) != s.liveTrack) { s.liveNotes = nullptr; s.liveNoteCount = 0; }
-                renderPluginNotes(t.instrumentPlugin, slot->notes.data(), slot->noteEnds.data(), slot->notes.size(), synth, rel, frames, s);
-                s.liveNotes = live; s.liveNoteCount = liveCount;
-                any = true;
-            } else if (t.instrument && renderNotes(slot->notes, state.synth, synth, rel, frames, s.trackL)) {
-                for (int i = 0; i < frames; ++i) s.trackR[i] = s.trackL[i];
-                any = true;
+                if (!liveHere) { s.liveNotes = nullptr; s.liveNoteCount = 0; }
+                const bool inflight = renderPluginNotes(t.instrumentPlugin, starts, ends, n, synth, at, frames, s, L, R);
+                s.liveNotes = live;
+                s.liveNoteCount = liveCount;
+                return inflight;
+            };
+            bool inflight = false;
+            if (slot) {
+                const int64_t start0 = rt.slotStart.load(std::memory_order_relaxed);
+                const int64_t rel = ((pos - start0) % slot->length + slot->length) % slot->length; // block ends by the loop end
+                if (slot->muted) {
+                    clear(L, frames); clear(R, frames);
+                    if (t.instrumentPlugin) inflight = instrument(nullptr, nullptr, 0, rel);
+                    st.any = true;
+                } else if (slot->hasAudio) {
+                    clear(L, frames); clear(R, frames);
+                    mixClip(slot->clip, rel, frames, L, R);
+                    st.any = true;
+                } else if (t.instrumentPlugin) {
+                    inflight = instrument(slot->notes.data(), slot->noteEnds.data(), slot->notes.size(), rel);
+                    st.any = true;
+                } else if (t.instrument && renderNotes(slot->notes, state.synth, synth, rel, frames, L)) {
+                    for (int k = 0; k < frames; ++k) R[k] = L[k];
+                    st.any = true;
+                }
+            } else if (t.bus) {
+                const float *inL = busL + static_cast<size_t>(t.busSlot) * kMaxBlock, *inR = busR + static_cast<size_t>(t.busSlot) * kMaxBlock;
+                for (int k = 0; k < frames; ++k) { L[k] = inL[k]; R[k] = inR[k]; }
+                st.any = true;
+            } else if (t.instrumentPlugin) {
+                // Plugin instruments run every block (tails, internal state).
+                inflight = instrument(t.content->notes.data(), t.content->noteEnds.data(), t.content->notes.size(), pos);
+                st.any = true;
+            } else if (t.instrument && renderNotes(t.content->notes, state.synth, synth, pos, frames, L)) {
+                for (int k = 0; k < frames; ++k) R[k] = L[k];
+                st.any = true;
             }
-        } else if (t.bus) {
-            const float *inL = busL + static_cast<size_t>(t.busSlot) * kMaxBlock, *inR = busR + static_cast<size_t>(t.busSlot) * kMaxBlock;
-            for (int i = 0; i < frames; ++i) { s.trackL[i] = inL[i]; s.trackR[i] = inR[i]; }
-            any = true;
-        } else if (t.instrumentPlugin) {
-            // Plugin instruments run every block (tails, internal state); live notes join on the live track.
-            const bool liveHere = !synths && static_cast<int32_t>(index - 1) == s.liveTrack;
-            const PluginNote *live = s.liveNotes;
-            const int liveCount = s.liveNoteCount;
-            if (!liveHere) { s.liveNotes = nullptr; s.liveNoteCount = 0; }
-            renderPluginNotes(t.instrumentPlugin, t.content->notes.data(), t.content->noteEnds.data(), t.content->notes.size(), synth, pos, frames, s);
-            s.liveNotes = live;
-            s.liveNoteCount = liveCount;
-            any = true;
-        } else if (t.instrument && renderNotes(t.content->notes, state.synth, synth, pos, frames, s.trackL)) {
-            for (int i = 0; i < frames; ++i) s.trackR[i] = s.trackL[i];
-            any = true;
+            if (inflight) { st.stage = kStepInstrumentWait; st.waiting = true; st.pending = t.instrumentPlugin; return true; }
+            st.stage = kStepClips;
         }
-        for (const RenderClip &c : t.content->clips) {
-            if (slot) break; // the launcher clip plays instead of the arrangement
-            if (c.start >= pos + frames || c.start + c.length <= pos) continue;
-            if (!any) {
-                clear(s.trackL, frames);
-                clear(s.trackR, frames);
-                any = true;
+        if (st.stage == kStepClips) {
+            for (const RenderClip &c : t.content->clips) {
+                if (st.slot) break; // the launcher clip plays instead of the arrangement
+                if (c.start >= pos + frames || c.start + c.length <= pos) continue;
+                if (!st.any) { clear(L, frames); clear(R, frames); st.any = true; }
+                mixClip(c, pos, frames, L, R);
             }
-            mixClip(c, pos, frames, s.trackL, s.trackR);
-        }
-        if (!t.inserts.empty()) {
-            if (!any) { clear(s.trackL, frames); clear(s.trackR, frames); any = true; }
-            // Live input on a built-in-synth track with inserts goes through the inserts too.
-            if (!synths && static_cast<int32_t>(index - 1) == s.liveTrack && t.instrument && !t.instrumentPlugin && rt.live.active()) {
-                clear(s.tmp, frames);
-                rt.live.render(state.synth, s.tmp, frames, -1);
-                for (int i = 0; i < frames; ++i) { s.trackL[i] += s.tmp[i]; s.trackR[i] += s.tmp[i]; }
+            if (!t.inserts.empty()) {
+                if (!st.any) { clear(L, frames); clear(R, frames); st.any = true; }
+                // Live input on a built-in-synth track with inserts goes through the inserts too.
+                if (!synths && static_cast<int32_t>(i) == s.liveTrack && t.instrument && !t.instrumentPlugin && rt.live.active()) {
+                    clear(s.tmp, frames);
+                    rt.live.render(state.synth, s.tmp, frames, -1);
+                    for (int k = 0; k < frames; ++k) { L[k] += s.tmp[k]; R[k] += s.tmp[k]; }
+                }
             }
-            runInserts(t, frames, s); // every block, so reverb and delay tails continue after clips end
+            st.stage = kStepInserts;
+            st.insert = 0;
         }
+        if (st.stage == kStepInserts) {
+            // Every block, so reverb and delay tails continue after clips end.
+            while (st.insert < static_cast<int32_t>(t.inserts.size())) {
+                PluginProcessor *p = t.inserts[static_cast<size_t>(st.insert)];
+                beforeInsert(p, L, R, frames);
+                p->setDeadline(s.deadlineNs);
+                if (p->beginProcess(L, R, frames, nullptr, 0)) { st.stage = kStepInsertWait; st.waiting = true; st.pending = p; return true; }
+                afterPlugin(p, L, R, frames);
+                ++st.insert;
+            }
+            // A sidechain source publishes its post-insert, pre-fader signal (silence when it has none).
+            if (t.scSlot >= 0) {
+                float *dl = state.scL.data() + static_cast<size_t>(t.scSlot) * kMaxBlock, *dr = state.scR.data() + static_cast<size_t>(t.scSlot) * kMaxBlock;
+                if (st.any) for (int k = 0; k < frames; ++k) { dl[k] = L[k]; dr[k] = R[k]; }
+                else { clear(dl, frames); clear(dr, frames); }
+            }
+            st.stage = kStepReady;
+            return true;
+        }
+        return false;
+    };
 
-        // A sidechain source publishes its post-insert, pre-fader signal (silence when it has none).
-        if (t.scSlot >= 0) {
-            float *dl = state.scL.data() + static_cast<size_t>(t.scSlot) * kMaxBlock, *dr = state.scR.data() + static_cast<size_t>(t.scSlot) * kMaxBlock;
-            if (any) for (int i = 0; i < frames; ++i) { dl[i] = s.trackL[i]; dr[i] = s.trackR[i]; }
-            else { clear(dl, frames); clear(dr, frames); }
-        }
+    // Collects the block of the isolated plug-in track i is waiting on, and moves it past that plug-in.
+    auto finishPending = [&](size_t i) DALNOK_NONBLOCKING {
+        TrackStep &st = steps[i];
+        float *L = state.chainL.data() + i * kMaxBlock, *R = state.chainR.data() + i * kMaxBlock;
+        st.pending->finishProcess(L, R, frames);
+        afterPlugin(st.pending, L, R, frames);
+        st.waiting = false;
+        st.pending = nullptr;
+        if (st.stage == kStepInstrumentWait) st.stage = kStepClips;
+        else { ++st.insert; st.stage = kStepInserts; }
+    };
+
+    // Fader, pan and automation, then delivery to the output bus or master and to the sends (in processing order).
+    auto deliverTrack = [&](size_t i) DALNOK_NONBLOCKING {
+        const RenderTrack &t = state.tracks[i];
+        TrackStep &st = steps[i];
+        TrackRuntime &rt = *t.runtime;
+        float *L = state.chainL.data() + i * kMaxBlock, *R = state.chainR.data() + i * kMaxBlock;
+        bool any = st.any;
+        const bool linkedSolo = st.linkedSolo;
+        const float gl = st.gl, gr = st.gr;
         // A track with delay compensation keeps its delay lines running even while silent.
         bool delayed = t.outDelay != nullptr;
         for (const RenderSend &x : t.sends) delayed = delayed || x.delay != nullptr;
-        if (delayed && !any) { clear(s.trackL, frames); clear(s.trackR, frames); any = true; }
+        if (delayed && !any) { clear(L, frames); clear(R, frames); any = true; }
         float *outL = t.output < 0 ? left : busL + static_cast<size_t>(t.output) * kMaxBlock;
         float *outR = t.output < 0 ? right : busR + static_cast<size_t>(t.output) * kMaxBlock;
         const bool silentPre = rt.muted.load(std::memory_order_relaxed) ||
@@ -380,21 +470,24 @@ void renderBlock(const RenderState &state, int64_t pos, int frames, float *left,
         // Adds `src * gain` to a destination, through the connection's compensation delay if it has one.
         auto addTo = [&](float *dl, float *dr, const float *srcL, const float *srcR, float gain, DelayLine *delay) DALNOK_NONBLOCKING {
             if (!delay) {
-                for (int i = 0; i < frames; ++i) { dl[i] += srcL[i] * gain; dr[i] += srcR[i] * gain; }
+                vec::addScaled(srcL, gain, dl, frames);
+                vec::addScaled(srcR, gain, dr, frames);
                 return;
             }
-            for (int i = 0; i < frames; ++i) { s.edgeL[i] = srcL[i] * gain; s.edgeR[i] = srcR[i] * gain; }
+            vec::scale(srcL, gain, s.edgeL, frames);
+            vec::scale(srcR, gain, s.edgeR, frames);
             delay->process(s.edgeL, s.edgeR, frames);
-            for (int i = 0; i < frames; ++i) { dl[i] += s.edgeL[i]; dr[i] += s.edgeR[i]; }
+            vec::addScaled(s.edgeL, 1.0f, dl, frames);
+            vec::addScaled(s.edgeR, 1.0f, dr, frames);
         };
         // Delivers the faded signal (s.fade*) to the output and post-fader sends, and the pre-fader signal
-        // (s.track*, silenced by mute and solo) to pre-fader sends.
+        // (the chain buffer, silenced by mute and solo) to pre-fader sends.
         auto deliver = [&]() DALNOK_NONBLOCKING {
             addTo(outL, outR, s.fadeL, s.fadeR, 1.0f, t.outDelay);
             for (const RenderSend &snd : t.sends) {
                 if (snd.slot < 0) continue;
                 float *dl = busL + static_cast<size_t>(snd.slot) * kMaxBlock, *dr = busR + static_cast<size_t>(snd.slot) * kMaxBlock;
-                if (snd.pre) addTo(dl, dr, s.trackL, s.trackR, silentPre ? 0.0f : snd.gain, snd.delay);
+                if (snd.pre) addTo(dl, dr, L, R, silentPre ? 0.0f : snd.gain, snd.delay);
                 else addTo(dl, dr, s.fadeL, s.fadeR, snd.gain, snd.delay);
             }
         };
@@ -413,11 +506,11 @@ void renderBlock(const RenderState &state, int64_t pos, int frames, float *left,
                 autoGains(t, rt, mono, solo, g0 + 32, l1, r1);
                 const float sl = (l1 - l0) / 32.0f, sr = (r1 - r0) / 32.0f;
                 for (int k = 0; k < n && any; ++k) {
-                    const int i = i0 + k;
+                    const int j = i0 + k;
                     const float off = static_cast<float>(f - g0 + k);
-                    const float vl = s.trackL[i] * (l0 + sl * off), vr = s.trackR[i] * (r0 + sr * off);
-                    s.fadeL[i] = vl;
-                    s.fadeR[i] = vr;
+                    const float vl = L[j] * (l0 + sl * off), vr = R[j] * (r0 + sr * off);
+                    s.fadeL[j] = vl;
+                    s.fadeR[j] = vr;
                     pl = std::max(pl, meterLevel(vl, rt.meterDcL));
                     pr = std::max(pr, meterLevel(vr, rt.meterDcR));
                 }
@@ -432,15 +525,16 @@ void renderBlock(const RenderState &state, int64_t pos, int frames, float *left,
                 raisePeak(rt.peakR, pr);
                 rt.curL = al; rt.curR = ar; rt.primed = true; // leaving automation continues from here
             }
-            continue;
+            return;
         }
 
         if (!smooth) {
             if (any) {
-                for (int i = 0; i < frames; ++i) { s.fadeL[i] = s.trackL[i] * gl; s.fadeR[i] = s.trackR[i] * gr; }
+                vec::scale(L, gl, s.fadeL, frames);
+                vec::scale(R, gr, s.fadeR, frames);
                 deliver();
             }
-            continue;
+            return;
         }
 
         if (!rt.primed) {
@@ -452,22 +546,34 @@ void renderBlock(const RenderState &state, int64_t pos, int frames, float *left,
         const float dl = (gl - rt.curL) / static_cast<float>(frames);
         const float dr = (gr - rt.curR) / static_cast<float>(frames);
         if (any) {
-            float cl = rt.curL, cr = rt.curR, pl = 0, pr = 0;
-            for (int i = 0; i < frames; ++i) {
-                cl += dl;
-                cr += dr;
-                const float vl = s.trackL[i] * cl, vr = s.trackR[i] * cr;
-                s.fadeL[i] = vl;
-                s.fadeR[i] = vr;
-                pl = std::max(pl, meterLevel(vl, rt.meterDcL));
-                pr = std::max(pr, meterLevel(vr, rt.meterDcR));
-            }
+            // Sample k gets cur + d * (k + 1), reaching the target on the last sample.
+            vec::rampMul(L, rt.curL, dl, s.fadeL, frames);
+            vec::rampMul(R, rt.curR, dr, s.fadeR, frames);
+            const float pl = blockMeter(s.fadeL, frames, rt.meterDcL), pr = blockMeter(s.fadeR, frames, rt.meterDcR);
             deliver();
             raisePeak(rt.peakL, pl);
             raisePeak(rt.peakR, pr);
         }
         rt.curL = gl;
         rt.curR = gr;
+    };
+
+    // Rounds: every track moves as far as it can, starting the blocks of its isolated plug-ins; finished tracks are
+    // delivered in order; when nothing else can move, the blocks in flight are collected (one wait for all of them,
+    // instead of one after another). With only in-process plug-ins this is the plain track-by-track order.
+    size_t cursor = 0;
+    while (cursor < count) {
+        bool moved = false;
+        for (size_t i = cursor; i < count; ++i)
+            if (!steps[i].waiting && steps[i].stage != kStepReady && advance(i, cursor)) moved = true;
+        while (cursor < count && steps[cursor].stage == kStepReady) { deliverTrack(cursor); ++cursor; moved = true; }
+        if (moved) continue;
+        bool collected = false;
+        for (size_t i = cursor; i < count; ++i)
+            if (steps[i].waiting) { finishPending(i); collected = true; }
+        if (!collected) { // defensive: should not happen (the cursor track can always start)
+            if (!advance(cursor, cursor)) { steps[cursor].stage = kStepReady; }
+        }
     }
     // Master fader (ramped live from the previous block, constant offline).
     if (state.master) {

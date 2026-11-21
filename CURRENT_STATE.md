@@ -1,11 +1,39 @@
 ---
-updated: 2026-11-19
+updated: 2026-11-20
 phase: Phases 1 and 3 complete; 2 and 4 in progress
 milestone: hosting complete (VST3/AU/CLAP, editors, parameters, automation, delay compensation); isolation and streaming next
 ---
 # Current State
 
-## Current priorities (2026-11-19)
+## Current priorities (2026-11-20)
+- **Safety is on by default** (ADR-0014, 2026-11-20). Both blockers from the first pass are fixed:
+  - Isolated plug-ins on independent tracks process in parallel.
+  - The main thread never waits on a host: edit counts and latency come from shared memory, and automation ranges are cached.
+  - Hosts also warm up with 0.75 s of silence before reporting ready.
+- **Real-project results** (`load-bench`, release; it now runs the run loop between blocks, as the app does): every plug-in loads in all 24 projects, and none opens Edited.
+  - The worst isolated main-thread call while loading is ≤13 ms (in-process 0.28–1.7 s), and isolated loading is faster in 23 of 24 projects.
+  - No isolated block runs over the period; 4 projects in-process do.
+  - Isolated misses: 22 projects miss nothing. Two miss 6–13 blocks once, from one sampler script's 36 ms of work on its audio thread; in-process the same work stalls everything for 70–124 ms.
+  - Known limit: on a heavily loaded machine (load average 5–14) isolated hosts miss blocks where in-process ones just get slower. The audio workgroup protects hosts in the app; `load-bench` has no device.
+  - Off switch: Settings ▸ Plug-ins ▸ Safety; an explicit choice is kept.
+- Earlier, the same day: verified with real OS input on the owner's plug-in library (14 plug-ins). Stress: 64 instances (22.6 MB/host, ≈54 µs per instance per block), 10× open/close, host killed mid-play (contained).
+- **Fixed during the pass (each with a test):** isolated editors stuck on another Space; AUSampler's editor crashing its host (re-entrant fit) and growing to 3,937 pt; a 1.2 s main-thread block sending large states (macOS ignores MSG_DONTWAIT on the socket pair); VST3/AU/CLAP reports with no editor open marking projects Edited; a host crash counting as an edit; switching theme squeezing the arrangement's zoom.
+- **Owner's UI requests (done):** plug-ins fold (C API 40, saved, undoable; Graphite rack blank, Warm Analog pedal tipped onto its side with cables following frame by frame; on/off works folded); arrival/departure animations; one Open button per unit with Controls in the plug-in window's title bar (isolated: the host's title bar sends DALNOK_EDITOR_SHOW_CONTROLS); Warm Analog pedals with a readout window and signal LEDs.
+- **Known issues (generic):** a CLAP sampler with no instrument loaded ignores input; one CLAP synth reports editor edits only while processing; typing into AUDelay's value field sends no gesture end, so it is caught only by the state comparison at close; a host killed mid-play once produced one 117 ms block in the CLI (not reproduced by the crash test's 50 ms bound); an AU drum sampler's editor went blank once after its promo dialog (not reproduced).
+- **Verification (Phase 2, final build):** `swift test` 242/242 (with the test VST3/CLAP); `DALNOK_SANITIZE=1 scripts/check.sh` PASS (normal, ASan, TSan, live smoke, self-test); `plugin-isolation.sh` with the isolated self-test PASS; `plugin-recovery.sh`, `record-crash.sh`, `rt-effects.sh` PASS; `fuzz.sh 120` clean (145,649 runs; the harness had failed since A-09 on a by-design singleton, now suppressed); self-tests plain Graphite 564 / Warm Analog 549, with the test plug-ins 601 / 586, and with `DALNOK_REAL_INPUT=1` 616 / 602, all PASS. The verification caught one regression from this session (changed slots animated as arrivals while slow plug-ins loaded: 102–112 ms main-thread gaps), bisected and fixed.
+- **Releases:** 0.2.0 (Safety on by default, folding, pedal readouts, FL-style clip motion) and 0.2.1 (clips no longer swell when dragged) are published on GitHub. Both are tagged on `fix/audit-followups`, because PR #2 isn't merged yet.
+- **Phase 3 done (2026-11-20), one commit each, with numbers in `docs/audits/findings.json`:**
+  - A-19: CI jobs run in parallel (about 9 min → about 5.5 min wall time); `compile_commands.json` script. Changing one hosting adapter already rebuilds in 3 s.
+  - A-15: `engine/api/views.def` generates the clip/track structs, fill code and Swift fields; one-pass clip reads (C API 41), 102x faster.
+  - A-16: project format migration chain, schema (`engine/api/project-format.json`), 150 random round trips and fixtures v1–13. Found and fixed two under-versioned writes (sidechain, master gain).
+  - A-18: self-test split by area. It passes at 44.1 and 48 kHz (`DALNOK_SAMPLE_RATE`; this fixed the LCD half-frame bug). Environment-dependent checks report SKIP, and CI runs a self-test job.
+  - A-17: themes are a palette plus look capabilities; views no longer test for Warm Analog. Pixel check: 71 of 72 frames identical or within noise.
+  - A-11: measured, already met: 256 tracks with 8 audible cost 24.5 µs vs 19.3 µs for 8 tracks.
+  - A-13: vDSP kernels and block meters make live mixing 3x faster (64 tracks 143 → 46.5 µs, 256 tracks 567 → 180 µs), within 9e-8 of the scalar path.
+  - The flaky `instrumentPluginPlaysNotesSampleAccurately` was a live deadline miss under load. It is reproduced by a forced miss, and the test now checks a miss as a miss.
+- Next: merge PR #2 (owner's call). Then the remaining audit items, and the self-test CI job, which is informational until it proves stable on hosted runners.
+
+## Earlier priorities (2026-11-19)
 - **A-03 done:** undo steps below the top are clip deltas against the state they'll be applied to (`Engine::ModelDelta`). 500 structural edits at 4,096 clips: RSS growth 268.9 → 3.3 MB; edit p50 0.274 → 0.299 ms, undo 0.27 → 0.36 ms. `UndoDeltas` random-history test. 
 - **A-06 partial:** `PluginHostService` and `UndoStack` extracted; Engine definitions split across engine.cpp (1,024 lines), engine_clips, engine_takes, engine_launcher, engine_device, engine_compile, engine_audio and engine_offline; layout in [[System Overview]]. `Transport` (transport.hpp) extracted too, and recording state is grouped as `RecordingState` (recording_state.hpp; its logic is still in record.cpp). Render compilation is still Engine members.
 - **A-09 done:** files over 60 s stream from a decoded cache file through a bounded block cache (ADR-0016, C API 38). One hour of stereo: RSS 1,390 MB → 48.6 MB peak while playing, 0 missed frames. The time stretcher now uses a fixed seed (renders were not reproducible). Launched slots are prefetched along their own loop (a 2 MB-budget test went from 660,480 missed frames to 0). Cache files: least recently used first, kept within `DALNOK_STREAM_DISK_MB` (default 8 GiB), tested. 
@@ -324,7 +352,7 @@ slot, and retired ones come back through an SPSC queue. See [[System Overview]],
 
 ## Not yet / incomplete
 Every row in "Verified working" names the test, self-test or command behind it. This list is what has no such evidence yet.
-- Out-of-process plug-in hosting (crash isolation); plug-ins still run in-process (ADR-0009, audit A-01).
+- Out-of-process hosting is opt-in (Settings ▸ Plug-ins ▸ Safety); not the default until isolated plug-ins process in parallel (ADR-0014, audit A-01).
 - Recovery snapshots do not isolate the app from plug-in crashes or hangs; power-loss durability has not been verified.
 - Loopback latency measurement and power-loss validation.
 - Separate input/output devices (built-in mic + speakers is refused with an explanation).
