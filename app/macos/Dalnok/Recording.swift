@@ -137,6 +137,7 @@ extension MainWindowController {
         dalnok_metronome_count_in(e.handle, countInEnd)
         countInUntil = countInEnd
         do {
+            if let uid { dalnok_record_set_latency_offset(e.handle, latencyOffset(input: uid)) } // measured correction, if any
             try e.startRecording(input: uid, folder: audio == nil ? nil : recordingFolder)
         } catch {
             dalnok_record_set_punch(e.handle, false, 0, 0); dalnok_metronome_count_in(e.handle, 0)
@@ -211,6 +212,83 @@ extension MainWindowController {
                                    cycle: cycleTake ? (c.start, c.end) : nil)
     }
 
+    // MARK: Latency
+
+    /// Measured corrections (measured − reported round trip, frames) per input|output device pair.
+    static var latencyOffsets: [String: Int] {
+        get { UserDefaults.standard.dictionary(forKey: "latencyOffsets") as? [String: Int] ?? [:] }
+        set { UserDefaults.standard.set(newValue, forKey: "latencyOffsets") }
+    }
+    /// The pair key: the input and the output actually in use (the system default resolved to its device).
+    func latencyKey(input: String) -> String {
+        let out = session.engine.outputDeviceUid
+        return input + "|" + (out.isEmpty ? (Engine.outputDevices().first(where: \.isDefault)?.uid ?? "") : out)
+    }
+    func latencyOffset(input: String) -> Int64 { Int64(Self.latencyOffsets[latencyKey(input: input)] ?? 0) }
+
+    /// Audio ▸ Measure Recording Latency…: clicks out, the same clicks back on an input that hears the output.
+    @objc func measureLatency(_ sender: Any?) {
+        guard !session.engine.isRecording else { return flash("Stop recording first") }
+        guard let device = recordingDevice else { return recordingProblem("No audio input", "Connect an interface first.") }
+        let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 260, height: 26), pullsDown: false)
+        for ch in 0..<max(device.channels, 1) { popup.addItem(withTitle: "Input \(ch + 1)") }
+        // A loopback input (the interface's own playback) is the usual choice; many interfaces put it last.
+        let guess = selectedTrack.flatMap { session.track($0) }.map { Int($0.inputChannel) } ?? 0
+        popup.selectItem(at: min(guess, popup.numberOfItems - 1))
+        let alert = NSAlert()
+        alert.messageText = "Measure Recording Latency"
+        alert.informativeText = "Dalnok plays short tones on \(outputDeviceDescription()) and listens for them on \(device.name). Choose an input that hears that output: a cable from an output to an input, or the interface's loopback input. Turn the volume down if the output is speakers."
+        alert.accessoryView = popup
+        alert.addButton(withTitle: "Measure")
+        alert.addButton(withTitle: "Cancel")
+        guard let window else { return }
+        alert.beginSheetModal(for: window) { [weak self] r in
+            guard r == .alertFirstButtonReturn else { return }
+            self?.startLatencyMeasurement(input: device.uid, channel: popup.indexOfSelectedItem)
+        }
+    }
+
+    func startLatencyMeasurement(input uid: String, channel: Int) {
+        var err = [CChar](repeating: 0, count: 512)
+        guard dalnok_latency_measure_start(session.engine.handle, uid, Int32(channel), &err, 512) == DALNOK_OK else {
+            return recordingProblem("Couldn't measure latency", cString(err))
+        }
+        flash("Measuring latency on Input \(channel + 1)…")
+        latencyInput = uid
+        if SelfTest.running { return } // the self-test pumps the simulated device and polls itself
+        func poll() {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+                guard let self, !self.pollLatencyMeasurement() else { return }
+                poll()
+            }
+        }
+        poll()
+    }
+
+    /// True once finished; keeps the measurement (and tells the user) when it is clean.
+    @discardableResult
+    func pollLatencyMeasurement() -> Bool {
+        var r = DalnokLatencyResult()
+        guard dalnok_latency_measure_poll(session.engine.handle, &r) else { return false }
+        let rate = session.engine.sampleRate
+        let ms = { (f: Int64) in String(format: "%.2f ms", Double(f) / rate * 1000) }
+        guard r.ok, let input = latencyInput else {
+            recordingProblem("Latency not measured", fixedString(r.error))
+            return true
+        }
+        let key = latencyKey(input: input)
+        Self.latencyOffsets[key] = Int(r.measured_frames - r.reported_frames)
+        lastLatencyResult = r
+        flash("Round trip \(ms(r.measured_frames)) (\(r.measured_frames) samples; devices report \(ms(r.reported_frames))). Takes now use the measurement.")
+        return true
+    }
+
+    @objc func resetLatency(_ sender: Any?) {
+        guard let uid = recordingDevice?.uid else { return }
+        Self.latencyOffsets[latencyKey(input: uid)] = nil
+        flash("Latency compensation: as the devices report")
+    }
+
     // MARK: Inputs
 
     @objc func selectRecordingInput(_ sender: NSMenuItem) {
@@ -239,12 +317,25 @@ extension MainWindowController {
             menu.addItem(it)
         }
         menu.addItem(.separator())
-        let latency = NSMenuItem(title: String(format: "Latency compensation: %.1f ms (reported by the device)",
-                                               Double(session.engine.recordLatency) / session.engine.sampleRate * 1000),
+        let offset = current.map { latencyOffset(input: $0) } ?? 0
+        let latency = NSMenuItem(title: String(format: "Latency compensation: %.1f ms (%@)",
+                                               Double(session.engine.recordLatency) / session.engine.sampleRate * 1000,
+                                               offset != 0 ? "measured" : "reported by the devices"),
                                  action: nil, keyEquivalent: "")
         latency.isEnabled = false
-        if !session.engine.isRecording { latency.title = "Latency compensation: reported by the device when recording starts" }
+        if !session.engine.isRecording {
+            latency.title = offset != 0 ? String(format: "Latency compensation: measured (%+d samples vs. the devices)", offset)
+                                        : "Latency compensation: reported by the devices when recording starts"
+        }
         menu.addItem(latency)
+        let measure = NSMenuItem(title: "Measure Recording Latency…", action: #selector(measureLatency(_:)), keyEquivalent: "")
+        measure.target = self
+        menu.addItem(measure)
+        if offset != 0 {
+            let reset = NSMenuItem(title: "Use Reported Latency", action: #selector(resetLatency(_:)), keyEquivalent: "")
+            reset.target = self
+            menu.addItem(reset)
+        }
     }
 
     /// Track header input button: choose an input channel (audio) or explain MIDI routing.

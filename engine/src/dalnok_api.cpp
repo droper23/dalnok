@@ -196,6 +196,24 @@ int32_t dalnok_record_live_peaks(DalnokEngine *e, DalnokTrackId track, float *ou
     for (int32_t i = 0; out && i < capacity && i < n; ++i) out[i] = (*p)[static_cast<size_t>(i)];
     return n;
 }
+DalnokStatus dalnok_latency_measure_start(DalnokEngine *e, const char *uid, int32_t channel, char *err, size_t err_len) {
+    if (!e || !uid) return DALNOK_ERR_INVALID_ARG;
+    std::string msg;
+    if (!e->impl.startLatencyProbe(uid, channel, msg)) { copyOut(err, err_len, msg); return DALNOK_ERR_DEVICE; }
+    return DALNOK_OK;
+}
+bool dalnok_latency_measure_poll(DalnokEngine *e, DalnokLatencyResult *out) {
+    if (!e) return true;
+    dalnok::Engine::LatencyResult r;
+    if (!e->impl.pollLatencyProbe(r)) return false;
+    if (out) {
+        *out = DalnokLatencyResult{};
+        out->ok = r.ok; out->measured_frames = r.measured; out->reported_frames = r.reported;
+        out->clicks = r.clicks; out->spread_frames = r.spread; out->level = r.level;
+        copyOut(out->error, sizeof out->error, r.error);
+    }
+    return true;
+}
 DalnokStatus dalnok_input_set_device(DalnokEngine *e, const char *uid, char *err, size_t err_len) {
     if (!e) return DALNOK_ERR_INVALID_ARG;
     std::string msg;

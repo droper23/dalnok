@@ -58,6 +58,10 @@ public:
     bool inputRunning() const { return duplex_ != nullptr && !simulatedInput_; }
     const std::string &inputError() const { return inputError_; }
     bool setInputMonitor(DalnokTrackId id, bool on, std::string &err);
+    // Latency measurement (loopback): clicks out, the same clicks back on an input channel.
+    struct LatencyResult { bool ok = false; int64_t measured = 0, reported = 0; int32_t clicks = 0, spread = 0; float level = 0; std::string error; };
+    bool startLatencyProbe(const std::string &uid, int channel, std::string &err);
+    bool pollLatencyProbe(LatencyResult &result); // true once finished
     // Live waveform of the take in progress: peaks (one per kLivePeakFrames) of the spool channel recording `track`.
     const std::vector<float> *livePeaks(DalnokTrackId track);
     // Captures the given device input channels (zero-based) into one interleaved spool.
@@ -409,6 +413,12 @@ private:
     void syncInput();                  // opens or closes the monitoring input to match monitorWanted()
     bool openDuplex(const std::string &uid, int highestChannel, std::string &err); // replaces the output device
     void closeDuplex();                // back to the output device
+    // Latency probe: the audio thread owns probeFrame_ and writes probeBuf_ until probeDone_ (then the control thread).
+    std::vector<float> probeBuf_, probeBurst_; // capture; the burst played at each click (Hann-windowed 2 kHz, 2 ms)
+    std::atomic<bool> probeActive_{false}, probeDone_{false}, probeFailed_{false};
+    int probeChannel_ = 0, probePeriod_ = 12000, probeFirst_ = 2400;
+    int64_t probeFrame_ = 0;
+    bool probeOwnsInput_ = false;
     const float *const *rtInputs_ = nullptr; // this callback's device inputs (audio thread)
     int rtInputCount_ = 0;
     static constexpr int kMaxCaptureBlock = 8192;

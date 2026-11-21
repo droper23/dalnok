@@ -32,6 +32,26 @@ void Engine::duplexCallback(void *ctx, float *left, float *right, const float *c
     self->rtInputCount_ = 0;
     self->scratch_.liveInputCount = 0;
 
+    // Latency probe: silence except a click every period; read the probe channel back.
+    if (self->probeActive_.load(std::memory_order_acquire)) {
+        const int ch = self->probeChannel_;
+        const float *in = inputs && ch < inputCount ? inputs[ch] : nullptr;
+        if (!in) self->probeFailed_.store(true, std::memory_order_relaxed);
+        const auto size = static_cast<int64_t>(self->probeBuf_.size());
+        const auto burst = static_cast<int64_t>(self->probeBurst_.size());
+        for (int i = 0; i < frames; ++i) {
+            const int64_t f = self->probeFrame_ + i;
+            const int64_t k = f >= self->probeFirst_ ? (f - self->probeFirst_) % self->probePeriod_ : burst;
+            left[i] = right[i] = k < burst ? self->probeBurst_[static_cast<size_t>(k)] : 0.0f;
+            if (f < size) self->probeBuf_[static_cast<size_t>(f)] = in ? in[i] : 0.0f;
+        }
+        self->probeFrame_ += frames;
+        if (self->probeFrame_ >= size) {
+            self->probeActive_.store(false, std::memory_order_relaxed);
+            self->probeDone_.store(true, std::memory_order_release);
+        }
+    }
+
     CaptureWriter *writer = self->rec_.captureRT.load(std::memory_order_acquire);
     if (!writer) return; // monitoring only
     const int n = self->rec_.captureChannels;

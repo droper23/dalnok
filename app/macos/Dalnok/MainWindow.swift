@@ -193,6 +193,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     /// Self-test only: record from DALNOK_SIMULATED_INPUT instead of a device.
     static var simulatedInput = false
     static var inputMonitoring = false
+    var latencyInput: String?
+    var lastLatencyResult: DalnokLatencyResult?
     var openedMidiSources = Set<Int32>()
     var lastRecordingProblem: String?
     var lastRecoveredTakes: [URL] = []

@@ -102,8 +102,8 @@ bool Engine::monitorWanted() const {
 }
 
 void Engine::syncInput() {
-    // Recording owns the duplex device; nothing real runs before startDevice.
-    if (rec_.captureWriter) return;
+    // Recording or a latency measurement owns the duplex device; nothing real runs before startDevice.
+    if (rec_.captureWriter || probeOwnsInput_) return;
     if (inputUid_ == kSimulatedInput || simulatedInput_) {
         // Tests: the simulated input stands in for the device (output stopped; cycles come from pumpInput).
         const bool wantSim = inputUid_ == kSimulatedInput && monitorWanted();
@@ -155,6 +155,93 @@ void Engine::closeDuplex() {
     std::string ignored;
     if (!simulatedInput_) startDevice(ignored);
     updateWorkgroup();
+}
+
+bool Engine::startLatencyProbe(const std::string &uid, int channel, std::string &err) {
+    if (rec_.captureWriter || rec_.active) { err = "stop recording before measuring latency"; return false; }
+    if (probeOwnsInput_) { err = "already measuring"; return false; }
+    if (channel < 0 || channel > 63) { err = "input channel out of range"; return false; }
+    const bool simulated = uid == kSimulatedInput;
+    if (!simulated) {
+        int inputs = 0;
+        for (const auto &d : listInputDevices()) if (d.uid == uid) inputs = d.inputChannels;
+        if (channel >= inputs) { err = inputs ? "the input device does not have that input" : "the input device is not available"; return false; }
+        if (!device_ && !duplex_) { err = "start the output device first"; return false; }
+    } else if (device_ || (duplex_ && !simulatedInput_)) { err = "the simulated input requires the output device to be stopped"; return false; }
+    probeBuf_.assign(static_cast<size_t>(sampleRate_ * 2.5), 0.0f);
+    probePeriod_ = static_cast<int>(sampleRate_ / 4);
+    probeFirst_ = static_cast<int>(sampleRate_ / 20);
+    probeChannel_ = channel;
+    probeFrame_ = 0;
+    // A short tone burst carries far more energy than one sample, so speakers and microphones pick it up too.
+    probeBurst_.assign(static_cast<size_t>(sampleRate_ / 500), 0.0f);
+    for (size_t i = 0; i < probeBurst_.size(); ++i) {
+        const double t = static_cast<double>(i), n = static_cast<double>(probeBurst_.size());
+        probeBurst_[i] = static_cast<float>(0.5 * std::sin(2 * M_PI * 2000.0 * t / sampleRate_) * (0.5 - 0.5 * std::cos(2 * M_PI * t / n)));
+    }
+    probeDone_.store(false, std::memory_order_relaxed);
+    probeFailed_.store(false, std::memory_order_relaxed);
+    probeOwnsInput_ = true;
+    if (simulated) {
+        if (!duplex_) { duplex_ = std::make_unique<SimulatedDuplex>(sampleRate_, simulatedLatency_); duplexInputUid_ = kSimulatedInput; simulatedInput_ = true; }
+    } else if (!duplex_ || duplexInputUid_ != uid) {
+        if (duplex_) closeDuplex();
+        if (!openDuplex(uid, channel, err)) { probeOwnsInput_ = false; syncInput(); return false; }
+    }
+    probeActive_.store(true, std::memory_order_release); // the callback starts at frame 0 from here
+    return true;
+}
+
+bool Engine::pollLatencyProbe(LatencyResult &r) {
+    if (!probeOwnsInput_) { r = {}; r.error = "not measuring"; return true; }
+    if (!probeDone_.load(std::memory_order_acquire)) {
+        if (duplex_ && !duplex_->alive()) probeFailed_.store(true);
+        if (!probeFailed_.load() || !duplex_) return false;
+    }
+    probeActive_.store(false, std::memory_order_release);
+    if (!simulatedInput_) waitForAudioCycles();
+    r = {};
+    r.reported = duplex_ ? duplex_->roundTripLatency() : 0;
+    if (probeFailed_.load()) r.error = "the input stopped during the measurement";
+    else {
+        // Each burst: the lag of the strongest cross-correlation with the burst within the following period, if it
+        // stands well clear of the correlation elsewhere in that period.
+        std::vector<int64_t> delays;
+        const auto size = static_cast<int64_t>(probeBuf_.size()), len = static_cast<int64_t>(probeBurst_.size());
+        for (float v : probeBuf_) r.level = std::max(r.level, std::fabs(v));
+        std::vector<double> corr(static_cast<size_t>(probePeriod_));
+        for (int64_t c = probeFirst_; c + probePeriod_ + len <= size; c += probePeriod_) {
+            int64_t best = 0; double peak = 0;
+            for (int64_t lag = 0; lag < probePeriod_; ++lag) {
+                double acc = 0;
+                for (int64_t j = 0; j < len; ++j) acc += static_cast<double>(probeBuf_[static_cast<size_t>(c + lag + j)]) * probeBurst_[static_cast<size_t>(j)];
+                corr[static_cast<size_t>(lag)] = acc;
+                if (std::fabs(acc) > peak) { peak = std::fabs(acc); best = lag; }
+            }
+            double noise = 0; int64_t n = 0;
+            for (int64_t lag = 0; lag < probePeriod_; ++lag)
+                if (lag < best - 2 * len || lag > best + 2 * len) { noise += corr[static_cast<size_t>(lag)] * corr[static_cast<size_t>(lag)]; ++n; }
+            const double rms = n ? std::sqrt(noise / static_cast<double>(n)) : 0;
+            if (peak > 1e-6 && peak > 8 * rms) delays.push_back(best);
+        }
+        std::sort(delays.begin(), delays.end());
+        r.clicks = static_cast<int32_t>(delays.size());
+        if (delays.size() >= 3) {
+            r.measured = delays[delays.size() / 2];
+            r.spread = static_cast<int32_t>(delays.back() - delays.front());
+        }
+        if (delays.size() < 3) r.error = "the clicks were not heard on that input (connect an output to it, or choose a loopback input)";
+        else if (r.spread > 48) r.error = "the clicks arrived inconsistently (" + std::to_string(r.spread) + " frames apart); use a cable or a loopback input";
+        else r.ok = true;
+    }
+    probeOwnsInput_ = false;
+    probeDone_.store(false, std::memory_order_relaxed);
+    if (simulatedInput_ && !rec_.captureWriter && !(inputUid_ == kSimulatedInput && monitorWanted())) {
+        duplex_.reset(); duplexInputUid_.clear(); simulatedInput_ = false;
+    }
+    syncInput(); // back to monitoring, or to the output alone
+    if (duplex_ && !monitorWanted() && !simulatedInput_) closeDuplex();
+    return true;
 }
 
 const std::vector<float> *Engine::livePeaks(DalnokTrackId track) {

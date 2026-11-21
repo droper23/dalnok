@@ -35,6 +35,23 @@ extension SelfTest {
             check(perform("Input Monitoring", exact: true) && s.track(track)?.inputMonitor == false, "Input Monitoring turns off")
             check(dalnok_engine_pump_input(e.handle, probe, &l, &r, 512) != DALNOK_OK, "the input closes when nothing monitors it")
         }
+        // Measure Recording Latency: the simulated input hears the output 700 frames later; takes then use it.
+        do {
+            w.startLatencyMeasurement(input: DALNOK_SIMULATED_INPUT, channel: 0)
+            var heard = [Float](repeating: 0, count: 700), finished = false
+            for _ in 0..<400 where !finished {
+                let input = Array(heard.prefix(512))
+                heard.removeFirst(512)
+                check(dalnok_engine_pump_input(e.handle, input, &l, &r, 512) == DALNOK_OK, "the measurement runs the input")
+                heard += l
+                finished = w.pollLatencyMeasurement()
+            }
+            let key = w.latencyKey(input: DALNOK_SIMULATED_INPUT)
+            check(finished && w.lastLatencyResult?.measured_frames == 700 && MainWindowController.latencyOffsets[key] == 700 - Int(w.lastLatencyResult?.reported_frames ?? 0),
+                  "Measure Recording Latency finds the 700-sample round trip and keeps it (\(w.lastLatencyResult?.measured_frames ?? -1))")
+            check(dalnok_engine_pump_input(e.handle, [Float](repeating: 0, count: 512), &l, &r, 512) != DALNOK_OK, "the input closes after measuring")
+            MainWindowController.latencyOffsets = [:]
+        }
         check(perform("Record Enable Track") && s.track(track)?.armed == true, "menu Track > Record Enable Track arms the track")
         check(w.headers.row(track)?.inputButton.title == "IN 1", "header shows the track input (IN 1)")
         e.seek(0)
@@ -230,7 +247,7 @@ extension SelfTest {
     /// Piano roll through real menus, mouse gestures (synthesized events) and keys.
     /// DALNOK_TEST_AUDIO_INPUT=<input device name>: Input Monitoring and a short take on real hardware, listening on the
     /// system default output (another device), so recording must not move the output. The monitored track sits at
-    /// -40 dB (no feedback through speakers). Skipped without the variable.
+    /// -24 dB (little risk of feedback through speakers). Skipped without the variable.
     func realAudioInput() async {
         guard let name = ProcessInfo.processInfo.environment["DALNOK_TEST_AUDIO_INPUT"], !name.isEmpty else { return }
         guard let device = Engine.recordingDevices().first(where: { $0.name == name }) else {
@@ -245,15 +262,14 @@ extension SelfTest {
         w.syncInputDevice()
         let track = s.tracks.first(where: { !$0.isInstrument && !$0.isBus && $0.stack == 0 })?.id ?? s.addTrack("Real Input")
         let gain = s.track(track)?.gainDb ?? 0
-        s.setGain(track, db: -40)
+        s.setGain(track, db: -24)
         defer { s.setGain(track, db: gain) }
         w.headers.select(track)
         let outputBefore = e.outputDeviceUid
         if s.track(track)?.inputMonitor != true { _ = perform("Input Monitoring", exact: true) }
         await wait(0.6)
-        _ = e.trackMeter(track)
-        await wait(0.4)
-        let (ml, _) = e.trackMeter(track)
+        var ml: Float = 0
+        for _ in 0..<20 { await wait(0.1); ml = max(ml, e.trackMeter(track).0) } // a quiet room is near the meter's floor
         check(e.inputRunning && e.inputError.isEmpty, "real input: \(name) opens for Input Monitoring (\(e.inputError))")
         check(e.outputDeviceUid == outputBefore, "real input: monitoring keeps the output device")
         check(ml > 0, "real input: the monitored track's meter moves with \(name)'s input (\(ml))")

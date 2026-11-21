@@ -28,7 +28,7 @@
 extern "C" {
 #endif
 
-#define DALNOK_API_VERSION 42
+#define DALNOK_API_VERSION 43
 
 typedef enum {
     DALNOK_OK = 0,
@@ -172,6 +172,27 @@ void dalnok_record_set_monitoring(DalnokEngine *engine, bool on);
  * `track`, from the start of the take (timeline position: dalnok_record_start_frame, wrapping at the cycle for a
  * cycle take). Copies up to `capacity`; returns the total number (0 when the track is not recording). */
 #define DALNOK_LIVE_PEAK_FRAMES 256
+
+/* ---- Latency measurement -----------------------------------------------
+ * Plays a click every quarter second on the current output (everything else silent) and listens on `input_channel`
+ * of `input_device_uid`, which must hear that output: a cable from an output to that input, or an interface's
+ * loopback input. After about 2.5 s, poll returns true with the measured round trip: the frames from writing a
+ * sample to the output to reading it back, the median over the clicks. Recording compensates
+ * dalnok_record_latency = reported + offset; set the offset to measured - reported to use the measurement.
+ * Fails if recording, or when fewer than 3 clicks are heard clearly and consistently. Control thread only. */
+typedef struct {
+    bool ok;                  /* false: `error` says why */
+    int64_t measured_frames;  /* median round trip */
+    int64_t reported_frames;  /* what the devices report for the same input and output */
+    int32_t clicks;           /* clicks heard clearly */
+    int32_t spread_frames;    /* largest minus smallest delay among them */
+    float level;              /* the loudest click as heard (linear peak) */
+    char error[256];
+} DalnokLatencyResult;
+DalnokStatus dalnok_latency_measure_start(DalnokEngine *engine, const char *input_device_uid, int32_t input_channel,
+                                          char *err, size_t err_len);
+/* False while measuring; true once finished (the input returns to monitoring, or closes). */
+bool dalnok_latency_measure_poll(DalnokEngine *engine, DalnokLatencyResult *result);
 int32_t dalnok_record_live_peaks(DalnokEngine *engine, DalnokTrackId track, float *out, int32_t capacity);
 
 /* ---- Input monitoring --------------------------------------------------
