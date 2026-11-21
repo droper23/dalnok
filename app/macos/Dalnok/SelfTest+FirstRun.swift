@@ -84,13 +84,14 @@ extension SelfTest {
               "hovering the Mixer button shows its hint (\(w.hoverHint ?? "none"))")
         // A clip the pointer can reach: on screen and not under a panel (CI's smaller screens scroll some lanes away).
         let hoverTimeline = w.timeline, content = w.window?.contentView
-        let reachable = s.tracks.enumerated().flatMap { i, t in t.clips.map { (i, $0) } }.lazy.compactMap { i, c -> CGPoint? in
-            guard let p = hoverTimeline.windowPoint(ofClip: c.id, zone: "body"), let content else { return nil }
-            let local = hoverTimeline.convert(p, from: nil)
-            guard hoverTimeline.visibleRect.contains(local),
-                  hoverTimeline.clipRect(c, laneY: hoverTimeline.laneY(i)).contains(local) else { return nil } // on the clip itself
-            return content.hitTest(content.convert(p, from: nil)) === hoverTimeline ? p : nil
-        }.first
+        // The widest visible clip, at the middle of its visible part (clear of the trim edges and fade handles).
+        let reachable = s.tracks.enumerated().flatMap { i, t in t.clips.map { (i, $0) } }.compactMap { i, c -> (CGFloat, CGPoint)? in
+            guard let content else { return nil }
+            let r = hoverTimeline.clipRect(c, laneY: hoverTimeline.laneY(i)).intersection(hoverTimeline.visibleRect)
+            guard r.width >= 60, r.height >= 24 else { return nil }
+            let p = hoverTimeline.convert(CGPoint(x: r.midX, y: r.midY), to: nil)
+            return content.hitTest(content.convert(p, from: nil)) === hoverTimeline ? (r.width, p) : nil
+        }.max { $0.0 < $1.0 }?.1
         if let p = reachable {
             let ev = mouse(.mouseMoved, p)
             w.timeline.mouseMoved(with: ev); w.pointerMoved(ev)
