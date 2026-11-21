@@ -24,14 +24,14 @@ Concept Guide. Grows with each phase: MIDI (P3), plugins, automation, and sends 
 Signalsmith-based stretch, pitch, and varispeed rendered in the background. ⌥-drag stretch and the Clip
 menu. Imported REAPER playrates and Ableton warp markers now play correctly.
 
-## Phase 2: Recording and editing 🔶 (recording, journals, crash recovery prompt, cycle, punch, count-in and multi-input verified; loopback latency and power loss need the owner's hardware; disk streaming open)
+## Phase 2: Recording and editing 🔶 (recording, journals, crash recovery prompt, cycle, punch, count-in, multi-input, separate input/output devices, Input Monitoring, live waveform, disk streaming and loopback-measured latency verified, the last on a Scarlett; open: power-loss test)
 Input and recording (with a Scarlett test rig), monitoring, split, fades, crossfades, autosave and crash
 recovery, basic routing, disk streaming.
 
 ## Phase 3: MIDI and instruments ✅ (MIDI clips, live input, recording, quantize, Dalnok Poly, piano roll, velocity, tempo and meter maps, metronome; open: real-keyboard test, sample-accurate input timing)
 MIDI tracks, recording and playback, piano roll, quantize, velocity, tempo and meter map, first stock instrument.
 
-## Phase 4: Professional production 🔶 (VST3/AU hosting, parameter panel, buses, sends, mixer with master and inserts, volume/pan/plug-in automation, delay compensation, comping, stacks done; VST3/CLAP sidechains, CLAP hosting and Touch/Latch done; Audio Unit sidechain verification open)
+## Phase 4: Professional production ✅ (VST3/AU/CLAP hosting, parameter panel, buses, sends, mixer with master and inserts, volume/pan/plug-in automation with Touch/Latch, delay compensation, comping, stacks, track groups; VST3/CLAP/AU sidechains verified; released as 0.3.0)
 **VST3 hosting (first format)** with generic parameter panels, then AU and CLAP. Mixer, buses, sends,
 sidechains, automation, delay compensation, **comping and take folders**, track stacks.
 

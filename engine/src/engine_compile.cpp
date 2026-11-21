@@ -47,6 +47,7 @@ void Engine::commit() {
     // is safe to delete immediately.
     delete pending_.exchange(state.release(), std::memory_order_acq_rel);
     collectGarbage();
+    syncInput(); // undo, load or removing a track can change what monitors its input
 }
 
 void Engine::updateStreamPlan(const RenderState &state) {

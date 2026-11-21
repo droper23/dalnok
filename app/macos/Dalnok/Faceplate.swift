@@ -361,16 +361,18 @@ final class FaceplateControl: NSControl, ParameterControl {
     enum Kind { case knob, selector, toggle }
     let kind: Kind
     let name: String
-    var value: Double = 0 { didSet { needsDisplay = true; setAccessibilityValue(format(value)) } }
+    // Setters redraw only on a real change: the device panel re-applies every control's state four times a second,
+    // and redrawing all of them each time cost the main thread about 45 ms per refresh on a 4-unit chain.
+    var value: Double = 0 { didSet { if value != oldValue { needsDisplay = true; setAccessibilityValue(format(value)) } } }
     var defaultValue: Double = 0
     var steps: Int32 = 0
     var bipolar = false
-    var tint: NSColor = Theme.accent { didSet { needsDisplay = true } }
-    var dimmed = false { didSet { needsDisplay = true } }
+    var tint: NSColor = Theme.accent { didSet { if tint != oldValue { needsDisplay = true } } }
+    var dimmed = false { didSet { if dimmed != oldValue { needsDisplay = true } } }
     /// How lit its lights are (0 … 1): fades with bypass (DeviceView drives it).
     var light: CGFloat = 1 { didSet { if light != oldValue { needsDisplay = true } } }
     /// Printed legends for the scale ends (and, for short selectors, every position).
-    var legends: [String] = [] { didSet { needsDisplay = true } }
+    var legends: [String] = [] { didSet { if legends != oldValue { needsDisplay = true } } }
     var format: (Double) -> String = { String(format: "%.0f%%", $0 * 100) }
     var onChange: ((Double) -> Void)?
     private(set) var tracking = false
@@ -723,8 +725,8 @@ extension Faceplate {
 /// A unit's name, laser-etched into the faceplate.
 @MainActor
 final class EtchedLabel: NSView {
-    var text: String { didSet { invalidateIntrinsicContentSize(); needsDisplay = true; setAccessibilityLabel(text) } }
-    var dimmed = false { didSet { needsDisplay = true } }
+    var text: String { didSet { guard text != oldValue else { return }; invalidateIntrinsicContentSize(); needsDisplay = true; setAccessibilityLabel(text) } }
+    var dimmed = false { didSet { if dimmed != oldValue { needsDisplay = true } } }
     let font = NSFont.systemFont(ofSize: 12.5, weight: .bold)
     init(_ text: String) {
         self.text = text

@@ -13,7 +13,7 @@ final class SelfTest {
     let workdir: URL
     var failures = 0
     /// Preferences the test changes; all are restored at the end so a run never alters the owner's settings.
-    static let restoredKeys = ["copyAudioOnSave", "comingFrom", "onboardingDone", "recordingInputUID", "rulerBarsAndBeats", "metronome", "showDevicePanel", "countIn", "showMixer", "showLauncher", "automationMode", "pedal.AUDelay", "shortcuts.preset", "shortcuts.overrides", "shortcuts.userPresets"] + PluginLibrary.keys + ["tapeSpeed", "trackHeight", "secondaryClock", "gainRingLevel", "isolatePlugins", "clipBounce"] + Faceplate.preferenceKeys
+    static let restoredKeys = ["copyAudioOnSave", "comingFrom", "onboardingDone", "recordingInputUID", "latencyOffsets", "rulerBarsAndBeats", "metronome", "showDevicePanel", "countIn", "showMixer", "showLauncher", "automationMode", "pedal.AUDelay", "shortcuts.preset", "shortcuts.overrides", "shortcuts.userPresets"] + PluginLibrary.keys + ["tapeSpeed", "trackHeight", "secondaryClock", "gainRingLevel", "isolatePlugins", "clipBounce"] + Faceplate.preferenceKeys
     let previousPreferences: [String: Any]
     var w: MainWindowController { app.main }
     var s: Session { app.session }
@@ -419,11 +419,7 @@ final class SelfTest {
         check(perform("New"), "menu File > New")
         check(s.tracks.isEmpty, "new project is empty")
         check(!w.emptyState.isHidden && w.timeline.isHidden, "empty state shown for an empty project")
-        if let b = w.emptyState.subviewsDeep.compactMap({ $0 as? NSButton }).first(where: { $0.title == "New Instrument Track" }) {
-            b.performClick(nil)
-            check(s.tracks.count == 1 && s.tracks.first?.isInstrument == true, "empty state's New Instrument Track adds one")
-            _ = perform("Undo")
-        } else { check(false, "empty state offers New Instrument Track") }
+        await startPage()
         let opened = await withCheckedContinuation { cont in w.openProject(project) { cont.resume(returning: $0) } }
         check(opened, "background open completed")
         check(s.tracks.count == files.count, "reopened \(s.tracks.count) tracks")

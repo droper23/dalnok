@@ -264,6 +264,8 @@ json::Value Engine::describe() const {
         }
         if (t.armed) tv.set("armed", true);
         if (t.inputChannel != 0) tv.set("input", t.inputChannel);
+        if (t.inputMonitor) tv.set("monitor", true);
+        if (t.group) tv.set("group", t.group);
         if (!t.plugins.empty()) {
             Value list = Value::makeArray();
             for (const auto &slot : t.plugins) {
@@ -442,6 +444,18 @@ bool Engine::saveProject(const std::string &path, std::string &err, bool copyMed
     for (const auto &t : model_.tracks) pluginAutomation = pluginAutomation || !t.pluginAuto.empty();
     bool bypass = false;
     for (const auto &t : model_.tracks) for (const auto &p : t.plugins) bypass = bypass || p.bypassed;
+    if (!model_.groups.empty()) { // editing links only: older builds ignore them and play the same
+        json::Value gs = json::Value::makeArray();
+        for (const auto &g : model_.groups) {
+            json::Value v = json::Value::makeObject();
+            v.set("id", g.id);
+            v.set("name", g.name);
+            v.set("volume", g.volume); v.set("pan", g.pan); v.set("mute", g.mute);
+            v.set("solo", g.solo); v.set("arm", g.arm); v.set("monitor", g.monitor);
+            gs.push(std::move(v));
+        }
+        doc.set("groups", std::move(gs));
+    }
     if (!model_.markers.empty()) {
         json::Value ms = json::Value::makeArray();
         for (const auto &mk : model_.markers) {
@@ -611,6 +625,8 @@ std::unique_ptr<Engine::PreparedProject> Engine::readDocument(const json::Value 
                 }
             t.armed = tv.getBool("armed", false);
             t.inputChannel = static_cast<int32_t>(std::clamp<int64_t>(toInt(tv, "input"), 0, 63));
+            t.inputMonitor = t.kind == kTrackAudio && tv.getBool("monitor", false);
+            t.group = static_cast<int32_t>(std::max<int64_t>(0, toInt(tv, "group")));
             if (const json::Value *pl = tv.get("plugins"); pl && pl->isArray()) {
                 std::set<int32_t> seen;
                 for (const auto &pv : pl->array) {
@@ -739,6 +755,21 @@ std::unique_ptr<Engine::PreparedProject> Engine::readDocument(const json::Value 
             model.tracks.push_back(std::move(t));
         }
     }
+    // Track groups: unique positive ids; a track naming a missing group belongs to none.
+    if (const json::Value *gl = doc.get("groups"); gl && gl->isArray()) {
+        std::set<int32_t> seen;
+        for (const auto &gv : gl->array) {
+            TrackGroup g;
+            g.id = static_cast<int32_t>(toInt(gv, "id"));
+            if (g.id <= 0 || !seen.insert(g.id).second) continue;
+            g.name = gv.getString("name", "Group " + std::to_string(g.id));
+            g.volume = gv.getBool("volume", true); g.pan = gv.getBool("pan", false); g.mute = gv.getBool("mute", true);
+            g.solo = gv.getBool("solo", true); g.arm = gv.getBool("arm", true); g.monitor = gv.getBool("monitor", true);
+            model.groups.push_back(std::move(g));
+        }
+    }
+    for (auto &t : model.tracks)
+        if (t.group && std::none_of(model.groups.begin(), model.groups.end(), [&](const TrackGroup &g) { return g.id == t.group; })) t.group = 0;
     // Markers: unique positive ids, positions >= 0.
     if (const json::Value *ml = doc.get("markers")) {
         if (!ml->isArray()) { err = "invalid markers"; return nullptr; }

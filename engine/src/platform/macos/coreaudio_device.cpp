@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <unistd.h>
 
 namespace dalnok {
 
@@ -206,11 +207,19 @@ private:
 };
 
 // One AUHAL instance keeps capture and playback on a single device clock.
+// With separate input and output devices, `device` is a private aggregate (output first, as the clock; the input
+// drift-corrected), and the input device's channels start at `inputOffset` within it.
 class CoreAudioDuplex final : public AudioDuplexDevice {
 public:
-    CoreAudioDuplex(AudioDeviceID device, double rate, int channel, int channels)
-        : device_(device), sampleRate_(rate), selected_(channel), channels_(channels) {}
-    ~CoreAudioDuplex() override { stop(); }
+    CoreAudioDuplex(AudioDeviceID device, double rate, int channel, int channels, int inputOffset = 0,
+                    AudioDeviceID inputDevice = 0, AudioDeviceID outputDevice = 0, bool aggregate = false)
+        : device_(device), sampleRate_(rate), selected_(channel), channels_(channels), offset_(inputOffset),
+          inputDevice_(inputDevice ? inputDevice : device), outputDevice_(outputDevice ? outputDevice : device),
+          aggregate_(aggregate) {}
+    ~CoreAudioDuplex() override {
+        stop();
+        if (aggregate_) AudioHardwareDestroyAggregateDevice(device_);
+    }
 
     bool start(Callback cb, void *ctx, std::string &err) override {
         if (unit_) { err = "duplex device already started"; return false; }
@@ -266,9 +275,12 @@ public:
     }
     bool captureFailed() const override { return failed_.load(std::memory_order_acquire); }
     bool alive() const override {
-        auto a = addr(kAudioDevicePropertyDeviceIsAlive);
-        UInt32 value = 0, size = sizeof(value);
-        return AudioObjectGetPropertyData(device_, &a, 0, nullptr, &size, &value) == noErr && value;
+        auto isAlive = [](AudioDeviceID d) {
+            auto a = addr(kAudioDevicePropertyDeviceIsAlive);
+            UInt32 value = 0, size = sizeof(value);
+            return AudioObjectGetPropertyData(d, &a, 0, nullptr, &size, &value) == noErr && value;
+        };
+        return isAlive(device_) && isAlive(inputDevice_) && isAlive(outputDevice_);
     }
     double hardwareSampleRate() const override { return nominalRate(device_); }
     uint32_t workgroupPort() const override { return ioWorkgroupPort(device_); }
@@ -278,18 +290,20 @@ public:
             UInt32 value = 0, size = sizeof(value);
             return AudioObjectGetPropertyData(object, &a, 0, nullptr, &size, &value) == noErr ? int64_t(value) : int64_t(0);
         };
-        auto firstStream = [this](AudioObjectPropertyScope scope) -> AudioObjectID {
+        auto firstStream = [](AudioDeviceID dev, AudioObjectPropertyScope scope) -> AudioObjectID {
             auto a = addr(kAudioDevicePropertyStreams, scope);
             UInt32 size = 0;
-            if (AudioObjectGetPropertyDataSize(device_, &a, 0, nullptr, &size) != noErr || size < sizeof(AudioStreamID)) return 0;
+            if (AudioObjectGetPropertyDataSize(dev, &a, 0, nullptr, &size) != noErr || size < sizeof(AudioStreamID)) return 0;
             std::vector<AudioStreamID> streams(size / sizeof(AudioStreamID));
-            return AudioObjectGetPropertyData(device_, &a, 0, nullptr, &size, streams.data()) == noErr ? streams[0] : 0;
+            return AudioObjectGetPropertyData(dev, &a, 0, nullptr, &size, streams.data()) == noErr ? streams[0] : 0;
         };
+        // Each direction from its own (sub-)device; the buffer from the device the unit runs (the aggregate's own).
         int64_t total = 0;
         for (auto scope : {kAudioObjectPropertyScopeInput, kAudioObjectPropertyScopeOutput}) {
-            total += get(device_, kAudioDevicePropertyLatency, scope) + get(device_, kAudioDevicePropertySafetyOffset, scope) +
+            const AudioDeviceID dev = scope == kAudioObjectPropertyScopeInput ? inputDevice_ : outputDevice_;
+            total += get(dev, kAudioDevicePropertyLatency, scope) + get(dev, kAudioDevicePropertySafetyOffset, scope) +
                      get(device_, kAudioDevicePropertyBufferFrameSize, scope);
-            if (const AudioObjectID stream = firstStream(scope)) total += get(stream, kAudioStreamPropertyLatency, kAudioObjectPropertyScopeGlobal);
+            if (const AudioObjectID stream = firstStream(dev, scope)) total += get(stream, kAudioStreamPropertyLatency, kAudioObjectPropertyScopeGlobal);
         }
         return total;
     }
@@ -328,11 +342,13 @@ private:
             // Core Audio's own render-thread call (real-time safe by contract; older SDKs don't annotate it).
             const OSStatus s = AudioUnitRender(self->unit_, &inputFlags, time, 1, frames, reinterpret_cast<AudioBufferList *>(&input));
 #pragma clang diagnostic pop
-            if (s == noErr && input.count > static_cast<UInt32>(self->selected_)) {
-                channelCount = static_cast<int>(std::min<UInt32>(input.count, 64));
+            const auto offset = static_cast<UInt32>(self->offset_);
+            if (s == noErr && input.count > static_cast<UInt32>(self->selected_) + offset) {
+                channelCount = static_cast<int>(std::min<UInt32>(input.count - offset, 64));
                 for (int c = 0; c < channelCount; ++c) {
-                    if (input.buffers[c].mDataByteSize < frames * sizeof(float)) { channelCount = 0; break; }
-                    channels[c] = static_cast<const float *>(input.buffers[c].mData);
+                    const AudioBuffer &b = input.buffers[offset + static_cast<UInt32>(c)];
+                    if (b.mDataByteSize < frames * sizeof(float)) { channelCount = 0; break; }
+                    channels[c] = static_cast<const float *>(b.mData);
                 }
             }
         }
@@ -342,7 +358,9 @@ private:
     }
     AudioDeviceID device_;
     double sampleRate_;
-    int selected_, channels_;
+    int selected_, channels_, offset_;
+    AudioDeviceID inputDevice_, outputDevice_;
+    bool aggregate_;
     UInt32 maxFrames_ = 0;
     AudioComponentInstance unit_ = nullptr;
     std::vector<float> input_;
@@ -401,20 +419,85 @@ std::unique_ptr<AudioDevice> createOutputDevice(const std::string &uid, double s
     return std::make_unique<CoreAudioOutput>(dev, sampleRate);
 }
 
-std::unique_ptr<AudioDuplexDevice> createDuplexDevice(const std::string &uid, double sampleRate,
-                                                      int inputChannel, std::string &err) {
-    const AudioDeviceID device = uid.empty() ? 0 : deviceForUID(uid);
-    if (!device) { err = "select an available duplex device"; return nullptr; }
-    const int inputs = channelCount(device, kAudioObjectPropertyScopeInput);
-    const int outputs = channelCount(device, kAudioObjectPropertyScopeOutput);
-    if (inputs <= 0 || inputs > 64 || outputs < 2 || inputChannel < 0 || inputChannel >= inputs) {
-        err = "device does not support the requested input and stereo output"; return nullptr;
+namespace {
+CFStringRef cf(const std::string &s) { return CFStringCreateWithCString(nullptr, s.c_str(), kCFStringEncodingUTF8); }
+
+bool setNominalRate(AudioDeviceID dev, double rate) {
+    if (std::abs(nominalRate(dev) - rate) <= 0.5) return true;
+    auto a = addr(kAudioDevicePropertyNominalSampleRate);
+    Float64 r = rate;
+    if (AudioObjectSetPropertyData(dev, &a, 0, nullptr, sizeof(r), &r) != noErr) return false;
+    for (int i = 0; i < 100 && std::abs(nominalRate(dev) - rate) > 0.5; ++i) usleep(10000); // applies asynchronously
+    return std::abs(nominalRate(dev) - rate) <= 0.5;
+}
+
+// A private (unlisted, process-owned) aggregate of the output device (clock) and the input device (drift-corrected).
+AudioDeviceID createAggregate(const std::string &outputUid, const std::string &inputUid, std::string &err) {
+    static std::atomic<int> serial{0};
+    const std::string uid = "io.github.droper23.dalnok.io." + std::to_string(getpid()) + "." + std::to_string(serial++);
+    CFStringRef outUID = cf(outputUid), inUID = cf(inputUid), aggUID = cf(uid), name = cf("Dalnok I/O");
+    const int one = 1;
+    CFNumberRef yes = CFNumberCreate(nullptr, kCFNumberIntType, &one);
+    const void *outKeys[] = {CFSTR(kAudioSubDeviceUIDKey)};
+    const void *outVals[] = {outUID};
+    CFDictionaryRef outSub = CFDictionaryCreate(nullptr, outKeys, outVals, 1, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+    const void *inKeys[] = {CFSTR(kAudioSubDeviceUIDKey), CFSTR(kAudioSubDeviceDriftCompensationKey)};
+    const void *inVals[] = {inUID, yes};
+    CFDictionaryRef inSub = CFDictionaryCreate(nullptr, inKeys, inVals, 2, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+    const void *subs[] = {outSub, inSub};
+    CFArrayRef list = CFArrayCreate(nullptr, subs, 2, &kCFTypeArrayCallBacks);
+    const void *keys[] = {CFSTR(kAudioAggregateDeviceNameKey), CFSTR(kAudioAggregateDeviceUIDKey),
+                          CFSTR(kAudioAggregateDeviceIsPrivateKey), CFSTR(kAudioAggregateDeviceSubDeviceListKey),
+                          CFSTR(kAudioAggregateDeviceMainSubDeviceKey)};
+    const void *vals[] = {name, aggUID, yes, list, outUID};
+    CFDictionaryRef desc = CFDictionaryCreate(nullptr, keys, vals, 5, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+    AudioDeviceID agg = 0;
+    const OSStatus s = AudioHardwareCreateAggregateDevice(desc, &agg);
+    for (CFTypeRef r : {(CFTypeRef)desc, (CFTypeRef)list, (CFTypeRef)inSub, (CFTypeRef)outSub, (CFTypeRef)yes,
+                        (CFTypeRef)name, (CFTypeRef)aggUID, (CFTypeRef)inUID, (CFTypeRef)outUID}) CFRelease(r);
+    if (s != noErr || !agg) { err = osStatusString("create the input and output device pair", s); return 0; }
+    // The aggregate publishes its streams asynchronously.
+    for (int i = 0; i < 200 && (channelCount(agg, kAudioObjectPropertyScopeInput) <= 0 ||
+                                channelCount(agg, kAudioObjectPropertyScopeOutput) <= 0); ++i) usleep(5000);
+    return agg;
+}
+} // namespace
+
+std::unique_ptr<AudioDuplexDevice> createDuplexDevice(const std::string &uid, const std::string &outputUid,
+                                                      double sampleRate, int inputChannel, std::string &err) {
+    const AudioDeviceID input = uid.empty() ? 0 : deviceForUID(uid);
+    if (!input) { err = "the input device is not available (unplugged?)"; return nullptr; }
+    const AudioDeviceID output = outputUid.empty() ? defaultOutputID() : deviceForUID(outputUid);
+    if (!output) { err = "the output device is not available (unplugged?)"; return nullptr; }
+    const int inputs = channelCount(input, kAudioObjectPropertyScopeInput);
+    if (inputs <= 0 || inputs > 64 || inputChannel < 0 || inputChannel >= inputs) {
+        err = "the input device does not have the requested input"; return nullptr;
     }
-    const double rate = nominalRate(device);
-    if (rate <= 0 || std::abs(rate - sampleRate) > 0.5) {
-        err = "engine and duplex device sample rates do not match"; return nullptr;
+    if (channelCount(output, kAudioObjectPropertyScopeOutput) < 1) { err = "the output device has no outputs"; return nullptr; }
+    if (input == output) {
+        if (channelCount(output, kAudioObjectPropertyScopeOutput) < 2) { err = "device does not support stereo output"; return nullptr; }
+        const double rate = nominalRate(input);
+        if (rate <= 0 || std::abs(rate - sampleRate) > 0.5) { err = "engine and duplex device sample rates do not match"; return nullptr; }
+        return std::make_unique<CoreAudioDuplex>(input, rate, inputChannel, inputs);
     }
-    return std::make_unique<CoreAudioDuplex>(device, rate, inputChannel, inputs);
+    // Separate devices: both must run at the engine's rate (an aggregate does not convert). Like other DAWs, the
+    // input device is switched to the engine rate if it can be; the output already runs it (or AUHAL converts).
+    if (!setNominalRate(input, sampleRate)) {
+        err = "the input device cannot run at " + std::to_string(static_cast<int>(sampleRate)) + " Hz"; return nullptr;
+    }
+    if (!setNominalRate(output, sampleRate)) {
+        err = "the output device cannot run at " + std::to_string(static_cast<int>(sampleRate)) + " Hz"; return nullptr;
+    }
+    const std::string outUid = cfString(output, kAudioDevicePropertyDeviceUID);
+    const AudioDeviceID agg = createAggregate(outUid, uid, err);
+    if (!agg) return nullptr;
+    const int offset = channelCount(output, kAudioObjectPropertyScopeInput); // the output device's own inputs come first
+    const int total = channelCount(agg, kAudioObjectPropertyScopeInput);
+    if (total < offset + inputs || total > 64 || channelCount(agg, kAudioObjectPropertyScopeOutput) < 1) {
+        AudioHardwareDestroyAggregateDevice(agg);
+        err = "the input and output device pair did not come up"; return nullptr;
+    }
+    return std::make_unique<CoreAudioDuplex>(agg, nominalRate(agg), inputChannel, total, offset, input, output, true);
 }
 
 double defaultOutputSampleRate() { return nominalRate(defaultOutputID()); }

@@ -188,6 +188,44 @@ int64_t dalnok_record_start_frame(const DalnokEngine *e) { return e && e->impl.r
 int64_t dalnok_record_latency(const DalnokEngine *e) { return e ? e->impl.recordLatency() : 0; }
 void dalnok_record_set_latency_offset(DalnokEngine *e, int64_t frames) { if (e) e->impl.setRecordLatencyOffset(frames); }
 void dalnok_record_set_monitoring(DalnokEngine *e, bool on) { if (e) e->impl.setMonitoring(on); }
+int32_t dalnok_record_live_peaks(DalnokEngine *e, DalnokTrackId track, float *out, int32_t capacity) {
+    if (!e || !e->impl.recording()) return 0;
+    const std::vector<float> *p = e->impl.livePeaks(track);
+    if (!p) return 0;
+    const auto n = static_cast<int32_t>(std::min<size_t>(p->size(), INT32_MAX));
+    for (int32_t i = 0; out && i < capacity && i < n; ++i) out[i] = (*p)[static_cast<size_t>(i)];
+    return n;
+}
+DalnokStatus dalnok_latency_measure_start(DalnokEngine *e, const char *uid, int32_t channel, char *err, size_t err_len) {
+    if (!e || !uid) return DALNOK_ERR_INVALID_ARG;
+    std::string msg;
+    if (!e->impl.startLatencyProbe(uid, channel, msg)) { copyOut(err, err_len, msg); return DALNOK_ERR_DEVICE; }
+    return DALNOK_OK;
+}
+bool dalnok_latency_measure_poll(DalnokEngine *e, DalnokLatencyResult *out) {
+    if (!e) return true;
+    dalnok::Engine::LatencyResult r;
+    if (!e->impl.pollLatencyProbe(r)) return false;
+    if (out) {
+        *out = DalnokLatencyResult{};
+        out->ok = r.ok; out->measured_frames = r.measured; out->reported_frames = r.reported;
+        out->clicks = r.clicks; out->spread_frames = r.spread; out->level = r.level;
+        copyOut(out->error, sizeof out->error, r.error);
+    }
+    return true;
+}
+DalnokStatus dalnok_input_set_device(DalnokEngine *e, const char *uid, char *err, size_t err_len) {
+    if (!e) return DALNOK_ERR_INVALID_ARG;
+    std::string msg;
+    if (!e->impl.setInputDevice(uid ? uid : "", msg)) { copyOut(err, err_len, msg); return DALNOK_ERR_DEVICE; }
+    return DALNOK_OK;
+}
+bool dalnok_input_running(const DalnokEngine *e) { return e && e->impl.inputRunning(); }
+int32_t dalnok_input_error(const DalnokEngine *e, char *out, size_t out_len) {
+    if (!e) return 0;
+    copyOut(out, out_len, e->impl.inputError());
+    return static_cast<int32_t>(e->impl.inputError().size());
+}
 void dalnok_record_set_simulated_latency(DalnokEngine *e, int64_t frames) { if (e) e->impl.setSimulatedLatency(frames); }
 DalnokStatus dalnok_engine_pump_input(DalnokEngine *e, const float *in, float *l, float *r, int32_t frames) {
     return e && in && e->impl.pumpInput(in, l, r, frames) ? DALNOK_OK : DALNOK_ERR_INVALID_ARG;
@@ -654,6 +692,51 @@ int32_t dalnok_track_automation(const DalnokEngine *e, DalnokTrackId t, int32_t 
 DalnokStatus dalnok_track_set_armed(DalnokEngine *e, DalnokTrackId t, bool armed) {
     std::string err;
     return e ? statusFor(e->impl.setArmed(t, armed, err), err) : DALNOK_ERR_INVALID_ARG;
+}
+int32_t dalnok_groups(const DalnokEngine *e, DalnokGroupInfo *out, int32_t capacity) {
+    if (!e) return 0;
+    const auto &gs = e->impl.groups();
+    for (int32_t i = 0; out && i < capacity && i < static_cast<int32_t>(gs.size()); ++i) {
+        const auto &g = gs[static_cast<size_t>(i)];
+        out[i] = DalnokGroupInfo{};
+        out[i].id = g.id;
+        copyOut(out[i].name, sizeof out[i].name, g.name);
+        out[i].volume = g.volume; out[i].pan = g.pan; out[i].mute = g.mute;
+        out[i].solo = g.solo; out[i].arm = g.arm; out[i].monitor = g.monitor;
+        for (int32_t k = 0; k < dalnok_track_count(e); ++k) {
+            DalnokTrackInfo t{};
+            if (dalnok_track_info(e, dalnok_track_at(e, k), &t) == DALNOK_OK && t.group == g.id) ++out[i].members;
+        }
+    }
+    return static_cast<int32_t>(gs.size());
+}
+int32_t dalnok_group_create(DalnokEngine *e, const char *name, const DalnokTrackId *members, int32_t count) {
+    if (!e || count < 0 || (count > 0 && !members)) return 0;
+    std::string err;
+    return e->impl.createGroup(name ? name : "", std::vector<DalnokTrackId>(members, members + count), err);
+}
+DalnokStatus dalnok_group_remove(DalnokEngine *e, int32_t g) {
+    std::string err;
+    return e ? statusFor(e->impl.removeGroup(g, err), err) : DALNOK_ERR_INVALID_ARG;
+}
+DalnokStatus dalnok_group_set(DalnokEngine *e, const DalnokGroupInfo *info) {
+    if (!e || !info) return DALNOK_ERR_INVALID_ARG;
+    dalnok::TrackGroup g;
+    g.id = info->id;
+    g.name = std::string(info->name, strnlen(info->name, sizeof info->name));
+    g.volume = info->volume; g.pan = info->pan; g.mute = info->mute; g.solo = info->solo; g.arm = info->arm; g.monitor = info->monitor;
+    std::string err;
+    return statusFor(e->impl.setGroup(g, err), err);
+}
+DalnokStatus dalnok_track_set_group(DalnokEngine *e, DalnokTrackId t, int32_t g) {
+    std::string err;
+    return e ? statusFor(e->impl.setTrackGroup(t, g, err), err) : DALNOK_ERR_INVALID_ARG;
+}
+void dalnok_groups_set_clutch(DalnokEngine *e, bool on) { if (e) e->impl.setGroupClutch(on); }
+bool dalnok_groups_clutch(const DalnokEngine *e) { return e && e->impl.groupClutch(); }
+DalnokStatus dalnok_track_set_input_monitor(DalnokEngine *e, DalnokTrackId t, bool on) {
+    std::string err;
+    return e ? statusFor(e->impl.setInputMonitor(t, on, err), err) : DALNOK_ERR_INVALID_ARG;
 }
 DalnokStatus dalnok_track_set_input(DalnokEngine *e, DalnokTrackId t, int32_t ch) {
     std::string err;

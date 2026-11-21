@@ -181,18 +181,24 @@ final class Engine {
     // MARK: Recording and MIDI input
     struct InputDevice: Equatable {
         let uid: String, name: String, sampleRate: Double, channels: Int
+        var isDefault = false
     }
     static func inputDevices() -> [InputDevice] {
         var list = [DalnokInputDeviceInfo](repeating: DalnokInputDeviceInfo(), count: 64)
         let n = min(Int(dalnok_input_devices(&list, 64)), 64)
         return list.prefix(n).map { InputDevice(uid: fixedString($0.uid), name: fixedString($0.name),
-                                               sampleRate: $0.sample_rate, channels: Int($0.input_channels)) }
+                                               sampleRate: $0.sample_rate, channels: Int($0.input_channels), isDefault: $0.is_default) }
     }
-    /// Devices that can record (they also have outputs, so one clock drives both).
-    static func recordingDevices() -> [InputDevice] {
-        let outputs = Set(outputDevices().map(\.uid))
-        return inputDevices().filter { outputs.contains($0.uid) }
+    /// Devices that can record: any device with inputs. When it isn't the output device, the engine pairs the two
+    /// (the output keeps the clock), so recording never changes where you listen.
+    static func recordingDevices() -> [InputDevice] { inputDevices() }
+    /// The input used for Input Monitoring and recording ("" = none).
+    func setInputDevice(_ uid: String?) throws {
+        var err = [CChar](repeating: 0, count: 512)
+        guard dalnok_input_set_device(handle, uid, &err, 512) == DALNOK_OK else { throw EngineError(description: cString(err)) }
     }
+    var inputRunning: Bool { dalnok_input_running(handle) }
+    var inputError: String { var b = [CChar](repeating: 0, count: 512); dalnok_input_error(handle, &b, 512); return cString(b) }
     struct MidiSource { let id: Int32, name: String }
     static func midiSources() -> [MidiSource] {
         var list = [DalnokMidiSourceInfo](repeating: DalnokMidiSourceInfo(), count: 64)

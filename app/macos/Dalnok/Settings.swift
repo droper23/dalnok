@@ -41,11 +41,12 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
     let secondaryClock = NSButton(checkboxWithTitle: "Show a small second clock under the position display", target: nil, action: nil)
     let trackHeight = NSSlider(value: 88, minValue: 48, maxValue: 400, target: nil, action: nil)
     let clipBounce = NSSlider(value: 0.65, minValue: 0, maxValue: 1, target: nil, action: nil)
+    let showHints = NSButton(checkboxWithTitle: "Describe the control under the pointer below the project name", target: nil, action: nil)
     private let trackHeightValue = NSTextField(labelWithString: "")
     // Audio & MIDI
     let outputPopup = NSPopUpButton(frame: .zero, pullsDown: true)
     let inputPopup = NSPopUpButton(frame: .zero, pullsDown: true)
-    let inputMonitoring = NSButton(checkboxWithTitle: "Hear armed tracks' inputs while recording (input monitoring)", target: nil, action: nil)
+    let inputMonitoring = NSButton(checkboxWithTitle: "Armed tracks play their input (auto input monitoring)", target: nil, action: nil)
     private let midiInputs = NSTextField(wrappingLabelWithString: "")
     // Recording
     let countIn = NSButton(checkboxWithTitle: "Count in one bar before recording", target: nil, action: nil)
@@ -289,6 +290,7 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
              "Drag a track header's bottom edge to size one track (double-click it for the default), or ⌥-scroll over the tracks to size them all."),
             ("Clip bounce", slider(clipBounce, #selector(clipBounceChanged(_:)), { String(format: "%.0f%%", $0 * 100) }, from: "Calm", to: "Bouncy"),
              "How lively dragged, dropped, new and deleted clips move: the lift, the spring between grid steps, the lean and the settle."),
+            ("Hints", showHints, "Like a hover tooltip without the wait: every button, knob and clip edge says what it does."),
             ("Motion", note("Animations follow System Settings ▸ Accessibility ▸ Display ▸ Reduce motion."), nil),
         ])
         // Audio & MIDI
@@ -321,7 +323,7 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
         vuBallistics.addItems(withTitles: ["Standard VU (300 ms)", "Fast (100 ms)"])
         vuBallistics.target = self; vuBallistics.action = #selector(vuChanged(_:))
         for (b, sel) in [(readoutsFade, #selector(readoutsChanged(_:))), (selectionGlow, #selector(selectionChanged(_:))),
-                         (gainRings, #selector(gainRingsChanged(_:)))] { b.target = self; b.action = sel }
+                         (gainRings, #selector(gainRingsChanged(_:))), (showHints, #selector(showHintsChanged(_:)))] { b.target = self; b.action = sel }
         let pct: (Double) -> String = { String(format: "%.0f%%", $0 * 100) }, secs: (Double) -> String = { String(format: "%.1f s", $0) }
         paneViews[.plugins] = pane("Plug-ins", "How plug-ins look and behave in the device panel, and where they come from.", [
             ("Meters", deviceMeters, nil),
@@ -369,6 +371,7 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
         isolatePlugins.isEnabled = Engine.pluginHostAvailable
         wear.doubleValue = Faceplate.wear
         clipBounce.doubleValue = Double(ClipLift.bounce)
+        showHints.state = MainWindowController.showsHints ? .on : .off
         peakHold.doubleValue = Faceplate.peakHold
         vuBallistics.selectItem(at: Faceplate.fastVU ? 1 : 0)
         bypassShrink.doubleValue = Faceplate.bypassShrink
@@ -457,6 +460,7 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
     }
     @objc func metersChanged(_ sender: Any?) { Faceplate.showMeters = deviceMeters.state == .on }
     @objc func isolationChanged(_ sender: Any?) { Engine.isolatePlugins = isolatePlugins.state == .on }
+    @objc func showHintsChanged(_ sender: Any?) { MainWindowController.showsHints = showHints.state == .on }
     @objc func clipBounceChanged(_ sender: Any?) { ClipLift.bounce = CGFloat(clipBounce.doubleValue); showSliderValues() }
     @objc func wearChanged(_ sender: Any?) { Faceplate.wear = wear.doubleValue; showSliderValues() }
     @objc func peakHoldChanged(_ sender: Any?) { Faceplate.peakHold = peakHold.doubleValue; showSliderValues() }

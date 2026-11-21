@@ -176,6 +176,8 @@ struct RenderTrack {
     std::vector<PluginLane> pluginAuto;
     bool monoSource = true;        // every clip is mono -> constant-power pan law
     uint64_t mutedMidiSignature = 0;
+    int32_t inputChannel = -1;     // audio tracks: the device input they monitor (-1 = cannot monitor)
+    bool inputMonitor = false, armed = false; // Input Monitoring on; record-enabled (monitors when armed monitoring is on)
     bool instrument = false;       // MIDI track (built-in synth unless instrumentPlugin is set)
     PluginProcessor *instrumentPlugin = nullptr;
     std::vector<PluginProcessor *> inserts;               // processing order
@@ -269,7 +271,23 @@ struct Scratch {
     // Live callbacks: when every isolated plug-in in this callback must have answered (one shared budget; 0 = none,
     // as for offline renders). Set once per callback by Engine::process.
     uint64_t deadlineNs = 0;
+    // Time this callback spent waiting on isolated hosts (ns), so the engine can tell its own work from theirs.
+    uint64_t isolatedWaitNs = 0;
+    // Live audio input for this sub-block (live callbacks with an input device open; null otherwise): one mono buffer
+    // per device input channel, already offset to the sub-block. Monitored tracks add their channel to their source.
+    const float *liveInputs[64] = {};
+    int liveInputCount = 0;
+    bool monitorArmed = false; // armed audio tracks monitor too (Settings: hear armed tracks)
+    // Transport stopped with input monitored: renderBlock plays no timeline content and runs only monitored tracks
+    // and buses (other tracks stay silent and get their idle call instead).
+    bool timelineOff = false;
 };
+
+// Whether track `t` adds its device input in this block.
+inline bool monitorsInput(const RenderTrack &t, const Scratch &s) DALNOK_NONBLOCKING {
+    return t.inputChannel >= 0 && t.inputChannel < s.liveInputCount && s.liveInputs[t.inputChannel] &&
+           (t.inputMonitor || (t.armed && s.monitorArmed));
+}
 
 // Mixes `frames` (<= kMaxBlock) of `state` at timeline position `pos` into
 // left/right (overwritten). If `smooth`, gain changes ramp across the block
@@ -280,9 +298,5 @@ void renderBlock(const RenderState &state, int64_t pos, int frames, float *left,
                  Scratch &scratch, bool smooth, bool anySolo, SynthState *synths = nullptr) DALNOK_NONBLOCKING;
 // While the transport is stopped: gives every plug-in its idle call (parameter flushes), within the callback's budget.
 void idlePlugins(const RenderState &state, Scratch &scratch) DALNOK_NONBLOCKING;
-// Adds live-input instrument voices (independent of the transport) through the track's gain and pan.
-// While the transport is stopped this also runs a plugin instrument (and its inserts) for live notes.
-void renderLiveInput(const RenderState &state, int frames, float *left, float *right, Scratch &scratch,
-                     bool anySolo, bool transportStopped) DALNOK_NONBLOCKING;
 
 } // namespace dalnok

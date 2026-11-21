@@ -23,7 +23,37 @@ using namespace detail;
 void Engine::duplexCallback(void *ctx, float *left, float *right, const float *const *inputs, int inputCount,
                             int frames) DALNOK_NONBLOCKING {
     auto *self = static_cast<Engine *>(ctx);
+    // Monitored tracks read the inputs inside process() (sub-block slices set there).
+    self->rtInputs_ = inputs;
+    self->rtInputCount_ = inputs ? std::min(inputCount, 64) : 0;
+    self->scratch_.monitorArmed = self->rec_.monitoring.load(std::memory_order_relaxed);
     audioCallback(ctx, left, right, frames);
+    self->rtInputs_ = nullptr;
+    self->rtInputCount_ = 0;
+    self->scratch_.liveInputCount = 0;
+
+    // Latency probe: silence except a click every period; read the probe channel back.
+    if (self->probeActive_.load(std::memory_order_acquire)) {
+        const int ch = self->probeChannel_;
+        const float *in = inputs && ch < inputCount ? inputs[ch] : nullptr;
+        if (!in) self->probeFailed_.store(true, std::memory_order_relaxed);
+        const auto size = static_cast<int64_t>(self->probeBuf_.size());
+        const auto burst = static_cast<int64_t>(self->probeBurst_.size());
+        for (int i = 0; i < frames; ++i) {
+            const int64_t f = self->probeFrame_ + i;
+            const int64_t k = f >= self->probeFirst_ ? (f - self->probeFirst_) % self->probePeriod_ : burst;
+            left[i] = right[i] = k < burst ? self->probeBurst_[static_cast<size_t>(k)] : 0.0f;
+            if (f < size) self->probeBuf_[static_cast<size_t>(f)] = in ? in[i] : 0.0f;
+        }
+        self->probeFrame_ += frames;
+        if (self->probeFrame_ >= size) {
+            self->probeActive_.store(false, std::memory_order_relaxed);
+            self->probeDone_.store(true, std::memory_order_release);
+        }
+    }
+
+    CaptureWriter *writer = self->rec_.captureRT.load(std::memory_order_acquire);
+    if (!writer) return; // monitoring only
     const int n = self->rec_.captureChannels;
     bool ok = inputs != nullptr && frames <= kMaxCaptureBlock;
     for (int c = 0; ok && c < n; ++c) {
@@ -38,18 +68,29 @@ void Engine::duplexCallback(void *ctx, float *left, float *right, const float *c
     // Outside a recording session every frame is captured; in one, only the part of the block inside the
     // punch window, and only where the transport rolled continuously.
     const bool session = self->rec_.recordSession.load(std::memory_order_acquire);
-    if (self->rec_.captureRT && n > 0 && (!session || self->rec_.rtRecordingBlock)) {
+    if (n > 0 && (!session || self->rec_.rtRecordingBlock)) {
         const int from = session ? self->rec_.rtRecordOffset : 0, count = session ? self->rec_.rtRecordCount : frames;
         float *out = self->rec_.captureScratch.data();
-        for (int i = 0; i < count; ++i)
-            for (int c = 0; c < n; ++c) out[i * n + c] = inputs[self->rec_.captureMap[static_cast<size_t>(c)]][from + i];
-        self->rec_.captureRT->push(out, static_cast<uint32_t>(count));
-    }
-    if (self->rec_.monitoring.load(std::memory_order_relaxed))
-        for (int c = 0; c < n; ++c) {
-            const float *in = inputs[self->rec_.captureMap[static_cast<size_t>(c)]];
-            for (int i = 0; i < frames; ++i) { left[i] += in[i]; right[i] += in[i]; }
+        RecordingState &r = self->rec_;
+        for (int i = 0; i < count; ++i) {
+            for (int c = 0; c < n; ++c) {
+                const float v = inputs[r.captureMap[static_cast<size_t>(c)]][from + i];
+                out[i * n + c] = v;
+                const float a = v < 0 ? -v : v;
+                if (a > r.rtPeakAcc[static_cast<size_t>(c)]) r.rtPeakAcc[static_cast<size_t>(c)] = a;
+            }
+            // Live waveform: one peak per channel every kLivePeakFrames frames of the take.
+            if (session && ++r.rtPeakFill == kLivePeakFrames) {
+                for (int c = 0; c < n; ++c) {
+                    r.livePeakQueue->push(LivePeak{r.rtPeakIndex, static_cast<uint16_t>(c), r.rtPeakAcc[static_cast<size_t>(c)]});
+                    r.rtPeakAcc[static_cast<size_t>(c)] = 0;
+                }
+                r.rtPeakFill = 0;
+                ++r.rtPeakIndex;
+            }
         }
+        writer->push(out, static_cast<uint32_t>(count));
+    }
 }
 
 void Engine::renderClick(float *left, float *right, int frames, int64_t pos) DALNOK_NONBLOCKING {
@@ -152,8 +193,16 @@ void Engine::audioCallback(void *ctx, float *left, float *right, int frames) DAL
 
 void Engine::process(float *left, float *right, int frames) DALNOK_NONBLOCKING {
     [[maybe_unused]] const FlushDenormals flushDenormals;
-    // Isolated plug-ins (ADR-0014) share one budget per callback: together they may wait 40 % of its period.
-    scratch_.deadlineNs = nowNs() + static_cast<uint64_t>(0.4e9 * frames / sampleRate_);
+    // Isolated plug-ins (ADR-0014) share one budget per callback. It used to be a fixed 40 % of the period, which
+    // dropped effects on big projects (512 isolated units: 7.6 % of blocks skipped one, while the same project
+    // in-process kept up with 30 % to spare). Now it is what the rest of the block leaves: the period, less the
+    // non-plug-in work of recent callbacks (with 50 % headroom) and a 10 % margin, kept between 40 and 85 %.
+    const uint64_t startNs = nowNs();
+    const double periodNs = 1e9 * frames / sampleRate_;
+    const double budget = std::clamp(periodNs * 0.9 - 1.5 * static_cast<double>(restEstimateNs_), periodNs * 0.4, periodNs * 0.85);
+    scratch_.deadlineNs = startNs + static_cast<uint64_t>(budget);
+    scratch_.isolatedWaitNs = 0;
+    lastIsolatedBudget_.store(static_cast<float>(budget / periodNs), std::memory_order_relaxed);
     // Adopt the newest snapshot only if the previous one can be retired.
     if (!retired_.full()) {
         if (RenderState *s = pending_.exchange(nullptr, std::memory_order_acq_rel)) {
@@ -191,6 +240,17 @@ void Engine::process(float *left, float *right, int frames) DALNOK_NONBLOCKING {
         // Stop the sub-block exactly at the cycle end so the jump back lands on the right sample.
         if (cycleValid && play && pendingSeek_ < 0 && rtPosition_ < cycleEnd && rtPosition_ + n > cycleEnd)
             n = static_cast<int>(cycleEnd - rtPosition_);
+        // Rendering runs `compensation` frames ahead of the playhead, so it reaches the cycle end first: it wraps there
+        // (and the sub-block stops there), while the playhead wraps `compensation` frames later.
+        const int64_t comp = current_ ? current_->compensation : 0;
+        auto renderAt = [&](int64_t p) DALNOK_NONBLOCKING {
+            int64_t rp = p + comp;
+            if (cycleValid && play && pendingSeek_ < 0 && p < cycleEnd && rp >= cycleEnd) rp = cycleStart + (rp - cycleEnd) % (cycleEnd - cycleStart);
+            return rp;
+        };
+        const int64_t renderPos = renderAt(rtPosition_);
+        if (cycleValid && play && pendingSeek_ < 0 && rtPosition_ < cycleEnd && renderPos < cycleEnd && renderPos + n > cycleEnd)
+            n = static_cast<int>(cycleEnd - renderPos);
         // Clip launcher: switch tracks exactly at their launch frame and cut blocks at loop ends, so every
         // change lands on a block start (rendered position = playhead + compensation).
         if (current_ && play && pendingSeek_ < 0) {
@@ -232,6 +292,8 @@ void Engine::process(float *left, float *right, int frames) DALNOK_NONBLOCKING {
             }
         }
         float *l = left + off, *r = right + off;
+        scratch_.liveInputCount = rtInputCount_;
+        for (int c = 0; c < rtInputCount_; ++c) scratch_.liveInputs[c] = rtInputs_[c] ? rtInputs_[c] + off : nullptr;
         off += n;
 
         if (pendingSeek_ >= 0 && transportGain_ == 0.0f) {
@@ -246,8 +308,19 @@ void Engine::process(float *left, float *right, int frames) DALNOK_NONBLOCKING {
             scratch_.liveNotes = rtLiveNotes_;
             scratch_.liveNoteCount = off == n ? rtLiveNoteCount_ : 0; // live notes go to the first sub-block
             if (current_) {
+                // Input Monitoring while stopped: monitored tracks (and the buses they feed) play their input.
+                // and live MIDI plays the live instrument track: both through their strips and routing.
+                bool monitor = false;
+                for (int k = 0; scratch_.liveInputCount > 0 && k < static_cast<int>(current_->tracks.size()) && !monitor; ++k)
+                    monitor = monitorsInput(current_->tracks[static_cast<size_t>(k)], scratch_);
+                const int32_t lt = scratch_.liveTrack;
+                const bool live = lt >= 0 && lt < static_cast<int32_t>(current_->tracks.size()) &&
+                                  (current_->tracks[static_cast<size_t>(lt)].instrumentPlugin ||
+                                   (current_->tracks[static_cast<size_t>(lt)].instrument && current_->tracks[static_cast<size_t>(lt)].runtime->live.active()));
+                scratch_.timelineOff = monitor || live;
                 if (off == n) idlePlugins(*current_, scratch_); // once per callback
-                renderLiveInput(*current_, n, l, r, scratch_, anySolo, true);
+                if (monitor || live) renderBlock(*current_, rtPosition_ + current_->compensation, n, l, r, scratch_, true, anySolo);
+                scratch_.timelineOff = false;
                 // The master meter shows live input and auditioned notes while stopped, as the track meter does.
                 float pl = 0, pr = 0;
                 for (int i = 0; i < n; ++i) {
@@ -263,7 +336,7 @@ void Engine::process(float *left, float *right, int frames) DALNOK_NONBLOCKING {
         scratch_.liveNoteCount = off == n ? rtLiveNoteCount_ : 0;
         if (current_) {
             // Rendered ahead by the delay compensation, so what is heard lines up with the playhead.
-            renderBlock(*current_, rtPosition_ + current_->compensation, n, l, r, scratch_, true, anySolo);
+            renderBlock(*current_, renderAt(rtPosition_), n, l, r, scratch_, true, anySolo); // after a seek landed
         } else {
             for (int i = 0; i < n; ++i) l[i] = r[i] = 0.0f;
         }
@@ -276,7 +349,6 @@ void Engine::process(float *left, float *right, int frames) DALNOK_NONBLOCKING {
             }
             transportGain_ = g;
         }
-        if (current_) renderLiveInput(*current_, n, l, r, scratch_, anySolo, false);
         if (play && pendingSeek_ < 0 && (clickLeft_ > 0 || transport_.metronome.load(std::memory_order_relaxed) ||
                                          rtPosition_ < transport_.countInUntil.load(std::memory_order_relaxed)))
             renderClick(l, r, n, rtPosition_);
@@ -343,6 +415,10 @@ void Engine::process(float *left, float *right, int frames) DALNOK_NONBLOCKING {
         }
     }
     rtMidiCount_ = 0;
+    // This block's own work (everything but waiting on isolated hosts) feeds the next budget. The estimate jumps up
+    // at once and decays slowly (about 1 % every 2.7 callbacks), so one light block doesn't invite an overload.
+    const uint64_t total = nowNs() - startNs, own = total > scratch_.isolatedWaitNs ? total - scratch_.isolatedWaitNs : 0;
+    restEstimateNs_ = std::max(own, restEstimateNs_ - restEstimateNs_ / 256);
 }
 
 } // namespace dalnok

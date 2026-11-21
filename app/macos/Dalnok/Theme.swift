@@ -88,6 +88,7 @@ enum Theme {
     static var cycle: NSColor { tone(\.cycle) } // cycle region in the ruler (Logic users know it as yellow)
     static let muteOn = hex(0x5B9BFF)        // blue chip (Logic convention)
     static let soloOn = hex(0xF5C451)        // yellow chip
+    static let monitorOn = hex(0xE8892B)     // orange chip: Input Monitoring (as in Logic)
     static let clipRed = hex(0xFF5A4F)
     static let recordOn = hex(0xE5484D)      // record arm / recording (always with an "R" or ● shape)
     static var selectedHeader: NSColor { tone(\.selectedHeader) }

@@ -78,8 +78,8 @@ const PluginSlot *PluginHostService::findSlot(const Model &m, int32_t id) {
     return nullptr;
 }
 
-bool PluginHostService::state(const Model &m, int32_t id, std::string &bytes) const {
-    if (PluginProcessor *p = instance(id)) return p->getState(bytes);
+bool PluginHostService::state(const Model &m, int32_t id, std::string &bytes, bool forSnapshot) const {
+    if (PluginProcessor *p = instance(id)) return forSnapshot ? p->getStateForSnapshot(bytes) : p->getState(bytes);
     if (const PluginSlot *slot = findSlot(m, id)) { bytes = slot->state.str(); return true; } // missing: keep the saved state
     return false;
 }

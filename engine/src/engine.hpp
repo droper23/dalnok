@@ -51,6 +51,29 @@ public:
     const std::string &outputDeviceUid() const { return outputUid_; }
     bool deviceAlive() const { return duplex_ ? duplex_->alive() : (!device_ || device_->alive()); }
     double hardwareSampleRate() const { return duplex_ ? duplex_->hardwareSampleRate() : (device_ ? device_->hardwareSampleRate() : 0); }
+    // Input device for monitoring and recording (empty = none). While any track monitors its input (Input Monitoring,
+    // or armed with armed-track monitoring on), the engine runs the input and output devices as one duplex device.
+    bool setInputDevice(const std::string &uid, std::string &err);
+    const std::string &inputDeviceUid() const { return inputUid_; }
+    bool inputRunning() const { return duplex_ != nullptr && !simulatedInput_; }
+    const std::string &inputError() const { return inputError_; }
+    bool setInputMonitor(DalnokTrackId id, bool on, std::string &err);
+    // Track groups (engine_groups.cpp). Group edits are undoable; the clutch (suspending every group) is not saved.
+    int32_t createGroup(const std::string &name, const std::vector<DalnokTrackId> &members, std::string &err);
+    bool removeGroup(int32_t id, std::string &err);
+    bool setTrackGroup(DalnokTrackId track, int32_t group, std::string &err);
+    bool setGroup(const TrackGroup &g, std::string &err); // name and links
+    const std::vector<TrackGroup> &groups() const { return model_.groups; }
+    void setGroupClutch(bool suspended) { groupClutch_ = suspended; }
+    bool groupClutch() const { return groupClutch_; }
+    // The other members of `id`'s group when that group links `what` (empty with the clutch on).
+    std::vector<DalnokTrackId> groupLinked(DalnokTrackId id, bool TrackGroup::*what) const;
+    // Latency measurement (loopback): clicks out, the same clicks back on an input channel.
+    struct LatencyResult { bool ok = false; int64_t measured = 0, reported = 0; int32_t clicks = 0, spread = 0; float level = 0; std::string error; };
+    bool startLatencyProbe(const std::string &uid, int channel, std::string &err);
+    bool pollLatencyProbe(LatencyResult &result); // true once finished
+    // Live waveform of the take in progress: peaks (one per kLivePeakFrames) of the spool channel recording `track`.
+    const std::vector<float> *livePeaks(DalnokTrackId track);
     // Captures the given device input channels (zero-based) into one interleaved spool.
     bool startCapture(const std::string &uid, const std::vector<int> &channels, const std::string &path, std::string &err);
     bool startCapture(const std::string &uid, int channel, const std::string &path, std::string &err) {
@@ -83,7 +106,7 @@ public:
     bool recordBroken() const { return rec_.recordBroken.load(std::memory_order_acquire); }
     void setRecordLatencyOffset(int64_t frames) { rec_.latencyOffset = frames; }
     int64_t recordLatency() const; // device-reported round trip + offset
-    void setMonitoring(bool on) { rec_.monitoring.store(on, std::memory_order_relaxed); }
+    void setMonitoring(bool on) { rec_.monitoring.store(on, std::memory_order_relaxed); syncInput(); }
     // Metronome: a click on every beat (accented on the bar) while the transport rolls. Live path only;
     // offline renders and exports never contain it.
     void setMetronome(bool on, float level) { transport_.setMetronome(on, level); }
@@ -109,7 +132,7 @@ public:
     uint64_t midiDropped() const;
     int32_t recordedMidiEvents() const { return static_cast<int32_t>(rec_.midiTake.size()); }
     bool stopCapture(DalnokCaptureStats &stats, std::string &err, bool restoreOutput = true);
-    bool captureActive() const { return duplex_ != nullptr; }
+    bool captureActive() const { return rec_.captureWriter != nullptr; }
     bool captureStatus(DalnokCaptureStats &stats) const;
     void collectGarbage();
     // Runs the live render path manually (no device may be running). For tests and simulation.
@@ -228,6 +251,7 @@ public:
     PluginProcessor *pluginInstance(int32_t slot) const;
     std::string pluginError(int32_t slot) const;
     bool pluginState(int32_t slot, std::string &bytes) const;
+    bool savingRecoverySnapshot_ = false; // control thread: set while dalnok_project_save_snapshot writes
     bool setPluginState(int32_t slot, const std::string &bytes, std::string &err);
     void touchPlugin() { ++revision_; } // a parameter changed: the project has unsaved changes
     bool recolorAsGradient(std::string &err); // automatic tracks get gradient steps in display order
@@ -355,6 +379,8 @@ private:
     static void duplexCallback(void *ctx, float *left, float *right, const float *const *inputs, int inputCount,
                                int frames) DALNOK_NONBLOCKING;
     void process(float *left, float *right, int frames) DALNOK_NONBLOCKING;
+    uint64_t restEstimateNs_ = 0;                // audio thread: recent non-plug-in work per callback (see process)
+    std::atomic<float> lastIsolatedBudget_{0.4f}; // the last callback's isolated budget, as a fraction of its period
     void handleMidiInput(int64_t pos, int frames) DALNOK_NONBLOCKING;
     void renderClick(float *left, float *right, int frames, int64_t pos) DALNOK_NONBLOCKING;
     void drainRecordedMidi();
@@ -392,6 +418,19 @@ private:
     DalnokMediaId nextMedia_ = 1;
     int32_t nextColor_ = 0;
     std::unique_ptr<AudioDuplexDevice> duplex_;
+    std::string duplexInputUid_, inputUid_, inputError_;
+    bool monitorWanted() const;        // some track monitors its input (control thread, from the model)
+    void syncInput();                  // opens or closes the monitoring input to match monitorWanted()
+    bool openDuplex(const std::string &uid, int highestChannel, std::string &err); // replaces the output device
+    void closeDuplex();                // back to the output device
+    // Latency probe: the audio thread owns probeFrame_ and writes probeBuf_ until probeDone_ (then the control thread).
+    std::vector<float> probeBuf_, probeBurst_; // capture; the burst played at each click (Hann-windowed 2 kHz, 2 ms)
+    std::atomic<bool> probeActive_{false}, probeDone_{false}, probeFailed_{false};
+    int probeChannel_ = 0, probePeriod_ = 12000, probeFirst_ = 2400;
+    int64_t probeFrame_ = 0;
+    bool probeOwnsInput_ = false;
+    const float *const *rtInputs_ = nullptr; // this callback's device inputs (audio thread)
+    int rtInputCount_ = 0;
     static constexpr int kMaxCaptureBlock = 8192;
     std::unique_ptr<AudioDevice> device_;
     std::string outputUid_;
@@ -403,6 +442,7 @@ private:
     void updateWorkgroup();               // after the device starts, changes or stops: tell isolated hosts
     int32_t nextPlugin_ = 1;
     int32_t nextMarker_ = 1;
+    bool groupClutch_ = false;
     // Recording (control thread)
     int64_t simulatedLatency_ = 0;
     RecordingState rec_; // capture, the take in progress and its audio-thread state (A-06)

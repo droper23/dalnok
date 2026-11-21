@@ -32,10 +32,11 @@ usage:
   dalnok-cli recover-capture <spool> <new-output.wav>
   dalnok-cli command <project.dalnok> <command> [args-json] [--save]   run a catalog command
   dalnok-cli commands                                                  list the command catalog
+  dalnok-cli latency <input-device> <channel> [--output <name|default>]   measure the loopback round trip
   dalnok-cli inputs                                                    list audio input devices
   dalnok-cli midi-inputs                                               list MIDI sources
   dalnok-cli capture-test <device-name> <channel> <seconds> <new-spool>  experimental duplex capture
-  dalnok-cli record <device-name> <channel> <seconds> <folder> [--save p.dalnok] [--monitor]  record an armed track
+  dalnok-cli record <device-name> <channel> <seconds> <folder> [--save p.dalnok] [--monitor] [--output <name|default>]  record an armed track
   dalnok-cli simulate-record <folder> <seconds>                         record generated input in real time (crash tests)
   dalnok-cli recover-takes <folder>                                      recover unfinished takes from their journals
   dalnok-cli midi-play <source-id> <seconds> [--record]                  play (and record) the built-in synth from MIDI
@@ -118,7 +119,17 @@ case "record", "simulate-record":
     defer { dalnok_engine_destroy(engine) }
     var err = [CChar](repeating: 0, count: 1_024)
     if !simulated {
-        guard dalnok_engine_set_output_device(engine, uid, &err, err.count) == DALNOK_OK else { fail(cstr(err)) }
+        // --output <name|default>: listen elsewhere (the engine pairs the two devices); otherwise the input device.
+        var out = uid
+        if let name = opt("--output") {
+            var list = [DalnokDeviceInfo](repeating: DalnokDeviceInfo(), count: 64)
+            let n = Int(dalnok_output_devices(&list, 64))
+            if name == "default" { out = "" }
+            else if let d = list.prefix(min(n, 64)).first(where: { withUnsafeBytes(of: $0.name) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) } == name }) {
+                out = withUnsafeBytes(of: d.uid) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }
+            } else { fail("output device not found") }
+        }
+        guard dalnok_engine_set_output_device(engine, out, &err, err.count) == DALNOK_OK else { fail(cstr(err)) }
     }
     let track = dalnok_track_add(engine, "Input \(channel)")
     _ = dalnok_track_set_input(engine, track, channel - 1)
@@ -153,6 +164,33 @@ case "record", "simulate-record":
     }
     guard status == DALNOK_OK else { fail(cstr(err)) }
     print("record: PASS")
+
+case "latency":
+    // dalnok-cli latency <input-device> <channel> [--output <name|default>]: loopback round-trip measurement.
+    guard args.count >= 3, let channel = Int32(args[2]), channel > 0 else { print(usage); leave(2) }
+    var inputs = [DalnokInputDeviceInfo](repeating: DalnokInputDeviceInfo(), count: 64)
+    let ni = Int(dalnok_input_devices(&inputs, 64))
+    func str<T>(_ t: T) -> String { withUnsafeBytes(of: t) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) } }
+    guard let device = inputs.prefix(min(ni, 64)).first(where: { str($0.name) == args[1] }) else { fail("input device not found") }
+    guard let engine = dalnok_engine_create(device.sample_rate) else { fail("engine creation failed") }
+    defer { dalnok_engine_destroy(engine) }
+    var err = [CChar](repeating: 0, count: 1_024)
+    var out = str(device.uid)
+    if let name = opt("--output") {
+        var list = [DalnokDeviceInfo](repeating: DalnokDeviceInfo(), count: 64)
+        let n = Int(dalnok_output_devices(&list, 64))
+        if name == "default" { out = "" }
+        else if let d = list.prefix(min(n, 64)).first(where: { str($0.name) == name }) { out = str(d.uid) }
+        else { fail("output device not found") }
+    }
+    guard dalnok_engine_set_output_device(engine, out, &err, err.count) == DALNOK_OK else { fail(cstr(err)) }
+    guard dalnok_latency_measure_start(engine, str(device.uid), channel - 1, &err, err.count) == DALNOK_OK else { fail(cstr(err)) }
+    var r = DalnokLatencyResult()
+    while !dalnok_latency_measure_poll(engine, &r) { Thread.sleep(forTimeInterval: 0.05) }
+    let ms = { (f: Int64) in String(format: "%.2f ms", Double(f) / device.sample_rate * 1000) }
+    print("measured \(r.measured_frames) frames (\(ms(r.measured_frames))); reported \(r.reported_frames) (\(ms(r.reported_frames))); difference \(r.measured_frames - r.reported_frames); \(r.clicks) clicks, spread \(r.spread_frames), level \(r.level)")
+    guard r.ok else { fail(str(r.error)) }
+    print("latency: PASS")
 
 case "recover-takes":
     var buf = [CChar](repeating: 0, count: 1 << 20)

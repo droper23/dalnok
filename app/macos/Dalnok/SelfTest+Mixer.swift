@@ -122,7 +122,47 @@ extension SelfTest {
     }
 
     /// Mixer and routing: View ▸ Mixer, Track ▸ New Bus, output and send through the strip controls, fader drag.
+    /// Track groups through the track context menu's Group submenu: membership, linked volume and mute, the clutch.
+    func trackGroups() {
+        let audio = s.tracks.filter { !$0.isBus && !$0.isInstrument && $0.stack == 0 }.map(\.id)
+        guard audio.count >= 2 else { return check(false, "two audio tracks for groups") }
+        let (a, b) = (audio[0], audio[1])
+        let gains = (s.track(a)?.gainDb ?? 0, s.track(b)?.gainDb ?? 0)
+        func groupMenu() -> NSMenu? {
+            let m = w.headers.contextMenu?.items.first { $0.title == "Group" }?.submenu
+            if let m { w.menuNeedsUpdate(m) }
+            return m
+        }
+        func pick(_ title: String) -> Bool {
+            guard let it = groupMenu()?.items.first(where: { $0.title == title }), let action = it.action else { return false }
+            return NSApp.sendAction(action, to: it.target, from: it)
+        }
+        w.headers.select(a)
+        check(pick("New Group"), "Group > New Group on the first track")
+        guard let g = s.track(a)?.group, g != 0, let name = s.groupName(g) else { return check(false, "the track joins the new group") }
+        w.headers.select(b)
+        check(pick(name) && s.track(b)?.group == g, "Group > \(name) adds the second track")
+        check(w.headers.row(b)?.inputButton.title.contains(name) == true, "the header names the group")
+        s.setGain(a, db: gains.0 - 4)
+        _ = s.refresh(onDisplayTick: true)
+        check(abs((s.track(b)?.gainDb ?? 0) - (gains.1 - 4)) < 0.01, "moving one grouped fader moves the other by the same dB")
+        let undone = perform("Undo"); _ = s.refresh(onDisplayTick: true)
+        check(undone && abs((s.track(b)?.gainDb ?? 0) - gains.1) < 0.01 && abs((s.track(a)?.gainDb ?? 0) - gains.0) < 0.01,
+              "one undo restores both faders")
+        s.setMute(a, true); _ = s.refresh(onDisplayTick: true)
+        check(s.track(b)?.muted == true, "grouped mute follows")
+        s.setMute(a, false); _ = s.refresh(onDisplayTick: true)
+        check(perform("Suspend Groups") && s.groupClutch, "Track > Suspend Groups (clutch) turns the links off")
+        s.setMute(a, true); _ = s.refresh(onDisplayTick: true)
+        check(s.track(b)?.muted == false, "with the clutch on, the other track stays as it was")
+        s.setMute(a, false); _ = s.refresh(onDisplayTick: true)
+        _ = perform("Suspend Groups")
+        w.headers.select(a)
+        check(pick("Delete Group") && s.track(a)?.group == 0 && s.track(b)?.group == 0 && s.groups.isEmpty, "Group > Delete Group")
+    }
+
     func mixerAndRouting() async {
+        trackGroups()
         guard let src = s.tracks.first(where: { !$0.isBus })?.id else { return check(false, "a track for routing") }
         let wasShown = MainWindowController.showMixer
         if !wasShown { check(perform("Mixer", exact: true) && MainWindowController.showMixer, "View > Mixer shows the mixer") }

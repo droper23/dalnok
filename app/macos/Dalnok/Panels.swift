@@ -118,12 +118,22 @@ final class TransportBar: NSView {
     let playButton = IconButton("play.fill", help: "Play / Pause (Space)")
     let recordButton = IconButton("circle.fill", help: "Record (R)")
     let metronomeButton = IconButton("metronome.fill", help: "Metronome (K)")
+    /// Optional count-in, lit while on (Logic's control bar has the same pair: metronome and count-in).
+    let countInButton = IconButton("123.rectangle", help: "Count-In (⇧K): one bar of clicks before recording starts")
+    var onCountIn: (() -> Void)?
     var onMetronome: (() -> Void)?
     let cycleButton = IconButton("repeat", help: "Cycle (C): loop playback between the yellow markers in the ruler")
     var onCycle: (() -> Void)?
     private let rewind = IconButton("backward.end.fill", help: "Go to Start (Return)")
     private let paletteButton = IconButton("magnifyingglass", help: "Command Palette (⌘K)")
     private let importButton = IconButton("plus.rectangle.on.rectangle", help: "Import Audio… (⌘I)")
+    /// View toggles, lit while their view is open (Logic's control bar and Bitwig's panel buttons put these in reach
+    /// so nobody has to know the shortcut or the menu).
+    let launcherButton = IconButton("square.grid.3x2", help: "Clip Launcher (⌘L)")
+    let automationButton = IconButton("point.topleft.down.to.point.bottomright.curvepath", help: "Automation (A)")
+    let mixerButton = IconButton("slider.vertical.3", help: "Mixer (X)")
+    let devicesButton = IconButton("rectangle.3.group", help: "Device Panel (⌥⌘D): the selected track's plug-ins")
+    var onLauncher: (() -> Void)?, onAutomation: (() -> Void)?, onMixer: (() -> Void)?, onDevices: (() -> Void)?
     var onPlayPause: (() -> Void)?
     var onRecord: (() -> Void)?
     /// Project tempo (type and press Return) and meter.
@@ -207,6 +217,7 @@ final class TransportBar: NSView {
         playButton.target = self; playButton.action = #selector(playTapped)
         recordButton.target = self; recordButton.action = #selector(recordTapped)
         metronomeButton.target = self; metronomeButton.action = #selector(metronomeTapped)
+        countInButton.target = self; countInButton.action = #selector(countInTapped)
         cycleButton.target = self; cycleButton.action = #selector(cycleTapped)
         recordButton.contentTintColor = Theme.recordOn.withAlphaComponent(0.75)
         paletteButton.target = self; paletteButton.action = #selector(paletteTapped)
@@ -227,7 +238,7 @@ final class TransportBar: NSView {
         meterPopup.font = Theme.mono(12, .medium)
         meterPopup.toolTip = "Time signature"
         meterPopup.setAccessibilityLabel("Time signature")
-        let tempo = NSStackView(views: [tempoField, bpmLabel, meterPopup, metronomeButton])
+        let tempo = NSStackView(views: [tempoField, bpmLabel, meterPopup, metronomeButton, countInButton])
         tempo.spacing = 3
         tempo.edgeInsets = NSEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
         tempoField.widthAnchor.constraint(equalToConstant: 44).isActive = true
@@ -238,8 +249,15 @@ final class TransportBar: NSView {
 
         masterMeter.toolTip = "Output level (click to reset the clip indicator)"
         masterMeter.setAccessibilityLabel("Master level meter")
-        let tools = NSStackView(views: [masterMeter, paletteButton, importButton])
+        for (b, sel) in [(launcherButton, #selector(launcherTapped)), (automationButton, #selector(automationTapped)),
+                         (mixerButton, #selector(mixerTapped)), (devicesButton, #selector(devicesTapped))] {
+            b.target = self; b.action = sel
+        }
+        let views = NSStackView(views: [launcherButton, automationButton, mixerButton, devicesButton])
+        views.spacing = 2
+        let tools = NSStackView(views: [views, masterMeter, paletteButton, importButton])
         tools.spacing = 8
+        tools.setCustomSpacing(16, after: views)
 
         for v in [titles, transport, tools] as [NSView] {
             v.translatesAutoresizingMaskIntoConstraints = false
@@ -293,6 +311,7 @@ final class TransportBar: NSView {
     @objc private func playTapped() { onPlayPause?() }
     @objc private func recordTapped() { onRecord?() }
     @objc private func metronomeTapped() { onMetronome?() }
+    @objc private func countInTapped() { onCountIn?() }
     @objc private func cycleTapped() { onCycle?() }
 
     /// Recording: red record symbol and position display; otherwise the normal look.
@@ -318,6 +337,10 @@ final class TransportBar: NSView {
     @objc private func rewindTapped() { onRewind?() }
     @objc private func importTapped() { onImport?() }
     @objc private func paletteTapped() { onPalette?() }
+    @objc private func launcherTapped() { onLauncher?() }
+    @objc private func automationTapped() { onAutomation?() }
+    @objc private func mixerTapped() { onMixer?() }
+    @objc private func devicesTapped() { onDevices?() }
 }
 
 // MARK: - Track header
@@ -356,6 +379,8 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
     private let mute = ToggleChip("M", on: Theme.muteOn, onText: .white, help: "Mute (⌃M)")
     private let solo = ToggleChip("S", on: Theme.soloOn, onText: Theme.hex(0x1A1400), help: "Solo (⌃S)")
     private let arm = ToggleChip("R", on: Theme.recordOn, onText: .white, help: "Record Enable (⌃R)")
+    private let monitor = ToggleChip("I", on: Theme.monitorOn, onText: .white, help: "Input Monitoring: hear this track's input now, recording or not (⌃I)")
+    var onInputMonitor: ((DalnokTrackId) -> Void)?
     /// Input source: "IN 1" for audio tracks, "MIDI" for instrument tracks. Click to choose.
     let inputButton = NSButton(title: "IN 1", target: nil, action: nil)
     var onInputMenu: ((TrackHeaderRow) -> Void)?
@@ -394,6 +419,7 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
         mute.onToggle = { [weak self] on in guard let self else { return }; self.session.setMute(self.trackId, on) }
         solo.onToggle = { [weak self] on in guard let self else { return }; self.session.setSolo(self.trackId, on) }
         arm.onToggle = { [weak self] on in guard let self else { return }; self.session.setArmed(self.trackId, on) }
+        monitor.onToggle = { [weak self] _ in guard let self else { return }; self.onInputMonitor?(self.trackId) }
         inputButton.isBordered = false
         inputButton.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         (inputButton.cell as? NSButtonCell)?.lineBreakMode = .byTruncatingTail
@@ -422,7 +448,7 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
         disclosure.target = self
         disclosure.action = #selector(toggleStack)
         disclosure.isHidden = true
-        for v in [number, nameLabel, arm, mute, solo, gain, pan, gainLabel, panLabel, meter, inputButton, disclosure] as [NSView] {
+        for v in [number, nameLabel, arm, monitor, mute, solo, gain, pan, gainLabel, panLabel, meter, inputButton, disclosure] as [NSView] {
             v.translatesAutoresizingMaskIntoConstraints = false
             addSubview(v)
         }
@@ -436,8 +462,10 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
             nameLabel.leadingAnchor.constraint(equalTo: number.trailingAnchor, constant: Theme.look.channelStripHeaders ? 14 : 8),
             nameLabel.topAnchor.constraint(equalTo: topAnchor, constant: 12),
             nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: arm.leadingAnchor, constant: Theme.look.channelStripHeaders ? -16 : -8),
-            arm.trailingAnchor.constraint(equalTo: mute.leadingAnchor, constant: -4),
+            arm.trailingAnchor.constraint(equalTo: monitor.leadingAnchor, constant: -4),
             arm.centerYAnchor.constraint(equalTo: nameLabel.centerYAnchor),
+            monitor.trailingAnchor.constraint(equalTo: mute.leadingAnchor, constant: -4),
+            monitor.centerYAnchor.constraint(equalTo: nameLabel.centerYAnchor),
             inputButton.trailingAnchor.constraint(equalTo: solo.trailingAnchor),
             inputButton.centerYAnchor.constraint(equalTo: pan.centerYAnchor),
             // Never over the pan knob: a long instrument name truncates instead.
@@ -465,7 +493,7 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
         ])
         // Long names truncate; the chips never shrink.
         nameLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        for chip in [arm, mute, solo] { chip.setContentCompressionResistancePriority(.required, for: .horizontal) }
+        for chip in [arm, monitor, mute, solo] { chip.setContentCompressionResistancePriority(.required, for: .horizontal) }
         update(track, index: index)
     }
 
@@ -509,9 +537,13 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
         mute.isOn = t.muted
         solo.isOn = t.solo
         arm.isOn = t.armed
+        monitor.isOn = t.inputMonitor
+        monitor.isHidden = t.isBus || t.isInstrument
+        monitor.setAccessibilityLabel("Input monitoring \(t.name)")
         let fx = t.effects.count
         let instrument = t.instrumentName ?? "Dalnok Poly"
-        inputButton.title = (t.isBus ? "BUS" : t.isInstrument ? String(instrument.prefix(12)) : "IN \(t.inputChannel + 1)") + (fx > 0 ? " · \(fx) FX" : "")
+        let group = t.group != 0 ? session.groupName(t.group).map { " · " + $0 } ?? "" : ""
+        inputButton.title = (t.isBus ? "BUS" : t.isInstrument ? String(instrument.prefix(12)) : "IN \(t.inputChannel + 1)") + (fx > 0 ? " · \(fx) FX" : "") + group
         arm.isHidden = t.isBus
         let missing = t.plugins.filter { !$0.loaded }.map(\.name)
         inputButton.toolTip = (t.isBus ? "A bus mixes what tracks route or send to it (View ▸ Mixer)"
@@ -688,6 +720,7 @@ final class TrackHeaderColumn: NSView, TrackScrollHost {
     var onSelect: ((DalnokTrackId?) -> Void)?
     var onAddTrack: (() -> Void)?
     var onInputMenu: ((TrackHeaderRow) -> Void)?
+    var onInputMonitorColumn: ((DalnokTrackId) -> Void)?
     var contextMenu: NSMenu?
 
     func select(_ id: DalnokTrackId) { selectedTrack = id }
@@ -774,6 +807,7 @@ final class TrackHeaderColumn: NSView, TrackScrollHost {
             rows.forEach { if $0.superview == nil { rowClip.addSubview($0) } }
             rows.forEach {
                 $0.column = self; $0.isSelected = $0.trackId == selectedTrack; $0.onInputMenu = { [weak self] r in self?.onInputMenu?(r) }
+                $0.onInputMonitor = { [weak self] id in self?.onInputMonitorColumn?(id) }
                 $0.onToggleStack = { [weak self] id, closed in self?.onToggleStack?(id, closed) }
             }
             if let sel = selectedTrack, !tracks.contains(where: { $0.id == sel }) { selectedTrack = nil }

@@ -66,6 +66,9 @@ public:
     virtual bool response(const double *hz, int count, double *db) { (void)hz; (void)count; (void)db; return false; }
     // Opaque plugin state (control thread).
     virtual bool getState(std::string &bytes) = 0;
+    // Recovery snapshots (every 30 s while there are unsaved changes): a plug-in may answer with the state it last
+    // gave if nothing has changed it since. Isolated plug-ins use this to skip a round trip each.
+    virtual bool getStateForSnapshot(std::string &bytes) { return getState(bytes); }
     virtual bool setState(const std::string &bytes) = 0;
     // Restoring a saved document can differ from loading a preset (notably for Audio Units).
     virtual bool setStateFromDocument(const std::string &bytes) { return setState(bytes); }
@@ -93,12 +96,14 @@ public:
     virtual bool hasSidechain() const { return false; }
     void setSidechain(const float *l, const float *r) DALNOK_NONBLOCKING { scL_ = l; scR_ = r; }
     // The callback's shared deadline for isolated plug-ins (CLOCK_UPTIME_RAW ns; 0 = none). Audio thread, before process.
-    void setDeadline(uint64_t ns) DALNOK_NONBLOCKING { deadlineNs_ = ns; }
+    // `waitSink` (may be null) accumulates the time spent waiting on an isolated host.
+    void setDeadline(uint64_t ns, uint64_t *waitSink = nullptr) DALNOK_NONBLOCKING { deadlineNs_ = ns; waitSink_ = waitSink; }
     // Audio thread, while the transport is stopped and `process` is not called: lets a plug-in exchange parameter
     // changes with the host (a CLAP plug-in's request_flush, so edits in its editor reach Dalnok at once).
     virtual void idle() DALNOK_NONBLOCKING {}
 protected:
     uint64_t deadlineNs_ = 0;
+    uint64_t *waitSink_ = nullptr;
     const float *scL_ = nullptr, *scR_ = nullptr;
     static constexpr int kMaxAuto = 64;
     struct AutoChange { uint32_t id; double value; };

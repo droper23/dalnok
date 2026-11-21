@@ -25,12 +25,21 @@ extension MainWindowController {
             ?? Self.scratchRecordingFolder
     }
 
-    /// The device recordings come from: the saved choice, else the current output if it has inputs, else the first.
+    /// The device recordings come from: the saved choice, else the current output if it has inputs, else the
+    /// system's default input, else the first.
     var recordingDevice: Engine.InputDevice? {
         let devices = Engine.recordingDevices()
         if let uid = Self.recordingInputUID, let d = devices.first(where: { $0.uid == uid }) { return d }
         if let d = devices.first(where: { $0.uid == session.engine.outputDeviceUid }) { return d }
-        return devices.first
+        return devices.first(where: \.isDefault) ?? devices.first
+    }
+
+    /// Tells the engine which input monitored tracks hear (it opens the device only while something monitors).
+    func syncInputDevice() {
+        let uid = Self.simulatedInput ? DALNOK_SIMULATED_INPUT : recordingDevice?.uid
+        do { try session.engine.setInputDevice(uid) } catch {
+            flash("Input monitoring unavailable: \(error)")
+        }
     }
 
     // MARK: Record
@@ -44,6 +53,7 @@ extension MainWindowController {
     /// Transport ▸ Count-In (⇧K): recording starts one bar early with clicks; the take starts where you pressed Record.
     @objc func toggleCountIn(_ sender: Any?) {
         Self.countIn.toggle()
+        syncViewButtons()
         flash(Self.countIn ? "Count-in on: one bar of clicks before recording" : "Count-in off")
     }
     /// Transport ▸ Autopunch: record only inside the red punch range (from the cycle, the selection, or 4 bars).
@@ -85,23 +95,14 @@ extension MainWindowController {
                 uid = DALNOK_SIMULATED_INPUT
             } else {
                 guard let device = recordingDevice else {
-                    return recordingProblem("No audio interface for recording",
-                        "Dalnok records from a device that has both inputs and outputs (such as an audio interface), so one clock drives recording and playback. Separate built-in microphones and speakers aren’t supported yet.")
-                }
-                guard abs(device.sampleRate - e.sampleRate) < 0.5 else {
-                    return recordingProblem("Sample rates don’t match",
-                        String(format: "%@ runs at %g kHz, but this session runs at %g kHz. Set the device to %g kHz in Audio MIDI Setup, or make it the system output and reopen Dalnok.",
-                               device.name, device.sampleRate / 1000, e.sampleRate / 1000, e.sampleRate / 1000))
+                    return recordingProblem("No audio input for recording",
+                        "Connect an audio interface or microphone, then choose it in Transport ▸ Recording Input.")
                 }
                 for t in session.tracks where t.armed && !t.isInstrument && Int(t.inputChannel) >= device.channels {
                     return recordingProblem("Input not available",
                                             "\(device.name) has \(device.channels) inputs; choose another input for \(t.name).")
                 }
-                if e.outputDeviceUid != device.uid {
-                    do { try e.setOutputDevice(device.uid) } catch {
-                        return recordingProblem("Couldn’t use \(device.name)", "\(error)")
-                    }
-                }
+                // The output stays where it is: the engine pairs this input with it (one clock, drift-corrected).
                 uid = device.uid
                 // Ask for microphone access before opening the input (ADR-0008).
                 switch AVCaptureDevice.authorizationStatus(for: .audio) {
@@ -136,6 +137,7 @@ extension MainWindowController {
         dalnok_metronome_count_in(e.handle, countInEnd)
         countInUntil = countInEnd
         do {
+            if let uid { dalnok_record_set_latency_offset(e.handle, latencyOffset(input: uid)) } // measured correction, if any
             try e.startRecording(input: uid, folder: audio == nil ? nil : recordingFolder)
         } catch {
             dalnok_record_set_punch(e.handle, false, 0, 0); dalnok_metronome_count_in(e.handle, 0)
@@ -194,8 +196,97 @@ extension MainWindowController {
             return
         }
         let start = e.recordStartFrame
-        timeline.recording = start < 0 ? nil : .init(start: start, end: e.position,
-                                                     tracks: Set(session.tracks.filter(\.armed).map(\.id)))
+        guard start >= 0 else { timeline.recording = nil; return }
+        let armed = session.tracks.filter(\.armed)
+        var peaks: [DalnokTrackId: [Float]] = [:]
+        for t in armed where !t.isInstrument {
+            let n = Int(dalnok_record_live_peaks(e.handle, t.id, nil, 0))
+            guard n > 0 else { continue }
+            var buf = [Float](repeating: 0, count: n)
+            let got = Int(dalnok_record_live_peaks(e.handle, t.id, &buf, Int32(n)))
+            peaks[t.id] = Array(buf.prefix(min(n, got)))
+        }
+        let c = session.cycle
+        let cycleTake = c.on && c.end > c.start && !Self.autopunch
+        timeline.recording = .init(start: start, end: e.position, tracks: Set(armed.map(\.id)), peaks: peaks,
+                                   cycle: cycleTake ? (c.start, c.end) : nil)
+    }
+
+    // MARK: Latency
+
+    /// Measured corrections (measured − reported round trip, frames) per input|output device pair.
+    static var latencyOffsets: [String: Int] {
+        get { UserDefaults.standard.dictionary(forKey: "latencyOffsets") as? [String: Int] ?? [:] }
+        set { UserDefaults.standard.set(newValue, forKey: "latencyOffsets") }
+    }
+    /// The pair key: the input and the output actually in use (the system default resolved to its device).
+    func latencyKey(input: String) -> String {
+        let out = session.engine.outputDeviceUid
+        return input + "|" + (out.isEmpty ? (Engine.outputDevices().first(where: \.isDefault)?.uid ?? "") : out)
+    }
+    func latencyOffset(input: String) -> Int64 { Int64(Self.latencyOffsets[latencyKey(input: input)] ?? 0) }
+
+    /// Audio ▸ Measure Recording Latency…: clicks out, the same clicks back on an input that hears the output.
+    @objc func measureLatency(_ sender: Any?) {
+        guard !session.engine.isRecording else { return flash("Stop recording first") }
+        guard let device = recordingDevice else { return recordingProblem("No audio input", "Connect an interface first.") }
+        let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 260, height: 26), pullsDown: false)
+        for ch in 0..<max(device.channels, 1) { popup.addItem(withTitle: "Input \(ch + 1)") }
+        // A loopback input (the interface's own playback) is the usual choice; many interfaces put it last.
+        let guess = selectedTrack.flatMap { session.track($0) }.map { Int($0.inputChannel) } ?? 0
+        popup.selectItem(at: min(guess, popup.numberOfItems - 1))
+        let alert = NSAlert()
+        alert.messageText = "Measure Recording Latency"
+        alert.informativeText = "Dalnok plays short tones on \(outputDeviceDescription()) and listens for them on \(device.name). Choose an input that hears that output: a cable from an output to an input, or the interface's loopback input. Turn the volume down if the output is speakers."
+        alert.accessoryView = popup
+        alert.addButton(withTitle: "Measure")
+        alert.addButton(withTitle: "Cancel")
+        guard let window else { return }
+        alert.beginSheetModal(for: window) { [weak self] r in
+            guard r == .alertFirstButtonReturn else { return }
+            self?.startLatencyMeasurement(input: device.uid, channel: popup.indexOfSelectedItem)
+        }
+    }
+
+    func startLatencyMeasurement(input uid: String, channel: Int) {
+        var err = [CChar](repeating: 0, count: 512)
+        guard dalnok_latency_measure_start(session.engine.handle, uid, Int32(channel), &err, 512) == DALNOK_OK else {
+            return recordingProblem("Couldn't measure latency", cString(err))
+        }
+        flash("Measuring latency on Input \(channel + 1)…")
+        latencyInput = uid
+        if SelfTest.running { return } // the self-test pumps the simulated device and polls itself
+        func poll() {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+                guard let self, !self.pollLatencyMeasurement() else { return }
+                poll()
+            }
+        }
+        poll()
+    }
+
+    /// True once finished; keeps the measurement (and tells the user) when it is clean.
+    @discardableResult
+    func pollLatencyMeasurement() -> Bool {
+        var r = DalnokLatencyResult()
+        guard dalnok_latency_measure_poll(session.engine.handle, &r) else { return false }
+        let rate = session.engine.sampleRate
+        let ms = { (f: Int64) in String(format: "%.2f ms", Double(f) / rate * 1000) }
+        guard r.ok, let input = latencyInput else {
+            recordingProblem("Latency not measured", fixedString(r.error))
+            return true
+        }
+        let key = latencyKey(input: input)
+        Self.latencyOffsets[key] = Int(r.measured_frames - r.reported_frames)
+        lastLatencyResult = r
+        flash("Round trip \(ms(r.measured_frames)) (\(r.measured_frames) samples; devices report \(ms(r.reported_frames))). Takes now use the measurement.")
+        return true
+    }
+
+    @objc func resetLatency(_ sender: Any?) {
+        guard let uid = recordingDevice?.uid else { return }
+        Self.latencyOffsets[latencyKey(input: uid)] = nil
+        flash("Latency compensation: as the devices report")
     }
 
     // MARK: Inputs
@@ -203,6 +294,7 @@ extension MainWindowController {
     @objc func selectRecordingInput(_ sender: NSMenuItem) {
         guard let uid = sender.representedObject as? String else { return }
         Self.recordingInputUID = uid
+        syncInputDevice()
         flash("Recording input: \(Engine.recordingDevices().first { $0.uid == uid }?.name ?? uid)")
     }
 
@@ -210,13 +302,13 @@ extension MainWindowController {
         let devices = Engine.recordingDevices()
         let current = recordingDevice?.uid
         if devices.isEmpty {
-            let none = NSMenuItem(title: "No device with inputs and outputs", action: nil, keyEquivalent: "")
+            let none = NSMenuItem(title: "No audio inputs", action: nil, keyEquivalent: "")
             none.isEnabled = false
             menu.addItem(none)
         }
         for d in devices {
             let rateOK = abs(d.sampleRate - session.engine.sampleRate) < 0.5
-            let title = d.name + (rateOK ? "" : String(format: " (%g kHz — session is %g kHz)", d.sampleRate / 1000, session.engine.sampleRate / 1000))
+            let title = d.name + (rateOK ? "" : String(format: " (switches to %g kHz)", session.engine.sampleRate / 1000))
             let it = NSMenuItem(title: title, action: #selector(selectRecordingInput(_:)), keyEquivalent: "")
             it.representedObject = d.uid
             it.state = d.uid == current ? .on : .off
@@ -225,12 +317,25 @@ extension MainWindowController {
             menu.addItem(it)
         }
         menu.addItem(.separator())
-        let latency = NSMenuItem(title: String(format: "Latency compensation: %.1f ms (reported by the device)",
-                                               Double(session.engine.recordLatency) / session.engine.sampleRate * 1000),
+        let offset = current.map { latencyOffset(input: $0) } ?? 0
+        let latency = NSMenuItem(title: String(format: "Latency compensation: %.1f ms (%@)",
+                                               Double(session.engine.recordLatency) / session.engine.sampleRate * 1000,
+                                               offset != 0 ? "measured" : "reported by the devices"),
                                  action: nil, keyEquivalent: "")
         latency.isEnabled = false
-        if !session.engine.isRecording { latency.title = "Latency compensation: reported by the device when recording starts" }
+        if !session.engine.isRecording {
+            latency.title = offset != 0 ? String(format: "Latency compensation: measured (%+d samples vs. the devices)", offset)
+                                        : "Latency compensation: reported by the devices when recording starts"
+        }
         menu.addItem(latency)
+        let measure = NSMenuItem(title: "Measure Recording Latency…", action: #selector(measureLatency(_:)), keyEquivalent: "")
+        measure.target = self
+        menu.addItem(measure)
+        if offset != 0 {
+            let reset = NSMenuItem(title: "Use Reported Latency", action: #selector(resetLatency(_:)), keyEquivalent: "")
+            reset.target = self
+            menu.addItem(reset)
+        }
     }
 
     /// Track header input button: choose an input channel (audio) or explain MIDI routing.
@@ -292,10 +397,28 @@ extension MainWindowController {
         session.setInput(id, Int32(sender.tag))
     }
 
+    /// Transport ▸ Monitor Armed Tracks: every record-enabled audio track plays its input (Logic's auto input monitoring).
     @objc func toggleInputMonitoring(_ sender: Any?) {
         Self.inputMonitoring.toggle()
+        syncInputDevice()
         dalnok_record_set_monitoring(session.engine.handle, Self.inputMonitoring)
-        flash(Self.inputMonitoring ? "Input monitoring on — use headphones to avoid feedback" : "Input monitoring off")
+        flash(Self.inputMonitoring ? "Armed tracks play their input — use headphones to avoid feedback" : "Armed tracks no longer play their input")
+    }
+
+    /// The I button: hear this track's input through its channel strip now, recording or not.
+    func toggleTrackInputMonitor(_ id: DalnokTrackId) {
+        guard let t = session.track(id), !t.isBus, !t.isInstrument else { return }
+        syncInputDevice()
+        session.setInputMonitor(id, !t.inputMonitor)
+        if !t.inputMonitor {
+            let problem = session.engine.inputError
+            flash(problem.isEmpty ? "Input Monitoring on \(t.name): Input \(t.inputChannel + 1) of \(recordingDevice?.name ?? "no input") — use headphones to avoid feedback"
+                                  : "Input Monitoring couldn't open the input: \(problem)")
+        }
+    }
+    @objc func toggleSelectedInputMonitor(_ sender: Any?) {
+        guard let id = selectedTrack else { return }
+        toggleTrackInputMonitor(id)
     }
 
     /// Opens every MIDI source not yet connected (sources can appear at any time).

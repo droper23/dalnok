@@ -108,6 +108,27 @@
    "type": "array",
    "since": 1
   },
+  "groups": {
+   "type": "array",
+   "since": 13,
+   "ignorable": true,
+   "note": "track groups: editing links between tracks, never the sound"
+  },
+  "groups[].id": { "type": "number", "since": 13, "ignorable": true },
+  "groups[].name": { "type": "string", "since": 13, "ignorable": true },
+  "groups[].volume": { "type": "bool", "since": 13, "ignorable": true },
+  "groups[].pan": { "type": "bool", "since": 13, "ignorable": true },
+  "groups[].mute": { "type": "bool", "since": 13, "ignorable": true },
+  "groups[].solo": { "type": "bool", "since": 13, "ignorable": true },
+  "groups[].arm": { "type": "bool", "since": 13, "ignorable": true },
+  "groups[].monitor": { "type": "bool", "since": 13, "ignorable": true },
+  "tracks[].group": { "type": "number", "since": 13, "ignorable": true },
+  "tracks[].monitor": {
+   "type": "bool",
+   "since": 13,
+   "ignorable": true,
+   "note": "Input Monitoring (live input only; never changes what plays back)"
+  },
   "tracks[].armed": {
    "type": "bool",
    "since": 2

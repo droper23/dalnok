@@ -135,7 +135,7 @@ final class MixerPanel: NSView {
     }
 
     func pushMeters(_ read: (DalnokTrackId) -> (Float, Float)) {
-        for s in strips { let (l, r) = read(s.trackId); s.meter.push(l, r) }
+        for s in strips where !s.visibleRect.isEmpty { let (l, r) = read(s.trackId); s.meter.push(l, r) } // scrolled-off strips skip
     }
     func select(_ id: DalnokTrackId?) { strips.forEach { $0.isSelected = $0.trackId == id } }
 }

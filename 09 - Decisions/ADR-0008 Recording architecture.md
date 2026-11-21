@@ -25,3 +25,23 @@ Recording must preserve captured audio even when the application, device, or dis
 
 ## Consequences
 The first recording release is intentionally limited to a single duplex device. File recovery and error reporting are part of recording, not later polish. Disk streaming for playback is independent. The exact ring size and container remain implementation choices to be justified by tests; no audio capture is enabled by this decision alone.
+
+## Amendment (2026-11-21): separate input and output devices, Input Monitoring, measured latency
+
+The milestone deferred above ("independent devices, aggregate devices, and clock-drift correction") is now built,
+because the owner listens on one device and records from another (an interface's inputs, the Mac's speakers), and
+switching the output to the interface for every take was wrong.
+
+- **One clock still.** When the input and output devices differ, the engine creates a *private* aggregate device
+  (`kAudioAggregateDeviceIsPrivateKey`, owned by the process, never listed to other apps) of the output (the main
+  sub-device and clock) and the input (drift-corrected). The engine still runs one AUHAL duplex unit on one clock;
+  only the hardware pairing changed. The input device is set to the engine rate if it differs (as other DAWs do);
+  it is never changed during a take.
+- **Input stays open while it is needed.** Input Monitoring (per track, saved) and armed-track monitoring open the
+  duplex device and keep it open; a take attaches its capture writer to the running device (atomic publish) instead
+  of restarting it, so starting a take doesn't glitch what you hear. Monitored input goes through the track's own
+  inserts, fader, pan and routing, transport rolling or stopped.
+- **Latency is measured, not assumed.** `dalnok_latency_measure_*` plays tone bursts and finds them on an input that
+  hears the output (cable or loopback) by cross-correlation. The correction (measured − reported) is kept per
+  input/output pair. On a Scarlett Solo 4th Gen loopback the measurement is exact (spread 0); with it, a take
+  recorded back through the loopback lands on the sample it was played from (HardwareLoopback suite).

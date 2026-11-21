@@ -684,6 +684,7 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
     private func fadeLights(to target: CGFloat) {
         let duration = Motion.reduced || window == nil ? 0 : Faceplate.lightFade
         guard let from = lightLevel, duration > 0.01 else { lightTimer?.invalidate(); return setLights(target) }
+        if from == target || (lightTimer?.isValid == true && lightFade?.to == target) { return } // already there or on the way
         lightTimer?.invalidate()
         lightFade = (from, target, CACurrentMediaTime(), duration)
         let t = Timer(timeInterval: 1.0 / 60, repeats: true) { [weak self] _ in MainActor.assumeIsolated { self?.lightStep() } }
@@ -1149,7 +1150,8 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         for k in knobs where !k.knob.tracking {
             guard let p = current(k.id) else { continue }
             if abs(p.value - k.knob.value) > 1e-6 { k.knob.glide(to: p.value) }
-            k.value.stringValue = display(p)
+            let text = display(p)
+            if k.value.stringValue != text { k.value.stringValue = text }
         }
     }
 

@@ -27,15 +27,15 @@ struct Probe {
 };
 int main(int argc, char **argv) {
     std::string error;
-    if (dalnok::createDuplexDevice("", 48000, 0, error)) return 1;
-    if (dalnok::createDuplexDevice("missing-device", 48000, 0, error)) return 2;
+    if (dalnok::createDuplexDevice("", "", 48000, 0, error)) return 1;
+    if (dalnok::createDuplexDevice("missing-device", "missing-device", 48000, 0, error)) return 2;
     if (argc != 2) { std::puts("duplex validation: PASS"); return 0; }
     for (const auto &device : dalnok::listInputDevices()) {
         if (device.name != argv[1]) continue;
-        if (dalnok::createDuplexDevice(device.uid, device.sampleRate, device.inputChannels, error)) return 3;
-        if (dalnok::createDuplexDevice(device.uid, device.sampleRate + 100, 0, error)) return 4;
+        if (dalnok::createDuplexDevice(device.uid, device.uid, device.sampleRate, device.inputChannels, error)) return 3;
+        if (dalnok::createDuplexDevice(device.uid, device.uid, device.sampleRate + 100, 0, error)) return 4;
         for (int channel = 0; channel < std::min(device.inputChannels, 2); ++channel) {
-            auto duplex = dalnok::createDuplexDevice(device.uid, device.sampleRate, channel, error);
+            auto duplex = dalnok::createDuplexDevice(device.uid, device.uid, device.sampleRate, channel, error);
             if (!duplex) { std::fprintf(stderr, "%s\n", error.c_str()); return 5; }
             Probe p;
             p.channel = channel;

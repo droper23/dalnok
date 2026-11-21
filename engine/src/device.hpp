@@ -61,9 +61,10 @@ std::vector<DeviceInfo> listOutputDevices();
 std::vector<DeviceInfo> listInputDevices();
 // Empty uid = follow the system default output.
 std::unique_ptr<AudioDevice> createOutputDevice(const std::string &uid, double sampleRate, std::string &err);
-// UID must name a single duplex device; inputChannel is zero-based.
-std::unique_ptr<AudioDuplexDevice> createDuplexDevice(const std::string &uid, double sampleRate,
-                                                      int inputChannel, std::string &err);
+// Input from device `uid` (inputChannel is zero-based) and output to `outputUid` (empty = the system default), on one
+// clock: the same device, or a private aggregate of the two with the output as the clock and the input drift-corrected.
+std::unique_ptr<AudioDuplexDevice> createDuplexDevice(const std::string &uid, const std::string &outputUid,
+                                                      double sampleRate, int inputChannel, std::string &err);
 double defaultOutputSampleRate(); // 0 if unknown
 
 } // namespace dalnok

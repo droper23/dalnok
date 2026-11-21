@@ -107,4 +107,30 @@ struct Sidechain {
         #expect(dalnok_plugin_set_sidechain(e, key, slot2, bed) != DALNOK_OK)
         #expect(dalnok_plugin_sidechain(e, bed, slot) == key)
     }
+
+    /// Cycle playback with compensation: what is heard wraps at the cycle end exactly (it used to play `compensation`
+    /// frames past the end, then skip that much of the start).
+    @Test func cyclePlaybackWrapsExactlyWithCompensation() {
+        let e = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(e) }
+        let ramp = (0..<8_000).map { Float($0 + 1) / 16_384 }
+        let m = makeMedia([ramp]); defer { dalnok_media_release(m) }
+        let id = dalnok_pool_add(e, m, "")
+        let a = dalnok_track_add(e, "A"), b = dalnok_track_add(e, "B")
+        DalnokEngine.dalnok_clip_add(e, a, id, 0, 0, 0)
+        DalnokEngine.dalnok_clip_add(e, b, id, 0, 0, 0)
+        #expect(dalnok_plugin_add(e, a, testVst3, delayClass, nil, 0) != 0 && dalnok_latency_compensation(e) == 300)
+        #expect(dalnok_cycle_set(e, true, 1_000, 3_000) == DALNOK_OK)
+        dalnok_transport_seek(e, 1_000)
+        _ = pump(e, 512, block: 256) // the seek lands while stopped
+        dalnok_transport_play(e)
+        let (l, _) = pump(e, 9_000, block: 256)
+        // From well after the fade-in and the plug-in's own first 300 frames: every sample is the ramp at the playhead.
+        var wrong: [(Int, Float, Float)] = []
+        for k in 1_000..<9_000 {
+            let pos = 1_000 + k % 2_000
+            let want = 2 * Float(pos + 1) / 16_384
+            if abs(l[k] - want) > 1e-6 { wrong.append((k, l[k], want)) }
+        }
+        #expect(wrong.isEmpty, "\(wrong.count) samples differ, first \(wrong.prefix(3))")
+    }
 }

@@ -1,6 +1,6 @@
 {
   "product": "Dalnok",
-  "updated": "2026-11-20",
+  "updated": "2026-11-21",
   "milestone": "Recording, MIDI editing and motion (M8–M9)",
   "rubric": "Each feature is split into concrete steps. A verified step (backed by an automated test, the app's end-to-end self-test, or a measured benchmark) counts 1. An implemented-but-unverified step counts 0.5. Planned steps count 0. Feature % = step score ÷ steps. Overall parity weights features by priority (P0 = 3, P1 = 2, P2 = 1). A reference DAW's parity covers only the features that DAW has.",
   "references": {
@@ -530,12 +530,12 @@
           "verified"
         ],
         [
-          "Software input monitoring while recording (opt-in)",
+          "Input Monitoring per track (I button) and for armed tracks, through the track's strip and routing, stopped or playing",
           "verified"
         ],
         [
-          "Latency-compensated placement (device-reported latency; loopback measurement pending)",
-          "implemented"
+          "Latency-compensated placement, measured by loopback (per input/output pair)",
+          "verified"
         ],
         [
           "Power-loss durability",
@@ -550,11 +550,15 @@
           "verified"
         ],
         [
-          "Separate input and output devices",
-          "todo"
+          "Separate input and output devices (private aggregate, output clock, drift-corrected input)",
+          "verified"
+        ],
+        [
+          "Live waveform while recording",
+          "verified"
         ]
       ],
-      "evidence": "RecordingTests: bit-exact take contents, latency placement, undo/redo, save and reopen, interrupted takes, journal recovery and monitoring on the simulated input. scripts/ci/record-crash.sh kills a real-time take at three points and verifies every recovered sample. App self-test records through the real menus. Scarlett Solo 4th Gen at 44.1 kHz: 10 s and 120 s takes via dalnok-cli record, 0 dropped frames. Latency compensation uses the device's reported figures (1,186 frames on the Solo) and has not been checked with a loopback measurement; monitoring was not checked by ear. PunchTests: a mid-block punch window records exactly its frames, count-in pre-roll starts the take at the record point (also when requested while playing), and count-in clicks stop at the record point; the self-test records with count-in and autopunch through the Transport menu. MultiInputTests: two armed tracks on inputs 1 and 3 each get exactly their input's samples, one undo removes both, and a failed multi-track take recovers one file per track (repeatably); the self-test records two armed tracks through the menus. Not yet run on the Scarlett with both inputs."
+      "evidence": "RecordingTests: bit-exact take contents, latency placement, undo/redo, save and reopen, interrupted takes, journal recovery and monitoring on the simulated input. scripts/ci/record-crash.sh kills a real-time take at three points and verifies every recovered sample. App self-test records through the real menus. Scarlett Solo 4th Gen at 44.1 kHz: 10 s and 120 s takes via dalnok-cli record, 0 dropped frames. Latency compensation uses the device's reported figures (1,186 frames on the Solo) and has not been checked with a loopback measurement; monitoring was not checked by ear. PunchTests: a mid-block punch window records exactly its frames, count-in pre-roll starts the take at the record point (also when requested while playing), and count-in clicks stop at the record point; the self-test records with count-in and autopunch through the Transport menu. MultiInputTests: two armed tracks on inputs 1 and 3 each get exactly their input's samples, one undo removes both, and a failed multi-track take recovers one file per track (repeatably); the self-test records two armed tracks through the menus. Not yet run on the Scarlett with both inputs. InputMonitor and LatencyMeasure suites; HardwareLoopback on a Scarlett Solo 4th Gen (take lands on the exact sample); self-test real-input section (output unchanged by recording, live waveform, monitoring meter)."
     },
     {
       "id": "comping",
@@ -1014,14 +1018,14 @@
         ],
         [
           "Sidechain input for Audio Units (second input bus)",
-          "implemented"
+          "verified"
         ],
         [
           "Plugin delay compensation (tracks, buses and sends; live and exports)",
           "verified"
         ]
       ],
-      "evidence": "DelayCompensationTests (test VST3 that delays by exactly its reported 300 frames): a latent insert stays sample-aligned with other tracks, a latent bus and a send into it arrive together with the direct paths, and live playback puts the impulse exactly at the playhead. RoutingTests (offline renders, 1e-4 tolerance): output through a bus applies its fader and balance pan; post-fader and pre-fader sends add the expected levels; mute silences pre-fader sends; chained buses; solo through routing; feedback and clips on buses rejected; deleting a bus returns its sources to the master and undo restores the routing; routing survives save/reopen (format 5) and a looping file is rejected. TSan clean on the live render path tests. Live MIDI input played while stopped still goes straight to the master. ClapHosting sidechain fixture: unconnected input is silent, a muted pre-fader key ducks the main signal to the expected level, and disconnect restores it (1e-4 tolerance). Audio Unit sidechain lacks a fixture."
+      "evidence": "DelayCompensationTests (test VST3 that delays by exactly its reported 300 frames): a latent insert stays sample-aligned with other tracks, a latent bus and a send into it arrive together with the direct paths, and live playback puts the impulse exactly at the playhead. RoutingTests (offline renders, 1e-4 tolerance): output through a bus applies its fader and balance pan; post-fader and pre-fader sends add the expected levels; mute silences pre-fader sends; chained buses; solo through routing; feedback and clips on buses rejected; deleting a bus returns its sources to the master and undo restores the routing; routing survives save/reopen (format 5) and a looping file is rejected. TSan clean on the live render path tests. Live MIDI input played while stopped still goes straight to the master. ClapHosting sidechain fixture: unconnected input is silent, a muted pre-fader key ducks the main signal to the expected level, and disconnect restores it (1e-4 tolerance). Audio Unit sidechain lacks a fixture. AudioUnitSidechain suite (test AU, in-process and isolated): exact ducking, sample-accurate onset, save/reload."
     },
     {
       "id": "stacks",
@@ -1036,8 +1040,8 @@
       "why": "Organization and summing.",
       "steps": [
         [
-          "Folder groups",
-          "todo"
+          "Track groups (linked volume, pan, mute, solo, record, monitoring; clutch)",
+          "verified"
         ],
         [
           "Summing stacks (stack bus, members routed in, fader and plug-ins act on all)",
@@ -1052,7 +1056,7 @@
           "verified"
         ]
       ],
-      "evidence": "TrackStacks engine test: the stack sums its members, its fader scales only them, order and routing, collapse flag, ungroup and undo. stacksNest engine test: nested routing and faders (1e-4 tolerance), ordering, ungroup, deletion, undo and save/reopen. App self-test: create, collapse, expand and undo nested stacks; mixer output menus retain identically named stacks."
+      "evidence": "TrackStacks engine test: the stack sums its members, its fader scales only them, order and routing, collapse flag, ungroup and undo. stacksNest engine test: nested routing and faders (1e-4 tolerance), ordering, ungroup, deletion, undo and save/reopen. App self-test: create, collapse, expand and undo nested stacks; mixer output menus retain identically named stacks. TrackGroups suite (relative volume, one undo step, clutch, save/reload); self-test drives the Group menu."
     },
     {
       "id": "automation",

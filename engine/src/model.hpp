@@ -87,6 +87,8 @@ struct TrackState {
     std::vector<Send> sends;   // to bus tracks
     bool armed = false;       // record-enabled
     int32_t inputChannel = 0; // zero-based input of the recording device (audio tracks)
+    bool inputMonitor = false; // Input Monitoring: hear the input through this track's strip (audio tracks)
+    int32_t group = 0;         // TrackGroup id (0 = none)
     std::vector<PluginSlot> plugins; // instrument first (if any), then inserts in processing order
     std::string name;
     int32_t color = 0;        // gradient step (see "06 - Design/Track Colors")
@@ -150,8 +152,17 @@ struct Marker {
     std::string name;
 };
 
+// Track group (Logic's Groups): members share the linked settings. Volume and pan move relatively, toggles copy.
+struct TrackGroup {
+    int32_t id = 0;
+    std::string name;
+    bool volume = true, pan = false, mute = true, solo = true, arm = true, monitor = true;
+    bool operator==(const TrackGroup &) const = default;
+};
+
 struct Model {
     std::vector<TrackState> tracks; // display order
+    std::vector<TrackGroup> groups;
     std::vector<Marker> markers;    // sorted by frame
     std::vector<TakeFolder> folders;
     float masterGainDb = 0; // the master fader

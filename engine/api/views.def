@@ -22,6 +22,8 @@ int32_t       clip_count    | clipCount    | clipCount(m, t->id)         | clips
 int32_t       kind          | kind         | t->kind                     | DalnokTrackKind
 bool          armed         | armed        | t->armed                    | record-enabled
 int32_t       input_channel | inputChannel | t->inputChannel             | zero-based audio input (audio tracks)
+bool          input_monitor | inputMonitor | t->inputMonitor             | Input Monitoring: the input plays through the track (audio tracks)
+int32_t       group         | group        | t->group                    | track group (0 = none)
 DalnokTrackId stack         | stack        | t->stack                    | the summing stack this track belongs to (0 = none)
 bool          is_stack      | isStack      | t->isStack                  | a bus that is a summing stack
 bool          collapsed     | collapsed    | t->collapsed                | stack shown closed

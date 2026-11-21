@@ -304,6 +304,8 @@ DalnokTrackId Engine::addInstrumentTrack(const std::string &name, std::string &e
 
 bool Engine::setArmed(DalnokTrackId id, bool armed, std::string &err) {
     if (rec_.active) return fail(err, "cannot change record arm while recording");
+    // Grouped: the group's other audio tracks follow (only one instrument track takes MIDI, so they don't).
+    const auto others = groupLinked(id, &TrackGroup::arm);
     return edit(armed ? "Record Enable" : "Record Disable", true, [&](Model &m) {
         TrackState *t = m.track(id);
         if (!t) return fail(err, "no such track");
@@ -311,13 +313,14 @@ bool Engine::setArmed(DalnokTrackId id, bool armed, std::string &err) {
         if (armed && t->kind == kTrackInstrument)
             for (auto &other : m.tracks) if (other.kind == t->kind) other.armed = false;
         t->armed = armed;
+        for (DalnokTrackId o : others) if (TrackState *g = m.track(o); g && g->kind == kTrackAudio) g->armed = armed;
         return true;
     });
 }
 
 bool Engine::setInputChannel(DalnokTrackId id, int32_t channel, std::string &err) {
     if (rec_.active) return fail(err, "cannot change input while recording");
-    return edit("Track Input", false, [&](Model &m) {
+    return edit("Track Input", true, [&](Model &m) { // structural: monitored tracks read their channel from the snapshot
         TrackState *t = m.track(id);
         if (!t) return fail(err, "no such track");
         if (t->kind != kTrackAudio) return fail(err, "only audio tracks have an audio input");
@@ -685,7 +688,7 @@ PluginProcessor *Engine::pluginInstance(int32_t id) const { return pluginHost_.i
 
 std::string Engine::pluginError(int32_t id) const { return pluginHost_.error(id); }
 
-bool Engine::pluginState(int32_t id, std::string &bytes) const { return pluginHost_.state(model_, id, bytes); }
+bool Engine::pluginState(int32_t id, std::string &bytes) const { return pluginHost_.state(model_, id, bytes, savingRecoverySnapshot_); }
 
 bool Engine::setPluginState(int32_t id, const std::string &bytes, std::string &err) {
     PluginProcessor *p = pluginInstance(id);
@@ -971,15 +974,47 @@ bool Engine::setMasterGainDb(float db, std::string &err) {
 }
 
 bool Engine::setGainDb(DalnokTrackId id, float db, std::string &err) {
-    return editParameter("Volume", id, ParameterField::gain, db, err);
+    const auto others = groupLinked(id, &TrackGroup::volume);
+    const TrackState *t = model_.track(id);
+    if (others.empty() || !t) return editParameter("Volume", id, ParameterField::gain, db, err);
+    // Grouped: the others move by the same number of dB (one undo step); a fader at -inf stays there.
+    const float from = t->gainDb;
+    beginGroup("Volume");
+    const bool ok = editParameter("Volume", id, ParameterField::gain, db, err);
+    if (ok && std::isfinite(from)) {
+        const float to = model_.track(id)->gainDb, delta = std::isfinite(to) ? to - from : -INFINITY;
+        std::string ignored;
+        for (DalnokTrackId o : others)
+            if (const TrackState *m = model_.track(o); m && std::isfinite(m->gainDb))
+                editParameter("Volume", o, ParameterField::gain, std::isfinite(delta) ? m->gainDb + delta : -INFINITY, ignored);
+    }
+    endGroup();
+    return ok;
 }
 
 bool Engine::setPan(DalnokTrackId id, float pan, std::string &err) {
-    return editParameter("Pan", id, ParameterField::pan, pan, err);
+    const auto others = groupLinked(id, &TrackGroup::pan);
+    const TrackState *t = model_.track(id);
+    if (others.empty() || !t) return editParameter("Pan", id, ParameterField::pan, pan, err);
+    const float from = t->pan;
+    beginGroup("Pan");
+    const bool ok = editParameter("Pan", id, ParameterField::pan, pan, err);
+    std::string ignored;
+    if (ok) for (DalnokTrackId o : others)
+        if (const TrackState *m = model_.track(o)) editParameter("Pan", o, ParameterField::pan, m->pan + (model_.track(id)->pan - from), ignored);
+    endGroup();
+    return ok;
 }
 
 bool Engine::setMute(DalnokTrackId id, bool muted, std::string &err) {
-    return editParameter(muted ? "Mute" : "Unmute", id, ParameterField::mute, muted, err);
+    const auto others = groupLinked(id, &TrackGroup::mute);
+    if (others.empty()) return editParameter(muted ? "Mute" : "Unmute", id, ParameterField::mute, muted, err);
+    beginGroup(muted ? "Mute" : "Unmute");
+    const bool ok = editParameter(muted ? "Mute" : "Unmute", id, ParameterField::mute, muted, err);
+    std::string ignored;
+    if (ok) for (DalnokTrackId o : others) editParameter(muted ? "Mute" : "Unmute", o, ParameterField::mute, muted, ignored);
+    endGroup();
+    return ok;
 }
 
 bool Engine::setTrackColor(DalnokTrackId id, int32_t customRgb, std::string &err) {
@@ -1003,7 +1038,14 @@ bool Engine::recolorAsGradient(std::string &err) {
 }
 
 bool Engine::setSolo(DalnokTrackId id, bool solo, std::string &err) {
-    return editParameter(solo ? "Solo" : "Unsolo", id, ParameterField::solo, solo, err);
+    const auto others = groupLinked(id, &TrackGroup::solo);
+    if (others.empty()) return editParameter(solo ? "Solo" : "Unsolo", id, ParameterField::solo, solo, err);
+    beginGroup(solo ? "Solo" : "Unsolo");
+    const bool ok = editParameter(solo ? "Solo" : "Unsolo", id, ParameterField::solo, solo, err);
+    std::string ignored;
+    if (ok) for (DalnokTrackId o : others) editParameter(solo ? "Solo" : "Unsolo", o, ParameterField::solo, solo, ignored);
+    endGroup();
+    return ok;
 }
 
 bool Engine::moveTrack(DalnokTrackId id, int32_t index, std::string &err) {

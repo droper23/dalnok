@@ -1,0 +1,50 @@
+# Release Checklist
+
+What a Dalnok release has to meet before it is tagged. Versions are `0.MINOR.PATCH` until 1.0:
+- **MINOR** (0.2.0, 0.3.0): a roadmap phase or a group of user-facing features is complete and verified.
+- **PATCH** (0.2.1): fixes only, no new features and no project-format change that older builds of the same minor can't read.
+
+Written down for 0.3.0 from what gated 0.2.0 (see CURRENT_STATE, 2026-11-20).
+
+## 1. Scope (MINOR releases)
+- The phase or feature set the release names is done on the roadmap, and every step marked `verified` in
+  `site/parity.json` has a test, self-test or measurement behind it.
+- Anything that needs the owner's hardware or ears is either checked on the hardware or listed as not verified in the
+  release notes. Nothing is described as working without evidence.
+
+## 2. Quality gate (every release)
+Run on the release commit, on this Mac (real devices attached) unless noted.
+
+| Check | Command |
+|---|---|
+| Generated API is current | `python3 scripts/gen-api.py --check` |
+| Engine tests, ASan, TSan, live smoke, self-test | `DALNOK_SANITIZE=1 scripts/check.sh` |
+| Plug-in hosting (test VST3, CLAP, AU) | `scripts/ci/plugin-host.sh` |
+| Isolated hosting, crash/hang containment | `scripts/ci/plugin-isolation.sh`, `scripts/ci/plugin-recovery.sh` |
+| Plug-in scan containment | `scripts/ci/plugin-scan.sh` |
+| Recording crash recovery | `scripts/ci/record-crash.sh`, `scripts/ci/recovery-smoke.sh` |
+| Duplex device validation | `scripts/ci/duplex-probe.sh` |
+| Audio-thread effect analysis | `scripts/ci/rt-effects.sh` |
+| Parsers and importers | `scripts/ci/fuzz.sh 120` (then 1,000 save/load round trips) |
+| Self-test, both themes, both rates | Graphite at 48 kHz and Warm Analog at 44.1 kHz (`DALNOK_SAMPLE_RATE=44100`), with the test plug-ins |
+| Real hardware (when attached) | self-test with `DALNOK_TEST_AUDIO_INPUT=<interface>`; `DALNOK_TEST_LOOPBACK=<interface>:<loopback input> swift test --filter HardwareLoopback` |
+| CI | every job green on the release commit on GitHub |
+
+A failure blocks the release until it is fixed, or understood and recorded as a known issue that doesn't affect
+users' projects or audio.
+
+## 3. Package and publish
+1. Update `CHANGELOG.md` (move Unreleased under the version and date), `CURRENT_STATE.md`, the roadmap and
+   `site/parity.json`; write the development journal entry.
+2. Bump `CFBundleShortVersionString` (and `CFBundleVersion`) in `scripts/bundle.sh`.
+3. Merge to `main` (merge commits; history isn't rewritten, so earlier tags stay valid).
+4. `scripts/release.sh` builds `dist/Dalnok-<version>.zip` and prints its SHA-256. Launch the bundled app once.
+5. Tag `v<version>` on `main` and publish the GitHub release with the zip and its SHA-256
+   (`gh release create v<version> dist/Dalnok-<version>.zip --notes-file …`).
+6. The status site is published separately and only with the owner's go-ahead (`scripts/publish-site.sh`).
+
+## 0.3.0
+Scope: Phase 4 (professional production) complete: VST3, AU and CLAP hosting with sidechains (AU now verified),
+mixer, buses, sends, automation, delay compensation (cycle wrap fixed), comping, stacks and track groups. Plus the
+recording work: separate input and output devices, Input Monitoring, a live waveform while recording, and measured
+latency compensation, all checked on a Scarlett Solo 4th Gen.

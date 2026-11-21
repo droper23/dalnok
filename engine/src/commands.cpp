@@ -287,6 +287,28 @@ const CommandDef kCommands[] = {
          if (!needInt(a, "track", t, err)) return DALNOK_ERR_INVALID_ARG;
          return status(e.setArmed(t, a.getBool("armed", true), err), err);
      }},
+    {"group.create", "New Group", "{name, tracks: [id...]}", [](ARGS) {
+         std::vector<DalnokTrackId> members;
+         if (const json::Value *v = a.get("tracks"); v && v->isArray())
+             for (const auto &x : v->array) members.push_back(static_cast<DalnokTrackId>(x.number));
+         return e.createGroup(a.getString("name", ""), members, err) ? DALNOK_OK : status(false, err);
+     }},
+    {"group.remove", "Delete Group", "{group}", [](ARGS) {
+         int32_t g;
+         if (!needInt(a, "group", g, err)) return DALNOK_ERR_INVALID_ARG;
+         return status(e.removeGroup(g, err), err);
+     }},
+    {"track.setGroup", "Set Track Group", "{track, group (0 = none)}", [](ARGS) {
+         DalnokTrackId t;
+         int32_t g;
+         if (!needInt(a, "track", t, err) || !needInt(a, "group", g, err)) return DALNOK_ERR_INVALID_ARG;
+         return status(e.setTrackGroup(t, g, err), err);
+     }},
+    {"track.setInputMonitor", "Input Monitoring", "{track, on}", [](ARGS) {
+         DalnokTrackId t;
+         if (!needInt(a, "track", t, err)) return DALNOK_ERR_INVALID_ARG;
+         return status(e.setInputMonitor(t, a.getBool("on", true), err), err);
+     }},
     {"track.setInput", "Set Track Input", "{track, channel (zero-based)}", [](ARGS) {
          DalnokTrackId t;
          int32_t ch;

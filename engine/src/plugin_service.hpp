@@ -48,7 +48,7 @@ public:
     static std::string stateRejected(const std::string &detail);
 
     // State: the live instance's, or the saved state of an unloaded slot.
-    bool state(const Model &m, int32_t id, std::string &bytes) const;
+    bool state(const Model &m, int32_t id, std::string &bytes, bool forSnapshot = false) const;
     void captureLiveState(Model &m) const;
     PluginMap offlineCopies(const Model &m) const; // fresh instances with the live state, for offline renders
 

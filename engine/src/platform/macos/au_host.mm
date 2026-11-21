@@ -30,11 +30,24 @@ std::mutex &lifecycleLock() { static std::mutex m; return m; }
 
 struct ParamChange { AudioUnitParameterID id; double value; };
 
+class AudioUnitProcessor;
+// The event listener's user data. Its notifications arrive on the main run loop's timer, while a unit can be destroyed on
+// any thread: the destructor detaches under `m` (so a notification never touches a freed unit) and the listener is
+// disposed on the main thread, where its timer runs (disposing it elsewhere raced AudioToolbox's timer: ASan SEGV in
+// CAEventReceiver::timerFired).
+struct ListenerContext { std::mutex m; AudioUnitProcessor *owner = nullptr; };
+
 class AudioUnitProcessor final : public PluginProcessor {
 public:
     ~AudioUnitProcessor() override {
         closeEditor();
-        if (listener_) AUListenerDispose(listener_);
+        if (listener_) {
+            { std::lock_guard<std::mutex> g(listenerCtx_->m); listenerCtx_->owner = nullptr; }
+            AUEventListenerRef l = listener_;
+            ListenerContext *c = listenerCtx_;
+            if (pthread_main_np()) { AUListenerDispose(l); delete c; }
+            else dispatch_async(dispatch_get_main_queue(), ^{ AUListenerDispose(l); delete c; });
+        } else delete listenerCtx_;
         if (unit_) {
             std::lock_guard<std::mutex> g(lifecycleLock());
             AudioUnitUninitialize(unit_);
@@ -300,8 +313,11 @@ public:
         return name;
     }
     void listenForEdits() {
-        auto counted = [](void *self, void *, const AudioUnitEvent *e, UInt64, AudioUnitParameterValue) {
-            auto *me = static_cast<AudioUnitProcessor *>(self);
+        auto counted = [](void *ctx, void *, const AudioUnitEvent *e, UInt64, AudioUnitParameterValue) {
+            auto *c = static_cast<ListenerContext *>(ctx);
+            std::lock_guard<std::mutex> g(c->m);
+            AudioUnitProcessor *me = c->owner;
+            if (!me) return; // the unit is gone
             // Units also announce their preset, and some end parameter gestures, while loading or restoring state
             // (asynchronously): only a different preset or a changed value counts.
             if (e->mEventType == kAudioUnitEvent_PropertyChange) {
@@ -321,7 +337,9 @@ public:
             if (!me->editor_) return;
             me->edits_.fetch_add(1, std::memory_order_relaxed);
         };
-        if (AUEventListenerCreate(counted, this, CFRunLoopGetMain(), kCFRunLoopCommonModes, 0.05f, 0.05f, &listener_) != noErr) {
+        listenerCtx_ = new ListenerContext;
+        listenerCtx_->owner = this;
+        if (AUEventListenerCreate(counted, listenerCtx_, CFRunLoopGetMain(), kCFRunLoopCommonModes, 0.05f, 0.05f, &listener_) != noErr) {
             listener_ = nullptr;
             return;
         }
@@ -338,13 +356,13 @@ public:
             AudioUnitEvent e{};
             e.mEventType = kAudioUnitEvent_EndParameterChangeGesture;
             e.mArgument.mParameter = {unit_, id, kAudioUnitScope_Global, 0};
-            AUEventListenerAddEventType(listener_, this, &e);
+            AUEventListenerAddEventType(listener_, listenerCtx_, &e);
         }
         preset_ = currentPreset();
         AudioUnitEvent preset{};
         preset.mEventType = kAudioUnitEvent_PropertyChange;
         preset.mArgument.mProperty = {unit_, kAudioUnitProperty_PresentPreset, kAudioUnitScope_Global, 0};
-        AUEventListenerAddEventType(listener_, this, &preset);
+        AUEventListenerAddEventType(listener_, listenerCtx_, &preset);
     }
 
     // Editor: the unit's Cocoa view (AUv2 kAudioUnitProperty_CocoaUI).
@@ -400,6 +418,7 @@ private:
     std::map<uint32_t, double> touched_;
     void *editor_ = nullptr;
     AUEventListenerRef listener_ = nullptr;
+    ListenerContext *listenerCtx_ = nullptr; // owned; freed with the listener (on the main thread)
     std::string preset_; // last known preset (main thread)
     std::vector<AudioUnitParameterID> paramIds_;
     std::map<AudioUnitParameterID, AudioUnitParameterValue> known_; // last known values (main thread)

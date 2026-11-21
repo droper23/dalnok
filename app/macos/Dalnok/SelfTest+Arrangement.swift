@@ -425,7 +425,9 @@ extension SelfTest {
         w.conceptGuide.window.orderOut(nil)
 
         await recordingAndMidi()
+        await realAudioInput()
         await motion()
+        await navigation()
         pluginManager()
         hostedPlugins()
         devicePanel()
@@ -487,6 +489,17 @@ extension SelfTest {
             check(centered(w.settings.window), "settings window opens centered (frame \(String(describing: w.settings.window?.frame)))")
             w.settings.window?.orderOut(nil)
         }
+        // First launch: one question (which shortcuts do you know?), then out of the way.
+        let savedPreset = ShortcutRegistry.shared.presetId
+        w.shortcutChooser.show()
+        await wait(0.1)
+        check(centered(w.shortcutChooser.window) && w.shortcutChooser.cards.count == 6, "first launch asks which shortcuts you know (6 apps)")
+        w.shortcutChooser.choose("protools")
+        check(ShortcutRegistry.shared.presetId == "protools" && !w.shortcutChooser.window.isVisible && WelcomeController.hasCompleted,
+              "choosing Pro Tools applies its shortcuts and closes the window (preset \(ShortcutRegistry.shared.presetId))")
+        w.shortcutChooser.choose("logic")
+        check(ShortcutRegistry.shared.presetId == "logic" && SourceDAW.preferred == .logic, "choosing Logic Pro also uses its words")
+        ShortcutRegistry.shared.selectPreset(savedPreset)
         w.welcome.choose(.ableton)
         check(SourceDAW.preferred == .ableton && menuItem("Split at Playhead")?.keyEquivalent == "e", "welcome: Ableton chosen, preset applied")
         await w.welcome.rescan()

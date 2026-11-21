@@ -70,8 +70,9 @@ func oneNoteSession(pitch: UInt8 = 69, velocity: UInt8 = 127) -> (OpaquePointer,
         var ml: Float = 0, mr: Float = 0
         dalnok_meter_track(e, t, &ml, &mr)
         #expect(ml > 0.05) // live input is metered on its track
-        // Muting the track silences live input too.
+        // Muting the track silences live input too (after the fader's one-block de-click ramp).
         dalnok_track_set_mute(e, t, true)
+        dalnok_engine_pump(e, &l, &r, 512)
         dalnok_engine_pump(e, &l, &r, 512)
         #expect(l.allSatisfy { $0 == 0 })
         dalnok_track_set_mute(e, t, false)
@@ -84,6 +85,38 @@ func oneNoteSession(pitch: UInt8 = 69, velocity: UInt8 = 127) -> (OpaquePointer,
         dalnok_midi_inject(e, 0x90, 60, 100)
         for _ in 0..<4 { dalnok_engine_pump(e, &l, &r, 512) }
         #expect(l.allSatisfy { $0 == 0 })
+    }
+
+    /// Live notes follow the track's routing, stopped or playing: into its bus (and the bus's fader), and its sends.
+    @Test func liveInputFollowsRouting() {
+        let e = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(e) }
+        let keys = dalnok_track_add_instrument(e, "Keys"), bus = dalnok_track_add_bus(e, "Verb")
+        #expect(dalnok_track_set_output(e, keys, bus) == DALNOK_OK)
+        var l = [Float](repeating: 0, count: 512), r = l
+        func level(_ blocks: Int) -> Float {
+            var p: Float = 0
+            for _ in 0..<blocks { dalnok_engine_pump(e, &l, &r, 512); p = max(p, l.map(abs).max()!) }
+            return p
+        }
+        dalnok_midi_inject(e, 0x90, 60, 100)
+        let open = level(10)
+        #expect(open > 0.05, "heard through the bus while stopped (\(open))")
+        var bl: Float = 0, br: Float = 0
+        dalnok_meter_track(e, bus, &bl, &br)
+        #expect(bl > 0.05, "the bus meter shows the live notes")
+        #expect(dalnok_track_set_mute(e, bus, true) == DALNOK_OK)
+        _ = level(1) // the fader's de-click ramp
+        #expect(level(4) == 0, "a muted bus silences live notes routed to it (stopped)")
+        dalnok_transport_play(e)
+        #expect(level(10) == 0, "and while playing")
+        _ = level(0)
+        #expect(dalnok_track_set_mute(e, bus, false) == DALNOK_OK)
+        #expect(level(10) > 0.05, "unmuted: heard while playing")
+        _ = dalnok_track_set_gain_db(e, bus, -12)
+        _ = level(1)
+        let quieter = level(10)
+        #expect(quieter < open * 0.4, "the bus fader applies (\(quieter) vs \(open))")
+        dalnok_midi_inject(e, 0x80, 60, 0)
     }
 
     @Test func recordsNotesAsOneUndoableClip() {

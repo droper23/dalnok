@@ -451,6 +451,7 @@ final class UIWalk {
         w.showPlugins(nil); await pause(600); shot("plugin-manager"); w.pluginManager.window?.orderOut(nil)
         w.showConceptGuide(nil); await pause(300); shot("concept-guide"); w.conceptGuide.window.orderOut(nil)
         w.welcome.show(); await pause(300); shot("welcome"); w.welcome.window.orderOut(nil)
+        w.shortcutChooser.show(); await pause(300); shot("first-launch-shortcuts"); w.shortcutChooser.window.orderOut(nil)
         s.newProject(); await pause(400); shot("empty-state")
     }
 }

@@ -34,6 +34,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             main.flash("Audio device unavailable: \(error)")
         }
         main.connectMidiInputs()
+        main.syncInputDevice()
         let unfinished = MainWindowController.unfinishedTakes(in: MainWindowController.scratchRecordingFolder)
         if !unfinished.isEmpty && !args0.contains("--selftest") {
             main.flash("\(unfinished.count) unfinished recording(s) found — choose File ▸ Recover Recordings…")
@@ -41,7 +42,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let args = Array(CommandLine.arguments.dropFirst())
         func value(_ flag: String) -> String? { args.firstIndex(of: flag).flatMap { $0 + 1 < args.count ? args[$0 + 1] : nil } }
-        let flagValues = Set(["--snapshot", "--selftest", "--screenshots", "--plugin-snapshot", "--uiwalk", "--plugin-report", "--tour"].compactMap(value))
+        let flagValues = Set(["--perf", "--snapshot", "--selftest", "--screenshots", "--plugin-snapshot", "--uiwalk", "--plugin-report", "--tour"].compactMap(value))
         let files = args.filter { !$0.hasPrefix("-") && !flagValues.contains($0) }.map { URL(fileURLWithPath: $0) }
         let snapshot = value("--snapshot").map { URL(fileURLWithPath: $0) }
 
@@ -100,7 +101,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if interactiveLaunch { DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in self?.main.offerCrashRecovery(previousRecovery) } }
         if interactiveLaunch && Theme.look.tapeDeck && !Motion.reduced { main.vfdTestUntil = Date().addingTimeInterval(0.6) }
         if files.isEmpty && snapshot == nil && !args.contains("--no-welcome") && !WelcomeController.hasCompleted {
-            main.welcome.show()
+            main.shortcutChooser.show()
         }
         let finish = { [weak self] in
             guard let self else { return }
@@ -113,6 +114,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             // Developer: --tour <dir> plays a scripted walk through the window and writes its frames (README GIFs).
             if let dir = value("--tour") { return Screenshots.tour(app: self, dir: URL(fileURLWithPath: dir)) }
+            if let s = value("--perf"), let seconds = Double(s) { return PerfProbe.run(app: self, seconds: seconds) }
             if args.contains("--play") { engine.play() }
             if let snapshot {
                 let wait = Double(ProcessInfo.processInfo.environment["DALNOK_SNAPSHOT_DELAY"] ?? "") ?? (args.contains("--play") ? 1.5 : 0.4) // seconds
@@ -152,6 +154,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard !engine.isRecording else { return false }
         let old = main!
         let frame = old.window?.frame
+        // A picture of the old style, faded out over the new window so the switch reads as one change (as macOS does
+        // for Light and Dark), not as a window closing and another opening.
+        var before: NSImage?
+        if !Motion.reduced, let v = old.window?.contentView, let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) {
+            v.cacheDisplay(in: v.bounds, to: rep)
+            let image = NSImage(size: v.bounds.size)
+            image.addRepresentation(rep)
+            before = image
+        }
         let settings = old.settings
         old.tearDown(keeping: [settings.window].compactMap { $0 })
         Theme.activeStyle = style
@@ -170,6 +181,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         old.window?.delegate = nil
         old.window?.close()
         if settings.window?.isVisible == true { settings.window?.orderFront(nil) }
+        if let before, let content = next.window?.contentView {
+            let cover = NSImageView(frame: content.bounds)
+            cover.image = before
+            cover.imageScaling = .scaleAxesIndependently
+            cover.autoresizingMask = [.width, .height]
+            content.addSubview(cover, positioned: .above, relativeTo: nil)
+            Motion.views(0.35, { cover.animator().alphaValue = 0 }, completion: {
+                DispatchQueue.main.async { cover.removeFromSuperview() }
+            })
+        }
         next.flash("Appearance: \(style.title)")
         return true
     }
@@ -177,7 +198,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// A normal launch (not a snapshot, screenshot, self-test or UI walk run).
     var interactiveLaunch: Bool {
         let a = CommandLine.arguments
-        return !["--snapshot", "--screenshots", "--selftest", "--uiwalk", "--plugin-snapshot", "--tour"].contains { a.contains($0) }
+        return !["--snapshot", "--screenshots", "--selftest", "--uiwalk", "--plugin-snapshot", "--tour", "--perf"].contains { a.contains($0) }
     }
     /// Set by Settings ▸ "Relaunch Now": start a fresh instance (with the saved project) once this one quits.
     var relaunchOnQuit = false
@@ -333,6 +354,8 @@ func buildMenu(target: MainWindowController) -> NSMenu {
         item("Mute Track", #selector(W.toggleMuteTrack(_:)), "m", [.control]),
         item("Solo Track", #selector(W.toggleSoloTrack(_:)), "s", [.control]),
         item("Record Enable Track", #selector(W.toggleArmTrack(_:)), "r", [.control]),
+        item("Input Monitoring", #selector(W.toggleSelectedInputMonitor(_:)), "i", [.control]),
+        item("Suspend Groups", #selector(W.toggleGroupClutch(_:)), "g", [.command]),
         item("Bypass Plug-ins", #selector(W.toggleTrackBypass(_:)), "b", [.control]),
         .separator(),
         colorItem,
@@ -405,7 +428,7 @@ func buildMenu(target: MainWindowController) -> NSMenu {
     midiMenu.submenu = NSMenu(title: "MIDI Inputs")
     midiMenu.submenu?.delegate = target
     menu("Audio", [outputMenu, inputMenu,
-                   item("Input Monitoring", #selector(W.toggleInputMonitoring(_:)), ""),
+                   item("Monitor Armed Tracks", #selector(W.toggleInputMonitoring(_:)), ""),
                    .separator(), midiMenu,
                    .separator(), item("Plug-ins…", #selector(W.showPlugins(_:)), "p", [.command, .option])])
     menu("View", [
