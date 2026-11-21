@@ -802,7 +802,9 @@ final class TimelineView: NSView {
 
     func positionText(_ frame: Int64, barsAndBeats: Bool = TimelineView.barsAndBeats) -> String {
         guard barsAndBeats else { return Self.formatTime(Double(frame) / sampleRate) }
-        let b = session.bar(atBeat: session.frameToBeat(Double(frame)) + 1e-9)
+        // A frame stands for the interval [frame, frame + 1): show the tick at its middle, so a grid line that falls
+        // inside it (at 44.1 kHz and 96 BPM a beat is 27,562.5 frames) reads as that line, not the tick before it.
+        let b = session.bar(atBeat: session.frameToBeat(Double(frame) + 0.5))
         let sixteenths = b.beatInBar * 16 / Double(b.den) // 16ths since the bar start
         let whole = Int(sixteenths.rounded(.down)), ticks = min(239, Int((sixteenths - Double(whole)) * 240))
         let perBeat = max(1, 16 / b.den)

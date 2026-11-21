@@ -1850,11 +1850,13 @@ final class SelfTest {
         try? await Task.sleep(for: .milliseconds(100))
         check(perform("New MIDI Clip"), "menu Clip > New MIDI Clip")
         guard let clip = w.timeline.selectedClip, s.clip(clip)?.isMidi == true else { return check(false, "MIDI clip selected") }
-        let sixteenth = s.framesPerBeat / 4
+        // A 16th is 6,890.625 frames at 44.1 kHz and 96 BPM: notes land on the nearest frame to each grid line.
+        let exact16 = e.sampleRate * 60 / s.bpm / 4, sixteenth = Int64(exact16.rounded())
         s.setNotes(clip, [DalnokNote(start: sixteenth + 100, length: sixteenth, pitch: 60, velocity: 100),
-                          DalnokNote(start: 2 * sixteenth - 90, length: sixteenth, pitch: 64, velocity: 90)])
+                          DalnokNote(start: Int64((2 * exact16).rounded()) - 90, length: sixteenth, pitch: 64, velocity: 90)])
         check(perform("1/16 Notes"), "menu Clip > Quantize > 1/16 Notes")
-        check(s.clip(clip)?.notes.map(\.start) == [sixteenth, 2 * sixteenth], "notes quantized to 16ths")
+        check(s.clip(clip)?.notes.map(\.start) == [sixteenth, Int64((2 * exact16).rounded())],
+              "notes quantized to 16ths (\(s.clip(clip)?.notes.map(\.start) ?? []))")
         check(menuItem("Double Speed")?.isEnabled == false, "audio-only clip commands are disabled for MIDI clips")
 
         // Live MIDI through the running device: the armed instrument meters while stopped.
@@ -2005,11 +2007,11 @@ final class SelfTest {
         roll.entryPitch = 70
         key(124, "", mods: .option)
         key(126, "", mods: .option)
-        let entry = Int64(roll.snapFrames)
+        let entry = Int64(roll.snapFrames.rounded()) // the nearest frame (a 16th is 6,890.625 frames at 44.1 kHz)
         key(36, "\r")
         check(s.clip(clip)?.notes.contains { $0.pitch == 71 && $0.start == c.offset + entry && $0.length == entry } == true,
               "option arrows and Return enter a note at the cursor")
-        check(roll.entryFrame == Double(c.start + 2 * entry), "step entry advances by the grid")
+        check(abs((roll.entryFrame ?? 0) - (Double(c.start) + 2 * roll.snapFrames)) < 1e-6, "step entry advances by the grid")
         _ = perform("Undo")
         check(s.clip(clip)?.notes.contains { $0.pitch == 71 && $0.start == c.offset + entry } == false, "undo removes the entered note")
         let originalNotes = s.clip(clip)?.notes ?? []
@@ -3048,7 +3050,7 @@ final class SelfTest {
         check(s.meter == (3, 4), "meter popup sets 3/4")
         let wasBars = TimelineView.barsAndBeats
         if !wasBars { _ = perform("Bars and Beats Ruler") }
-        e.seek(Int64(e.sampleRate * 60 / 96 * 3) + Int64(e.sampleRate * 60 / 96)) // bar 2, beat 2
+        e.seek(Int64((e.sampleRate * 60 / 96 * 4).rounded())) // bar 2, beat 2 (the nearest frame: 110,250 at 44.1 kHz)
         for _ in 0..<10 where !w.transport.timeLabel.stringValue.hasPrefix("2.2.1.") { try? await Task.sleep(for: .milliseconds(100)) } // the display updates on the next frame
         check(w.transport.timeLabel.stringValue.hasPrefix("2.2.1."), "LCD shows bars and beats (\(w.transport.timeLabel.stringValue), \(e.isPlaying ? "playing" : "stopped"))")
         check(w.timeline.barsLabel(e.sampleRate * 60 / 96 * 3, wholeBars: false) == "2", "ruler labels bar 2 at its downbeat")

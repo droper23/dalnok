@@ -545,7 +545,7 @@ final class PianoRollView: NSView {
             let f = entryFrame ?? Double(c.start)
             let rel = Int64(f.rounded()) - c.start + c.offset
             guard rel >= c.offset, rel < c.offset + c.length else { return }
-            let n = DalnokNote(start: rel, length: min(Int64(snapFrames), c.offset + c.length - rel), pitch: UInt8(entryPitch), velocity: 100)
+            let n = DalnokNote(start: rel, length: min(Int64(snapFrames.rounded()), c.offset + c.length - rel), pitch: UInt8(entryPitch), velocity: 100)
             commit(c.notes.filter { key($0) != key(n) } + [n], select: [key(n)])
             previewNote(n.pitch, n.velocity)
             entryFrame = min(Double(c.end), f + snapFrames)

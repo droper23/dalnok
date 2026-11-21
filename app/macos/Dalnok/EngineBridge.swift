@@ -38,7 +38,9 @@ final class Engine {
     private var isolationObserver: NSObjectProtocol?
 
     init() {
-        handle = dalnok_engine_create(0)
+        // DALNOK_SAMPLE_RATE runs the engine at another rate than the output device's (Core Audio converts), so the
+        // self-test can be run as on a 44.1 kHz machine (A-18). Unset: the device's own rate.
+        handle = dalnok_engine_create(Double(ProcessInfo.processInfo.environment["DALNOK_SAMPLE_RATE"] ?? "") ?? 0)
         sampleRate = dalnok_engine_sample_rate(handle)
         applyPluginIsolation()
         isolationObserver = NotificationCenter.default.addObserver(forName: Engine.isolationChanged, object: nil, queue: .main) { [weak self] _ in
