@@ -427,6 +427,9 @@ case "load-bench":
         _ = dalnok_engine_pump(engine, &l, &r, 512)
         let took = Date().timeIntervalSince(b0)
         worstBlock = max(worstBlock, took); blocks += 1; sum += took; if took > period { over += 1 }
+        if took > period, ProcessInfo.processInfo.environment["DALNOK_LOAD_BENCH_TRACE"] != nil {
+            print(String(format: "  block %d took %.1f ms", blocks, took * 1000))
+        }
         if blocks % 64 == 0 { dalnok_engine_collect_garbage(engine) }
         let rest = period - Date().timeIntervalSince(b0)
         if rest > 0 { usleep(useconds_t(rest * 1e6)) }
