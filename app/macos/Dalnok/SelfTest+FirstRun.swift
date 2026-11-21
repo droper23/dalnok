@@ -82,11 +82,18 @@ extension SelfTest {
         // A message that just appeared (e.g. "Clip launcher: …") keeps the line for its few seconds, then hints return.
         check(w.hoverHint == "Mixer (X)" && [w.hoverHint, w.lastFlashText].contains(t.statusLabel.stringValue),
               "hovering the Mixer button shows its hint (\(w.hoverHint ?? "none"))")
-        if let c = s.tracks.first(where: { !$0.clips.isEmpty })?.clips.first, let p = w.timeline.windowPoint(ofClip: c.id, zone: "body") {
+        // A clip the pointer can reach: on screen and not under a panel (CI's smaller screens scroll some lanes away).
+        let hoverTimeline = w.timeline, content = w.window?.contentView
+        let reachable = s.tracks.flatMap(\.clips).lazy.compactMap { c -> CGPoint? in
+            guard let p = hoverTimeline.windowPoint(ofClip: c.id, zone: "body"), let content,
+                  hoverTimeline.visibleRect.contains(hoverTimeline.convert(p, from: nil)) else { return nil }
+            return content.hitTest(content.convert(p, from: nil)) === hoverTimeline ? p : nil
+        }.first
+        if let p = reachable {
             let ev = mouse(.mouseMoved, p)
             w.timeline.mouseMoved(with: ev); w.pointerMoved(ev)
             check(w.hoverHint?.contains("drag to move") == true, "hovering a clip explains it (\(w.hoverHint ?? "none"))")
-        }
+        } else { print("SKIP  hovering a clip explains it [environment: no clip on screen at this window size]") }
         MainWindowController.showsHints = false
         w.pointerMoved(mouse(.mouseMoved, mixerCenter))
         check(w.hoverHint == nil, "hints off: nothing shown")
