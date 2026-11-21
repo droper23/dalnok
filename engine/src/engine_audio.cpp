@@ -240,6 +240,17 @@ void Engine::process(float *left, float *right, int frames) DALNOK_NONBLOCKING {
         // Stop the sub-block exactly at the cycle end so the jump back lands on the right sample.
         if (cycleValid && play && pendingSeek_ < 0 && rtPosition_ < cycleEnd && rtPosition_ + n > cycleEnd)
             n = static_cast<int>(cycleEnd - rtPosition_);
+        // Rendering runs `compensation` frames ahead of the playhead, so it reaches the cycle end first: it wraps there
+        // (and the sub-block stops there), while the playhead wraps `compensation` frames later.
+        const int64_t comp = current_ ? current_->compensation : 0;
+        auto renderAt = [&](int64_t p) DALNOK_NONBLOCKING {
+            int64_t rp = p + comp;
+            if (cycleValid && play && pendingSeek_ < 0 && p < cycleEnd && rp >= cycleEnd) rp = cycleStart + (rp - cycleEnd) % (cycleEnd - cycleStart);
+            return rp;
+        };
+        const int64_t renderPos = renderAt(rtPosition_);
+        if (cycleValid && play && pendingSeek_ < 0 && rtPosition_ < cycleEnd && renderPos < cycleEnd && renderPos + n > cycleEnd)
+            n = static_cast<int>(cycleEnd - renderPos);
         // Clip launcher: switch tracks exactly at their launch frame and cut blocks at loop ends, so every
         // change lands on a block start (rendered position = playhead + compensation).
         if (current_ && play && pendingSeek_ < 0) {
@@ -298,14 +309,18 @@ void Engine::process(float *left, float *right, int frames) DALNOK_NONBLOCKING {
             scratch_.liveNoteCount = off == n ? rtLiveNoteCount_ : 0; // live notes go to the first sub-block
             if (current_) {
                 // Input Monitoring while stopped: monitored tracks (and the buses they feed) play their input.
+                // and live MIDI plays the live instrument track: both through their strips and routing.
                 bool monitor = false;
                 for (int k = 0; scratch_.liveInputCount > 0 && k < static_cast<int>(current_->tracks.size()) && !monitor; ++k)
                     monitor = monitorsInput(current_->tracks[static_cast<size_t>(k)], scratch_);
-                scratch_.timelineOff = monitor;
+                const int32_t lt = scratch_.liveTrack;
+                const bool live = lt >= 0 && lt < static_cast<int32_t>(current_->tracks.size()) &&
+                                  (current_->tracks[static_cast<size_t>(lt)].instrumentPlugin ||
+                                   (current_->tracks[static_cast<size_t>(lt)].instrument && current_->tracks[static_cast<size_t>(lt)].runtime->live.active()));
+                scratch_.timelineOff = monitor || live;
                 if (off == n) idlePlugins(*current_, scratch_); // once per callback
-                if (monitor) renderBlock(*current_, rtPosition_ + current_->compensation, n, l, r, scratch_, true, anySolo);
+                if (monitor || live) renderBlock(*current_, rtPosition_ + current_->compensation, n, l, r, scratch_, true, anySolo);
                 scratch_.timelineOff = false;
-                renderLiveInput(*current_, n, l, r, scratch_, anySolo, true);
                 // The master meter shows live input and auditioned notes while stopped, as the track meter does.
                 float pl = 0, pr = 0;
                 for (int i = 0; i < n; ++i) {
@@ -321,7 +336,7 @@ void Engine::process(float *left, float *right, int frames) DALNOK_NONBLOCKING {
         scratch_.liveNoteCount = off == n ? rtLiveNoteCount_ : 0;
         if (current_) {
             // Rendered ahead by the delay compensation, so what is heard lines up with the playhead.
-            renderBlock(*current_, rtPosition_ + current_->compensation, n, l, r, scratch_, true, anySolo);
+            renderBlock(*current_, renderAt(rtPosition_), n, l, r, scratch_, true, anySolo); // after a seek landed
         } else {
             for (int i = 0; i < n; ++i) l[i] = r[i] = 0.0f;
         }
@@ -334,7 +349,6 @@ void Engine::process(float *left, float *right, int frames) DALNOK_NONBLOCKING {
             }
             transportGain_ = g;
         }
-        if (current_) renderLiveInput(*current_, n, l, r, scratch_, anySolo, false);
         if (play && pendingSeek_ < 0 && (clickLeft_ > 0 || transport_.metronome.load(std::memory_order_relaxed) ||
                                          rtPosition_ < transport_.countInUntil.load(std::memory_order_relaxed)))
             renderClick(l, r, n, rtPosition_);
