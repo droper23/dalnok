@@ -1,9 +1,31 @@
 ---
 updated: 2026-11-21
-phase: Phases 1 and 3 complete; 2 and 4 in progress
-milestone: hosting complete (VST3/AU/CLAP, editors, parameters, automation, delay compensation); isolation and streaming next
+phase: Phases 1, 3 and 4 complete; 2 (power-loss test) and 5 in progress
+milestone: 0.3.0, Phase 4 complete; recording I/O (separate devices, Input Monitoring, measured latency) verified on a Scarlett
 ---
 # Current State
+
+## Latest (2026-11-21, later): 0.3.0, recording I/O, sidechains, latency, groups
+Branch `feat/recording-io` (on top of `feat/first-run-and-motion` and `fix/audit-followups`). Release standard:
+`08 - Testing and Benchmarks/Release Checklist.md`.
+- **Recording keeps the output** (ADR-0008 amendment): different input and output devices run as one private
+  aggregate (output = clock, input drift-corrected). Real check: recording from the Scarlett while the output stayed on
+  the MacBook speakers (self-test `DALNOK_TEST_AUDIO_INPUT="Scarlett Solo 4th Gen"`, CLI `record … --output default`).
+- **Input Monitoring (I)** per track (saved; ⌃I) and Monitor Armed Tracks, through the track's strip and routing,
+  stopped or playing; the input stays open while monitored and a take attaches without a restart. C API 42.
+- **Live waveform** while recording (`dalnok_record_live_peaks`, one peak per 256 frames).
+- **Latency measured** (C API 43, Audio ▸ Recording Input ▸ Measure Recording Latency…, per device pair). Scarlett @48k:
+  loopback 1136 vs 1200 reported (converters), speakers → Scarlett mic 2163 vs 2006 (≈1.1 m of air). HardwareLoopback:
+  a take recorded back through the loopback lands on the exact sample.
+- **AU sidechains verified** with a test AU (`tools/dalnok-scan/fixtures/host_au.cpp`, `DALNOK_TEST_AU`), in-process and
+  isolated. TDR Nova and Guitar Rig 7 FX expose sidechain buses; Nova accepted the connection (its own dynamics settings
+  weren't made to duck in the probe, so that's not a behavioural check of Nova).
+- **Track groups** (C API 44): linked volume/pan (relative), mute, solo, record, monitoring; one undo step; ⌘G clutch.
+- **Fixed:** cycle wrap with delay compensation overshot by the compensation; live MIDI ignored routing (now through
+  `renderBlock`; `renderLiveInput` removed).
+- Not verified: the Scarlett's two inputs recorded at once on hardware (simulated only); acoustic monitoring by ear;
+  power loss during a take. The system output was muted at volume 0; it was unmuted briefly for the acoustic latency
+  runs and restored.
 
 ## Current priorities (2026-11-21)
 - **First run and motion pass, then big-project performance** (branch `feat/first-run-and-motion`). Design notes and evidence: `06 - Design/First Run and Motion 2026-11-21.md`.

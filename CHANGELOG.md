@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+- **Recording no longer changes your output.** Recording from an interface while listening on another device (the Mac's speakers, headphones) used to switch the output to the interface for every take. Dalnok now pairs the input and the output itself (a private aggregate, clocked by the output, with the input drift-corrected), so you keep listening where you were. Any device with inputs can record.
+- **Input Monitoring (I):** each audio track has an I button (Track ▸ Input Monitoring, ⌃I) to hear its input now, recording or not, through the track's plug-ins, fader, pan and routing. It's saved with the project. Audio ▸ Monitor Armed Tracks (was Input Monitoring) does the same for every record-enabled track; it used to add the input straight to the output.
+- **The waveform draws while you record**, as the take comes in.
+- **Measured latency compensation:** Audio ▸ Recording Input ▸ Measure Recording Latency plays short tones and listens for them on an input that hears the output (a cable, or the interface's loopback input). The correction is kept for that input and output pair and used for every take; Use Reported Latency goes back. On a Scarlett Solo 4th Gen the loopback measures 1136 samples at 48 kHz (the device reports 1200, including its converters), and a take recorded back through the loopback lands on exactly the sample it was played from.
+- **Track groups** (like Logic's Groups): track context menu ▸ Group. Members move together: volume and pan relatively, mute, solo, record enable and Input Monitoring the same, in one undo step. Each group chooses what it links. Track ▸ Suspend Groups (⌘G) is the clutch. Groups are saved; older versions open the project and ignore them.
+- **Audio Unit sidechains verified:** a test Audio Unit with a sidechain bus ducks exactly as keyed by another track, in-process and with Safety on. TDR Nova and Guitar Rig 7 FX expose their sidechain inputs.
+- Fixed: with plug-in delay compensation, cycle playback ran on past the cycle end by the compensation (300 frames with a 300-frame plug-in) and skipped as much of the start on every pass.
+- Fixed: notes played live on an instrument track ignored its routing: a bus, its fader and sends were skipped (always while stopped, and while playing for Dalnok Poly without inserts). Live notes now go through the track's whole channel strip.
+- Developer: `dalnok-cli latency <input> <channel> [--output <name|default>]`; `dalnok-cli record … --output <name|default>`; self-test `DALNOK_TEST_AUDIO_INPUT=<device>` (real-input checks); `DALNOK_TEST_LOOPBACK=<device>:<input>` (HardwareLoopback suite); `DALNOK_TEST_AU` (test Audio Unit). C API 44.
+
 - Fixed: effects dropping out on big projects with Safety on. Isolated plug-ins shared a fixed 40 % of each audio block, so a heavy chain was skipped even when the block had time to spare: 150 of 1,972 blocks skipped an effect in a 512-effect test project. The budget now adapts to what the rest of the block needs. The same project plays with 0 skips and 0 overloads.
 - Fixed: the interface lagging during playback on big projects. On a 128-track project with 128 isolated effects, main-thread stalls over 50 ms went from 52 to 0 in 20 s, and the slowest 1 % of passes from 50 ms to 16 ms.
   - The device panel redrew every control four times a second, even when nothing had changed.
