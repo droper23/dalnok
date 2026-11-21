@@ -4,6 +4,7 @@
 //     swinging back when it stops, while a ghost outline shows where it will land on the grid.
 //   - Dropped, it glides onto the ghost and settles with a small squash and stretch.
 //   - Clips that appear (paste, duplicate, record, import) pop in; deleted clips shrink and fade out.
+// How lively it is follows Settings ▸ Appearance ▸ Clip bounce (`ClipLift.bounce`, 0 = calm, 1 = very bouncy).
 // Everything follows Reduce Motion (Motion.reduced): then clips just move.
 // SPDX-License-Identifier: GPL-3.0-or-later
 import AppKit
@@ -19,7 +20,14 @@ final class ClipLift {
     var target: CGPoint                     // where the pointer wants the centre
     private var timer: Timer?
     private var dropping = false
-    static let liftScale: CGFloat = 1.045
+    /// Settings ▸ Appearance ▸ Clip bounce, 0…1. 0.5 was the first tuning; the default is a little bouncier.
+    static var bounce: CGFloat {
+        get { CGFloat(UserDefaults.standard.object(forKey: "clipBounce") as? Double ?? 0.65) }
+        set { UserDefaults.standard.set(Double(min(1, max(0, newValue))), forKey: "clipBounce") }
+    }
+    /// How much a lifted clip grows: 1.0 (calm) to 1.09 (very bouncy); 1.045 at 0.5.
+    static var liftScale: CGFloat { 1 + 0.09 * bounce }
+    private let scale = ClipLift.liftScale, bouncy = ClipLift.bounce
 
     /// `image` is the clip(s) as drawn, `frame` their rect in the timeline (flipped, y down).
     init(image: CGImage, frame: CGRect, in host: CALayer, scale: CGFloat) {
@@ -38,15 +46,15 @@ final class ClipLift {
         host.addSublayer(layer)
         // Lift: grow a little and raise the shadow.
         let grow = CASpringAnimation(keyPath: "transform.scale")
-        grow.fromValue = 1; grow.toValue = Self.liftScale
-        grow.damping = 14; grow.stiffness = 320; grow.mass = 1
+        grow.fromValue = 1; grow.toValue = scale
+        grow.damping = 22 - 16 * bouncy; grow.stiffness = 320; grow.mass = 1
         grow.duration = grow.settlingDuration
         layer.add(grow, forKey: "lift")
         let shadow = CABasicAnimation(keyPath: "shadowOpacity")
         shadow.fromValue = 0; shadow.toValue = 0.45; shadow.duration = 0.14
         layer.add(shadow, forKey: "shadow")
         CATransaction.begin(); CATransaction.setDisableActions(true)
-        layer.transform = CATransform3DMakeScale(Self.liftScale, Self.liftScale, 1)
+        layer.transform = CATransform3DMakeScale(scale, scale, 1)
         layer.shadowOpacity = 0.45
         CATransaction.commit()
         let t = Timer(timeInterval: 1 / 120, repeats: true) { [weak self] _ in MainActor.assumeIsolated { self?.step() } }
@@ -54,20 +62,21 @@ final class ClipLift {
         timer = t
     }
 
-    /// One 120 Hz step of the follow spring: a stiff spring with damping, so fast moves overshoot a touch and the
-    /// clip leans with its horizontal speed (like something carried by its top edge).
+    /// One 120 Hz step of the follow spring: a stiff spring with damping, so moves overshoot a little (more with
+    /// more bounce) and the clip leans with its horizontal speed (like something carried by its top edge).
     private func step() {
         guard !dropping else { return }
-        let k: CGFloat = 0.22, damping: CGFloat = 0.62
+        let k: CGFloat = 0.22, damping: CGFloat = 0.47 + 0.3 * bouncy // 0.62 at 0.5
         velocity.x = (velocity.x + (target.x - position.x) * k) * damping
         velocity.y = (velocity.y + (target.y - position.y) * k) * damping
         position.x += velocity.x
         position.y += velocity.y
-        let wanted = max(-0.09, min(0.09, velocity.x * 0.006)) // at most about 5 degrees
+        let most = 0.18 * bouncy // at most about 5 degrees at 0.5
+        let wanted = max(-most, min(most, velocity.x * 0.012 * bouncy))
         lean += (wanted - lean) * 0.3
         CATransaction.begin(); CATransaction.setDisableActions(true)
         layer.position = position
-        var t = CATransform3DMakeScale(Self.liftScale, Self.liftScale, 1)
+        var t = CATransform3DMakeScale(scale, scale, 1)
         t = CATransform3DRotate(t, lean, 0, 0, 1)
         layer.transform = t
         CATransaction.commit()
@@ -85,8 +94,9 @@ final class ClipLift {
         glide.duration = duration * 0.55
         glide.timingFunction = CAMediaTimingFunction(name: .easeIn)
         let squash = CAKeyframeAnimation(keyPath: "transform")
-        let tilt = CATransform3DRotate(CATransform3DMakeScale(Self.liftScale, Self.liftScale, 1), lean, 0, 0, 1)
-        squash.values = [tilt, CATransform3DMakeScale(1.06, 0.9, 1), CATransform3DMakeScale(0.98, 1.04, 1), CATransform3DIdentity]
+        let tilt = CATransform3DRotate(CATransform3DMakeScale(scale, scale, 1), lean, 0, 0, 1)
+        let a = 2 * bouncy // squash amount: 1 at 0.5
+        squash.values = [tilt, CATransform3DMakeScale(1 + 0.06 * a, 1 - 0.1 * a, 1), CATransform3DMakeScale(1 - 0.02 * a, 1 + 0.04 * a, 1), CATransform3DIdentity]
             .map { NSValue(caTransform3D: $0) }
         squash.keyTimes = [0, 0.55, 0.8, 1]
         squash.duration = duration
@@ -94,7 +104,10 @@ final class ClipLift {
         let shadow = CABasicAnimation(keyPath: "shadowOpacity")
         shadow.fromValue = 0.45; shadow.toValue = 0; shadow.duration = duration * 0.6
         CATransaction.begin()
-        CATransaction.setCompletionBlock { [weak self] in MainActor.assumeIsolated { self?.layer.removeFromSuperlayer(); done() } }
+        // Strong: the timeline lets go of its lift when the drop starts, and only this block removes the picture
+        // (with a weak reference it stayed on screen, over a clip that was never redrawn).
+        let picture = layer
+        CATransaction.setCompletionBlock { MainActor.assumeIsolated { picture.removeFromSuperlayer(); done() } }
         layer.add(glide, forKey: "glide")
         layer.add(squash, forKey: "squash")
         layer.add(shadow, forKey: "shadowDrop")
@@ -119,7 +132,8 @@ enum ClipFlourish {
     static func pop(_ image: CGImage, frame: CGRect, in host: CALayer, scale: CGFloat) {
         let l = picture(image, frame: frame, in: host, scale: scale)
         let grow = CAKeyframeAnimation(keyPath: "transform.scale")
-        grow.values = [0.82, 1.06, 0.99, 1]
+        let a = 2 * ClipLift.bounce
+        grow.values = [1 - 0.18 * max(0.5, a), 1 + 0.06 * a, 1 - 0.01 * a, 1]
         grow.keyTimes = [0, 0.5, 0.8, 1]
         grow.duration = 0.32
         grow.timingFunctions = [CAMediaTimingFunction(name: .easeOut), CAMediaTimingFunction(name: .easeInEaseOut), CAMediaTimingFunction(name: .easeOut)]

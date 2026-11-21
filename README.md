@@ -21,8 +21,9 @@ recording, editing, and mixing in a fast, focused native app.
   works folded. Plug-ins animate in and out of the chain.
 - **Pedals show more:** a backlit readout window (the control being turned, gain reduction, response or output trace)
   and signal LEDs.
-- **Livelier clips:** a dragged clip lifts and follows the pointer, a ghost shows where it lands, and it settles when
-  dropped; new clips pop in and deleted ones shrink away.
+- **Livelier clips:** a dragged clip lifts and springs from grid step to grid step, a ghost shows where it lands, and
+  it settles when dropped; new clips pop in and deleted ones shrink away. Settings ▸ Appearance ▸ Clip bounce sets how
+  lively it is.
 - One Open button per plug-in, with Controls in the plug-in window's title bar.
 
 ## What's in Dalnok

@@ -78,7 +78,6 @@ final class TimelineView: NSView {
     /// follow the pointer. `lifted` clips are drawn as a ghost (their landing place on the grid) meanwhile, and not at
     /// all while the picture settles onto them.
     private(set) var lift: ClipLift?
-    private var liftOrigin = CGPoint.zero, liftCentre = CGPoint.zero // pointer and picture centre when lifted
     private(set) var lifted: Set<DalnokClipId> = []
     private var landing = false
     /// The clips last drawn, for pop-in and poof (`noteClipChanges`).
@@ -859,20 +858,24 @@ final class TimelineView: NSView {
         ctx.restoreGState()
     }
 
-    /// Body drags: after 3 pt the clips lift and from then on follow the pointer (unsnapped, also across lanes).
+    /// Body drags: after 3 pt the clips lift. From then on the picture springs from grid step to grid step and lane
+    /// to lane, to wherever the clips would land (`snapLift`), rather than gliding under the pointer.
     private func liftClips(_ d: Drag, pointer p: CGPoint) {
-        if let lift { lift.target = CGPoint(x: liftCentre.x + p.x - liftOrigin.x, y: liftCentre.y + p.y - liftOrigin.y); return }
+        if lift != nil { return }
         guard !Motion.reduced, hypot(p.x - d.startX, p.y - d.startY) >= 3, let host = layer else { return }
         let ids = Set(d.moving.map(\.id))
         guard let (image, area) = picture(of: ids) else { return }
-        liftOrigin = CGPoint(x: d.startX, y: d.startY)
-        liftCentre = CGPoint(x: area.midX, y: area.midY)
         let l = ClipLift(image: image, frame: area, in: host, scale: window?.backingScaleFactor ?? 2)
-        l.target = CGPoint(x: liftCentre.x + p.x - d.startX, y: liftCentre.y + p.y - d.startY)
         lift = l
         lifted = ids
         landing = false
         needsDisplay = true
+    }
+
+    /// Points the lifted picture at where the clips now sit on the grid (after the drag moved them).
+    private func snapLift() {
+        guard let lift, let landing = rect(of: lifted)?.insetBy(dx: -1, dy: -1) else { return }
+        lift.target = CGPoint(x: landing.midX, y: landing.midY)
     }
 
     /// Drops the lifted picture onto where the clips ended up (or ends it at once).
@@ -1257,6 +1260,7 @@ final class TimelineView: NSView {
                 let wanted = max(-earliest, start - c.start)
                 let applied = current.start - c.start
                 if wanted != applied && session.nudgeClips(d.moving.map(\.id), by: wanted - applied) { d.changed = true }
+                snapLift()
                 break
             }
             let track = trackIndex(atY: p.y).map { session.tracks[$0].id } ?? current.track
@@ -1264,6 +1268,7 @@ final class TimelineView: NSView {
                 session.moveClip(c.id, track: track, start: start)
                 d.changed = true
             }
+            snapLift()
         case .leftEdge:
             // Keep the right edge fixed; reveal or hide audio on the left.
             var start = snap(Double(c.start) + delta, bypass: bypass)

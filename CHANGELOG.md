@@ -11,7 +11,8 @@
   - Fixed: each edit asked every isolated plug-in for its latency and waited for the answer, which caused 47-132 ms stalls while loading.
   - An isolated plug-in now processes 0.75 s of silence before it starts, so one-off start-up work some instruments do no longer drops blocks on the first play.
 - Clips move with more life, in the spirit of FL Studio's playlist:
-  - A dragged clip lifts off its lane (a little larger, with a shadow) and follows the pointer on a spring, leaning into the direction it travels.
+  - A dragged clip lifts off its lane (a little larger, with a shadow) and springs from grid step to grid step and lane to lane as you drag, leaning into the direction it travels.
+  - Settings ▸ Appearance ▸ Clip bounce sets how lively all of this is, from Calm to Bouncy (default a little bouncier than the first tuning).
   - A dashed ghost shows where it will land on the grid. Dropped, it glides onto the ghost and settles with a small squash.
   - Pasted, duplicated or recorded clips pop in, and deleted ones shrink away.
   - All of it follows Reduce Motion.

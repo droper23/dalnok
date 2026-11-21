@@ -13,7 +13,7 @@ final class SelfTest {
     let workdir: URL
     private var failures = 0
     /// Preferences the test changes; all are restored at the end so a run never alters the owner's settings.
-    private static let restoredKeys = ["copyAudioOnSave", "comingFrom", "onboardingDone", "recordingInputUID", "rulerBarsAndBeats", "metronome", "showDevicePanel", "countIn", "showMixer", "showLauncher", "automationMode", "pedal.AUDelay", "shortcuts.preset", "shortcuts.overrides", "shortcuts.userPresets"] + PluginLibrary.keys + ["tapeSpeed", "trackHeight", "secondaryClock", "gainRingLevel", "isolatePlugins"] + Faceplate.preferenceKeys
+    private static let restoredKeys = ["copyAudioOnSave", "comingFrom", "onboardingDone", "recordingInputUID", "rulerBarsAndBeats", "metronome", "showDevicePanel", "countIn", "showMixer", "showLauncher", "automationMode", "pedal.AUDelay", "shortcuts.preset", "shortcuts.overrides", "shortcuts.userPresets"] + PluginLibrary.keys + ["tapeSpeed", "trackHeight", "secondaryClock", "gainRingLevel", "isolatePlugins", "clipBounce"] + Faceplate.preferenceKeys
     private let previousPreferences: [String: Any]
     private var w: MainWindowController { app.main }
     private var s: Session { app.session }
@@ -2540,25 +2540,40 @@ final class SelfTest {
             w.timeline.mouseDown(with: mouse(.leftMouseDown, p))
             check(w.timeline.lift == nil, "a click alone lifts nothing")
             for k in 1...6 { w.timeline.mouseDragged(with: mouse(.leftMouseDragged, CGPoint(x: p.x + dx * CGFloat(k) / 6, y: p.y))) }
-            let lifted = w.timeline.lift
+            weak var lifted = w.timeline.lift // weak: the test must not keep the picture alive (that hid a bug)
             check(lifted != nil && w.timeline.lifted == [c.id], "dragging a clip lifts it off the lane")
             try? await Task.sleep(for: .milliseconds(250)) // the follow spring catches up
-            if let lifted, let host = w.timeline.layer {
-                let area = w.timeline.windowPoint(ofClip: c.id, zone: "body").map { w.timeline.convert($0, from: nil) }
-                check(abs(lifted.position.x - lifted.target.x) < 2 && area != nil,
-                      String(format: "the lifted clip follows the pointer (at %.1f, target %.1f)", lifted.position.x, lifted.target.x))
-                check(lifted.layer.superlayer === host && abs(lifted.layer.transform.m11 - ClipLift.liftScale) < 0.02,
-                      "it is drawn above the lanes, a little larger (scale \(lifted.layer.transform.m11))")
+            if let l = lifted, let host = w.timeline.layer {
+                // Grid snapping: the picture settles where the clip now sits on the grid, not under the pointer.
+                let landing = s.clip(c.id).flatMap { m in s.tracks.firstIndex { $0.id == m.track }.map { w.timeline.clipRect(m, laneY: w.timeline.laneY($0)) } }
+                check(landing.map { abs(l.position.x - $0.midX) < 2 && abs(l.target.x - $0.midX) < 1.5 } == true,
+                      String(format: "the lifted clip springs to its snapped place (at %.1f, landing %.1f)", l.position.x, landing?.midX ?? -1))
+                check(l.layer.superlayer === host && abs(l.layer.transform.m11 - ClipLift.liftScale) < 0.02,
+                      "it is drawn above the lanes, a little larger (scale \(l.layer.transform.m11))")
                 if let view = w.window?.contentView, let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
                     view.cacheDisplay(in: view.bounds, to: bitmap)
                     try? bitmap.representation(using: .png, properties: [:])?.write(to: workdir.appendingPathComponent("clip-lift.png"))
                 }
             }
+            let picture = lifted?.layer
             w.timeline.mouseUp(with: mouse(.leftMouseUp, CGPoint(x: p.x + dx, y: p.y)))
             check(w.timeline.lift == nil && w.timeline.lifted == [c.id], "dropped, the picture settles onto the clip's new place")
             try? await Task.sleep(for: .milliseconds(500))
-            check(w.timeline.lifted.isEmpty && lifted?.layer.superlayer == nil, "after settling the real clip is drawn again")
+            check(w.timeline.lifted.isEmpty && picture?.superlayer == nil, "after settling the picture is gone and the real clip is drawn again")
             check((s.clip(c.id)?.start ?? 0) > c.start && e.undoName == "Move Clip", "the drag still moved the clip, one undo step")
+            do { // the bug the owner found: after a move, scrolling showed a frozen copy of the clip
+                let leftovers = (w.timeline.layer?.sublayers ?? []).filter { $0.contents != nil && $0.zPosition >= 400 }
+                check(leftovers.isEmpty, "no clip picture is left over the lanes after the drop (\(leftovers.count))")
+            }
+            do { // Settings ▸ Appearance ▸ Clip bounce
+                let saved = ClipLift.bounce
+                let slider = w.settings.clipBounce
+                slider.doubleValue = 0; _ = slider.target.map { NSApp.sendAction(slider.action!, to: $0, from: slider) }
+                check(ClipLift.bounce == 0 && ClipLift.liftScale == 1, "Clip bounce at Calm: no lift growth")
+                slider.doubleValue = 1; _ = slider.target.map { NSApp.sendAction(slider.action!, to: $0, from: slider) }
+                check(ClipLift.bounce == 1 && abs(ClipLift.liftScale - 1.09) < 1e-6, "Clip bounce at Bouncy: 9 % lift")
+                ClipLift.bounce = saved
+            }
             _ = perform("Undo")
             w.timeline.selectClips([c.id])
             let active = ClipFlourish.active
