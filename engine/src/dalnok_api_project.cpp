@@ -362,7 +362,10 @@ DalnokStatus dalnok_project_export_dawproject(DalnokEngine *e, const char *path,
 DalnokStatus dalnok_project_save_snapshot(DalnokEngine *e, const char *path, char *err, size_t err_len) {
     if (!e || !path) return DALNOK_ERR_INVALID_ARG;
     std::string msg;
-    if (!e->impl.saveProject(path, msg, false, false)) {
+    e->impl.savingRecoverySnapshot_ = true;
+    const bool saved = e->impl.saveProject(path, msg, false, false);
+    e->impl.savingRecoverySnapshot_ = false;
+    if (!saved) {
         copyOut(err, err_len, msg);
         return DALNOK_ERR_IO;
     }

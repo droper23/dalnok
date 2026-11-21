@@ -16,6 +16,7 @@
 #include <os/workgroup.h>
 #include <unordered_map>
 
+#include <algorithm>
 #include <atomic>
 #include <cerrno>
 #include <chrono>
@@ -122,7 +123,8 @@ enum Op : uint8_t {
     opParameterText, opSetParameter, opTouched, opEditCount, opAutomationRange, opResponse, opLatency, opQuit,
     opInit, // engine → host once after starting: [u8 has state][u8 from document][str state]
     opHasEditor, opShowEditor, opCloseEditor, opEditorWindow, opEditorSnapshot, // ADR-0015
-    opIsolationStats
+    opIsolationStats,
+    opParameters // every parameter in one reply: [u32 n] then n × the opParameter fields
 };
 // Reply heads: 0 = refused (payload: reason), 1 = done, 2 = the host is crashing (payload: str reason; see onCrash).
 constexpr uint8_t kCrashed = 2;
@@ -466,8 +468,9 @@ public:
         }
         // Live: the callback's shared budget. Once other isolated plug-ins have spent it, this one passes for a block
         // without being blamed (budget skips never count towards "stopped responding").
+        // Without a callback deadline (a direct call), the most a live block may wait is the budget's upper bound.
         uint64_t timeout = offline_ ? 10'000'000'000ull
-                                    : static_cast<uint64_t>(0.4e9 * frames / (sampleRate_ > 0 ? sampleRate_ : 48000));
+                                    : static_cast<uint64_t>(0.85e9 * frames / (sampleRate_ > 0 ? sampleRate_ : 48000));
         if (!offline_ && deadlineNs_) {
             const uint64_t now = nowNs();
             if (now >= deadlineNs_) {
@@ -507,6 +510,7 @@ public:
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wfunction-effects"
                 answered = waitChange(s->done, request, inflightUntil_ - now);
+                if (waitSink_) *waitSink_ += nowNs() - now;
 #pragma clang diagnostic pop
             }
         }
@@ -533,6 +537,7 @@ public:
 #pragma clang diagnostic ignored "-Wfunction-effects"
         wake(s->request);
         (void)waitChange(s->done, request, deadlineNs_ > now ? deadlineNs_ - now : 2'000'000);
+        if (waitSink_) *waitSink_ += nowNs() - now;
 #pragma clang diagnostic pop
     }
 
@@ -548,12 +553,22 @@ public:
         return r.ok;
     }
     bool getState(std::string &bytes) override {
+        const uint64_t edits = editCount();
         std::string reply;
         if (!call(opGetState, {}, reply)) return false;
         Reader r{reply};
         const bool ok = r.u8();
         bytes = r.str();
-        return ok && r.ok;
+        if (!(ok && r.ok)) { stateValid_ = false; return false; }
+        lastState_ = bytes; stateEdits_ = edits; stateValid_ = true;
+        return true;
+    }
+    // A recovery snapshot of 512 isolated units asked each for its state: 260 ms on the main thread every 30 s (more
+    // with large sampler states). Unchanged since the last answer (no edit reported, no parameter set or state
+    // loaded from Dalnok), the last answer is the state. Saving a project always asks.
+    bool getStateForSnapshot(std::string &bytes) override {
+        if (stateValid_ && editCount() == stateEdits_) { bytes = lastState_; return true; }
+        return getState(bytes);
     }
     bool setState(const std::string &bytes) override { return setStateVia(opSetState, bytes); }
     bool setStateFromDocument(const std::string &bytes) override { return setStateVia(opSetStateDocument, bytes); }
@@ -564,25 +579,52 @@ public:
         return r.str();
     }
     int32_t parameterCount() override {
+        if (paramsValid_ && nowNs() - paramsAt_ < kParameterCacheNs && editCount() == paramsEdits_) return static_cast<int32_t>(params_.size());
         std::string reply;
         if (!call(opParameterCount, {}, reply)) return 0;
         Reader r{reply};
         const int32_t n = r.i32();
         return r.ok ? n : 0;
     }
+    // The device panel reads every visible knob's value and text several times a second, and its displays format
+    // values while drawing. One round trip per read waited on the host each time: with 4 isolated units on a busy
+    // machine that stalled the main thread for 50 ms or more, 3 times a second. Now one round trip fetches every
+    // parameter, and reads within kParameterCacheNs reuse it (a knob is at most that stale; our own changes and the
+    // plug-in's reported edits refresh it at once).
+    static constexpr uint64_t kParameterCacheNs = 80'000'000;
     bool parameter(int32_t index, PluginParameter &out) override {
-        Writer w;
-        w.i32(index);
-        std::string reply;
-        if (!call(opParameter, w.b, reply)) return false;
-        Reader r{reply};
-        if (!r.u8()) return false;
-        out.id = r.u32();
-        out.title = r.str(); out.units = r.str(); out.display = r.str();
-        out.value = r.f64(); out.defaultValue = r.f64();
-        out.stepCount = r.i32();
-        out.automatable = r.u8(); out.readOnly = r.u8(); out.hidden = r.u8();
-        return r.ok;
+        const uint64_t now = nowNs(), edits = editCount();
+        if (!(paramsValid_ && now - paramsAt_ < kParameterCacheNs && edits == paramsEdits_)) {
+            paramsValid_ = false;
+            std::string reply;
+            if (!call(opParameters, {}, reply)) return false;
+            Reader r{reply};
+            const uint32_t n = r.u32();
+            params_.clear();
+            paramsOk_.clear();
+            params_.reserve(n);
+            for (uint32_t i = 0; i < n && r.ok; ++i) {
+                PluginParameter q;
+                if (r.u8()) {
+                    q.id = r.u32();
+                    q.title = r.str(); q.units = r.str(); q.display = r.str();
+                    q.value = r.f64(); q.defaultValue = r.f64();
+                    q.stepCount = r.i32();
+                    q.automatable = r.u8(); q.readOnly = r.u8(); q.hidden = r.u8();
+                    paramsOk_.push_back(true);
+                } else {
+                    paramsOk_.push_back(false);
+                }
+                params_.push_back(std::move(q));
+            }
+            if (!r.ok) { params_.clear(); paramsOk_.clear(); return false; }
+            paramsValid_ = true;
+            paramsAt_ = nowNs(); // from the reply: a slow host's answer is fresh when it arrives
+            paramsEdits_ = edits;
+        }
+        if (index < 0 || static_cast<size_t>(index) >= params_.size() || !paramsOk_[static_cast<size_t>(index)]) return false;
+        out = params_[static_cast<size_t>(index)];
+        return true;
     }
     bool parameterText(uint32_t id, double normalized, std::string &out) override {
         Writer w;
@@ -598,6 +640,8 @@ public:
         Writer w;
         w.u32(id); w.f64(normalized);
         std::string reply;
+        paramsValid_ = false; // the next read shows the new value and its text
+        stateValid_ = false;
         if (!call(opSetParameter, w.b, reply)) return false;
         Reader r{reply};
         return r.u8() && r.ok;
@@ -761,6 +805,8 @@ private:
         failed_.store(true, std::memory_order_release);
     }
     bool setStateVia(Op op, const std::string &bytes) {
+        paramsValid_ = false;
+        stateValid_ = false;
         Writer w;
         w.str(bytes);
         std::string reply;
@@ -812,6 +858,13 @@ private:
     mach_port_t rendezvous_ = MACH_PORT_NULL, hostPort_ = MACH_PORT_NULL;
     struct Range { bool ok; double lo, hi; };
     std::unordered_map<uint32_t, Range> ranges_; // automationRange answers (control thread)
+    std::vector<PluginParameter> params_;        // the last opParameters reply (control thread)
+    std::vector<bool> paramsOk_;
+    bool paramsValid_ = false;
+    std::string lastState_;                       // the last getState answer (control thread)
+    bool stateValid_ = false;
+    uint64_t stateEdits_ = 0;
+    uint64_t paramsAt_ = 0, paramsEdits_ = 0;
     std::string shmName_, outbox_, launchStateError_;
     size_t outboxSent_ = 0;
     uint64_t launchDeadline_ = 0;
@@ -1016,6 +1069,21 @@ void serve(Host *h, uint8_t op, const std::string &payload) {
                 w.u32(q.id); w.str(q.title); w.str(q.units); w.str(q.display);
                 w.f64(q.value); w.f64(q.defaultValue); w.i32(q.stepCount);
                 w.u8(q.automatable); w.u8(q.readOnly); w.u8(q.hidden);
+            }
+            break;
+        }
+        case opParameters: {
+            const int32_t n = p.parameterCount();
+            w.u32(static_cast<uint32_t>(std::max(0, n)));
+            for (int32_t i = 0; i < n; ++i) {
+                PluginParameter q;
+                const bool ok = p.parameter(i, q);
+                w.u8(ok);
+                if (ok) {
+                    w.u32(q.id); w.str(q.title); w.str(q.units); w.str(q.display);
+                    w.f64(q.value); w.f64(q.defaultValue); w.i32(q.stepCount);
+                    w.u8(q.automatable); w.u8(q.readOnly); w.u8(q.hidden);
+                }
             }
             break;
         }

@@ -203,7 +203,7 @@ bool renderPluginNotes(PluginProcessor *plugin, const RenderNote *starts, const 
     sortEvents(0);
     clear(outL, frames);
     clear(outR, frames);
-    plugin->setDeadline(s.deadlineNs);
+    plugin->setDeadline(s.deadlineNs, &s.isolatedWaitNs);
     if (plugin->beginProcess(outL, outR, frames, s.events, count)) return true;
     afterPlugin(plugin, outL, outR, frames);
     return false;
@@ -219,7 +219,7 @@ void renderPluginNotesNow(PluginProcessor *plugin, const RenderNote *starts, con
 void runInserts(const RenderTrack &t, int frames, Scratch &s) DALNOK_NONBLOCKING {
     for (PluginProcessor *p : t.inserts) {
         beforeInsert(p, s.trackL, s.trackR, frames);
-        p->setDeadline(s.deadlineNs);
+        p->setDeadline(s.deadlineNs, &s.isolatedWaitNs);
         p->process(s.trackL, s.trackR, frames, nullptr, 0);
         afterPlugin(p, s.trackL, s.trackR, frames);
     }
@@ -421,7 +421,7 @@ void renderBlock(const RenderState &state, int64_t pos, int frames, float *left,
             while (st.insert < static_cast<int32_t>(t.inserts.size())) {
                 PluginProcessor *p = t.inserts[static_cast<size_t>(st.insert)];
                 beforeInsert(p, L, R, frames);
-                p->setDeadline(s.deadlineNs);
+                p->setDeadline(s.deadlineNs, &s.isolatedWaitNs);
                 if (p->beginProcess(L, R, frames, nullptr, 0)) { st.stage = kStepInsertWait; st.waiting = true; st.pending = p; return true; }
                 afterPlugin(p, L, R, frames);
                 ++st.insert;
@@ -589,8 +589,8 @@ void renderBlock(const RenderState &state, int64_t pos, int frames, float *left,
 
 void idlePlugins(const RenderState &state, Scratch &s) DALNOK_NONBLOCKING {
     for (const RenderTrack &t : state.tracks) {
-        if (t.instrumentPlugin) { t.instrumentPlugin->setDeadline(s.deadlineNs); t.instrumentPlugin->idle(); }
-        for (PluginProcessor *p : t.inserts) { p->setDeadline(s.deadlineNs); p->idle(); }
+        if (t.instrumentPlugin) { t.instrumentPlugin->setDeadline(s.deadlineNs, &s.isolatedWaitNs); t.instrumentPlugin->idle(); }
+        for (PluginProcessor *p : t.inserts) { p->setDeadline(s.deadlineNs, &s.isolatedWaitNs); p->idle(); }
     }
 }
 

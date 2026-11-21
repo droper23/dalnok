@@ -152,8 +152,16 @@ void Engine::audioCallback(void *ctx, float *left, float *right, int frames) DAL
 
 void Engine::process(float *left, float *right, int frames) DALNOK_NONBLOCKING {
     [[maybe_unused]] const FlushDenormals flushDenormals;
-    // Isolated plug-ins (ADR-0014) share one budget per callback: together they may wait 40 % of its period.
-    scratch_.deadlineNs = nowNs() + static_cast<uint64_t>(0.4e9 * frames / sampleRate_);
+    // Isolated plug-ins (ADR-0014) share one budget per callback. It used to be a fixed 40 % of the period, which
+    // dropped effects on big projects (512 isolated units: 7.6 % of blocks skipped one, while the same project
+    // in-process kept up with 30 % to spare). Now it is what the rest of the block leaves: the period, less the
+    // non-plug-in work of recent callbacks (with 50 % headroom) and a 10 % margin, kept between 40 and 85 %.
+    const uint64_t startNs = nowNs();
+    const double periodNs = 1e9 * frames / sampleRate_;
+    const double budget = std::clamp(periodNs * 0.9 - 1.5 * static_cast<double>(restEstimateNs_), periodNs * 0.4, periodNs * 0.85);
+    scratch_.deadlineNs = startNs + static_cast<uint64_t>(budget);
+    scratch_.isolatedWaitNs = 0;
+    lastIsolatedBudget_.store(static_cast<float>(budget / periodNs), std::memory_order_relaxed);
     // Adopt the newest snapshot only if the previous one can be retired.
     if (!retired_.full()) {
         if (RenderState *s = pending_.exchange(nullptr, std::memory_order_acq_rel)) {
@@ -343,6 +351,10 @@ void Engine::process(float *left, float *right, int frames) DALNOK_NONBLOCKING {
         }
     }
     rtMidiCount_ = 0;
+    // This block's own work (everything but waiting on isolated hosts) feeds the next budget. The estimate jumps up
+    // at once and decays slowly (about 1 % every 2.7 callbacks), so one light block doesn't invite an overload.
+    const uint64_t total = nowNs() - startNs, own = total > scratch_.isolatedWaitNs ? total - scratch_.isolatedWaitNs : 0;
+    restEstimateNs_ = std::max(own, restEstimateNs_ - restEstimateNs_ / 256);
 }
 
 } // namespace dalnok

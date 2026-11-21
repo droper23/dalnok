@@ -228,6 +228,7 @@ public:
     PluginProcessor *pluginInstance(int32_t slot) const;
     std::string pluginError(int32_t slot) const;
     bool pluginState(int32_t slot, std::string &bytes) const;
+    bool savingRecoverySnapshot_ = false; // control thread: set while dalnok_project_save_snapshot writes
     bool setPluginState(int32_t slot, const std::string &bytes, std::string &err);
     void touchPlugin() { ++revision_; } // a parameter changed: the project has unsaved changes
     bool recolorAsGradient(std::string &err); // automatic tracks get gradient steps in display order
@@ -355,6 +356,8 @@ private:
     static void duplexCallback(void *ctx, float *left, float *right, const float *const *inputs, int inputCount,
                                int frames) DALNOK_NONBLOCKING;
     void process(float *left, float *right, int frames) DALNOK_NONBLOCKING;
+    uint64_t restEstimateNs_ = 0;                // audio thread: recent non-plug-in work per callback (see process)
+    std::atomic<float> lastIsolatedBudget_{0.4f}; // the last callback's isolated budget, as a fraction of its period
     void handleMidiInput(int64_t pos, int frames) DALNOK_NONBLOCKING;
     void renderClick(float *left, float *right, int frames, int64_t pos) DALNOK_NONBLOCKING;
     void drainRecordedMidi();

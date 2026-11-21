@@ -67,6 +67,9 @@ Swift/AppKit front end on macOS. GPL-3.0-or-later. This repo is also the project
 - `scripts/ci/rt-effects.sh` runs the real-time effect analysis (uses Homebrew LLVM on CI).
 - `scripts/ci/fuzz.sh [seconds]` fuzzes the project reader and every importer (libFuzzer + ASan, Homebrew LLVM) and then
   runs 1,000 random save/load round-trips. Run it after touching any parser; new crashes land in `.build/fuzz/artifacts`.
+- `Dalnok <project> --perf <seconds>` (release build) plays a project silently on the real device after its plug-ins
+  load and prints one `PERF {…}` line: engine overloads, worst render, isolated misses and budget skips, and
+  main-thread busy time per run-loop pass (UI lag). Use it for any playback or UI performance work.
 - `Dalnok <audio files> --screenshots site/screenshots` regenerates the parity-page screenshots from the real app.
 - `Dalnok <project> --tour <dir>` records a scripted walk through the window as TIFF frames plus `times.txt` (README GIFs in `assets/screenshots/`). Use generated projects with built-in or Apple plug-ins only.
 - `scripts/publish-site.sh` publishes `site/` (only) to the public repo `droper23/dalnok-status` (GitHub Pages).

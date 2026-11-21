@@ -269,6 +269,8 @@ struct Scratch {
     // Live callbacks: when every isolated plug-in in this callback must have answered (one shared budget; 0 = none,
     // as for offline renders). Set once per callback by Engine::process.
     uint64_t deadlineNs = 0;
+    // Time this callback spent waiting on isolated hosts (ns), so the engine can tell its own work from theirs.
+    uint64_t isolatedWaitNs = 0;
 };
 
 // Mixes `frames` (<= kMaxBlock) of `state` at timeline position `pos` into

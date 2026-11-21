@@ -29,8 +29,8 @@ What they share:
 
 | Area | Change | Learned from |
 |---|---|---|
-| Start page | Six templates (Record Audio, Play an Instrument, Make a Beat, Record a Band, Write a Song, Podcast or Voice-over), each one undo step. Five recent projects, the other ways in, and three tips. Sections rise into place, and the emblem breathes. Automated runs never list recent projects, so the owner's project names can't land in a picture. | Logic, Bitwig, Studio One |
-| Control bar | Clip Launcher, Automation, Mixer and Device Panel buttons, lit while their view is open (the accent pill eases in and out). | Logic, Bitwig |
+| Start page | First pass: six goal-named templates and recent projects. **Owner, same day: "they don't need six options, they just need to understand how to navigate a blank project."** Now: New Audio Track and New Instrument Track as cards; six essential keys (Space, R, ⌘K, X, ⌘Z, hover hints); links to open, import or bring in a project. Sections rise into place, and the emblem breathes. | Logic, Bitwig, Studio One |
+| Control bar | Count-In (beside the metronome; owner request), Clip Launcher, Automation, Mixer and Device Panel buttons, lit while their view is open (the accent pill eases in and out). | Logic, Bitwig |
 | Hint line | The line under the project name describes the control under the pointer: every tooltip, plus zone-aware text for clips (body, start, end, fades) and the ruler halves. Settings ▸ Appearance ▸ Hints. | Ableton Info View, FL hint bar |
 | Toasts | "Undo Move Clip ⌘Z", "Redo …", "Saved", template confirmations. Spring rise in; a repeat nudges instead of re-entering. Announced to VoiceOver. | Final Cut, Figma |
 | Camera | Keyboard and menu zoom, Zoom to Fit, Zoom to Selection and Go to Start glide (0.22–0.3 s). Zoom eases in log space around the one fixed point, so the anchor stays still; repeated keys build on the target. Page turns while playing glide in 0.2 s. A gesture takes over at once. | Bitwig, Studio One |

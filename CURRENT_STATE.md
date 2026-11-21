@@ -6,11 +6,18 @@ milestone: hosting complete (VST3/AU/CLAP, editors, parameters, automation, dela
 # Current State
 
 ## Current priorities (2026-11-21)
-- **First run and motion pass** (branch `feat/first-run-and-motion`, based on `fix/audit-followups`). Research, decisions and evidence are in `06 - Design/First Run and Motion 2026-11-21.md`.
-  - Start page with templates and recent projects; view buttons in the control bar; a hint line; undo/redo/save notices.
-  - Gliding zoom and page turns; a glow on new lanes; mute cross-fades; the launcher slides; a count-in overlay; theme cross-fade.
-  - Self-test 614 checks (48 kHz, Graphite) and 599 (44.1 kHz, Warm Analog), both PASS.
-  - Next candidates are listed at the end of that note.
+- **First run and motion pass, then big-project performance** (branch `feat/first-run-and-motion`). Design notes and evidence: `06 - Design/First Run and Motion 2026-11-21.md`.
+  - An empty project shows a short guide (two ways to add a track, six keys, links). The six templates were removed at the owner's request.
+  - Control bar: Count-In, Clip Launcher, Automation, Mixer and Device Panel buttons.
+  - Also new: a hint line, undo/redo/save notices, gliding zoom and page turns, a glow on new lanes, a count-in overlay.
+- **Performance, measured with `--perf` on generated 128-track projects** (release build, real device, silent):
+  - The isolated budget now adapts (ADR-0014 amendment). Effect skips on 512 isolated effects: 150 → 0.
+  - UI stalls over 50 ms (128 isolated effects): 52 → 0 per 20 s.
+  - Recovery snapshots reuse unchanged isolated states.
+  - Remaining: the first recovery snapshot after loading still asks every plug-in (about 260 ms with 512 units).
+  - The owner's own projects haven't been measured: that needs their go-ahead.
+- Verification: `swift test` 255/255; `plugin-isolation.sh` PASS; `rt-effects.sh` clean.
+  - Self-test 612 checks (Graphite, 48 kHz) and 597 (Warm Analog, 44.1 kHz), both PASS, run with the screen locked.
 
 ## Priorities (2026-11-20)
 - **Safety is on by default** (ADR-0014, 2026-11-20). Both blockers from the first pass are fixed:

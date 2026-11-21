@@ -2,7 +2,18 @@
 
 ## [Unreleased]
 
-- New start page for empty projects: six templates named for what you came to make (Record Audio, Play an Instrument, Make a Beat, Record a Band, Write a Song, Podcast or Voice-over), each one undo step. It also lists recent projects, the other ways in, and three tips.
+- Fixed: effects dropping out on big projects with Safety on. Isolated plug-ins shared a fixed 40 % of each audio block, so a heavy chain was skipped even when the block had time to spare: 150 of 1,972 blocks skipped an effect in a 512-effect test project. The budget now adapts to what the rest of the block needs. The same project plays with 0 skips and 0 overloads.
+- Fixed: the interface lagging during playback on big projects. On a 128-track project with 128 isolated effects, main-thread stalls over 50 ms went from 52 to 0 in 20 s, and the slowest 1 % of passes from 50 ms to 16 ms.
+  - The device panel redrew every control four times a second, even when nothing had changed.
+  - Each isolated plug-in parameter read was its own round trip; now one round trip reads them all.
+  - Track header meters and mixer strips that are scrolled out of view are no longer updated.
+  - Crash-recovery snapshots reuse unchanged isolated plug-in states (260 ms → under 6 ms on 512 units).
+- Animations always land on their final state, even while the display sleeps or the screen is locked.
+- Count-In button in the control bar, beside the metronome, lit while on.
+- New: an empty project shows a short guide:
+  - New Audio Track and New Instrument Track;
+  - six keys to get around (Space, R, ⌘K, X, ⌘Z, and hovering for hints);
+  - links to open, import, or bring in a project.
 - Control bar buttons for the Clip Launcher, Automation, Mixer and Device Panel, lit while their view is open.
 - Hints: the line under the project name says what the control under the pointer does, including each part of a clip and the two halves of the ruler (Settings ▸ Appearance ▸ Hints, on by default).
 - Undo, Redo and Save are confirmed in a short notice that names the step ("Undo Move Clip ⌘Z"), and VoiceOver announces it.
@@ -12,6 +23,7 @@
   - New tracks' lanes glow for a moment, and muting cross-fades.
   - The clip launcher slides open, the command palette grows in, and switching themes cross-fades.
   - The count-in shows big beat numbers over the arrangement.
+- Developer: `Dalnok <project> --perf <seconds>` plays a project silently on the real device and reports audio overloads, isolated misses and budget skips, and main-thread stalls.
 
 - Faster mixing (A-13): each track's gain ramp, meter and output now use vector routines (Accelerate's vDSP on macOS).
   - A 64-track block takes 46 µs instead of 143 µs, and a 256-track block 180 µs instead of 567 µs (about 3x faster).

@@ -685,7 +685,7 @@ PluginProcessor *Engine::pluginInstance(int32_t id) const { return pluginHost_.i
 
 std::string Engine::pluginError(int32_t id) const { return pluginHost_.error(id); }
 
-bool Engine::pluginState(int32_t id, std::string &bytes) const { return pluginHost_.state(model_, id, bytes); }
+bool Engine::pluginState(int32_t id, std::string &bytes) const { return pluginHost_.state(model_, id, bytes, savingRecoverySnapshot_); }
 
 bool Engine::setPluginState(int32_t id, const std::string &bytes, std::string &err) {
     PluginProcessor *p = pluginInstance(id);

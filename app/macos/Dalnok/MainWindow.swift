@@ -775,7 +775,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         let (ml0, mr0) = e.masterMeter()
         var levels: [DalnokTrackId: (Float, Float)] = [:]
         for t in session.tracks { levels[t.id] = e.trackMeter(t.id) }
-        for row in headers.rows {
+        // Only rows on screen: a 128-track project updated 128 meters and gain rings every frame for ~10 visible ones.
+        // A row scrolled into view catches up on the next frame (meters read the level since the last read).
+        let shownRows = headers.rows.first?.superview?.bounds ?? .zero
+        for row in headers.rows where row.frame.intersects(shownRows) {
             let (l, r) = levels[row.trackId] ?? (0, 0)
             row.meter.push(l, r)
             if row.gain.showsMeter != GainKnob.showsLevel { row.gain.showsMeter = GainKnob.showsLevel }

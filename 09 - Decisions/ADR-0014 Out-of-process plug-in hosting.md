@@ -125,3 +125,20 @@ playback look better than it is.
   third-party plug-ins load isolated unless the user had turned Safety off (an explicit choice, either way, is
   kept). Settings ▸ Plug-ins ▸ Safety is the off switch, and it applies to plug-ins loaded afterwards. A plug-in
   that fails isolated keeps its state and can be reloaded. Built-in plug-ins always run in-process.
+
+**Adaptive budget (2026-11-21).** The fixed 40 % budget dropped effects on big projects even when the block had time to
+spare. A generated test project (128 audio tracks, each with 4 Apple effects, so 512 isolated units; app release build,
+real device, 20 s): 150 of 1,972 blocks skipped an effect. The same project in-process kept up, with a worst block of
+7.5 ms of 10.7. The budget is now what the block's own work leaves.
+- *Rule.* The engine measures each callback's own work: everything except waiting on isolated hosts, which they report
+  through `setDeadline`'s wait sink. The estimate rises at once and decays by 1/256 per callback.
+- *Budget.* 90 % of the period, less 1.5 × that estimate, kept between 40 % and 85 % of the period.
+- *Unchanged.* Budget skips still pass dry or silent and are never blamed on the plug-in.
+- *Results on the same project, 20–40 s runs:* 0 budget skips, 0 missed blocks, 0 overloads, worst block 5.5–6.5 ms.
+- *Tests.*
+  - `isolatedBudgetFollowsWhatTheBlockLeaves`: one unit using 56 % of every block drops 0 of 80 blocks (the fixed 40 % dropped 80 of 80). Two such units in series still end every block inside its period (worst 9.1 ms of 10.7), because the second passes dry.
+  - `hungPluginsShareOneDeadlinePerCallback` now bounds a callback at 90 % of the period.
+
+**Main thread (same day).** Measured with `Dalnok <project> --perf <s>`.
+- *Parameter reads.* Each isolated parameter read was a round trip. The device panel reads every control several times a second, so 4 units on a busy machine blocked for 50 ms or more, about 3 times a second. Now one round trip (`opParameters`) fetches all parameters. Reads within 80 ms of the reply reuse it, and Dalnok's own changes and the plug-in's reported edits refresh it at once (`parameterReadsShareOneRoundTrip`).
+- *Recovery snapshots.* These ask every plug-in for its state every 30 s while there are unsaved changes; with 512 units that took 260 ms. An isolated plug-in that hasn't changed since its last answer (no reported edit, no parameter set or state loaded from Dalnok) now gives that answer again. Saving a project always asks (`recoverySnapshotsReuseUnchangedIsolatedStates`: unchanged snapshots worst 6 ms, 202 ms without reuse, with a host that answers slowly). The first snapshot after loading still asks every plug-in.

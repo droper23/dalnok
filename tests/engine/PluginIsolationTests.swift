@@ -115,9 +115,9 @@ struct PluginIsolation {
         unsetenv("DALNOK_TEST_PROCESS_FAILURE")
         #expect(slot != 0, "\(cstr(err))")
         dalnok_transport_play(e)
-        // 512 frames at 48 kHz is a 10.7 ms period; a hung plug-in may cost at most its 40 % wait per block.
+        // 512 frames at 48 kHz is a 10.7 ms period; a hung plug-in may cost at most the shared budget per block (at most 85 % of it).
         let worst = pumpLive(e, blocks: 240)
-        // The wait itself is 40 % of the period (4.3 ms); the bound that matters is never overrunning the period.
+        // The bound that matters is never overrunning the period.
         #expect(worst < 10.6, "a hung plug-in never makes a live block overrun its 10.7 ms period (worst \(worst) ms)")
         dalnok_engine_collect_garbage(e)
         let failed = info(e, t)
@@ -548,6 +548,110 @@ struct PluginIsolation {
         #expect(warm.loadMs < cold.loadMs + 400, "the warm-up adds little to loading (\(warm.loadMs) vs \(cold.loadMs) ms)")
     }
 
+    /// Isolated plug-ins share one time budget per callback. A fixed 40 % of the period dropped heavy effects on big
+    /// projects even though the rest of the block had plenty of time left (512 isolated units: 150 of 1,972 blocks
+    /// skipped an effect; in-process the same project kept up). The budget is now what the block's own work leaves.
+    /// One plug-in that needs 56 % of every 512-frame block (6 ms of 10.67) must never miss; two in series (12 ms, more
+    /// than the period) must not push the block past its period: the second one passes dry instead.
+    @Test func isolatedBudgetFollowsWhatTheBlockLeaves() throws {
+        setenv("DALNOK_TEST_PROCESS_SLOW_US", "6000", 1); defer { unsetenv("DALNOK_TEST_PROCESS_SLOW_US") }
+        let periodMs = 512.0 / 48.0
+        func play(units: Int) -> (dropped: UInt64, worstMs: Double) {
+            let (e, t) = audioSession(); defer { dalnok_engine_destroy(e) }
+            dalnok_plugins_set_host(e, isolationHost)
+            let slots = (0..<units).map { _ in dalnok_plugin_add(e, t, testVst3, gainClass, nil, 0) }
+            #expect(slots.allSatisfy { $0 != 0 } && info(e, t).isolated)
+            dalnok_transport_play(e)
+            var l = [Float](repeating: 0, count: 512), r = l
+            var worst = 0.0
+            for i in 0..<80 { // 0.85 s at the device's pace
+                let t0 = DispatchTime.now().uptimeNanoseconds
+                _ = dalnok_engine_pump(e, &l, &r, 512)
+                let ms = Double(DispatchTime.now().uptimeNanoseconds - t0) / 1e6
+                if i >= 5 { worst = max(worst, ms) } // after the first few blocks (estimate settled)
+                usleep(UInt32(max(0, periodMs - ms) * 1000))
+            }
+            var dropped: UInt64 = 0
+            for s in slots { var st = DalnokPluginIsolationStats(); _ = dalnok_plugin_isolation_stats(e, s, &st); dropped += st.missed_blocks + st.budget_skips }
+            return (dropped, worst)
+        }
+        let one = play(units: 1), two = play(units: 2)
+        print(String(format: "BUDGET: one 6 ms unit dropped %llu (worst block %.2f ms); two dropped %llu (worst %.2f ms, period %.2f)",
+                     one.dropped, one.worstMs, two.dropped, two.worstMs, periodMs))
+        #expect(one.dropped == 0, "a unit using 56 % of the period never drops (\(one.dropped))")
+        #expect(two.dropped > 0, "two that need more than the period cannot both run (\(two.dropped))")
+        #expect(two.worstMs < periodMs * 0.95, "and the block still ends inside its period (\(two.worstMs) ms)")
+    }
+
+    /// The device panel reads every visible control's value and text four times a second (and while drawing). Each read
+    /// was a round trip to the host: with 4 isolated units on a busy machine that stalled the main thread for 50 ms or
+    /// more, three times a second. One round trip now fetches every parameter, and reads within 80 ms reuse it.
+    @Test func parameterReadsShareOneRoundTrip() throws {
+        setenv("DALNOK_TEST_MAIN_BUSY", "1", 1); defer { unsetenv("DALNOK_TEST_MAIN_BUSY") }
+        let (e, t) = audioSession(); defer { dalnok_engine_destroy(e) }
+        dalnok_plugins_set_host(e, isolationHost)
+        let slot = dalnok_plugin_add(e, t, testVst3, gainClass, nil, 0)
+        #expect(slot != 0 && info(e, t).isolated)
+        let n = dalnok_plugin_parameter_count(e, slot)
+        #expect(n > 0)
+        // A refresh: every parameter, then every parameter again (values, then their text in a display).
+        var worstRefresh = 0.0
+        for _ in 0..<6 {
+            let t0 = DispatchTime.now().uptimeNanoseconds
+            for _ in 0..<2 { for i in 0..<n { var p = DalnokPluginParameter(); #expect(dalnok_plugin_parameter(e, slot, i, &p) == DALNOK_OK) } }
+            worstRefresh = max(worstRefresh, Double(DispatchTime.now().uptimeNanoseconds - t0) / 1e6)
+            usleep(250_000) // the panel's refresh interval
+        }
+        print(String(format: "PARAMS busy host: %d parameters read twice per refresh, worst refresh %.1f ms", n, worstRefresh))
+        // At most one wait on the host's busy main thread (up to 200 ms) per refresh, never one per read.
+        #expect(worstRefresh < 250, "a refresh waits on the host at most once (worst \(worstRefresh) ms)")
+        // And a value set from Dalnok shows on the next read, not 80 ms later.
+        var p = DalnokPluginParameter()
+        _ = dalnok_plugin_parameter(e, slot, 0, &p)
+        let target = p.value > 0.5 ? 0.1 : 0.9
+        #expect(dalnok_plugin_set_parameter(e, slot, p.id, target) == DALNOK_OK)
+        _ = dalnok_plugin_parameter(e, slot, 0, &p)
+        #expect(abs(p.value - target) < 1e-6, "the next read shows the new value (\(p.value) vs \(target))")
+    }
+
+    /// Recovery snapshots (every 30 s with unsaved changes) asked every isolated plug-in for its state on the main
+    /// thread: 512 units cost 260 ms each time. An unchanged plug-in now answers with its last state; a change made from
+    /// Dalnok is always in the next snapshot. The host here answers slowly (its main thread sleeps 200 ms at a time).
+    @Test func recoverySnapshotsReuseUnchangedIsolatedStates() throws {
+        setenv("DALNOK_TEST_MAIN_BUSY", "1", 1); defer { unsetenv("DALNOK_TEST_MAIN_BUSY") }
+        let (e, t) = audioSession(); defer { dalnok_engine_destroy(e) }
+        dalnok_plugins_set_host(e, isolationHost)
+        let slot = dalnok_plugin_add(e, t, testVst3, gainClass, nil, 0)
+        #expect(slot != 0 && info(e, t).isolated)
+        let dir = tempDir()
+        func snapshot(_ name: String) -> (ms: Double, state: String) {
+            let url = dir.appendingPathComponent(name + ".dalnok")
+            var err = [CChar](repeating: 0, count: 256)
+            let t0 = DispatchTime.now().uptimeNanoseconds
+            #expect(dalnok_project_save_snapshot(e, url.path, &err, 256) == DALNOK_OK)
+            let ms = Double(DispatchTime.now().uptimeNanoseconds - t0) / 1e6
+            let doc = (try? JSONSerialization.jsonObject(with: Data(contentsOf: url))) as? [String: Any]
+            let plugins = ((doc?["tracks"] as? [[String: Any]])?.first?["plugins"] as? [[String: Any]]) ?? []
+            return (ms, plugins.first?["state"] as? String ?? "")
+        }
+        let first = snapshot("a")
+        // Unchanged: five more snapshots over about half a second, while the host's main thread keeps sleeping 200 ms
+        // at a time. Asking the host would have waited on it at least once.
+        var second = (ms: 0.0, state: ""), worst = 0.0
+        for k in 0..<5 { second = snapshot("b\(k)"); worst = max(worst, second.ms); usleep(100_000) }
+        #expect(!first.state.isEmpty && second.state == first.state, "an unchanged plug-in's state is reused as it was")
+        #expect(worst < 20, "unchanged snapshots never wait on the host (worst \(worst) ms, first \(first.ms) ms)")
+        var p = DalnokPluginParameter()
+        #expect(dalnok_plugin_parameter(e, slot, 0, &p) == DALNOK_OK)
+        #expect(dalnok_plugin_set_parameter(e, slot, p.id, p.value > 0.5 ? 0.1 : 0.9) == DALNOK_OK)
+        var l = [Float](repeating: 0, count: 512), r = l
+        dalnok_transport_play(e)
+        for _ in 0..<8 { _ = dalnok_engine_pump(e, &l, &r, 512); usleep(10_000) } // the processor applies the change
+        let third = snapshot("c")
+        print(String(format: "SNAPSHOT busy host: first %.1f ms, unchanged worst %.1f ms, after a change %.1f ms", first.ms, worst, third.ms))
+        #expect(third.state != first.state, "a parameter set from Dalnok is in the next snapshot")
+    }
+
     /// Polling plug-ins for editor edits (every display frame in the app) asked each isolated host over its socket and
     /// waited for the answer, so a host whose main thread was busy stalled the caller (60 ms spikes on real projects).
     /// The count now comes from the shared block: polling never waits on a host.
@@ -581,7 +685,7 @@ struct PluginIsolation {
     // MARK: One deadline budget per callback (A-01 stage 2)
 
     /// Three isolated plug-ins in series all hang mid-session, followed by a healthy one. Each callback waits on the
-    /// hung hosts for at most one shared budget (40 % of the period), not 40 % per plug-in. The healthy plug-in, which
+    /// hung hosts for at most one shared budget (at most 85 % of the period), not one budget per plug-in. The healthy plug-in, which
     /// is skipped when the budget is spent, is never blamed for it.
     @Test func hungPluginsShareOneDeadlinePerCallback() throws {
         let (e, t) = audioSession(); defer { dalnok_engine_destroy(e) }
@@ -603,10 +707,11 @@ struct PluginIsolation {
         let period = 512.0 / 48.0 // ms
         print(String(format: "BUDGET 3 hung + 1 healthy, 512 frames (period %.2f ms): p50 %.2f ms, max %.2f ms", period, times[times.count / 2], times.last!))
         #expect(times.last! < period, "no callback overruns its period (max \(times.last!) ms)")
-        // One shared budget is 40 % of the period. The tight bound holds at normal speed. Under a sanitizer (p50 several
+        // One shared budget is at most 85 % of the period (what the block's own work leaves, see
+        // isolatedBudgetFollowsWhatTheBlockLeaves). The tight bound holds at normal speed. Under a sanitizer (p50 several
         // times higher) only the no-overrun bound above is meaningful.
         if times[times.count / 2] < 1 {
-            #expect(times.last! < period * 0.6, "the callback never waits more than one shared budget (max \(times.last!) ms)")
+            #expect(times.last! < period * 0.9, "the callback never waits more than one shared budget (max \(times.last!) ms)")
         }
         dalnok_engine_collect_garbage(e)
         var i = DalnokPluginSlotInfo()

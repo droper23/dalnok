@@ -150,6 +150,11 @@ final class MotionDriver: NSObject {
         let l = view.displayLink(target: self, selector: #selector(tick))
         l.add(to: .main, forMode: .common)
         link = l
+        // The display link pauses while the display sleeps, the screen is locked or the window is hidden. A glide
+        // must still land: the end state is applied on time whether or not a frame was drawn.
+        DispatchQueue.main.asyncAfter(deadline: .now() + duration + 0.05) { [weak self] in
+            MainActor.assumeIsolated { if let self, self.running { self.finish() } }
+        }
     }
     @objc private func tick(_ l: CADisplayLink) {
         let t = min(1, (CACurrentMediaTime() - began) / duration)
