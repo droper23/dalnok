@@ -34,7 +34,7 @@ final class SelfTest {
     /// it is reported as SKIP with the reason and does not fail the run, so failures are attributable to the product.
     enum Environment: String {
         case frontmost = "Dalnok could not become the active application (screen locked, or someone is using another app)"
-        var met: Bool {
+        @MainActor var met: Bool {
             switch self {
             case .frontmost: NSApp.isActive && NSWorkspace.shared.frontmostApplication?.processIdentifier == getpid()
             }
