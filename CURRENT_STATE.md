@@ -6,7 +6,17 @@ milestone: hosting complete (VST3/AU/CLAP, editors, parameters, automation, dela
 # Current State
 
 ## Current priorities (2026-11-20)
-- **Safety default-on decision: stays opt-in** (ADR-0014 amendment). Verified with real OS input on the owner's plug-in library (14 plug-ins: editors, keys, save prompts, dirty state, save/quit/reopen with every parameter identical) and on 24 real projects with `dalnok-cli load-bench` (release). Isolated loading: worst main-thread call ≤16 ms in 23 projects (in-process 0.3–1.9 s), faster in 20 of 24, never Edited. **Blocker:** isolated plug-ins share one serial 40 % budget per callback; 7 projects whose plug-ins need more than that miss 29–97 % of blocks. Next for A-01: process isolated plug-ins on independent tracks concurrently, then rerun `load-bench` on the same projects. Stress: 64 instances (22.6 MB/host, ≈54 µs per instance per block), 10× open/close (no leaks), host killed mid-play (contained, project stays clean).
+- **Safety is on by default** (ADR-0014, 2026-11-20). Both blockers from the first pass are fixed:
+  - Isolated plug-ins on independent tracks process in parallel.
+  - The main thread never waits on a host: edit counts and latency come from shared memory, and automation ranges are cached.
+  - Hosts also warm up with 0.75 s of silence before reporting ready.
+- **Real-project results** (`load-bench`, release; it now runs the run loop between blocks, as the app does): every plug-in loads in all 24 projects, and none opens Edited.
+  - The worst isolated main-thread call while loading is ≤13 ms (in-process 0.28–1.7 s), and isolated loading is faster in 23 of 24 projects.
+  - No isolated block runs over the period; 4 projects in-process do.
+  - Isolated misses: 22 projects miss nothing. Two miss 6–13 blocks once, from one sampler script's 36 ms of work on its audio thread; in-process the same work stalls everything for 70–124 ms.
+  - Known limit: on a heavily loaded machine (load average 5–14) isolated hosts miss blocks where in-process ones just get slower. The audio workgroup protects hosts in the app; `load-bench` has no device.
+  - Off switch: Settings ▸ Plug-ins ▸ Safety; an explicit choice is kept.
+- Earlier, the same day: verified with real OS input on the owner's plug-in library (14 plug-ins). Stress: 64 instances (22.6 MB/host, ≈54 µs per instance per block), 10× open/close, host killed mid-play (contained).
 - **Fixed during the pass (each with a test):** isolated editors stuck on another Space; AUSampler's editor crashing its host (re-entrant fit) and growing to 3,937 pt; a 1.2 s main-thread block sending large states (macOS ignores MSG_DONTWAIT on the socket pair); VST3/AU/CLAP reports with no editor open marking projects Edited; a host crash counting as an edit; switching theme squeezing the arrangement's zoom.
 - **Owner's UI requests (done):** plug-ins fold (C API 40, saved, undoable; Graphite rack blank, Warm Analog pedal tipped onto its side with cables following frame by frame; on/off works folded); arrival/departure animations; one Open button per unit with Controls in the plug-in window's title bar (isolated: the host's title bar sends DALNOK_EDITOR_SHOW_CONTROLS); Warm Analog pedals with a readout window and signal LEDs.
 - **Known issues (generic):** a CLAP sampler with no instrument loaded ignores input; one CLAP synth reports editor edits only while processing; typing into AUDelay's value field sends no gesture end, so it is caught only by the state comparison at close; a host killed mid-play once produced one 117 ms block in the CLI (not reproduced by the crash test's 50 ms bound); an AU drum sampler's editor went blank once after its promo dialog (not reproduced).

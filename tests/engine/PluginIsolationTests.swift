@@ -518,6 +518,36 @@ struct PluginIsolation {
         #expect(abs(peak - 1.0) < 0.05, "every block carries the plug-ins' output (peak \(peak))")
     }
 
+    /// Some plug-ins do one-off work a moment of audio after they load (an instrument's scripts finishing start-up:
+    /// about 36 ms in one block, half a second in). Each isolated process pays it alone, and on the first play it was a
+    /// burst of missed blocks. The host now processes 0.75 s of silence before reporting ready, so that work is done
+    /// before the first real block. Without the warm-up the same plug-in misses blocks; with it, none.
+    @Test func hostWarmUpAbsorbsOneOffStartUpWork() throws {
+        setenv("DALNOK_TEST_SLOW_ONCE_AT", "12000", 1); defer { unsetenv("DALNOK_TEST_SLOW_ONCE_AT") } // 0.25 s in
+        setenv("DALNOK_TEST_SLOW_ONCE_US", "40000", 1); defer { unsetenv("DALNOK_TEST_SLOW_ONCE_US") }
+        func missedOnFirstPlay(warmUpMs: String?) -> (missed: UInt64, loadMs: Double) {
+            if let w = warmUpMs { setenv("DALNOK_PLUGHOST_WARMUP_MS", w, 1) } else { unsetenv("DALNOK_PLUGHOST_WARMUP_MS") }
+            defer { unsetenv("DALNOK_PLUGHOST_WARMUP_MS") }
+            let (e, t) = audioSession(); defer { dalnok_engine_destroy(e) }
+            dalnok_plugins_set_host(e, isolationHost)
+            let t0 = DispatchTime.now().uptimeNanoseconds
+            let slot = dalnok_plugin_add(e, t, testVst3, gainClass, nil, 0)
+            let loadMs = Double(DispatchTime.now().uptimeNanoseconds - t0) / 1e6
+            #expect(slot != 0 && info(e, t).isolated)
+            dalnok_transport_play(e)
+            var l = [Float](repeating: 0, count: 512), r = l
+            for _ in 0..<60 { _ = dalnok_engine_pump(e, &l, &r, 512); usleep(10_000) } // 0.64 s at the device's pace
+            var st = DalnokPluginIsolationStats()
+            _ = dalnok_plugin_isolation_stats(e, slot, &st)
+            return (st.missed_blocks + st.budget_skips, loadMs)
+        }
+        let cold = missedOnFirstPlay(warmUpMs: "0"), warm = missedOnFirstPlay(warmUpMs: nil)
+        print(String(format: "WARM-UP: without %llu missed (load %.0f ms), with %llu missed (load %.0f ms)", cold.missed, cold.loadMs, warm.missed, warm.loadMs))
+        #expect(cold.missed >= 2, "without the warm-up the 40 ms of start-up work misses blocks (\(cold.missed))")
+        #expect(warm.missed == 0, "with it, the first play misses nothing (\(warm.missed))")
+        #expect(warm.loadMs < cold.loadMs + 400, "the warm-up adds little to loading (\(warm.loadMs) vs \(cold.loadMs) ms)")
+    }
+
     /// Polling plug-ins for editor edits (every display frame in the app) asked each isolated host over its socket and
     /// waited for the answer, so a host whose main thread was busy stalled the caller (60 ms spikes on real projects).
     /// The count now comes from the shared block: polling never waits on a host.
@@ -536,6 +566,16 @@ struct PluginIsolation {
         }
         print(String(format: "EDITPOLL busy host: worst collect %.2f ms", worst))
         #expect(worst < 5, "polling for edits does not wait on the busy host (worst \(worst) ms; its main thread sleeps 200 ms at a time)")
+        // Every edit compiles a snapshot, which reads each plug-in's latency for delay compensation. That too comes
+        // from the shared block now: it asked the host and waited (16-52 ms per plug-in on real projects).
+        var worstEdit = 0.0
+        for k in 0..<10 {
+            let t0 = DispatchTime.now().uptimeNanoseconds
+            _ = dalnok_track_add(e, "Edit \(k)")
+            worstEdit = max(worstEdit, Double(DispatchTime.now().uptimeNanoseconds - t0) / 1e6)
+        }
+        print(String(format: "EDITPOLL busy host: worst structural edit %.2f ms", worstEdit))
+        #expect(worstEdit < 20, "an edit does not wait on the busy host (worst \(worstEdit) ms)")
     }
 
     // MARK: One deadline budget per callback (A-01 stage 2)

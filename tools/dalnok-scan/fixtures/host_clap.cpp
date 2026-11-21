@@ -13,6 +13,7 @@ struct Gain {
     const clap_host_t *host;
     double gain = 0.5;
     int blocks = 0;
+    bool processing = false;
 };
 
 const clap_plugin_descriptor_t kDesc = {CLAP_VERSION, "org.dalnok.test-gain", "Dalnok Test CLAP Gain", "Dalnok Tests", "", "", "", "1.0", "",
@@ -58,7 +59,8 @@ void paramsFlush(const clap_plugin_t *p, const clap_input_events_t *in, const cl
     // DALNOK_TEST_CLAP_EDIT=flush: an editor edit made while the host is not processing, reported from the flush the
     // plug-in requested.
     // "queued": the same edit, but the plug-in never asks for the flush (it waits for the host's next one).
-    if (const char *edit = std::getenv("DALNOK_TEST_CLAP_EDIT"); out && edit && (!std::strcmp(edit, "flush") || !std::strcmp(edit, "queued")) && self(p)->blocks == 0) {
+    // Neither comes from a processed block (an isolated host processes silence before it reports ready).
+    if (const char *edit = std::getenv("DALNOK_TEST_CLAP_EDIT"); out && edit && !self(p)->processing && (!std::strcmp(edit, "flush") || !std::strcmp(edit, "queued")) && self(p)->blocks == 0) {
         self(p)->blocks = 1;
         self(p)->gain = 0.75; // the edit
         clap_event_param_value_t v{{sizeof v, 0, CLAP_CORE_EVENT_SPACE_ID, CLAP_EVENT_PARAM_VALUE, 0}, 7, nullptr, -1, -1, -1, -1, self(p)->gain};
@@ -80,10 +82,16 @@ bool stateLoad(const clap_plugin_t *p, const clap_istream_t *s) { return s->read
 const clap_plugin_state_t kState = {stateSave, stateLoad};
 
 clap_process_status process(const clap_plugin_t *p, const clap_process_t *pr) {
+    self(p)->processing = true;
     paramsFlush(p, pr->in_events, pr->out_events);
-    // An edit in the plug-in's own editor, on its fourth block (DALNOK_TEST_CLAP_EDIT): "event" reports the end of a
-    // parameter gesture as an output event; "dirty" asks for the main thread and marks its state dirty there.
-    if (const char *edit = std::getenv("DALNOK_TEST_CLAP_EDIT"); edit && strcmp(edit, "flush") && strcmp(edit, "queued") && ++self(p)->blocks == 4) {
+    self(p)->processing = false;
+    // An edit in the plug-in's own editor, on its fourth block with signal (DALNOK_TEST_CLAP_EDIT; the silence an
+    // isolated host processes before it reports ready does not count): "event" reports the end of a parameter gesture
+    // as an output event; "dirty" asks for the main thread and marks its state dirty there.
+    bool signal = false;
+    for (uint32_t c = 0; c < 2 && pr->audio_inputs_count > 0 && c < pr->audio_inputs[0].channel_count; ++c)
+        for (uint32_t i = 0; i < pr->frames_count && !signal; ++i) signal = pr->audio_inputs[0].data32[c][i] != 0.0f;
+    if (const char *edit = std::getenv("DALNOK_TEST_CLAP_EDIT"); edit && signal && strcmp(edit, "flush") && strcmp(edit, "queued") && ++self(p)->blocks == 4) {
         if (!std::strcmp(edit, "event")) {
             clap_event_param_gesture_t g{{sizeof g, 0, CLAP_CORE_EVENT_SPACE_ID, CLAP_EVENT_PARAM_GESTURE_END, 0}, 7};
             pr->out_events->try_push(pr->out_events, &g.header);

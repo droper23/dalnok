@@ -49,9 +49,10 @@ final class Engine {
     // MARK: Out-of-process plug-ins (ADR-0014)
 
     static let isolationChanged = Notification.Name("DalnokPluginIsolationChanged")
-    /// Settings > Plug-ins: run third-party plug-ins in their own processes. Applies to plug-ins loaded afterwards.
+    /// Settings > Plug-ins > Safety: run third-party plug-ins in their own processes. Applies to plug-ins loaded
+    /// afterwards. On unless turned off (ADR-0014, default since 0.2); an explicit choice, either way, is kept.
     static var isolatePlugins: Bool {
-        get { UserDefaults.standard.bool(forKey: "isolatePlugins") }
+        get { UserDefaults.standard.object(forKey: "isolatePlugins") as? Bool ?? true }
         set { UserDefaults.standard.set(newValue, forKey: "isolatePlugins"); NotificationCenter.default.post(name: isolationChanged, object: nil) }
     }
     static var pluginHostPath: String {

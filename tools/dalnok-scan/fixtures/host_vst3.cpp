@@ -332,9 +332,22 @@ public:
         // Isolation tests (ADR-0014): crash or hang after a few blocks, as a faulty plug-in would mid-session.
         // DALNOK_TEST_PROCESS_SLOW_US=n: every block takes n microseconds (a heavy plug-in).
         if (const char *slow = std::getenv("DALNOK_TEST_PROCESS_SLOW_US"); slow && data.numSamples > 0) ::usleep(static_cast<useconds_t>(std::atoi(slow)));
+        // DALNOK_TEST_SLOW_ONCE_AT=s: the block that reaches s samples processed takes DALNOK_TEST_SLOW_ONCE_US once
+        // (one-off start-up work a moment after loading, as some instruments' scripts do).
+        if (const char *at = std::getenv("DALNOK_TEST_SLOW_ONCE_AT"); at && data.numSamples > 0) {
+            const long long before = samples_;
+            samples_ += data.numSamples;
+            const long long mark = std::atoll(at);
+            if (before < mark && samples_ >= mark) ::usleep(static_cast<useconds_t>(std::atoi(std::getenv("DALNOK_TEST_SLOW_ONCE_US") ?: "40000")));
+        }
         if (const char *mode = std::getenv("DALNOK_TEST_PROCESS_FAILURE"); mode && data.numSamples > 0) {
             const char *after = std::getenv("DALNOK_TEST_PROCESS_AFTER");
-            if (++blocks_ > (after ? std::atoi(after) : 4)) {
+            // Counted from the first block with signal: an isolated host processes silence before it reports ready.
+            bool signal = false;
+            for (int32 c = 0; data.numInputs > 0 && c < data.inputs[0].numChannels && !signal; ++c)
+                for (int32 i = 0; i < data.numSamples && !signal; ++i) signal = data.inputs[0].channelBuffers32[c][i] != 0.0f;
+            if (signal || blocks_ > 0) ++blocks_;
+            if (blocks_ > (after ? std::atoi(after) : 4)) {
                 if (std::strcmp(mode, "crash") == 0) std::abort();
                 if (std::strcmp(mode, "hang") == 0) for (;;) ::sleep(1);
             }
@@ -400,6 +413,7 @@ private:
     float line_[2][kTestDelay] = {};
     int pos_ = 0;
     int blocks_ = 0, warmed_ = 0;
+    long long samples_ = 0;
     float gain_ = 0.5f, level_ = 0;
     double shown_ = 0.5;
     IComponentHandler *handler_ = nullptr;

@@ -14,6 +14,7 @@
 #include <mach/thread_policy.h>
 #include <os/os_sync_wait_on_address.h>
 #include <os/workgroup.h>
+#include <unordered_map>
 
 #include <atomic>
 #include <cerrno>
@@ -59,6 +60,10 @@ struct Shared {
     // Host: the plug-in's editor edit count, published after every block and idle request and every 100 ms, so the
     // engine reads it without a round trip (polling it over the socket blocked the caller while a host was busy).
     alignas(64) std::atomic<uint64_t> edits;
+    // Host (main thread): the plug-in's latency, published before the hello reply, after every control request and
+    // every 100 ms. Snapshot compiles read it for delay compensation; asking over the socket each time waited on the
+    // host's main thread (16-52 ms while a freshly loaded plug-in was busy there, measured on real projects).
+    std::atomic<uint32_t> latency;
     int32_t frames, noteCount, automationCount, sidechain;
     PluginNote notes[kMaxNotes];
     struct { uint32_t id; double value; } automation[kMaxAutomation];
@@ -434,13 +439,7 @@ public:
 
     bool instrument() const override { return instrument_; }
     uint32_t latency() const override {
-        Writer w;
-        std::string reply;
-        if (call(opLatency, w.b, reply)) {
-            Reader r{reply};
-            const uint32_t v = r.u32();
-            if (r.ok) latency_.store(v, std::memory_order_relaxed);
-        }
+        if (shared_ && !failed_.load(std::memory_order_acquire)) latency_.store(shared_->latency.load(std::memory_order_acquire), std::memory_order_relaxed);
         return latency_.load(std::memory_order_relaxed);
     }
     const std::string &name() const override { return name_; }
@@ -617,7 +616,11 @@ public:
     uint64_t editCount() const override {
         return shared_ ? shared_->edits.load(std::memory_order_acquire) : 0;
     }
+    // Every snapshot compile asks for each automated parameter's range, so answers are kept per instance: one
+    // round trip per parameter instead of one per lane per edit (each waits on the host's main thread, which took
+    // 50-100 ms while another host was busy). A failed call is not kept.
     bool automationRange(uint32_t id, double &lo, double &hi) override {
+        if (auto it = ranges_.find(id); it != ranges_.end()) { lo = it->second.lo; hi = it->second.hi; return it->second.ok; }
         Writer w;
         w.u32(id);
         std::string reply;
@@ -626,7 +629,9 @@ public:
         Reader r{reply};
         const bool ok = r.u8();
         const double a = r.f64(), b = r.f64();
-        if (r.ok) { lo = a; hi = b; }
+        if (!r.ok) return ok;
+        lo = a; hi = b;
+        ranges_[id] = {ok, a, b};
         return ok;
     }
 
@@ -805,6 +810,8 @@ private:
 
     Shared *shared_ = nullptr;
     mach_port_t rendezvous_ = MACH_PORT_NULL, hostPort_ = MACH_PORT_NULL;
+    struct Range { bool ok; double lo, hi; };
+    std::unordered_map<uint32_t, Range> ranges_; // automationRange answers (control thread)
     std::string shmName_, outbox_, launchStateError_;
     size_t outboxSent_ = 0;
     uint64_t launchDeadline_ = 0;
@@ -838,6 +845,8 @@ struct Host {
     std::atomic<bool> joined{false};
     std::atomic<int32_t> joinError{0};
     std::atomic<uint32_t> joins{0};
+    double rate = 48000;
+    int block = 512;
 };
 
 // Answers the engine's rendezvous with a port of our own, then receives workgroup ports for as long as we live.
@@ -887,27 +896,33 @@ void adoptWorkgroup(Host *h, os_workgroup_t &current, os_workgroup_join_token_s 
 }
 Host *gHost = nullptr;
 
-void setRealtime() {
+// The processing thread runs with a time-constraint policy sized from the callback period (it was a fixed 1 ms of
+// 5 ms, whatever the buffer size): it may compute for up to half a period and must finish within one.
+void setRealtime(double periodSeconds) {
     mach_timebase_info_data_t tb;
     mach_timebase_info(&tb);
-    const double msToTicks = 1e6 * tb.denom / tb.numer;
+    const double secToTicks = 1e9 * tb.denom / tb.numer;
+    const double period = std::clamp(periodSeconds, 0.0005, 0.1);
     thread_time_constraint_policy_data_t p;
-    p.period = static_cast<uint32_t>(5 * msToTicks);
-    p.computation = static_cast<uint32_t>(1 * msToTicks);
-    p.constraint = static_cast<uint32_t>(4 * msToTicks);
+    p.period = static_cast<uint32_t>(period * secToTicks);
+    p.computation = static_cast<uint32_t>(std::min(period * 0.5, 0.05) * secToTicks);
+    p.constraint = static_cast<uint32_t>(period * secToTicks);
     p.preemptible = 1;
     thread_policy_set(pthread_mach_thread_np(pthread_self()), THREAD_TIME_CONSTRAINT_POLICY,
                       reinterpret_cast<thread_policy_t>(&p), THREAD_TIME_CONSTRAINT_POLICY_COUNT);
 }
 
 void audioLoop(Host *h) {
-    setRealtime();
+    int policyFrames = h->block;
+    setRealtime(policyFrames / h->rate);
     Shared *s = h->shared;
     uint32_t seen = s->request.load(std::memory_order_acquire);
     PluginNote notes[kMaxNotes];
     os_workgroup_t workgroup = nullptr;
     os_workgroup_join_token_s token{};
     uint32_t offersSeen = 0;
+    const bool traceHost = getenv("DALNOK_PLUGHOST_TRACE") != nullptr;
+    uint64_t traced = 0;
     while (true) {
         waitChange(s->request, seen, 0);
         seen = s->request.load(std::memory_order_acquire);
@@ -923,6 +938,7 @@ void audioLoop(Host *h) {
             adoptWorkgroup(h, workgroup, token);
         }
         const int frames = s->frames;
+        if (frames > 0 && frames != policyFrames) { policyFrames = frames; setRealtime(frames / h->rate); }
         if (frames == 0) { h->plugin->idle(); s->edits.store(h->plugin->editCount(), std::memory_order_release); } // transport stopped (parameter flushes)
         if (frames <= 0 || frames > kMaxFrames) { s->done.store(seen, std::memory_order_release); wake(s->done); continue; }
         for (int i = 0; i < s->automationCount && i < kMaxAutomation; ++i) h->plugin->automate(s->automation[i].id, s->automation[i].value);
@@ -931,7 +947,13 @@ void audioLoop(Host *h) {
         h->plugin->setSidechain(s->sidechain ? s->scL : nullptr, s->sidechain ? s->scR : nullptr);
         std::memcpy(s->outL, s->inL, sizeof(float) * size_t(frames));
         std::memcpy(s->outR, s->inR, sizeof(float) * size_t(frames));
+        const auto t0 = traceHost ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
         h->plugin->process(s->outL, s->outR, frames, notes, n);
+        if (traceHost) { // DALNOK_PLUGHOST_TRACE: blocks that took over 2 ms (diagnostics only)
+            ++traced;
+            const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+            if (ms > 2) std::fprintf(stderr, "plughost %d: block %llu took %.1f ms\n", getpid(), (unsigned long long)traced, ms);
+        }
         s->edits.store(h->plugin->editCount(), std::memory_order_release);
         s->done.store(seen, std::memory_order_release);
         wake(s->done);
@@ -1074,6 +1096,7 @@ void onControl(CFFileDescriptorRef ref, CFOptionFlags, void *) {
     // One message per callback; the descriptor is re-armed below so the run loop keeps serving.
     if (!receiveMessage(h->fd, op, payload, 0) || op == opQuit) _exit(0); // engine gone or done: skip plug-in teardown
     serve(h, op, payload);
+    h->shared->latency.store(h->plugin->latency(), std::memory_order_release); // a request may have changed it
     CFFileDescriptorEnableCallBacks(ref, kCFFileDescriptorReadCallBack);
 }
 
@@ -1136,6 +1159,8 @@ int plughostMain(int argc, char **argv) {
     std::signal(SIGPIPE, SIG_IGN);
     Host host;
     gHost = &host;
+    host.rate = rate > 0 ? rate : 48000;
+    host.block = block > 0 ? block : 512;
     const int fd = ::shm_open(shm.c_str(), O_RDWR, 0);
     void *mem = fd >= 0 ? ::mmap(nullptr, sizeof(Shared), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0) : MAP_FAILED;
     if (fd >= 0) ::close(fd);
@@ -1179,6 +1204,22 @@ int plughostMain(int argc, char **argv) {
         stateAccepted = document ? host.plugin->setStateFromDocument(state) : host.plugin->setState(state);
         if (!stateAccepted) stateError = host.plugin->stateError();
     }
+    // Live hosts process about 0.75 s of silence before answering, with the transport stopped and no notes. Some
+    // plug-ins do one-off work a moment of audio after they load (an instrument's scripts finishing their start-up,
+    // for one: about 36 ms in a single block, half a second in). In the engine's process that work is shared by every
+    // instance; here each process pays it alone, and on the first play it showed as a burst of missed blocks.
+    // Silence leaves no trace in the output (tails of silence are silence), and offline renders skip it so they stay
+    // deterministic from the first sample.
+    if (!offline) {
+        const char *ms = getenv("DALNOK_PLUGHOST_WARMUP_MS");
+        const double seconds = (ms ? std::atof(ms) : 750.0) / 1000.0;
+        std::vector<float> l(size_t(host.block), 0.0f), r(size_t(host.block), 0.0f);
+        for (int done = 0; done < int(seconds * host.rate); done += host.block) {
+            std::fill(l.begin(), l.end(), 0.0f);
+            std::fill(r.begin(), r.end(), 0.0f);
+            host.plugin->process(l.data(), r.data(), host.block, nullptr, 0);
+        }
+    }
     std::thread(audioLoop, &host).detach();
     Writer hello;
     hello.u8(host.plugin->instrument());
@@ -1191,6 +1232,7 @@ int plughostMain(int argc, char **argv) {
     hello.u8(stateAccepted);
     hello.str(stateError);
     host.shared->edits.store(host.plugin->editCount(), std::memory_order_release); // the engine's baseline at load
+    host.shared->latency.store(host.plugin->latency(), std::memory_order_release);
     reply(host.fd, true, hello.b);
     // Control requests are served on the main thread inside its run loop, as the plug-in formats expect.
     CFFileDescriptorRef ref = CFFileDescriptorCreate(nullptr, host.fd, false, onControl, nullptr);
@@ -1201,7 +1243,12 @@ int plughostMain(int argc, char **argv) {
     CFFileDescriptorEnableCallBacks(ref, kCFFileDescriptorReadCallBack);
     // Editor edits made while no blocks are being processed are published too (main thread, every 100 ms).
     CFRunLoopTimerRef editTimer = CFRunLoopTimerCreateWithHandler(nullptr, CFAbsoluteTimeGetCurrent() + 0.1, 0.1, 0, 0, ^(CFRunLoopTimerRef) {
-        if (gHost && gHost->plugin && gHost->shared) gHost->shared->edits.store(gHost->plugin->editCount(), std::memory_order_release);
+        if (!gHost || !gHost->plugin || !gHost->shared) return;
+        const uint64_t edits = gHost->plugin->editCount();
+        // Latency is asked again only after an edit in the plug-in's editor (which may change it): asking some
+        // plug-ins for it takes a lock their audio thread also takes, and every 100 ms that cost missed blocks.
+        if (edits != gHost->shared->edits.load(std::memory_order_relaxed)) gHost->shared->latency.store(gHost->plugin->latency(), std::memory_order_release);
+        gHost->shared->edits.store(edits, std::memory_order_release);
     });
     CFRunLoopAddTimer(CFRunLoopGetMain(), editTimer, kCFRunLoopCommonModes);
     CFRunLoopRun();

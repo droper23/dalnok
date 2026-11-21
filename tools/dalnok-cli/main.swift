@@ -422,6 +422,8 @@ case "load-bench":
     dalnok_transport_play(engine)
     var worstBlock = 0.0, over = 0, blocks = 0, sum = 0.0
     let playStart = Date()
+    let trace = ProcessInfo.processInfo.environment["DALNOK_LOAD_BENCH_TRACE"] != nil
+    var seen: [Int32: (UInt64, UInt64)] = [:]
     while Date().timeIntervalSince(playStart) < playSeconds {
         let b0 = Date()
         _ = dalnok_engine_pump(engine, &l, &r, 512)
@@ -430,9 +432,23 @@ case "load-bench":
         if took > period, ProcessInfo.processInfo.environment["DALNOK_LOAD_BENCH_TRACE"] != nil {
             print(String(format: "  block %d took %.1f ms", blocks, took * 1000))
         }
+        if trace {
+            for s in slots {
+                var st = DalnokPluginIsolationStats()
+                guard dalnok_plugin_isolation_stats(engine, s, &st) == DALNOK_OK else { continue }
+                let was = seen[s] ?? (0, 0)
+                if st.missed_blocks != was.0 || st.budget_skips != was.1 {
+                    print(String(format: "  block %d (%.2f ms): slot %d missed +%llu, skips +%llu", blocks, took * 1000, s,
+                                 st.missed_blocks - was.0, st.budget_skips - was.1))
+                    seen[s] = (st.missed_blocks, st.budget_skips)
+                }
+            }
+        }
         if blocks % 64 == 0 { dalnok_engine_collect_garbage(engine) }
         let rest = period - Date().timeIntervalSince(b0)
-        if rest > 0 { usleep(useconds_t(rest * 1e6)) }
+        // Run the main run loop while waiting, as the app does: plug-ins schedule main-thread work (timers, script
+        // services) that changes what their audio thread does.
+        if rest > 0 { CFRunLoopRunInMode(.defaultMode, rest, false) }
     }
     var missed: UInt64 = 0, skips: UInt64 = 0
     for s in slots {

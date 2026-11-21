@@ -23,7 +23,8 @@ library so it reuses the VST3, Audio Unit and CLAP hosts unchanged. Built-in plu
 - *Failure.* A host that exits, crashes or misses its deadlines repeatedly marks the instance failed. Its slot
   shows the reason, the track keeps playing dry, and Load restarts it from the last saved state. The project and
   the app are unaffected.
-- *Rollout.* Off by default behind a setting until it has been verified on the owner's plug-in library. Editors
+- *Rollout.* Off by default behind a setting until it has been verified on the owner's plug-in library (on by
+  default since 2026-11-20; see the end of this record). Editors
   are not hosted out of process in this first stage: a plug-in's window would belong to the host process, which
   needs its own design (remote layers or a host-owned window). Isolated instances offer the generic parameter
   panel only.
@@ -85,3 +86,42 @@ Found and fixed during this verification (each with a test): isolated editors st
 fit crashed a host on an Apple sampler's editor; sending multi-megabyte saved states blocked the main thread for up to
 1.2 s (macOS ignores MSG_DONTWAIT on the socket pair); VST3, AU and CLAP reports made with no editor open marked
 projects edited; a host crashing during playback marked the project edited.
+
+**Default-on (2026-11-20, same day, superseding "stays opt-in" above): Safety is on by default.** Both blockers are
+fixed, measured with `dalnok-cli load-bench` on the same 24 projects. `load-bench` now runs the main run loop between
+blocks, as the app does. Before, it slept, which hid main-thread work that plug-ins schedule and made in-process
+playback look better than it is.
+
+- *Parallel processing.* Isolated plug-ins on different tracks are started together and collected in order
+  (`beginProcess`/`finishProcess`, rounds in `renderBlock`), so the 40 % budget covers the longest chain, not the
+  sum. The 7 projects that missed 29-97 % of blocks now miss none.
+- *Warm-up.* A host processes 0.75 s of silence before it reports ready (live hosts only; offline renders start
+  cold so they stay deterministic). Some plug-ins do one-off work a moment of audio after loading. In one project
+  it caused every first play to skip blocks; now it doesn't (`hostWarmUpAbsorbsOneOffStartUpWork`: 3 missed
+  without, 0 with, about 40 ms more loading).
+- *No waiting on hosts from the main thread.* Edit counts and latency are published in the shared block, and
+  automation ranges are cached per instance. Asking each host for its latency on every snapshot compile waited on
+  that host's main thread: 47-132 ms main-thread blocks while loading, also after ordinary edits.
+  `pollingEditsNeverWaitsOnABusyHost`: worst structural edit 0.42 ms with a host whose main thread sleeps 200 ms
+  at a time.
+- *Results (release, quiet machine).*
+  - Every plug-in loads in all 24 projects, and none opens marked edited.
+  - The worst main-thread call while loading isolated is at most 13 ms in every project. In-process it is
+    0.28-1.7 s.
+  - Loading is faster isolated in 23 of 24 projects.
+  - No isolated block runs over the period. One earlier run had two 32 ms blocks in one project; three reruns
+    didn't reproduce them. In-process, 4 projects have blocks over it: one runs over in all 302
+    of its blocks, and three have a single 21-124 ms block.
+  - 22 projects miss no isolated blocks. The other 2 miss 6-13 blocks in total, once, about 0.4 s into play.
+    That is one sampler's script doing about 36 ms of work on its audio thread. In-process, the same work stalls
+    the whole output for 70-124 ms; isolated, only that track drops, briefly.
+- *Known limit.* Isolated hosts are more sensitive to a busy machine than in-process plug-ins, because each block
+  must wake another process within the budget. During one run, other work drove the load average to 5-14, and 10 of
+  the 24 projects missed blocks; the worst had 762 misses and skips across 13 plug-ins in 5 s. The same build
+  rerun right afterwards, interleaved with the previous one, missed none in those projects. Joining the device's
+  audio workgroup (live only, ADR-0014 workgroups) is what protects hosts in the app. `load-bench` has no device,
+  so it measures the unprotected case.
+- *Migration note.* Nothing in a project changes: saved state is identical in both modes. On first launch of 0.2,
+  third-party plug-ins load isolated unless the user had turned Safety off (an explicit choice, either way, is
+  kept). Settings ▸ Plug-ins ▸ Safety is the off switch, and it applies to plug-ins loaded afterwards. A plug-in
+  that fails isolated keeps its state and can be reloaded. Built-in plug-ins always run in-process.

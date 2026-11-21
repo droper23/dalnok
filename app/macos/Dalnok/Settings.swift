@@ -51,7 +51,7 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
     let metronome = NSButton(checkboxWithTitle: "Metronome click", target: nil, action: nil)
     // Plug-ins
     let deviceMeters = NSButton(checkboxWithTitle: "Show input and output meters on plug-ins (Graphite)", target: nil, action: nil)
-    let isolatePlugins = NSButton(checkboxWithTitle: "Run plug-ins in separate processes (experimental)", target: nil, action: nil)
+    let isolatePlugins = NSButton(checkboxWithTitle: "Run plug-ins in separate processes", target: nil, action: nil)
     /// How worn the plug-in units look (Graphite): 0 new … 1 well used.
     let wear = NSSlider(value: 0.25, minValue: 0, maxValue: 1, target: nil, action: nil)
     let peakHold = NSSlider(value: 1.5, minValue: 0, maxValue: 3, target: nil, action: nil)
