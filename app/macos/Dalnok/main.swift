@@ -98,7 +98,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         if let f = foreign.first { main.importProject(f, confirm: false) }
         if interactiveLaunch { DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in self?.main.offerCrashRecovery(previousRecovery) } }
-        if interactiveLaunch && Analog.on && !Motion.reduced { main.vfdTestUntil = Date().addingTimeInterval(0.6) }
+        if interactiveLaunch && Theme.look.tapeDeck && !Motion.reduced { main.vfdTestUntil = Date().addingTimeInterval(0.6) }
         if files.isEmpty && snapshot == nil && !args.contains("--no-welcome") && !WelcomeController.hasCompleted {
             main.welcome.show()
         }

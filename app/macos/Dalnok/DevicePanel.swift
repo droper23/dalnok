@@ -9,7 +9,7 @@ import DalnokEngine
 
 @MainActor
 final class DevicePanel: NSView {
-    static var height: CGFloat { Analog.on ? 268 : 226 } // Warm Analog: upright stomp boxes; Graphite: two rows of faceplate controls
+    static var height: CGFloat { Theme.look.pedalboard ? 268 : 226 } // Warm Analog: upright stomp boxes; Graphite: two rows of faceplate controls
     let session: Session
     var track: DalnokTrackId? { didSet { if oldValue != track { rebuild() } } }
     private(set) var devices: [DeviceView] = []
@@ -51,7 +51,7 @@ final class DevicePanel: NSView {
     private func showDropLine(_ index: Int?) {
         guard let index, let doc = scroll.documentView else { dropLine.isHidden = true; return }
         let frames = devices.map { $0.convert($0.bounds, to: doc) }
-        let x = index < frames.count ? frames[index].minX - (Analog.on ? 20 : 5) : (frames.last.map { $0.maxX + (Analog.on ? 20 : 5) } ?? 12)
+        let x = index < frames.count ? frames[index].minX - (Theme.look.pedalboard ? 20 : 5) : (frames.last.map { $0.maxX + (Theme.look.pedalboard ? 20 : 5) } ?? 12)
         if dropLine.superlayer == nil { doc.wantsLayer = true; doc.layer?.addSublayer(dropLine) }
         dropLine.backgroundColor = Theme.selection.cgColor
         dropLine.zPosition = 50
@@ -99,8 +99,8 @@ final class DevicePanel: NSView {
         registerForDraggedTypes([.dalnokPlugin, .dalnokSlot])
         stack.orientation = .horizontal
         stack.alignment = .top
-        stack.spacing = Analog.on ? 40 : 10 // analog: room for the patch cables between units
-        stack.edgeInsets = NSEdgeInsets(top: 10, left: Analog.on ? 64 : 12, bottom: 10, right: Analog.on ? 64 : 12)
+        stack.spacing = Theme.look.pedalboard ? 40 : 10 // analog: room for the patch cables between units
+        stack.edgeInsets = NSEdgeInsets(top: 10, left: Theme.look.pedalboard ? 64 : 12, bottom: 10, right: Theme.look.pedalboard ? 64 : 12)
         let doc = FlippedView()
         stack.translatesAutoresizingMaskIntoConstraints = false
         doc.addSubview(stack)
@@ -110,7 +110,7 @@ final class DevicePanel: NSView {
         scroll.drawsBackground = false
         scroll.autohidesScrollers = true
         emptyCard.wantsLayer = true
-        emptyCard.layer?.backgroundColor = (Analog.on ? Theme.hex(0x211914) : Theme.hex(0x202228)).cgColor
+        emptyCard.layer?.backgroundColor = (Theme.look.pedalboard ? Theme.hex(0x211914) : Theme.hex(0x202228)).cgColor
         emptyCard.layer?.borderColor = Theme.hairline.cgColor
         emptyCard.layer?.borderWidth = 1
         emptyCard.layer?.cornerRadius = 6
@@ -131,7 +131,7 @@ final class DevicePanel: NSView {
             doc.heightAnchor.constraint(equalTo: scroll.contentView.heightAnchor),
             doc.widthAnchor.constraint(greaterThanOrEqualTo: stack.widthAnchor),
             doc.widthAnchor.constraint(greaterThanOrEqualTo: scroll.contentView.widthAnchor),
-            emptyCard.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Analog.on ? 64 : 12),
+            emptyCard.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Theme.look.pedalboard ? 64 : 12),
             emptyCard.centerYAnchor.constraint(equalTo: centerYAnchor),
             emptyCard.widthAnchor.constraint(equalToConstant: 360), emptyCard.heightAnchor.constraint(equalToConstant: 132),
             emptyTitle.leadingAnchor.constraint(equalTo: emptyCard.leadingAnchor, constant: 16),
@@ -147,7 +147,7 @@ final class DevicePanel: NSView {
     required init?(coder: NSCoder) { fatalError() }
 
     override func draw(_ dirtyRect: NSRect) {
-        if Analog.on, let ctx = NSGraphicsContext.current?.cgContext { PedalDraw.board(ctx, bounds) } // a pedalboard
+        if Theme.look.pedalboard, let ctx = NSGraphicsContext.current?.cgContext { PedalDraw.board(ctx, bounds) } // a pedalboard
         else { Theme.panel.setFill(); bounds.fill() }
         Theme.separator.setFill(); NSRect(x: 0, y: bounds.height - 1, width: bounds.width, height: 1).fill()
     }
@@ -214,7 +214,7 @@ final class DevicePanel: NSView {
             devices.forEach { $0.isSelected = $0.slot == selectedSlot }
             if let last = arranged.last {
                 stack.addArrangedSubview(addTile)
-                stack.setCustomSpacing(Analog.on ? 96 : 10, after: last) // analog: past the OUT jack
+                stack.setCustomSpacing(Theme.look.pedalboard ? 96 : 10, after: last) // analog: past the OUT jack
             }
             if sameTrack {
                 arrived.forEach { $0.animateArrival() }
@@ -281,7 +281,7 @@ final class DevicePanel: NSView {
     }
     /// The signal path drawn as patch cables: track → first unit → … → last unit → track output.
     func layoutCables() {
-        guard Analog.on, let doc = scroll.documentView else { return }
+        guard Theme.look.pedalboard, let doc = scroll.documentView else { return }
         doc.wantsLayer = true
         doc.layoutSubtreeIfNeeded()
         cablesFollow()
@@ -294,7 +294,7 @@ final class DevicePanel: NSView {
     /// the same units are moved in place, so they follow units that are opening, closing or tipping, frame by frame;
     /// a new connection is plugged in with its animation.
     func cablesFollow() {
-        guard Analog.on, let doc = scroll.documentView else { return }
+        guard Theme.look.pedalboard, let doc = scroll.documentView else { return }
         let chain = stack.arrangedSubviews.compactMap { $0 as? DeviceView }
         let frames = chain.map { $0.convert($0.bounds, to: doc) }
         let slots = chain.map(\.slot)
@@ -445,7 +445,7 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
     private let path: String
     private let power = PlateButton(title: "", label: "")
     /// The unit's power key (Graphite), for tests.
-    var powerKey: PlateButton? { Analog.on ? nil : power }
+    var powerKey: PlateButton? { Theme.look.pedalboard ? nil : power }
     var bypassed: Bool { session.pluginBypassed(trackId, slot) }
     private(set) var allParameters: [DalnokPluginParameter] = []
     private var indexOf: [UInt32: Int32] = [:]
@@ -458,7 +458,7 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
     /// Bypassed in Graphite: the unit sits back slightly (drawn at this scale about its centre).
     private var recessed = false
     static let defaultCount = 8
-    static var ear: CGFloat { Analog.on ? 12 : 0 } // rack ear width
+    static var ear: CGFloat { Theme.look.pedalboard ? 12 : 0 } // rack ear width
     // Folding (dalnok_plugin_set_folded): the unit holds either its full body or a narrow FoldStrip.
     private var bodyStack: NSStackView!
     private var minWidth: NSLayoutConstraint!
@@ -493,12 +493,12 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         self.path = path
         super.init(frame: .zero)
         wantsLayer = true
-        layer?.cornerRadius = Analog.on ? 2 : 5
+        layer?.cornerRadius = Theme.look.pedalboard ? 2 : 5
         title.stringValue = name
         if !loaded { title.toolTip = unavailableMessage; setAccessibilityHelp(unavailableMessage) }
         title.font = Theme.ui(12, .semibold)
         title.textColor = loaded ? Theme.text : Theme.textFaint
-        if !Analog.on { // engraved into the faceplate
+        if !Theme.look.pedalboard { // engraved into the faceplate
             let s = NSShadow(); s.shadowColor = NSColor.black.withAlphaComponent(0.7); s.shadowOffset = NSSize(width: 0, height: -1); s.shadowBlurRadius = 0
             title.shadow = s
         }
@@ -532,8 +532,8 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         power.toolTip = "On/Off: bypass \(name) (undoable)"
         power.setAccessibilityLabel("Bypass \(name)")
         power.isEnabled = loaded
-        power.isHidden = Analog.on
-        if !Analog.on { // Graphite: hardware keys and an etched name
+        power.isHidden = Theme.look.pedalboard
+        if !Theme.look.pedalboard { // Graphite: hardware keys and an etched name
             etchedTitle.text = name
             title.isHidden = true
             for b in [editButton, openButton] { b.style = .key }
@@ -552,7 +552,7 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         let header = NSStackView(views: [foldButton, power, title, etchedTitle, NSView(), sidechain, openButton])
         header.spacing = 6
         header.setContentHuggingPriority(.required, for: .vertical) // stays at the top whatever the controls' height
-        if Analog.on {
+        if Theme.look.pedalboard {
             title.isHidden = true // the name is lettered on the pedal
             for b in [editButton, openButton] { b.contentTintColor = Theme.textDim; b.font = Theme.ui(9.5, .semibold) }
             let p = PedalBody(name: name)
@@ -568,7 +568,7 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         sectionsRow.alignment = .top
         sectionsRow.spacing = 6
         self.instrument = instrument
-        if !Analog.on && loaded {
+        if !Theme.look.pedalboard && loaded {
             loadParameters()
             display = makeDisplay(automaticKind())
         }
@@ -643,7 +643,7 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
     /// Bypass (Graphite): the unit shrinks a little about its centre and dims slightly, over Settings' motion time,
     /// while its lights fade (see `fadeLights`). Reduce Motion makes the change immediate.
     func setRecessed(_ on: Bool) {
-        guard !Analog.on, on != recessed else { return }
+        guard !Theme.look.pedalboard, on != recessed else { return }
         recessed = on
         let animate = !Motion.reduced && window != nil
         let from = layer?.presentation()?.transform ?? layer?.transform ?? CATransform3DIdentity
@@ -719,7 +719,7 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
-        guard Analog.on else {
+        guard Theme.look.pedalboard else {
             Faceplate.plate(ctx, bounds, accent: color, dimmed: !loaded || bypassed, seed: Faceplate.seed(title.stringValue), wear: Faceplate.wear)
             return
         }
@@ -1178,7 +1178,7 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         w.priority = .defaultHigh // a transition's width wins while it runs
         stripConstraints = [strip.leadingAnchor.constraint(equalTo: leadingAnchor), strip.trailingAnchor.constraint(equalTo: trailingAnchor),
                             // Warm Analog: level with the pedals, below the units' header row.
-                            strip.topAnchor.constraint(equalTo: topAnchor, constant: Analog.on ? 20 : 0), strip.bottomAnchor.constraint(equalTo: bottomAnchor), w]
+                            strip.topAnchor.constraint(equalTo: topAnchor, constant: Theme.look.pedalboard ? 20 : 0), strip.bottomAnchor.constraint(equalTo: bottomAnchor), w]
         NSLayoutConstraint.activate(stripConstraints)
         refreshStrip()
     }
@@ -1282,7 +1282,7 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         let animate = animated && !Motion.reduced && window != nil
         let from = bounds.width
         // Warm Analog: the pedal tips onto its side like the box it is (see tipPedal).
-        if animate, Analog.on, let pedal, layer != nil {
+        if animate, Theme.look.pedalboard, let pedal, layer != nil {
             let face = f ? snapshot(pedal) : nil
             let faceFrame = f ? pedal.convert(pedal.bounds, to: self) : .zero
             if f {
@@ -1316,8 +1316,8 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         if let outgoing {
             layer.addSublayer(outgoing)
             Motion.centerAnchor(outgoing)
-            let away = CABasicAnimation(keyPath: Analog.on ? "transform" : "opacity")
-            if Analog.on {
+            let away = CABasicAnimation(keyPath: Theme.look.pedalboard ? "transform" : "opacity")
+            if Theme.look.pedalboard {
                 away.fromValue = CATransform3DIdentity
                 away.toValue = Self.perspective(f ? .pi / 2 : -.pi / 2)
             } else { away.fromValue = 1; away.toValue = 0 }
@@ -1329,8 +1329,8 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         }
         if let l = incoming.layer {
             Motion.centerAnchor(l)
-            let arrive = CABasicAnimation(keyPath: Analog.on ? "transform" : "opacity")
-            if Analog.on {
+            let arrive = CABasicAnimation(keyPath: Theme.look.pedalboard ? "transform" : "opacity")
+            if Theme.look.pedalboard {
                 arrive.fromValue = Self.perspective(f ? -.pi / 2 : .pi / 2)
                 arrive.toValue = CATransform3DIdentity
             } else { arrive.fromValue = 0; arrive.toValue = 1 }
@@ -1460,11 +1460,11 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         let to = naturalWidth
         if !folded { attachBody(width: to) }
         arriving = true
-        let drop = CAKeyframeAnimation(keyPath: Analog.on ? "transform.translation.y" : "transform.translation.x")
-        drop.values = Analog.on ? [36, 0, 5, 0] : [-18, 0]
-        drop.keyTimes = Analog.on ? [0, 0.62, 0.82, 1] : [0, 1]
-        drop.duration = Analog.on ? 0.42 : 0.3
-        drop.timingFunctions = Analog.on ? [CAMediaTimingFunction(name: .easeIn), CAMediaTimingFunction(name: .easeOut), CAMediaTimingFunction(name: .easeIn)]
+        let drop = CAKeyframeAnimation(keyPath: Theme.look.pedalboard ? "transform.translation.y" : "transform.translation.x")
+        drop.values = Theme.look.pedalboard ? [36, 0, 5, 0] : [-18, 0]
+        drop.keyTimes = Theme.look.pedalboard ? [0, 0.62, 0.82, 1] : [0, 1]
+        drop.duration = Theme.look.pedalboard ? 0.42 : 0.3
+        drop.timingFunctions = Theme.look.pedalboard ? [CAMediaTimingFunction(name: .easeIn), CAMediaTimingFunction(name: .easeOut), CAMediaTimingFunction(name: .easeIn)]
                                          : [CAMediaTimingFunction(name: .easeOut)]
         layer.add(drop, forKey: "arrive")
         let fade = CABasicAnimation(keyPath: "opacity")
@@ -1481,9 +1481,9 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         guard !Motion.reduced, window != nil, let layer else { done(); return }
         let from = bounds.width
         if !folded { attachBody(width: from) }
-        let lift = CABasicAnimation(keyPath: Analog.on ? "transform.translation.y" : "transform.scale")
-        lift.fromValue = Analog.on ? 0 : 1
-        lift.toValue = Analog.on ? 40 : 0.9
+        let lift = CABasicAnimation(keyPath: Theme.look.pedalboard ? "transform.translation.y" : "transform.scale")
+        lift.fromValue = Theme.look.pedalboard ? 0 : 1
+        lift.toValue = Theme.look.pedalboard ? 40 : 0.9
         let fade = CABasicAnimation(keyPath: "opacity")
         fade.fromValue = 1; fade.toValue = 0
         for a in [lift, fade] {
@@ -1506,7 +1506,7 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         let off = bypassed
         power.state = off ? .off : .on
         power.contentTintColor = off ? Theme.textFaint : Theme.accent
-        title.textColor = !loaded || off ? Theme.textFaint : (Analog.on ? Theme.text : Faceplate.engraving)
+        title.textColor = !loaded || off ? Theme.textFaint : (Theme.look.pedalboard ? Theme.text : Faceplate.engraving)
         etchedTitle.dimmed = !loaded // lettering is cut into the metal: bypass doesn't change it
         pedal?.engaged = loaded && !off
         if folded { refreshStrip() }

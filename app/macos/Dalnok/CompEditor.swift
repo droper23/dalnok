@@ -91,8 +91,8 @@ final class CompView: NSView {
             CGRect(x: 0, y: top, width: bounds.width, height: Self.lane).fill()
             let r = CGRect(x: x(Double(take.start)), y: top + 4, width: CGFloat(Double(take.length) / framesPerPoint), height: Self.lane - 8)
             // The take, dim; the parts the comp uses, bright.
-            ctx.setFillColor((Analog.on ? Theme.hex(0x3A281C) : tint.body.withAlphaComponent(0.35)).cgColor); ctx.fill(r)
-            if Analog.on { // tape edges catch the light
+            ctx.setFillColor((Theme.look.tapeEditors ? Theme.hex(0x3A281C) : tint.body.withAlphaComponent(0.35)).cgColor); ctx.fill(r)
+            if Theme.look.tapeEditors { // tape edges catch the light
                 ctx.setFillColor(Theme.hex(0x6A4C36, 0.8).cgColor)
                 ctx.fill(CGRect(x: r.minX, y: r.minY, width: r.width, height: 1)); ctx.fill(CGRect(x: r.minX, y: r.maxY - 1, width: r.width, height: 1))
             }
@@ -106,7 +106,7 @@ final class CompView: NSView {
                 let a = min(sw.from, sw.to), b = max(sw.from, sw.to)
                 ctx.setFillColor(Theme.selection.withAlphaComponent(0.25).cgColor)
                 ctx.fill(CGRect(x: a, y: r.minY, width: b - a, height: r.height))
-                if Analog.on { for x in [a, b] { cutLine(ctx, x: x, top: r.minY - 3, bottom: r.maxY + 3) } } // the razor
+                if Theme.look.tapeEditors { for x in [a, b] { cutLine(ctx, x: x, top: r.minY - 3, bottom: r.maxY + 3) } } // the razor
             }
             // Header: take name (click for the whole take).
             Theme.panelRaised.setFill(); CGRect(x: 0, y: top, width: Self.header - 1, height: Self.lane).fill()
@@ -120,7 +120,7 @@ final class CompView: NSView {
         let top = compTop
         Theme.panel.setFill(); CGRect(x: 0, y: top, width: bounds.width, height: Self.compLane).fill()
         ("COMP" as NSString).draw(at: CGPoint(x: 12, y: top + 12), withAttributes: [.font: Theme.mono(10, .semibold), .foregroundColor: Theme.accent])
-        if Analog.on { // the splicing block the comp is assembled on
+        if Theme.look.tapeEditors { // the splicing block the comp is assembled on
             let block = CGRect(x: Self.header, y: top + 3, width: bounds.width - Self.header, height: Self.compLane - 6)
             ctx.setFillColor(Theme.hex(0x6E665D).cgColor); ctx.fill(block)
             ctx.setFillColor(Theme.hex(0x4A443E).cgColor); ctx.fill(CGRect(x: block.minX, y: block.midY - 0.5, width: block.width, height: 1))
@@ -128,12 +128,12 @@ final class CompView: NSView {
         for seg in comp {
             let s = CGRect(x: x(Double(seg.from)), y: top + 6, width: CGFloat(Double(seg.to - seg.from) / framesPerPoint), height: Self.compLane - 12)
             ctx.setFillColor(tint.base.cgColor); ctx.fill(s)
-            if Analog.on, seg.from > comp.map(\.from).min() ?? seg.from { // a splice: diagonal cut under a strip of splicing tape
+            if Theme.look.tapeEditors, seg.from > comp.map(\.from).min() ?? seg.from { // a splice: diagonal cut under a strip of splicing tape
                 ctx.setStrokeColor(Theme.hex(0x1A120C, 0.8).cgColor); ctx.setLineWidth(1)
                 ctx.move(to: CGPoint(x: s.minX - 4, y: s.maxY)); ctx.addLine(to: CGPoint(x: s.minX + 4, y: s.minY)); ctx.strokePath()
                 ctx.setFillColor(Theme.hex(0xF2EBDD, 0.45).cgColor)
                 ctx.fill(CGRect(x: s.minX - 6, y: s.minY + 4, width: 12, height: s.height - 8))
-            } else if !Analog.on {
+            } else if !Theme.look.tapeEditors {
                 ctx.setStrokeColor(Theme.panel.cgColor); ctx.setLineWidth(1); ctx.stroke(s)
             }
             if s.width > 24 {

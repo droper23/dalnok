@@ -10,7 +10,7 @@
 import AppKit
 
 final class FoldStrip: NSView {
-    static var width: CGFloat { Analog.on ? 44 : 34 }
+    static var width: CGFloat { Theme.look.pedalboard ? 44 : 34 }
     /// Warm Analog: the edge's box is inset this far from the strip's sides; the cables plug into its sides.
     static let boxInset: CGFloat = 3
     var name: String { didSet { needsDisplay = true; setAccessibilityLabel("\(name), folded") } }
@@ -27,7 +27,7 @@ final class FoldStrip: NSView {
     /// Where the on/off switch sits (strip coordinates, y up).
     var powerRect: CGRect {
         let r = bounds
-        return Analog.on ? CGRect(x: r.midX - 16, y: r.maxY - 52, width: 32, height: 48) : CGRect(x: r.midX - 13, y: r.maxY - 38, width: 26, height: 26)
+        return Theme.look.pedalboard ? CGRect(x: r.midX - 16, y: r.maxY - 52, width: 32, height: 48) : CGRect(x: r.midX - 13, y: r.maxY - 38, width: 26, height: 26)
     }
 
     init(name: String) {
@@ -65,7 +65,7 @@ final class FoldStrip: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
-        if Analog.on, let look { drawPedalEdge(ctx, look) } else { drawRackBlank(ctx) }
+        if Theme.look.pedalboard, let look { drawPedalEdge(ctx, look) } else { drawRackBlank(ctx) }
     }
 
     /// The name set upright along the strip, reading bottom to top, truncated to fit.

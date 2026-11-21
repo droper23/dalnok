@@ -841,7 +841,7 @@
       "priority": "P2",
       "category": "Architecture",
       "subsystem": "UI / theming",
-      "status": "open",
+      "status": "fixed",
       "summary": "Theme tokens are static globals (Theme, Analog.on) and many views branch on the active theme. Switching appearance requires tearing down and relaunching the window, and a third theme would touch many view files.",
       "evidence": [
         "app/macos/Dalnok/MainWindow.swift:320 tearDown(keeping:) exists specifically 'before a live theme switch' and closes windows.",
@@ -873,7 +873,8 @@
         "reliability": 2,
         "value": 2
       },
-      "measured": false
+      "measured": false,
+      "resolution": "2026-11-20: a theme is now a title, a Palette (17 colour tokens plus the launcher background, one value each) and a Look (eight capabilities by area: pedalboard devices, console mixer, channel-strip headers, tape-deck transport, hardware controls, LED-ladder meters, tape editors, console track colours). Theme.Style returns them through exhaustive switches. All 112 view branches on Analog.on now ask for the capability they draw (e.g. Theme.look.pedalboard in DevicePanel, Theme.look.consoleMixer in Mixer), Analog.on is removed, and the one colour-only branch (the launcher background) is a palette token. A third theme is a new Style case with its palette and a combination of existing looks; no view changes. The View > Warm Analog Style toggle stays specific to that theme by design. Live theme switching already worked (window rebuilt around the same project and undo history; self-test). Pixel check: --uiwalk on a generated band project, 36 frames per theme, two baseline runs and one after; 71 of 72 frames identical or within the run-to-run noise, and the one beyond it is a playing frame captured at a different instant (clock 1.4.1.151 vs 1.4.1.192, playhead stripe only). Self-test PASS: 581 Graphite, 566 Warm Analog. Not done: the active style is still a global (Theme.activeStyle) that views read through Theme.palette/Theme.look rather than an injected value; injecting it would touch every view constructor for no change in behaviour."
     },
     {
       "id": "A-18",

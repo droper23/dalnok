@@ -48,9 +48,9 @@ final class MixerPanel: NSView {
         addBusButton.action = #selector(addBus)
         addBusButton.toolTip = "New bus (an aux track that mixes what you route or send to it)"
         NSLayoutConstraint.activate([
-            scroll.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Analog.on ? Analog.cheekWidth : 0),
+            scroll.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Theme.look.consoleMixer ? Analog.cheekWidth : 0),
             scroll.trailingAnchor.constraint(equalTo: master.leadingAnchor),
-            master.trailingAnchor.constraint(equalTo: trailingAnchor, constant: Analog.on ? -Analog.cheekWidth : 0), master.topAnchor.constraint(equalTo: topAnchor, constant: 9),
+            master.trailingAnchor.constraint(equalTo: trailingAnchor, constant: Theme.look.consoleMixer ? -Analog.cheekWidth : 0), master.topAnchor.constraint(equalTo: topAnchor, constant: 9),
             master.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -9),
             scroll.topAnchor.constraint(equalTo: topAnchor, constant: 1), scroll.bottomAnchor.constraint(equalTo: bottomAnchor),
             stack.leadingAnchor.constraint(equalTo: doc.leadingAnchor), stack.topAnchor.constraint(equalTo: doc.topAnchor),
@@ -63,10 +63,10 @@ final class MixerPanel: NSView {
     required init?(coder: NSCoder) { fatalError() }
 
     override func draw(_ dirtyRect: NSRect) {
-        (Analog.on ? Analog.faceplate : Theme.panelRaised).setFill(); bounds.fill()
-        (Analog.on ? NSColor.black.withAlphaComponent(0.22) : Theme.panel.withAlphaComponent(0.55)).setFill(); bounds.fill()
+        (Theme.look.consoleMixer ? Analog.faceplate : Theme.panelRaised).setFill(); bounds.fill()
+        (Theme.look.consoleMixer ? NSColor.black.withAlphaComponent(0.22) : Theme.panel.withAlphaComponent(0.55)).setFill(); bounds.fill()
         Theme.hairline.setFill(); NSRect(x: 0, y: bounds.height - 2, width: bounds.width, height: 1).fill()
-        if Analog.on { // walnut end cheeks with a rounded, lit inner edge
+        if Theme.look.consoleMixer { // walnut end cheeks with a rounded, lit inner edge
             let w = Analog.cheekWidth
             for r in [NSRect(x: 0, y: 0, width: w, height: bounds.height), NSRect(x: bounds.width - w, y: 0, width: w, height: bounds.height)] {
                 Analog.walnut.setFill(); r.fill()
@@ -201,7 +201,7 @@ final class ChannelStrip: NSView {
         dbLabel.font = Theme.mono(10)
         dbLabel.textColor = Theme.textDim
         dbLabel.alignment = .center
-        name.font = Analog.on ? NSFont.systemFont(ofSize: 11.5, weight: .semibold, width: .condensed) : Theme.ui(11.5, .semibold)
+        name.font = Theme.look.consoleMixer ? NSFont.systemFont(ofSize: 11.5, weight: .semibold, width: .condensed) : Theme.ui(11.5, .semibold)
         name.alignment = .center
         name.lineBreakMode = .byTruncatingTail
 
@@ -279,12 +279,12 @@ final class ChannelStrip: NSView {
     required init?(coder: NSCoder) { fatalError() }
 
     override func draw(_ dirtyRect: NSRect) {
-        (Analog.on ? Analog.faceplate : Theme.panelRaised).setFill()
+        (Theme.look.consoleMixer ? Analog.faceplate : Theme.panelRaised).setFill()
         bounds.fill()
         if isSelected { Theme.selectedHeader.setFill(); bounds.fill() }
         color.setFill(); NSRect(x: 0, y: 0, width: bounds.width, height: 3).fill() // track color along the top
         Theme.separator.setFill(); NSRect(x: bounds.width - 1, y: 0, width: 1, height: bounds.height).fill()
-        if Analog.on, let ctx = NSGraphicsContext.current?.cgContext { // a channel module: screwed to the frame
+        if Theme.look.consoleMixer, let ctx = NSGraphicsContext.current?.cgContext { // a channel module: screwed to the frame
             for p in [CGPoint(x: 7, y: 9), CGPoint(x: bounds.width - 8, y: 9), CGPoint(x: 7, y: bounds.height - 8), CGPoint(x: bounds.width - 8, y: bounds.height - 8)] {
                 Analog.screw(ctx, at: p, radius: 2.5)
             }
@@ -299,7 +299,7 @@ final class ChannelStrip: NSView {
         let tint = t.muted ? TrackTint(base: t.color).muted : t.color
         if color != tint { color = tint; needsDisplay = true }
         if mute.isOn != t.muted {
-            name.textColor = Analog.on ? (t.muted ? Theme.textFaint : OKLCH.adjust(t.color, dl: 0.2, chromaScale: 0.7))
+            name.textColor = Theme.look.consoleMixer ? (t.muted ? Theme.textFaint : OKLCH.adjust(t.color, dl: 0.2, chromaScale: 0.7))
                                        : (t.muted ? Theme.textDim : Theme.text)
             scribble.lit = !t.muted
         }
@@ -315,11 +315,11 @@ final class ChannelStrip: NSView {
         name.stringValue = t.name
         fader.setAccessibilityLabel("Volume, \(t.name)")
         pan.setAccessibilityLabel("Pan, \(t.name)")
-        name.textColor = Analog.on ? (t.muted ? Theme.textFaint : OKLCH.adjust(t.color, dl: 0.2, chromaScale: 0.7))
+        name.textColor = Theme.look.consoleMixer ? (t.muted ? Theme.textFaint : OKLCH.adjust(t.color, dl: 0.2, chromaScale: 0.7))
                                    : (t.muted ? Theme.textDim : Theme.text)
         scribble.color = t.color
         scribble.lit = !t.muted
-        scribble.isHidden = !Analog.on
+        scribble.isHidden = !Theme.look.consoleMixer
         if !fader.tracking { fader.db = t.gainDb; dbLabel.stringValue = FaderControl.format(t.gainDb) }
         fader.tint = t.color
         if !pan.tracking { pan.pan = t.pan }
@@ -475,13 +475,13 @@ final class MasterStrip: NSView {
         let row = NSStackView(views: [fader, meter])
         row.spacing = 4
         for v in [needle, row, dbLabel, name] as [NSView] { v.translatesAutoresizingMaskIntoConstraints = false; addSubview(v) }
-        needle.isHidden = !Analog.on
+        needle.isHidden = !Theme.look.consoleMixer
         needle.setAccessibilityLabel("Master needle meter")
         NSLayoutConstraint.activate([
-            widthAnchor.constraint(equalToConstant: Analog.on ? 112 : 86),
+            widthAnchor.constraint(equalToConstant: Theme.look.consoleMixer ? 112 : 86),
             needle.topAnchor.constraint(equalTo: topAnchor, constant: 10), needle.centerXAnchor.constraint(equalTo: centerXAnchor),
-            needle.widthAnchor.constraint(equalToConstant: 100), needle.heightAnchor.constraint(equalToConstant: Analog.on ? 62 : 0),
-            row.topAnchor.constraint(equalTo: needle.bottomAnchor, constant: Analog.on ? 10 : 20), row.centerXAnchor.constraint(equalTo: centerXAnchor),
+            needle.widthAnchor.constraint(equalToConstant: 100), needle.heightAnchor.constraint(equalToConstant: Theme.look.consoleMixer ? 62 : 0),
+            row.topAnchor.constraint(equalTo: needle.bottomAnchor, constant: Theme.look.consoleMixer ? 10 : 20), row.centerXAnchor.constraint(equalTo: centerXAnchor),
             fader.widthAnchor.constraint(equalToConstant: 44), meter.widthAnchor.constraint(equalToConstant: 16),
             row.bottomAnchor.constraint(equalTo: dbLabel.topAnchor, constant: -2),
             dbLabel.centerXAnchor.constraint(equalTo: centerXAnchor), dbLabel.bottomAnchor.constraint(equalTo: name.topAnchor, constant: -10),
@@ -491,7 +491,7 @@ final class MasterStrip: NSView {
     required init?(coder: NSCoder) { fatalError() }
     override var isFlipped: Bool { true }
     override func draw(_ dirtyRect: NSRect) {
-        (Analog.on ? Analog.faceplate : Theme.panelRaised).setFill(); bounds.fill()
+        (Theme.look.consoleMixer ? Analog.faceplate : Theme.panelRaised).setFill(); bounds.fill()
         Theme.accent.setFill(); NSRect(x: 0, y: 0, width: bounds.width, height: 3).fill()
         Theme.separator.setFill(); NSRect(x: 0, y: 0, width: 1, height: bounds.height).fill()
     }

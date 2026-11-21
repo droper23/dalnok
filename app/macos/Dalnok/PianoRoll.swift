@@ -181,7 +181,7 @@ final class PianoRollView: NSView {
             let ry = y(p)
             guard ry + rowHeight >= g.minY, ry <= g.maxY else { continue }
             let black = [1, 3, 6, 8, 10].contains(p % 12)
-            if Analog.on { // ledger paper: warm rows with a faint rule under each, a red-brown rule under each C
+            if Theme.look.tapeEditors { // ledger paper: warm rows with a faint rule under each, a red-brown rule under each C
                 ctx.setFillColor(Theme.hex(black ? 0x17120E : 0x1F1913).cgColor)
                 ctx.fill(CGRect(x: g.minX, y: ry, width: g.width, height: rowHeight))
                 ctx.setFillColor((p % 12 == 0 ? Theme.hex(0xB0603E, 0.45) : Theme.hex(0xE8D8C0, 0.05)).cgColor)
@@ -204,7 +204,7 @@ final class PianoRollView: NSView {
             guard r.maxX >= g.minX, r.minX <= g.maxX, r.maxY >= g.minY, r.minY <= g.maxY else { continue }
             let sel = selection.contains(NoteKey(start: n.start, pitch: n.pitch))
             let v = CGFloat(n.velocity) / 127
-            if Analog.on { drawPin(ctx, r, velocity: v, tint: tint, selected: sel); continue }
+            if Theme.look.tapeEditors { drawPin(ctx, r, velocity: v, tint: tint, selected: sel); continue }
             let path = CGPath(roundedRect: r, cornerWidth: 2.5, cornerHeight: 2.5, transform: nil)
             ctx.addPath(path)
             ctx.setFillColor(tint.base.withAlphaComponent(0.35 + 0.65 * v).cgColor)

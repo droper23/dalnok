@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Internal (A-17): a theme is now a palette of colour tokens plus a set of look capabilities (pedalboard devices, console mixer, tape-deck transport, and so on). Views ask for the capability they draw instead of checking whether Warm Analog is on, so a third theme needs no view changes. Both themes render the same as before: 71 of 72 frames are identical or within run-to-run noise, and the remaining one differs only in playhead timing.
+
 - Fixed: at 44.1 kHz the position display could read one tick early on bar and beat lines. For example, bar 2 showed as 2.1.4.239, because a beat at 96 BPM is 27,562.5 frames. Step-entered MIDI notes were also a frame short.
 - Internal (A-18): the self-test is split into a harness and one file per area. It passes at both 44.1 and 48 kHz (`DALNOK_SAMPLE_RATE`). Checks that depend on the machine rather than on Dalnok report SKIP with the reason instead of failing. CI also runs the self-test.
 

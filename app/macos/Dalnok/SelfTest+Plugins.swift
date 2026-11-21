@@ -565,7 +565,7 @@ extension SelfTest {
         check(!panel.isHidden && panel.devices.map(\.slot) == [slot, limiter], "device panel shows the track's plug-ins in order")
         check(panel.subviewsDeep.contains { ($0 as? NSButton)?.title.contains("Add Plug-in") == true && !$0.isHiddenOrHasHiddenAncestor },
               "device panel offers Add Plug-in after the chain")
-        if Analog.on {
+        if (Theme.activeStyle == .warmAnalog) {
             panel.layoutCables()
             check(panel.cableCount == 3, "Warm Analog patches IN → AUDelay → AUPeakLimiter → OUT with \(panel.cableCount) cables")
         }
@@ -625,7 +625,7 @@ extension SelfTest {
         // Bypass (power button in Graphite, footswitch on the Warm Analog pedal): real, undoable, nulls the effect.
         let delayName = "AUDelay"
         if let pedal = delay.pedal {
-            check(Analog.on && pedal.controls.count == delay.knobs.count, "Warm Analog shows AUDelay as a pedal with \(pedal.controls.count) controls")
+            check((Theme.activeStyle == .warmAnalog) && pedal.controls.count == delay.knobs.count, "Warm Analog shows AUDelay as a pedal with \(pedal.controls.count) controls")
             check(PedalStore.look(delayName) == PedalStore.look(delayName) && PedalLook.random("A#0") != PedalLook.random("B#0"),
                   "a pedal's look is stable for its plug-in and differs between plug-ins")
             panel.layoutSubtreeIfNeeded()
@@ -812,7 +812,7 @@ extension SelfTest {
         _ = perform("Undo"); panel.rebuild()
         check(s.track(track)?.plugins.map(\.id) == order0, "undo removes the dropped plug-in")
         // EQ screen: a band handle drags its band (Dalnok Channel EQ, with real mouse events on the screen).
-        if !Analog.on, let eqSlot = try? s.addPlugin(track, path: "dalnok:channel-eq") {
+        if !(Theme.activeStyle == .warmAnalog), let eqSlot = try? s.addPlugin(track, path: "dalnok:channel-eq") {
             panel.rebuild(); panel.layoutSubtreeIfNeeded()
             if let eq = panel.devices.first(where: { $0.slot == eqSlot }), let screen = eq.display as? ResponseScreen {
                 screen.display()

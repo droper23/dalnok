@@ -251,7 +251,7 @@ final class SelfTest {
             let mid = (loud.meterDb, quiet.meterDb)
             let midScale = loud.faceScale, expected = RotaryKnob.revealScale + (1 - RotaryKnob.revealScale) * 0.5
             loud.updateMeter(-22, now: t0 + 2 * half + 0.0001); quiet.updateMeter(-120, now: q0 + 2 * half + 0.0001)
-            if !Analog.on {
+            if !(Theme.activeStyle == .warmAnalog) {
                 check(abs(midScale - expected) < 0.001 && abs(loud.faceScale - 1) < 1e-9 && abs(quiet.faceScale - 1) < 1e-9,
                       String(format: "dial face grows back in step with the falling ring (half-way %.3f, expected %.3f; end %.3f)", midScale, expected, loud.faceScale))
             }
@@ -596,7 +596,7 @@ final class SelfTest {
         w.window?.layoutIfNeeded()
         check(w.timeline.framesPerPoint == zoomBefore && w.timeline.scrollFrame == scrollBefore && w.timeline.bounds.width > 400,
               "the arrangement keeps its zoom and position (\(w.timeline.framesPerPoint) vs \(zoomBefore) frames/pt, width \(w.timeline.bounds.width))")
-        check((w.transport.reels.superview != nil) == Analog.on, "the rebuilt window uses the new style's parts (tape reels \(Analog.on ? "shown" : "hidden"))")
+        check((w.transport.reels.superview != nil) == (Theme.activeStyle == .warmAnalog), "the rebuilt window uses the new style's parts (tape reels \((Theme.activeStyle == .warmAnalog) ? "shown" : "hidden"))")
         check(w.settings.window?.isVisible == true && w.settings.relaunch.isHidden, "settings stays open, with no relaunch needed")
         try? w.snapshot(to: workdir.appendingPathComponent("theme-switched.png"))
         w.settings.themePicker.selectItem(at: other == 1 ? 0 : 1)

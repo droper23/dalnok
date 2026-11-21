@@ -36,7 +36,7 @@ extension SelfTest {
         await wait(2.3) // the stop lands on the next bar (2 s at 120 BPM)
         check(dalnok_launcher_playing(e.handle, track.id) == -1, "clicking it again goes back to the arrangement on the bar")
         e.pause()
-        if Analog.on { // tape reels: the take-up pack follows the playhead
+        if (Theme.activeStyle == .warmAnalog) { // tape reels: the take-up pack follows the playhead
             e.seek(0); await wait(0.15)
             let start = w.transport.reels.tapeFraction
             e.seek(Int64(e.sampleRate * 20)); await wait(0.15)

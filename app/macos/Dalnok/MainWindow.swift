@@ -698,7 +698,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             let other = timeline.positionText(e.position, barsAndBeats: !TimelineView.barsAndBeats)
             if transport.subTimeLabel.stringValue != other { transport.subTimeLabel.stringValue = other }
         }
-        if Analog.on {
+        if Theme.look.tapeDeck {
             if tickCount % 60 == 0 { // as much tape as there is sound in the project
                 let end = session.tracks.flatMap(\.clips).map(\.end).max() ?? 0
                 transport.reels.length = max(1, Double(end) / e.sampleRate)
@@ -708,7 +708,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             tapeTransport.advance()
             transport.tapeStrip.refresh(playing: e.isPlaying, recording: e.isRecording, cycle: session.cycle.on, winding: tapeTransport.winding)
         }
-        if Analog.on { transport.ghost.stringValue = String(position.map { $0.isNumber ? "8" : $0 }) } // unlit segments
+        if Theme.look.tapeDeck { transport.ghost.stringValue = String(position.map { $0.isNumber ? "8" : $0 }) } // unlit segments
         timeline.followPlayhead()
         timeline.updatePlayhead()
         // Meters reset on read: read each once and feed the headers, the control bar and the mixer.
@@ -721,7 +721,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             if row.gain.showsMeter != GainKnob.showsLevel { row.gain.showsMeter = GainKnob.showsLevel }
             row.gain.updateMeter(max(row.meter.levelDb.0, row.meter.levelDb.1))
         }
-        if !mixer.isHidden { mixer.pushMeters { levels[$0] ?? (0, 0) }; mixer.master.meter.push(ml0, mr0); if Analog.on { mixer.master.needle.push(ml0, mr0) } }
+        if !mixer.isHidden { mixer.pushMeters { levels[$0] ?? (0, 0) }; mixer.master.meter.push(ml0, mr0); if Theme.look.consoleMixer { mixer.master.needle.push(ml0, mr0) } }
         // Automated tracks: knobs and faders show the automated value at the playhead.
         for t in session.tracks where !t.volumeAuto.isEmpty || !t.panAuto.isEmpty {
             let v = session.automationValue(t, 0, at: e.position), p = session.automationValue(t, 1, at: e.position)

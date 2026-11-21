@@ -329,7 +329,7 @@ extension SelfTest {
         w.tapeDeck?.window?.close()
         e.seek(0); await wait(0.1)
         // Warm Analog: the same keys live in the control bar, so the window is optional.
-        if Analog.on {
+        if (Theme.activeStyle == .warmAnalog) {
             let strip = w.transport.tapeStrip
             check(strip.superview != nil && strip.reels.superview != nil && strip.transport != nil, "the control bar carries the tape strip (reels and keys)")
             strip.play.onPress?(); await wait(0.4)

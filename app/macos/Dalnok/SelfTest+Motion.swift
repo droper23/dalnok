@@ -120,7 +120,7 @@ extension SelfTest {
         check(w.transport.recordButton.layer?.animation(forKey: "pulse") != nil, "record button pulses while recording")
         w.transport.setRecording(false)
         check(w.transport.recordButton.layer?.animation(forKey: "pulse") == nil, "pulse stops when recording stops")
-        if Analog.on, let content = w.window?.contentView {
+        if (Theme.activeStyle == .warmAnalog), let content = w.window?.contentView {
             let lamp = ToggleChip("M", on: Theme.muteOn, onText: .white, help: "Motion test")
             lamp.frame = NSRect(x: 0, y: 0, width: 24, height: 18)
             content.addSubview(lamp)
