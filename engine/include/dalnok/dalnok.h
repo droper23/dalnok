@@ -28,7 +28,7 @@
 extern "C" {
 #endif
 
-#define DALNOK_API_VERSION 39
+#define DALNOK_API_VERSION 41
 
 typedef enum {
     DALNOK_OK = 0,
@@ -299,24 +299,28 @@ DalnokStatus dalnok_track_parameters(const DalnokEngine *engine, DalnokTrackId t
 int32_t dalnok_track_count(const DalnokEngine *engine);
 DalnokTrackId dalnok_track_at(const DalnokEngine *engine, int32_t index);
 
+/* BEGIN GENERATED DalnokTrackInfo (scripts/gen-api.py) */
 typedef struct {
     DalnokTrackId id;
     char name[128];
-    int32_t color;       /* gradient step (automatic color) */
-    int32_t custom_color;/* 0xRRGGBB pinned by the user, or -1 = automatic */
-    float gain_db;       /* -INFINITY for silence */
+    int32_t color;                 /* gradient step (automatic color) */
+    int32_t custom_color;          /* 0xRRGGBB pinned by the user, or -1 = automatic */
+    float gain_db;                 /* -INFINITY for silence */
     float pan;
     bool muted;
     bool solo;
-    int32_t clip_count;
-    int32_t kind;          /* DalnokTrackKind */
-    bool armed;            /* record-enabled */
-    int32_t input_channel; /* zero-based audio input (audio tracks) */
-    DalnokTrackId stack;   /* the summing stack this track belongs to (0 = none) */
-    bool is_stack;         /* a bus that is a summing stack */
-    bool collapsed;        /* stack shown closed */
-    float height;          /* lane height in points, view only (0 = the default height) */
+    int32_t clip_count;            /* clips on the track, takes and launcher slots included */
+    int32_t kind;                  /* DalnokTrackKind */
+    bool armed;                    /* record-enabled */
+    int32_t input_channel;         /* zero-based audio input (audio tracks) */
+    DalnokTrackId stack;           /* the summing stack this track belongs to (0 = none) */
+    bool is_stack;                 /* a bus that is a summing stack */
+    bool collapsed;                /* stack shown closed */
+    float height;                  /* lane height in points, view only (0 = the default height) */
+    bool hidden;                   /* hidden from the arrangement and mixer (still plays) */
+    DalnokTrackId output;          /* the bus this track plays into (0 = master) */
 } DalnokTrackInfo;
+/* END GENERATED DalnokTrackInfo */
 typedef enum { DALNOK_TRACK_AUDIO = 0, DALNOK_TRACK_INSTRUMENT = 1, DALNOK_TRACK_BUS = 2 } DalnokTrackKind;
 
 /* ---- Routing: buses, outputs and sends --------------------------------
@@ -406,6 +410,10 @@ DalnokTrackId dalnok_track_duplicate(DalnokEngine *engine, DalnokTrackId track);
 /* Reorders a track's plug-ins (API 26): moves `slot` to `index` (0 = first in the chain). Undoable. */
 DalnokStatus dalnok_plugin_move(DalnokEngine *engine, DalnokTrackId track, int32_t slot, int32_t index);
 bool dalnok_plugin_bypassed(const DalnokEngine *engine, DalnokTrackId track, int32_t slot);
+/* Folding (API 40): the device chain shows a folded plug-in as a narrow strip (name, bypass, meter). Saved with
+ * the project; undoable; no effect on audio. */
+DalnokStatus dalnok_plugin_set_folded(DalnokEngine *engine, DalnokTrackId track, int32_t slot, bool folded);
+bool dalnok_plugin_folded(const DalnokEngine *engine, DalnokTrackId track, int32_t slot);
 
 /* ---- Automation -------------------------------------------------------
  * Breakpoints in timeline frames, linear between points and held before the first and after the last.
@@ -432,33 +440,41 @@ DalnokStatus dalnok_track_info(const DalnokEngine *engine, DalnokTrackId track, 
 /* Clips of a track in z-order (later = on top; overlapping clips: top wins). */
 DalnokClipId dalnok_track_clip_at(const DalnokEngine *engine, DalnokTrackId track, int32_t index);
 
+/* BEGIN GENERATED DalnokClipInfo (scripts/gen-api.py) */
 typedef struct {
     DalnokClipId id;
     DalnokTrackId track;
     DalnokMediaId media;
-    int64_t start;        /* timeline frame */
-    int64_t offset;       /* frame within media */
-    int64_t length;       /* frames */
-    int64_t media_frames; /* total frames of the source media */
-    bool offline;         /* source missing: renders silence */
-    int64_t fade_in;      /* frames */
-    int64_t fade_out;     /* frames */
-    int32_t fade_curve;   /* DalnokFadeCurve */
-    float gain_db;        /* clip gain; -INFINITY = silent */
-    double rate;          /* source frames per timeline frame (1 = normal speed) */
-    float pitch;          /* semitones (time-stretch mode only) */
-    bool preserve_pitch;  /* false = varispeed */
-    bool processing;      /* stretched audio still rendering in the background (silent until ready) */
+    int64_t start;                 /* timeline frame */
+    int64_t offset;                /* frame within media */
+    int64_t length;                /* frames */
+    int64_t media_frames;          /* total frames of the source media */
+    bool offline;                  /* source missing: renders silence */
+    int64_t fade_in;               /* frames */
+    int64_t fade_out;              /* frames */
+    int32_t fade_curve;            /* DalnokFadeCurve */
+    float gain_db;                 /* clip gain; -INFINITY = silent */
+    double rate;                   /* source frames per timeline frame (1 = normal speed) */
+    float pitch;                   /* semitones (time-stretch mode only) */
+    bool preserve_pitch;           /* false = varispeed */
+    bool processing;               /* stretched audio still rendering in the background (silent until ready) */
     char name[128];
-    bool midi;            /* MIDI clip (media = 0; see dalnok_midi_clip_notes) */
+    bool midi;                     /* MIDI clip (media = 0; see dalnok_midi_clip_notes) */
     int32_t note_count;
-    int32_t folder;       /* take folder (0 = none) */
-    bool alt;             /* a take inside a folder: kept, not played (the comp's pieces play) */
-    int32_t slot;         /* clip launcher slot (>= 0: not on the timeline), -1 = timeline */
-    int32_t follow;       /* launcher follow action: 0 none, 1 next filled slot, 2 stop */
-    int32_t follow_loops; /* after this many loops */
+    int32_t folder;                /* take folder (0 = none) */
+    bool alt;                      /* a take inside a folder: kept, not played (the comp's pieces play) */
+    int32_t slot;                  /* clip launcher slot (>= 0: not on the timeline), -1 = timeline */
+    int32_t follow;                /* launcher follow action: 0 none, 1 next filled slot, 2 stop */
+    int32_t follow_loops;          /* after this many loops */
+    bool muted;                    /* clip muted */
 } DalnokClipInfo;
+/* END GENERATED DalnokClipInfo */
 DalnokStatus dalnok_clip_info(const DalnokEngine *engine, DalnokClipId clip, DalnokClipInfo *out);
+/* Every clip of a track in z-order (takes and launcher slots included), in one pass: writes up to `capacity`
+ * entries and returns the track's clip count (call with capacity 0 to size the buffer), or -1 if there is no such
+ * track. Reading a track clip by clip (dalnok_track_clip_at + dalnok_clip_info) costs a scan of the whole project
+ * per clip. */
+int32_t dalnok_track_clips(const DalnokEngine *engine, DalnokTrackId track, DalnokClipInfo *out, int32_t capacity);
 
 /* Timeline length in frames (end of the last clip). */
 int64_t dalnok_session_length(const DalnokEngine *engine);
@@ -639,6 +655,9 @@ typedef struct {
     char characters_ignoring_modifiers[16];  /* UTF-8 */
 } DalnokEditorKey;
 bool dalnok_plugin_take_editor_key(DalnokEngine *engine, DalnokEditorKey *out);
+/* Not a key: the editor window's title-bar Controls button (API 40). The front end shows the plug-in's controls
+ * (Dalnok's parameter view) for `slot` instead of replaying a key. */
+#define DALNOK_EDITOR_SHOW_CONTROLS 0xFFFF
 /* Writes the editor window's pixels to a PNG (visual checks, self-tests). */
 DalnokStatus dalnok_plugin_editor_snapshot(DalnokEngine *engine, int32_t slot, const char *png_path);
 
@@ -716,6 +735,11 @@ void dalnok_project_new(DalnokEngine *engine);
 /* Writes a versioned JSON project atomically (temp file + rename). Media is
  * referenced by path (absolute and relative to the project file). */
 DalnokStatus dalnok_project_save(DalnokEngine *engine, const char *path, char *err, size_t err_len);
+/* Tests and benchmarks (A-13): true makes the mix use plain scalar loops instead of the platform's vector routines,
+ * so the two can be compared. Process-wide; call while nothing renders. */
+void dalnok_debug_set_scalar_mix(bool scalar);
+/* The newest project format version this build reads and writes (engine/api/project-format.json describes it). */
+int32_t dalnok_project_format_version(void);
 /* Write a recovery snapshot without marking the current project saved or copying media.
  * Use a separate recovery path, never the primary project file. [control thread] */
 DalnokStatus dalnok_project_save_snapshot(DalnokEngine *engine, const char *path, char *err, size_t err_len);

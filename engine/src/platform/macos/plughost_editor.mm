@@ -38,9 +38,14 @@ namespace dalnok::hostui { void forwardKey(NSEvent *event); }
 @property(nonatomic) BOOL wanted;        // the user has it open (it may be hidden while Dalnok is in the background)
 @end
 
-namespace dalnok::hostui { void fitEditor(); }
+namespace dalnok::hostui { void fitEditor(); void requestControls(); }
 
 @implementation DalnokEditorController
+// The title bar's Controls button: Dalnok shows the plug-in's controls (its parameter view) instead.
+- (void)showControls:(id)sender {
+    (void)sender;
+    dalnok::hostui::requestControls();
+}
 - (void)editorFrameChanged:(NSNotification *)note {
     (void)note;
     dalnok::hostui::fitEditor();
@@ -88,9 +93,40 @@ NSRect onScreen(NSRect frame) {
     return frame;
 }
 
+// fit() resizes the window, which lays the editor out again, and an editor whose layout then changes its own frame
+// posts a frame change that calls fit() again from inside the first call. AUSampler's view recursed like that until
+// AppKit aborted ("_enumeratingSubviewsCount" overflow). A change that arrives while fitting is handled once, on the next
+// turn of the run loop, and a view that keeps changing size after kMaxFitPasses resizes in quick succession (each within
+// half a second of the last) keeps its window until it settles.
+bool gFitting = false, gFitQueued = false;
+int gFitPasses = 0;
+double gLastFitResize = 0;
+constexpr int kMaxFitPasses = 8;
+
+bool fitOnce();
 void fit() {
+    if (gFitting) {
+        if (!gFitQueued) {
+            gFitQueued = true;
+            dispatch_async(dispatch_get_main_queue(), ^{ gFitQueued = false; fit(); });
+        }
+        return;
+    }
+    const double now = NSProcessInfo.processInfo.systemUptime;
+    if (now - gLastFitResize > 0.5) gFitPasses = 0;
+    if (gFitPasses >= kMaxFitPasses) return;
+    gFitting = true;
+    const bool resizedWindow = fitOnce();
+    gFitting = false;
+    if (resizedWindow) { ++gFitPasses; gLastFitResize = now; }
+    else gFitPasses = 0;
+}
+
+// Returns true when it changed the window's frame.
+bool fitOnce() {
     NSView *view = gEditor.panel.contentView.subviews.firstObject;
-    if (!view) return;
+    if (!view) return false;
+    bool changed = false;
     const bool flexible = (view.autoresizingMask & NSViewWidthSizable) && (view.autoresizingMask & NSViewHeightSizable);
     if (flexible) {
         gEditor.panel.styleMask |= NSWindowStyleMaskResizable;
@@ -104,9 +140,14 @@ void fit() {
             frame.origin.y += frame.size.height - next.size.height; // keep the top edge
             frame.size = next.size;
             [gEditor.panel setFrame:onScreen(frame) display:YES];
+            // A view that autoresizes in one direction only (AUSampler: width) was resized along with the window by the
+            // old mismatch, so every pass made it larger again. It keeps the size it asked for.
+            if (!NSEqualSizes(view.frame.size, size)) [view setFrameSize:size];
+            changed = true;
         }
         if (!NSEqualPoints(view.frame.origin, NSZeroPoint)) view.frameOrigin = NSZeroPoint;
     }
+    return changed;
 }
 
 void resized(void *, int32_t w, int32_t h) {
@@ -158,6 +199,11 @@ void runApp() { [NSApp run]; }
 
 void setKeySink(KeySink sink) { gKeySink = sink; }
 
+// Sent through the key ring as DALNOK_EDITOR_SHOW_CONTROLS (not a key code any keyboard produces).
+void requestControls() {
+    if (gKeySink) gKeySink(0xFFFF, 0, "", "");
+}
+
 void forwardKey(NSEvent *event) {
     if (!gKeySink || (event.type != NSEventTypeKeyDown)) return;
     gKeySink(event.keyCode, event.modifierFlags, event.characters.UTF8String ?: "", event.charactersIgnoringModifiers.UTF8String ?: "");
@@ -183,8 +229,26 @@ bool showEditor(PluginProcessor &plugin, const std::string &title, double x, dou
         panel.hidesOnDeactivate = NO; // the host is never the active application
         panel.floatingPanel = YES;    // above Dalnok's windows, which belong to another process
         panel.becomesKeyOnlyIfNeeded = NO;
+        // Dalnok's windows can be on another Space (or full screen) than the one the host first drew on, and ordering
+        // a window front never moves it between Spaces: it stayed "visible" but off screen. Join every Space instead;
+        // appActivated: already hides it whenever Dalnok is not the active application.
+        panel.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces |
+                                   NSWindowCollectionBehaviorFullScreenAuxiliary;
         panel.delegate = gEditor;
         panel.contentView.wantsLayer = YES;
+        // Title bar: Controls shows Dalnok's view of the plug-in's parameters (the unit's controller and every
+        // parameter), so the plug-in's own window is the only one its unit opens.
+        NSButton *controls = [NSButton buttonWithTitle:@"Controls" target:gEditor action:@selector(showControls:)];
+        controls.bezelStyle = NSBezelStyleRecessed;
+        controls.controlSize = NSControlSizeSmall;
+        controls.toolTip = @"Show the plug-in's controls in Dalnok (every parameter, searchable, automatable)";
+        NSView *holder = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 86, 24)];
+        controls.frame = NSMakeRect(4, 2, 78, 20);
+        [holder addSubview:controls];
+        NSTitlebarAccessoryViewController *accessory = [NSTitlebarAccessoryViewController new];
+        accessory.view = holder;
+        accessory.layoutAttribute = NSLayoutAttributeTrailing;
+        [panel addTitlebarAccessoryViewController:accessory];
         gEditor.panel = panel;
         gEditor.plugin = &plugin;
     }
@@ -192,6 +256,7 @@ bool showEditor(PluginProcessor &plugin, const std::string &title, double x, dou
     if (!gEditor.wanted) {
         int32_t w = 0, h = 0;
         if (!plugin.openEditor((__bridge void *)gEditor.panel.contentView, w, h, resized, nullptr, err)) return false;
+        gFitPasses = 0;
         if (w > 0 && h > 0) [gEditor.panel setContentSize:NSMakeSize(w, h)];
         fit();
         // Editors that settle their size after joining the window (Apple's Audio Units) do so on the next turn of the
@@ -208,6 +273,12 @@ bool showEditor(PluginProcessor &plugin, const std::string &title, double x, dou
         gEditor.wanted = YES;
     }
     [gEditor.panel orderFrontRegardless]; // the host is not active, so plain orderFront could leave it behind
+    // Tests: press the title bar's Controls button once the window is up (DALNOK_TEST_EDITOR_CONTROLS=1).
+    if (getenv("DALNOK_TEST_EDITOR_CONTROLS")) {
+        for (NSTitlebarAccessoryViewController *a in gEditor.panel.titlebarAccessoryViewControllers)
+            for (NSView *v in a.view.subviews)
+                if ([v isKindOfClass:NSButton.class]) dispatch_async(dispatch_get_main_queue(), ^{ [(NSButton *)v performClick:nil]; });
+    }
     if (NSApp.active) [gEditor hostBecameActive:nil];
     width = static_cast<int32_t>(gEditor.panel.contentView.frame.size.width);
     height = static_cast<int32_t>(gEditor.panel.contentView.frame.size.height);

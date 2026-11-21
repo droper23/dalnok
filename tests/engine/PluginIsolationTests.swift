@@ -87,6 +87,8 @@ struct PluginIsolation {
         let slot = dalnok_plugin_add(e, t, testVst3, gainClass, &err, 256)
         unsetenv("DALNOK_TEST_PROCESS_FAILURE")
         #expect(slot != 0, "\(cstr(err))")
+        let saved = tempDir().appendingPathComponent("crash-\(UUID().uuidString).dalnok").path
+        #expect(dalnok_project_save(e, saved, nil, 0) == DALNOK_OK && !dalnok_project_dirty(e))
         dalnok_transport_play(e)
         let worst = pumpLive(e, blocks: 40)
         #expect(worst < 50, "the audio path never stalls on the dead plug-in (worst block \(worst) ms)")
@@ -94,6 +96,7 @@ struct PluginIsolation {
         while info(e, t).loaded && waited < 200 { dalnok_engine_collect_garbage(e); usleep(5_000); waited += 1 }
         let failed = info(e, t)
         #expect(!failed.loaded && name(failed.error).contains("crashed"), "reported: \(name(failed.error))")
+        #expect(!dalnok_project_dirty(e), "a crash is not an edit: the saved project stays clean")
         #expect(dalnok_track_count(e) == 1 && dalnok_track_plugin_count(e, t) == 1, "the project is intact")
         // While failed, the effect passes the dry signal through.
         let dry = renderStereo(e, 4_800)
@@ -172,6 +175,36 @@ struct PluginIsolation {
         p.standardOutput = out
         try? p.run(); p.waitUntilExit()
         return String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self).split(separator: "\n").count
+    }
+
+    /// The start request carries the saved state. With states of several MB and hosts busy initializing, sending it
+    /// blocked the caller for the whole transfer (1.2 s on a real project), because macOS ignores MSG_DONTWAIT on the
+    /// socket pair. Activation calls must stay short with 4 MB states, and the states must arrive intact.
+    @Test func largeStatesDoNotBlockActivation() throws {
+        setenv("DALNOK_TEST_STATE_PAD", "4000000", 1); defer { unsetenv("DALNOK_TEST_STATE_PAD") }
+        let project = slowProject()
+        setenv("DALNOK_TEST_INIT_FAILURE", "slow", 1); setenv("DALNOK_TEST_INIT_SLOW_MS", "800", 1)
+        defer { unsetenv("DALNOK_TEST_INIT_FAILURE"); unsetenv("DALNOK_TEST_INIT_SLOW_MS") }
+        let e = openDeferred(project.path); defer { dalnok_engine_destroy(e) }
+        let t = dalnok_track_at(e, 0)
+        var worstCall = 0.0, calls = 0
+        let deadline = Date().addingTimeInterval(20)
+        while Date() < deadline {
+            let t0 = DispatchTime.now().uptimeNanoseconds
+            let left = dalnok_plugins_activate_next(e, nil, nil)
+            worstCall = max(worstCall, Double(DispatchTime.now().uptimeNanoseconds - t0) / 1e6)
+            calls += 1
+            if left <= 0 { break }
+            usleep(2_000)
+        }
+        print(String(format: "BIGSTATE 3 × 4 MB isolated: worst activate call %.2f ms over %d calls", worstCall, calls))
+        #expect(worstCall < 50, "sending a large state never blocks the caller (worst \(worstCall) ms)")
+        for i: Int32 in 0..<3 {
+            let s = info(e, t, i)
+            #expect(s.loaded && s.isolated, "slot \(i): \(name(s.error))")
+        }
+        let wet = renderStereo(e, 4_800).0
+        #expect(zip(wet, project.wet).allSatisfy { abs($0 - $1) < 1e-6 }, "each host restored its state (gain 0.5)")
     }
 
     /// Every slot's initialization sleeps 1.5 s in its host. Activation calls never block (each returns in well under a
@@ -270,12 +303,12 @@ struct PluginIsolation {
     // MARK: Editors in the host's window (ADR-0015)
 
     /// The window server's record of a window: owner process and bounds (no screen-recording permission needed).
-    func windowServerEntry(_ number: Int64) -> (pid: Int32, bounds: CGRect)? {
+    func windowServerEntry(_ number: Int64) -> (pid: Int32, bounds: CGRect, onScreen: Bool)? {
         let list = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] ?? []
         guard let w = list.first(where: { ($0[kCGWindowNumber as String] as? Int64) == number }),
               let pid = w[kCGWindowOwnerPID as String] as? Int32,
               let b = w[kCGWindowBounds as String] as? NSDictionary, let rect = CGRect(dictionaryRepresentation: b) else { return nil }
-        return (pid, rect)
+        return (pid, rect, w[kCGWindowIsOnscreen as String] as? Bool == true)
     }
 
     /// Mean colour and spread of a PNG's pixels (0…1).
@@ -326,12 +359,18 @@ struct PluginIsolation {
         #expect(abs(w.x - 120) < 1 && abs(w.y + w.height - 700) < 1, "placed with its top-left where asked")
         #expect(w.level == Int64(NSWindow.Level.floating.rawValue), "floats above Dalnok's windows")
         #expect(w.process_id > 0 && w.process_id != getpid())
-        let ws = windowServerEntry(w.window_number)
+        var ws = windowServerEntry(w.window_number)
+        // A panel that joins every Space is briefly reported mid-way through its appear animation (476 × 350).
+        for _ in 0..<20 where ws?.bounds.width != 480 { usleep(50_000); ws = windowServerEntry(w.window_number) }
         #expect(ws?.pid == w.process_id, "the window server shows it owned by the host: \(String(describing: ws))")
         // The lock screen shows every window scaled to 90 % about the screen's centre, so bounds only hold unlocked.
         let locked = (CGSessionCopyCurrentDictionary() as? [String: Any])?["CGSSessionScreenIsLocked"] as? Bool == true
         if locked { print("SKIP  window-server bounds of the editor (the screen is locked)") }
-        else { #expect(ws?.bounds.width == 480, "the window server shows the resized window: \(String(describing: ws))") }
+        else {
+            #expect(ws?.bounds.width == 480, "the window server shows the resized window: \(String(describing: ws))")
+            // A panel left on another Space reports visible but is not on screen; it must join the active Space.
+            #expect(ws?.onScreen == true, "the window server shows the editor on the current Space")
+        }
         let png = tempDir().appendingPathComponent("vst3-editor-\(UUID().uuidString).png").path
         #expect(dalnok_plugin_editor_snapshot(e, slot, png) == DALNOK_OK)
         let p = pixels(png)
@@ -380,6 +419,163 @@ struct PluginIsolation {
         #expect(a.0.contains { $0 != 0 })
         dalnok_plugin_close_editor(e, slot)
         #expect(!editorWindow(e, slot).open)
+    }
+
+    /// The plug-in's own window has a Controls button in its title bar (owner: one button opens the plug-in's GUI,
+    /// and its title bar offers Dalnok's controls). Pressing it in the host reaches Dalnok as
+    /// DALNOK_EDITOR_SHOW_CONTROLS for that slot, through the editor key ring.
+    @Test func editorTitleBarControlsReachesDalnok() throws {
+        setenv("DALNOK_TEST_EDITOR", "1", 1); setenv("DALNOK_TEST_EDITOR_CONTROLS", "1", 1)
+        defer { unsetenv("DALNOK_TEST_EDITOR"); unsetenv("DALNOK_TEST_EDITOR_CONTROLS") }
+        let (e, t) = audioSession(); defer { dalnok_engine_destroy(e) }
+        dalnok_plugins_set_host(e, isolationHost)
+        let slot = dalnok_plugin_add(e, t, testVst3, gainClass, nil, 0)
+        #expect(slot != 0 && info(e, t).isolated)
+        var err = [CChar](repeating: 0, count: 256)
+        #expect(dalnok_plugin_show_editor_window(e, slot, "Audio — Dalnok Test Gain", .nan, .nan, &err, 256) == DALNOK_OK, "\(cstr(err))")
+        var k = DalnokEditorKey(), got = false
+        let deadline = Date().addingTimeInterval(3)
+        while !got && Date() < deadline {
+            while dalnok_plugin_take_editor_key(e, &k) { if k.key_code == UInt16(DALNOK_EDITOR_SHOW_CONTROLS) { got = true } }
+            usleep(20_000)
+        }
+        #expect(got && k.slot == slot, "the title bar's Controls arrives as DALNOK_EDITOR_SHOW_CONTROLS for slot \(slot) (got \(got), slot \(k.slot))")
+        dalnok_plugin_close_editor(e, slot)
+    }
+
+    /// AUSampler's editor changes its own frame while the window lays it out. The host's fit-to-editor pass re-entered
+    /// itself through the frame-change notification until AppKit aborted the host (found with real input on the
+    /// owner's library). The host must survive, show the editor, and settle on one size.
+    @Test func isolatedAuSamplerEditorDoesNotRecurseInLayout() throws {
+        let e = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(e) }
+        let t = dalnok_track_add_instrument(e, "Sampler")
+        dalnok_plugins_set_host(e, isolationHost)
+        var err = [CChar](repeating: 0, count: 256)
+        let slot = dalnok_plugin_add(e, t, "au:aumu:samp:appl", nil, &err, 256)
+        #expect(slot != 0 && info(e, t).isolated, "\(cstr(err))")
+        #expect(dalnok_plugin_show_editor_window(e, slot, "Sampler — AUSampler", .nan, .nan, &err, 256) == DALNOK_OK, "\(cstr(err))")
+        usleep(1_500_000) // the editor lays itself out over the host's next run-loop turns
+        let w1 = editorWindow(e, slot)
+        print(String(format: "EDITOR ausampler: content %.0f × %.0f, frame %.0f × %.0f", w1.content_width, w1.content_height, w1.width, w1.height))
+        #expect(info(e, t).loaded, "the host survived opening the editor")
+        #expect(w1.open && w1.visible && w1.content_width >= 200 && w1.content_height >= 100)
+        #expect(w1.content_width < 1_600, "keeps the width it asked for instead of growing with every pass")
+        usleep(500_000)
+        let w2 = editorWindow(e, slot)
+        #expect(abs(w2.width - w1.width) < 1 && abs(w2.height - w1.height) < 1, "settled on one size")
+        dalnok_plugin_close_editor(e, slot)
+        #expect(!editorWindow(e, slot).open && info(e, t).loaded)
+    }
+
+    // MARK: Isolated plug-ins run at the same time (ADR-0014, default-on)
+
+    /// Four tracks, each with an isolated plug-in that takes 2 ms per 512-frame block. One after another that is 8 ms,
+    /// more than the callback's 4.27 ms budget, so most blocks used to pass dry. Started together, their hosts work in
+    /// parallel: every block is answered in time and the audio is the plug-ins' (gain 0.5), with nothing skipped.
+    @Test func isolatedPluginsOnDifferentTracksProcessInParallel() throws {
+        let e = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(e) }
+        var x = [Float](repeating: 0, count: 48_000)
+        for i in 0..<x.count { x[i] = Float(0.5 * sin(Double(i) * 2 * .pi * 440 / 48_000)) }
+        let m = makeMedia([x]); defer { dalnok_media_release(m) }
+        let id = dalnok_pool_add(e, m, "")
+        dalnok_plugins_set_host(e, isolationHost)
+        setenv("DALNOK_TEST_PROCESS_SLOW_US", "2000", 1); defer { unsetenv("DALNOK_TEST_PROCESS_SLOW_US") }
+        var slots: [Int32] = []
+        for k in 0..<4 {
+            let t = dalnok_track_add(e, "T\(k)")
+            DalnokEngine.dalnok_clip_add(e, t, id, 0, 0, 0)
+            let slot = dalnok_plugin_add(e, t, testVst3, gainClass, nil, 0)
+            #expect(slot != 0 && info(e, t).isolated)
+            slots.append(slot)
+        }
+        dalnok_transport_play(e)
+        _ = pumpLive(e, blocks: 8) // warm up (hosts paging in)
+        func stats() -> (missed: UInt64, skips: UInt64) {
+            var missed: UInt64 = 0, skips: UInt64 = 0
+            for s in slots {
+                var st = DalnokPluginIsolationStats()
+                _ = dalnok_plugin_isolation_stats(e, s, &st)
+                missed += st.missed_blocks; skips += st.budget_skips
+            }
+            return (missed, skips)
+        }
+        let before = stats()
+        var l = [Float](repeating: 0, count: 512), r = l, worst = 0.0, peak: Float = 0
+        for _ in 0..<60 {
+            let t0 = DispatchTime.now().uptimeNanoseconds
+            _ = dalnok_engine_pump(e, &l, &r, 512)
+            worst = max(worst, Double(DispatchTime.now().uptimeNanoseconds - t0) / 1e6)
+            peak = max(peak, l.map(abs).max() ?? 0)
+            usleep(4_000) // leave the hosts idle between blocks, as a device period would
+        }
+        let after = stats()
+        print(String(format: "PARALLEL 4 x 2 ms isolated: worst callback %.2f ms (budget 4.27), missed %llu, skips %llu, peak %.3f",
+                     worst, after.missed - before.missed, after.skips - before.skips, peak))
+        #expect(after.skips - before.skips <= 2 && after.missed - before.missed <= 2,
+                "4 x 2 ms fit one 4.27 ms budget when run together (missed \(after.missed - before.missed), skips \(after.skips - before.skips))")
+        #expect(worst < 4.27 + 1.5, "the callback stays within its budget (worst \(worst) ms)")
+        // Four mono tracks at -3 dB pan law centre, through gain 0.5 each: about 4 x 0.5 x 0.5 = 1.0 peak.
+        #expect(abs(peak - 1.0) < 0.05, "every block carries the plug-ins' output (peak \(peak))")
+    }
+
+    /// Some plug-ins do one-off work a moment of audio after they load (an instrument's scripts finishing start-up:
+    /// about 36 ms in one block, half a second in). Each isolated process pays it alone, and on the first play it was a
+    /// burst of missed blocks. The host now processes 0.75 s of silence before reporting ready, so that work is done
+    /// before the first real block. Without the warm-up the same plug-in misses blocks; with it, none.
+    @Test func hostWarmUpAbsorbsOneOffStartUpWork() throws {
+        setenv("DALNOK_TEST_SLOW_ONCE_AT", "12000", 1); defer { unsetenv("DALNOK_TEST_SLOW_ONCE_AT") } // 0.25 s in
+        setenv("DALNOK_TEST_SLOW_ONCE_US", "40000", 1); defer { unsetenv("DALNOK_TEST_SLOW_ONCE_US") }
+        func missedOnFirstPlay(warmUpMs: String?) -> (missed: UInt64, loadMs: Double) {
+            if let w = warmUpMs { setenv("DALNOK_PLUGHOST_WARMUP_MS", w, 1) } else { unsetenv("DALNOK_PLUGHOST_WARMUP_MS") }
+            defer { unsetenv("DALNOK_PLUGHOST_WARMUP_MS") }
+            let (e, t) = audioSession(); defer { dalnok_engine_destroy(e) }
+            dalnok_plugins_set_host(e, isolationHost)
+            let t0 = DispatchTime.now().uptimeNanoseconds
+            let slot = dalnok_plugin_add(e, t, testVst3, gainClass, nil, 0)
+            let loadMs = Double(DispatchTime.now().uptimeNanoseconds - t0) / 1e6
+            #expect(slot != 0 && info(e, t).isolated)
+            dalnok_transport_play(e)
+            var l = [Float](repeating: 0, count: 512), r = l
+            for _ in 0..<60 { _ = dalnok_engine_pump(e, &l, &r, 512); usleep(10_000) } // 0.64 s at the device's pace
+            var st = DalnokPluginIsolationStats()
+            _ = dalnok_plugin_isolation_stats(e, slot, &st)
+            return (st.missed_blocks + st.budget_skips, loadMs)
+        }
+        let cold = missedOnFirstPlay(warmUpMs: "0"), warm = missedOnFirstPlay(warmUpMs: nil)
+        print(String(format: "WARM-UP: without %llu missed (load %.0f ms), with %llu missed (load %.0f ms)", cold.missed, cold.loadMs, warm.missed, warm.loadMs))
+        #expect(cold.missed >= 2, "without the warm-up the 40 ms of start-up work misses blocks (\(cold.missed))")
+        #expect(warm.missed == 0, "with it, the first play misses nothing (\(warm.missed))")
+        #expect(warm.loadMs < cold.loadMs + 400, "the warm-up adds little to loading (\(warm.loadMs) vs \(cold.loadMs) ms)")
+    }
+
+    /// Polling plug-ins for editor edits (every display frame in the app) asked each isolated host over its socket and
+    /// waited for the answer, so a host whose main thread was busy stalled the caller (60 ms spikes on real projects).
+    /// The count now comes from the shared block: polling never waits on a host.
+    @Test func pollingEditsNeverWaitsOnABusyHost() throws {
+        setenv("DALNOK_TEST_MAIN_BUSY", "1", 1); defer { unsetenv("DALNOK_TEST_MAIN_BUSY") }
+        let (e, t) = audioSession(); defer { dalnok_engine_destroy(e) }
+        dalnok_plugins_set_host(e, isolationHost)
+        let slot = dalnok_plugin_add(e, t, testVst3, gainClass, nil, 0)
+        #expect(slot != 0 && info(e, t).isolated)
+        var worst = 0.0
+        for _ in 0..<20 {
+            let t0 = DispatchTime.now().uptimeNanoseconds
+            dalnok_engine_collect_garbage(e)
+            worst = max(worst, Double(DispatchTime.now().uptimeNanoseconds - t0) / 1e6)
+            usleep(5_000)
+        }
+        print(String(format: "EDITPOLL busy host: worst collect %.2f ms", worst))
+        #expect(worst < 5, "polling for edits does not wait on the busy host (worst \(worst) ms; its main thread sleeps 200 ms at a time)")
+        // Every edit compiles a snapshot, which reads each plug-in's latency for delay compensation. That too comes
+        // from the shared block now: it asked the host and waited (16-52 ms per plug-in on real projects).
+        var worstEdit = 0.0
+        for k in 0..<10 {
+            let t0 = DispatchTime.now().uptimeNanoseconds
+            _ = dalnok_track_add(e, "Edit \(k)")
+            worstEdit = max(worstEdit, Double(DispatchTime.now().uptimeNanoseconds - t0) / 1e6)
+        }
+        print(String(format: "EDITPOLL busy host: worst structural edit %.2f ms", worstEdit))
+        #expect(worstEdit < 20, "an edit does not wait on the busy host (worst \(worstEdit) ms)")
     }
 
     // MARK: One deadline budget per callback (A-01 stage 2)

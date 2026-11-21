@@ -4,58 +4,35 @@
 import AppKit
 import DalnokEngine
 
+/// A clip as the views see it: its C API fields (`ClipFields`, generated from engine/api/views.def, reached as
+/// `clip.start`, `clip.fadeIn`, …) plus what the app adds.
+@dynamicMemberLookup
 struct ClipView {
-    let id: DalnokClipId
-    let track: DalnokTrackId
-    let media: DalnokMediaId
-    let start: Int64
-    let offset: Int64
-    let length: Int64
-    let mediaFrames: Int64
-    let offline: Bool
-    let fadeIn: Int64
-    let fadeOut: Int64
-    let fadeCurve: Int32
-    let gainDb: Float
-    let rate: Double
-    let pitch: Float
-    let preservePitch: Bool
-    let processing: Bool
-    let name: String
+    var fields: ClipFields
     var notes: [DalnokNote] = [] // MIDI clips only
-    var isMidi = false
-    var muted = false
-    var folder: Int32 = 0 // take folder (comp piece when shown in the arrangement)
-    var slot: Int32 = -1  // clip launcher slot (not on the timeline)
-    var follow: Int32 = 0, followLoops: Int32 = 1
-    var end: Int64 { start + length }
-    var isStretched: Bool { abs(rate - 1) > 1e-9 || pitch != 0 }
-    var sourceSpan: Int64 { Int64((Double(length) * rate).rounded()) }
+    subscript<T>(dynamicMember key: KeyPath<ClipFields, T>) -> T { fields[keyPath: key] }
+    var end: Int64 { fields.start + fields.length }
+    var isStretched: Bool { abs(fields.rate - 1) > 1e-9 || fields.pitch != 0 }
+    var sourceSpan: Int64 { Int64((Double(fields.length) * fields.rate).rounded()) }
 }
 
+/// A track as the views see it: its C API fields (`TrackFields`, generated) plus what the app derives and adds.
+/// Scalar parameters (gain, pan, mute, solo) are written in place by the parameter-only refresh.
+@dynamicMemberLookup
 struct TrackView {
-    let id: DalnokTrackId
-    let name: String
+    var fields: TrackFields
+    subscript<T>(dynamicMember key: WritableKeyPath<TrackFields, T>) -> T {
+        get { fields[keyPath: key] }
+        set { fields[keyPath: key] = newValue }
+    }
     let color: NSColor
-    let customColor: Int32
-    var gainDb: Float
-    var pan: Float
-    var muted: Bool
-    var solo: Bool
     let clips: [ClipView] // z-order
-    var isInstrument = false
-    var armed = false
-    var inputChannel: Int32 = 0
-    struct Plugin { let id: Int32; let name: String; let vendor: String; let instrument: Bool; let loaded: Bool; let error: String; let latency: UInt32; let bypassed: Bool; var path = ""; var loading = false; var isolated = false }
+    var isInstrument: Bool { fields.kind == Int32(DALNOK_TRACK_INSTRUMENT.rawValue) }
+    var isBus: Bool { fields.kind == Int32(DALNOK_TRACK_BUS.rawValue) }
+    struct Plugin { let id: Int32; let name: String; let vendor: String; let instrument: Bool; let loaded: Bool; let error: String; let latency: UInt32; let bypassed: Bool; var path = ""; var loading = false; var isolated = false; var folded = false }
     var plugins: [Plugin] = []
-    var isBus = false
-    var output: DalnokTrackId = 0 // 0 = master
-    var stack: DalnokTrackId = 0  // summing stack this track is in
-    var isStack = false
-    var collapsed = false
-    var hidden = false // Track ▸ Hide Track (still plays)
     /// Lane height in points set on this track (0: the arrangement's default, Theme.trackHeight).
-    var height: CGFloat = 0
+    var height: CGFloat { CGFloat(fields.laneHeight) }
     var sends: [DalnokSend] = []
     var volumeAuto: [DalnokAutoPoint] = [], panAuto: [DalnokAutoPoint] = []
     func automation(_ target: Int32) -> [DalnokAutoPoint] { target == 1 ? panAuto : volumeAuto }
@@ -151,24 +128,14 @@ final class Session {
             guard dalnok_track_info(h, tid, &ti) == DALNOK_OK else { continue }
             reread.insert(tid)
             var clips: [ClipView] = [], takes: [ClipView] = [], slots: [ClipView] = []
-            for k in 0..<ti.clip_count {
-                clipReads += 1
-                var ci = DalnokClipInfo()
-                guard dalnok_clip_info(h, dalnok_track_clip_at(h, tid, k), &ci) == DALNOK_OK else { continue }
-                var clip = ClipView(id: ci.id, track: ci.track, media: ci.media, start: ci.start, offset: ci.offset,
-                                    length: ci.length, mediaFrames: ci.media_frames, offline: ci.offline,
-                                    fadeIn: ci.fade_in, fadeOut: ci.fade_out, fadeCurve: ci.fade_curve,
-                                    gainDb: ci.gain_db, rate: ci.rate, pitch: ci.pitch, preservePitch: ci.preserve_pitch,
-                                    processing: ci.processing, name: fixedString(ci.name))
-                clip.muted = dalnok_clip_muted(h, ci.id)
-                clip.folder = ci.folder
-                clip.slot = ci.slot
-                clip.follow = ci.follow
-                clip.followLoops = ci.follow_loops
+            var infos = [DalnokClipInfo](repeating: DalnokClipInfo(), count: Int(ti.clip_count))
+            let read = Int(max(0, min(dalnok_track_clips(h, tid, &infos, ti.clip_count), ti.clip_count))) // one pass (A-15)
+            clipReads += read
+            for ci in infos.prefix(read) {
+                var clip = ClipView(fields: ClipFields(ci))
                 if ci.alt { takeClips[ci.id] = clip; takes.append(clip); continue } // takes live in their folder, not the arrangement
                 if ci.slot >= 0 { slotClips.append(clip); slots.append(clip); continue } // launcher slots, beside the arrangement
                 if ci.midi {
-                    clip.isMidi = true
                     clip.notes = [DalnokNote](repeating: DalnokNote(), count: Int(ci.note_count))
                     _ = dalnok_midi_clip_notes(h, ci.id, &clip.notes, ci.note_count)
                 }
@@ -180,24 +147,19 @@ final class Session {
                 guard dalnok_track_plugin_info(h, tid, k, &pi) == DALNOK_OK else { continue }
                 plugins.append(.init(id: pi.id, name: fixedString(pi.name), vendor: fixedString(pi.vendor), instrument: pi.instrument, loaded: pi.loaded,
                                      error: pi.loading ? "Loading…" : fixedString(pi.error), latency: pi.latency, bypassed: dalnok_plugin_bypassed(h, tid, pi.id),
-                                     path: fixedString(pi.path), loading: pi.loading, isolated: pi.isolated))
+                                     path: fixedString(pi.path), loading: pi.loading, isolated: pi.isolated,
+                                     folded: dalnok_plugin_folded(h, tid, pi.id)))
             }
             var sends = [DalnokSend](repeating: DalnokSend(), count: 16)
             let sendCount = Int(dalnok_track_sends(h, tid, &sends, 16))
-            out.append(TrackView(id: tid, name: fixedString(ti.name), color: Theme.trackColor(step: Int(ti.color), custom: ti.custom_color),
-                                 customColor: ti.custom_color,
-                                 gainDb: ti.gain_db, pan: ti.pan, muted: ti.muted, solo: ti.solo, clips: clips,
-                                 isInstrument: ti.kind == Int32(DALNOK_TRACK_INSTRUMENT.rawValue), armed: ti.armed,
-                                 inputChannel: ti.input_channel, plugins: plugins,
-                                 isBus: ti.kind == Int32(DALNOK_TRACK_BUS.rawValue), output: dalnok_track_output(h, tid),
-                                 stack: ti.stack, isStack: ti.is_stack, collapsed: ti.collapsed,
-                                 sends: Array(sends.prefix(min(sendCount, 16))),
+            out.append(TrackView(fields: TrackFields(ti), color: Theme.trackColor(step: Int(ti.color), custom: ti.custom_color),
+                                 clips: clips, plugins: plugins, sends: Array(sends.prefix(min(sendCount, 16))),
                                  volumeAuto: automationPoints(tid, 0), panAuto: automationPoints(tid, 1)))
             cache[tid] = CachedTrack(revision: trackRevision, style: style, view: out[out.count - 1], takes: takes, slots: slots)
         }
         trackCache = cache // tracks that are gone drop out
-        for k in out.indices { out[k].hidden = dalnok_track_hidden(h, out[k].id) }
-        for k in out.indices { var ti = DalnokTrackInfo(); dalnok_track_info(h, out[k].id, &ti); out[k].height = CGFloat(ti.height) }
+        // Hidden and lane height come with the track's fields: changing either moves the track's revision (A-15
+        // removed a second dalnok_track_info per track per refresh, each a scan of every clip).
         allTracks = out
         // Tracks inside a closed stack (at any depth) are hidden from the arrangement, headers and mixer.
         let byId = Dictionary(uniqueKeysWithValues: out.map { ($0.id, $0) })
@@ -393,6 +355,9 @@ final class Session {
         refresh()
         return ok
     }
+    /// Folding (the unit shown as a narrow strip): one undo step.
+    func setPluginFolded(_ t: DalnokTrackId, _ slot: Int32, _ folded: Bool) { dalnok_plugin_set_folded(h, t, slot, folded); refresh() }
+    func pluginFolded(_ t: DalnokTrackId, _ slot: Int32) -> Bool { dalnok_plugin_folded(h, t, slot) }
     /// Bypass (footswitch / power button): one undo step.
     func setPluginBypassed(_ t: DalnokTrackId, _ slot: Int32, _ bypassed: Bool) { dalnok_plugin_set_bypassed(h, t, slot, bypassed); refresh() }
     func setPluginControls(_ t: DalnokTrackId, _ slot: Int32, _ ids: [UInt32]) {

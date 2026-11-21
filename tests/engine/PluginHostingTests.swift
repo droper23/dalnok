@@ -115,14 +115,33 @@ struct PluginHosting {
         #expect(renderStereo(e, 2_000).0[1_200] == 0.5)
         dalnok_plugin_remove(e, t, gain)
         // Live MIDI reaches the plugin instrument while stopped, starting at the next block.
+        // Live blocks have a deadline. An isolated instrument that misses it (a loaded machine: this test failed once
+        // with the screen locked at load 10-14) plays that block silent and the miss is counted; that is the designed
+        // behaviour, not a timing error, so a missed block is checked as such and the note is expected on the next
+        // block that is answered. In-process, and isolated on time, the check is exact.
         var lb = [Float](repeating: 0, count: 512), rb = lb
-        dalnok_engine_pump(e, &lb, &rb, 512)
+        let slot = { () -> Int32 in var i = DalnokPluginSlotInfo(); _ = dalnok_track_plugin_info(e, t, 0, &i); return i.id }()
+        func misses() -> UInt64 {
+            var st = DalnokPluginIsolationStats()
+            return dalnok_plugin_isolation_stats(e, slot, &st) == DALNOK_OK ? st.missed_blocks + st.budget_skips : 0
+        }
+        func pumpAnswered(_ what: String) {
+            for _ in 0..<20 {
+                let before = misses()
+                dalnok_engine_pump(e, &lb, &rb, 512)
+                if misses() == before { return }
+                #expect(lb.allSatisfy { $0 == 0 }, "\(what): a block the isolated instrument missed is silent")
+                usleep(10_667) // the next block comes one device period later, as from a device
+            }
+            Issue.record("\(what): the instrument missed 20 blocks in a row")
+        }
+        pumpAnswered("before the note")
         #expect(lb.allSatisfy { $0 == 0 })
         dalnok_midi_inject(e, 0x90, 67, 127)
-        dalnok_engine_pump(e, &lb, &rb, 512)
+        pumpAnswered("note-on")
         #expect(lb.allSatisfy { $0 == 1 }, "live note-on applies from the start of the next block")
         dalnok_midi_inject(e, 0x80, 67, 0)
-        dalnok_engine_pump(e, &lb, &rb, 512)
+        pumpAnswered("note-off")
         #expect(lb.allSatisfy { $0 == 0 })
         // Instrument plugins only go on instrument tracks.
         let audio = dalnok_track_add(e, "Audio")
@@ -297,6 +316,46 @@ struct PluginHosting {
         #expect(zip(two.0, one.0).allSatisfy { abs($0 - 2 * $1) < 1e-6 }, "both tracks process through gain 0.25")
         dalnok_plugin_set_state(e, info.id, floatState(1))
         #expect(renderStereo(e, 4_800).0 != two.0, "changing the copy's plug-in leaves the original alone")
+    }
+
+    /// A VST3 that reports a value through performEdit from its own thread a moment after loading, with no editor
+    /// open (seen on the owner's library: a sampler finishing its background load), must not make the project look
+    /// edited. An edit made in its open editor still does (`isolatedVst3EditorOpensInTheHostsWindow`, editor tests).
+    @Test func performEditWithoutAnOpenEditorIsNotAProjectChange() throws {
+        let (e, t) = audioSession(); defer { dalnok_engine_destroy(e) }
+        let slot = dalnok_plugin_add(e, t, testVst3, gainClass, nil, 0)
+        #expect(slot != 0)
+        dalnok_plugin_set_state(e, slot, floatState(0.25))
+        let path = tempDir().appendingPathComponent("late-edit-\(UUID().uuidString).dalnok").path
+        #expect(dalnok_project_save(e, path, nil, 0) == DALNOK_OK && !dalnok_project_dirty(e))
+        setenv("DALNOK_TEST_LATE_EDIT", "300", 1); defer { unsetenv("DALNOK_TEST_LATE_EDIT") }
+        let a = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(a) }
+        var missing: Int32 = -1
+        #expect(dalnok_project_load(a, path, &missing, nil, 0) == DALNOK_OK && missing == 0)
+        var l = [Float](repeating: 0, count: 512), r = l
+        #expect(!dalnok_project_dirty(a), "clean right after opening")
+        let until = Date().addingTimeInterval(0.8) // the fixture reports 300 ms after loading
+        while Date() < until { _ = dalnok_engine_pump(a, &l, &r, 512); dalnok_engine_collect_garbage(a); usleep(10_000) }
+        #expect(!dalnok_project_dirty(a), "a value the plug-in reported on its own, editor closed, is not an edit")
+    }
+
+    /// The same for IComponentHandler2::setDirty: a plug-in that finishes loading in the background more than 2 s after
+    /// opening (14 plug-ins loading in-process) and reports its now different state, with no editor open.
+    @Test func setDirtyWithoutAnOpenEditorIsNotAProjectChange() throws {
+        let (e, t) = audioSession(); defer { dalnok_engine_destroy(e) }
+        let slot = dalnok_plugin_add(e, t, testVst3, gainClass, nil, 0)
+        #expect(slot != 0)
+        dalnok_plugin_set_state(e, slot, floatState(0.25))
+        let path = tempDir().appendingPathComponent("late-dirty-\(UUID().uuidString).dalnok").path
+        #expect(dalnok_project_save(e, path, nil, 0) == DALNOK_OK && !dalnok_project_dirty(e))
+        setenv("DALNOK_TEST_LATE_DIRTY", "2300", 1); defer { unsetenv("DALNOK_TEST_LATE_DIRTY") }
+        let a = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(a) }
+        var missing: Int32 = -1
+        #expect(dalnok_project_load(a, path, &missing, nil, 0) == DALNOK_OK && missing == 0)
+        var l = [Float](repeating: 0, count: 512), r = l
+        let until = Date().addingTimeInterval(2.8) // reported 2.3 s after loading, after the 2 s settling window
+        while Date() < until { _ = dalnok_engine_pump(a, &l, &r, 512); dalnok_engine_collect_garbage(a); usleep(10_000) }
+        #expect(!dalnok_project_dirty(a), "a state the plug-in changed on its own, editor closed, is not an edit")
     }
 
     /// A VST3 that reports its restored values through performEdit while loading (common in commercial plug-ins)

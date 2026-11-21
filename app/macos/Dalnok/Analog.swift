@@ -6,7 +6,6 @@ import QuartzCore
 
 @MainActor
 enum Analog {
-    static var on: Bool { Theme.activeStyle == .warmAnalog }
 
     // MARK: Surfaces
 

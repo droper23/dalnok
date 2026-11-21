@@ -10,6 +10,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Toolchain
         run: swift --version && xcodebuild -version
+      - name: Generated model views are current (engine/api/views.def)
+        run: python3 scripts/gen-api.py --check
       - name: Build
         run: swift build
       - name: Engine tests
@@ -28,26 +30,55 @@ jobs:
         run: scripts/ci/plugin-scan.sh
       - name: Plugin hosting (test VST3)
         run: scripts/ci/plugin-host.sh
+      # No audio device or GUI session on CI: live smoke test and app self-test run locally (scripts/check.sh).
+
+  # Jobs run in parallel, so CI takes as long as the longest one. Each build is cold (checkout resets file times,
+  # so a restored .build would rebuild anyway); splitting the release build and the two sanitizers into their
+  # own jobs took the wall time from about 9 minutes (ASan then TSan in one job) to about the longest single one (A-19).
+  release-build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
       - name: Release build
         run: swift build -c release
-      # No audio device or GUI session on CI: live smoke test and app self-test run locally (scripts/check.sh).
 
   sanitizers:
     # Memory and threading errors can pass silently in normal runs (one did: a test-only
     # use-after-free that segfaulted only on CI). ASan + TSan make them deterministic failures.
     runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        sanitizer: [address, thread]
+    name: sanitizers (${{ matrix.sanitizer }})
     steps:
       - uses: actions/checkout@v4
-      - name: Engine tests (AddressSanitizer)
-        run: swift test --sanitize=address
-      - name: Engine tests (ThreadSanitizer)
-        run: swift test --sanitize=thread
-
+      - name: Engine tests (${{ matrix.sanitizer }} sanitizer)
+        run: swift test --sanitize=${{ matrix.sanitizer }}
       - name: Capture buffer (ThreadSanitizer)
+        if: matrix.sanitizer == 'thread'
         run: DALNOK_CAPTURE_TSAN=1 scripts/ci/capture-ring.sh
-
       - name: MIDI parser (ThreadSanitizer)
+        if: matrix.sanitizer == 'thread'
         run: DALNOK_MIDI_TSAN=1 scripts/ci/midi-parser.sh
+
+  selftest:
+    # The app's end-to-end self-test (A-18), at 44.1 kHz so the beat/frame rounding paths run. Hosted runners have
+    # a window server but no audio hardware; informational until it has proven stable there.
+    runs-on: macos-15
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: swift build
+      - name: App self-test (44.1 kHz)
+        run: |
+          work=$(mktemp -d)
+          DALNOK_SAMPLE_RATE=44100 DALNOK_RECOVERY_DIR="$work/recovery" .build/debug/Dalnok \
+            /System/Library/Sounds/Submarine.aiff /System/Library/Sounds/Glass.aiff --selftest "$work/run" > "$work/selftest.log" 2>&1 && status=0 || status=$?
+          grep -E '^FAIL|^SKIP' "$work/selftest.log" || true
+          tail -1 "$work/selftest.log"
+          exit $status
 
   rt-effects:
     # Xcode's clang on hosted runners may predate [[clang::nonblocking]]; use Homebrew LLVM.

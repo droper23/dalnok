@@ -30,8 +30,59 @@ namespace fs = std::filesystem;
 namespace dalnok {
 
 namespace {
-constexpr int kFormatVersion = 13; // 13: built-in plug-ins; 12: clip mute; 11: markers; 10: plug-in bypass; 3: shared MIDI sources; 4: tempo/meter maps; 5: routing; 6: automation; 7: take folders; 8: plug-in automation; 9: launcher slots
+constexpr int kFormatVersion = 13;
 constexpr int kConstantTempoVersion = 3; // written when there are no tempo or meter changes, so older builds still open it
+
+// Format history (A-16), one step per version. Loading runs every step from the file's version up to
+// kFormatVersion before the reader sees the document, so the reader only knows the current shape. So far every step
+// only added optional keys whose absence means the earlier behaviour, so none rewrites anything (`apply` is null);
+// a future step that must (a renamed key, a changed unit) gets an `apply`. engine/api/project-format.json lists
+// every key with the version that introduced it, and ProjectFormat tests check saved files against it.
+struct Migration {
+    int to;
+    const char *adds;
+    void (*apply)(json::Value &doc);
+};
+constexpr Migration kMigrations[] = {
+    {2, "instrument tracks, MIDI clips, plug-ins, tempo and meter", nullptr},
+    {3, "shared MIDI note sources (notes crossing split clips)", nullptr},
+    {4, "tempo and meter maps (more than one point)", nullptr},
+    {5, "buses, outputs and sends", nullptr},
+    {6, "volume and pan automation", nullptr},
+    {7, "take folders and summing stacks", nullptr},
+    {8, "plug-in automation", nullptr},
+    {9, "clip launcher slots, follow actions and sidechains", nullptr},
+    {10, "plug-in bypass", nullptr},
+    {11, "markers (and hidden tracks)", nullptr},
+    {12, "clip mute", nullptr},
+    {13, "built-in plug-ins", nullptr},
+};
+constexpr bool migrationsCover() {
+    int v = 1;
+    for (const auto &m : kMigrations) if (m.to != ++v) return false;
+    return v == kFormatVersion;
+}
+static_assert(migrationsCover(), "one migration step per format version, in order, up to kFormatVersion");
+
+} // namespace
+
+int32_t projectFormatVersion() { return kFormatVersion; }
+
+namespace {
+// The document in the current shape: `doc` itself when no step from its version rewrites anything, else `storage`.
+const json::Value *migrate(const json::Value &doc, json::Value &storage, std::string &err) {
+    const json::Value *v = doc.get("version");
+    const double version = v ? (v->isNumber() ? v->number : -1) : 1; // the first files had no version
+    if (!(version >= 0) || version != std::floor(version)) { err = "invalid project version"; return nullptr; }
+    if (version > kFormatVersion) { err = "project was saved by a newer version of Dalnok"; return nullptr; }
+    const json::Value *out = &doc;
+    for (const auto &m : kMigrations) {
+        if (m.to <= version || !m.apply) continue;
+        if (out == &doc) { storage = doc; out = &storage; }
+        m.apply(storage);
+    }
+    return out;
+}
 
 bool readFile(const std::string &path, std::string &out, std::string &err) {
     std::ifstream in(path, std::ios::binary);
@@ -226,6 +277,7 @@ json::Value Engine::describe() const {
                 if (slot.instrument) pv.set("instrument", true);
                 if (slot.sidechain) pv.set("sidechain", slot.sidechain);
                 if (slot.bypassed) pv.set("bypassed", true);
+                if (slot.folded) pv.set("folded", true);
                 if (!slot.controls.empty()) {
                     Value ids = Value::makeArray();
                     for (auto c : slot.controls) ids.push(static_cast<int64_t>(c));
@@ -405,7 +457,12 @@ bool Engine::saveProject(const std::string &path, std::string &err, bool copyMed
     const bool builtin = std::any_of(model_.tracks.begin(), model_.tracks.end(), [](const TrackState &t) {
         return std::any_of(t.plugins.begin(), t.plugins.end(), [](const PluginSlot &p) { return p.format == "dalnok"; });
     });
-    doc.set("version", builtin ? 13 : clipMute ? 12 : !model_.markers.empty() ? 11 : bypass ? 10 : launcher ? 9 : pluginAutomation ? 8 : !model_.folders.empty() ? 7 : automation ? 6 : routing ? 5 : model_.tempo.size() > 1 || model_.meters.size() > 1 ? 4 : kConstantTempoVersion);
+    // Sidechains (9) and the master fader (7) used to fall through to older versions, which would play them wrongly
+    // (found by ProjectFormat's schema check, A-16).
+    bool sidechain = false;
+    for (const auto &t : model_.tracks) for (const auto &p : t.plugins) sidechain = sidechain || p.sidechain;
+    const bool masterGain = model_.masterGainDb != 0;
+    doc.set("version", builtin ? 13 : clipMute ? 12 : !model_.markers.empty() ? 11 : bypass ? 10 : launcher || sidechain ? 9 : pluginAutomation ? 8 : !model_.folders.empty() || masterGain ? 7 : automation ? 6 : routing ? 5 : model_.tempo.size() > 1 || model_.meters.size() > 1 ? 4 : kConstantTempoVersion);
     json::Value body = describe();
     for (auto &[key, value] : body.object) {
         if (key != "media") continue;
@@ -440,10 +497,14 @@ std::unique_ptr<Engine::PreparedProject> Engine::prepareDocument(const json::Val
         err = "not a Dalnok project";
         return nullptr;
     }
-    if (doc.getNumber("version", 0) > kFormatVersion) {
-        err = "project was saved by a newer version of Dalnok";
-        return nullptr;
-    }
+    json::Value migratedStorage;
+    const json::Value *current = migrate(doc, migratedStorage, err);
+    if (!current) return nullptr;
+    return readDocument(*current, projectDir, sampleRate, missing, err);
+}
+
+std::unique_ptr<Engine::PreparedProject> Engine::readDocument(const json::Value &doc, const fs::path &projectDir,
+                                                             double sampleRate, int32_t &missing, std::string &err) {
     const double fileRate = doc.getNumber("sampleRate", sampleRate);
     if (!(fileRate > 0)) {
         err = "invalid sampleRate";
@@ -563,6 +624,7 @@ std::unique_ptr<Engine::PreparedProject> Engine::prepareDocument(const json::Val
                     slot.instrument = pv.getBool("instrument", false);
                     slot.sidechain = static_cast<int32_t>(std::max<int64_t>(0, toInt(pv, "sidechain")));
                     slot.bypassed = pv.getBool("bypassed", false);
+                    slot.folded = pv.getBool("folded", false);
                     if (const json::Value *ids = pv.get("controls"); ids && ids->isArray())
                         for (const auto &c : ids->array)
                             if (c.isNumber() && c.number >= 0 && c.number <= 4294967295.0) slot.controls.push_back(static_cast<uint32_t>(c.number));

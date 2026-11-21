@@ -1,5 +1,6 @@
 // CLAP hosting with a test plug-in (scripts/ci/plugin-host.sh builds it and sets DALNOK_TEST_CLAP).
 // SPDX-License-Identifier: GPL-3.0-or-later
+import AppKit
 import DalnokEngine
 import Foundation
 import Testing
@@ -79,7 +80,8 @@ struct ClapHosting {
         #expect(!dalnok_project_dirty(b), "a plug-in repeating its own values after loading leaves the project clean (loaded \(info.loaded), error '\(cstr(withUnsafeBytes(of: info.error) { Array($0.bindMemory(to: CChar.self)) }))')")
     }
 
-    @MainActor @Test(.serialized, arguments: ["event", "dirty", "flush", "queued"]) func editorEditsMarkTheProjectChanged(_ how: String) async throws {
+    @MainActor @Test(.serialized, arguments: ["event", "dirty", "flush", "queued"], [true, false])
+    func editorEditsMarkTheProjectChanged(_ how: String, _ editorOpen: Bool) async throws {
         let (e, t) = audioSession(); defer { dalnok_engine_destroy(e) }
         let slot = dalnok_plugin_add(e, t, testClap, nil, nil, 0)
         #expect(slot != 0)
@@ -89,6 +91,18 @@ struct ClapHosting {
         let b = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(b) }
         var missing: Int32 = -1
         #expect(dalnok_project_load(b, path, &missing, nil, 0) == DALNOK_OK && missing == 0)
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: 200, height: 100))
+        var err = [CChar](repeating: 0, count: 256)
+        if editorOpen {
+            var w: Int32 = 0, h: Int32 = 0, slotInfo = DalnokPluginSlotInfo()
+            _ = dalnok_track_plugin_info(b, dalnok_track_at(b, 0), 0, &slotInfo)
+            if slotInfo.isolated { // its editor opens in the host's own window (ADR-0015)
+                #expect(dalnok_plugin_show_editor_window(b, slotInfo.id, "Audio — Dalnok Test Gain", .nan, .nan, &err, 256) == DALNOK_OK, "\(cstr(err))")
+            } else {
+                #expect(dalnok_plugin_open_editor(b, slotInfo.id, Unmanaged.passUnretained(view).toOpaque(),
+                                                  &w, &h, nil, nil, &err, 256) == DALNOK_OK, "\(cstr(err))")
+            }
+        }
         var l = [Float](repeating: 0, count: 512), r = l
         // "flush": the edit arrives while the transport is stopped, through the flush the plug-in asked for.
         if how != "flush" && how != "queued" {
@@ -96,11 +110,13 @@ struct ClapHosting {
             for _ in 0..<2 { _ = dalnok_engine_pump(b, &l, &r, 512) }
             #expect(!dalnok_project_dirty(b), "clean before the edit")
         }
-        let deadline = Date().addingTimeInterval(5)
+        let deadline = Date().addingTimeInterval(editorOpen ? 5 : 1)
         while !dalnok_project_dirty(b) && Date() < deadline {
             _ = dalnok_engine_pump(b, &l, &r, 512)
             try await Task.sleep(for: .milliseconds(10)) // lets the main queue run the plug-in's callback ("dirty")
         }
-        #expect(dalnok_project_dirty(b), "an edit in the editor (\(how)) marks the project changed")
+        if editorOpen { #expect(dalnok_project_dirty(b), "an edit in the editor (\(how)) marks the project changed") }
+        // The same reports with the editor closed come from the plug-in itself (finishing a background load): not edits.
+        else { #expect(!dalnok_project_dirty(b), "a report (\(how)) with no editor open leaves the project clean") }
     }
 }

@@ -79,7 +79,8 @@ DALNOK_FUZZ_SEED_DIR="$PWD/$seeds" swift test --disable-sandbox --filter LogicIm
 [ -f "$seeds/logic-generated" ] || { echo "fuzz: could not generate the Logic seed" >&2; exit 1; }
 
 # Earlier findings must now pass; replay them, then keep them as regression inputs.
-printf 'leak:fuzzer::StartRssThread\n' > "$out/lsan.supp"
+# Process-lifetime objects, never destroyed by design: libFuzzer's RSS thread and the shared stream cache (ADR-0016).
+printf 'leak:fuzzer::StartRssThread\nleak:dalnok::StreamCache::shared\n' > "$out/lsan.supp"
 export ASAN_OPTIONS=detect_leaks=1 LSAN_OPTIONS="suppressions=$PWD/$out/lsan.supp"
 mkdir -p "$out/regressions"
 for f in "$out"/artifacts/crash-* "$out"/artifacts/timeout-* "$out"/artifacts/leak-* "$out"/artifacts/oom-*; do

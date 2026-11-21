@@ -93,8 +93,10 @@ public:
             static_cast<ClapProcessor *>(h->host_data)->flushWanted_.store(true, std::memory_order_release);
         };
         // Edits in the plug-in's own editor: it marks its state dirty, or reports parameter changes it made.
+        // Only an open editor makes these edits: plug-ins that finish loading in the background report too.
         hostState_.mark_dirty = [](const clap_host_t *h) {
-            static_cast<ClapProcessor *>(h->host_data)->edits_.fetch_add(1, std::memory_order_relaxed);
+            auto *self = static_cast<ClapProcessor *>(h->host_data);
+            if (self->editorOpen_.load(std::memory_order_relaxed)) self->edits_.fetch_add(1, std::memory_order_relaxed);
         };
         alive_ = std::make_shared<Alive>();
         alive_->self = this;
@@ -303,6 +305,7 @@ public:
         closeEditor();
         if (!hasEditor() || !gui_->create(plugin_, CLAP_WINDOW_API_COCOA, false)) { err = "this CLAP plug-in has no editor"; return false; }
         guiOpen_ = true;
+        editorOpen_.store(true, std::memory_order_relaxed); // edits made while attaching count
         onResize_ = onResize;
         resizeCtx_ = ctx;
         uint32_t w = 640, h = 400;
@@ -318,6 +321,7 @@ public:
     void closeEditor() override {
         if (guiOpen_ && gui_) { gui_->hide(plugin_); gui_->destroy(plugin_); }
         guiOpen_ = false;
+        editorOpen_.store(false, std::memory_order_relaxed);
         onResize_ = nullptr;
     }
 
@@ -333,11 +337,12 @@ private:
     static bool countOutputEvent(const clap_output_events_t *l, const clap_event_header_t *e) DALNOK_NONBLOCKING {
         auto *self = static_cast<const ClapProcessor *>(l->ctx);
         if (e->space_id != CLAP_CORE_EVENT_SPACE_ID) return true;
-        if (e->type == CLAP_EVENT_PARAM_GESTURE_END) self->edits_.fetch_add(1, std::memory_order_relaxed);
+        const bool editing = self->editorOpen_.load(std::memory_order_relaxed);
+        if (e->type == CLAP_EVENT_PARAM_GESTURE_END && editing) self->edits_.fetch_add(1, std::memory_order_relaxed);
         if (e->type == CLAP_EVENT_PARAM_VALUE) {
             const auto *v = reinterpret_cast<const clap_event_param_value_t *>(e);
             const size_t i = self->indexOf(v->param_id);
-            if (i < self->values_.size() && std::abs(self->values_[i].exchange(v->value, std::memory_order_relaxed) - v->value) > 1e-9)
+            if (i < self->values_.size() && std::abs(self->values_[i].exchange(v->value, std::memory_order_relaxed) - v->value) > 1e-9 && editing)
                 self->edits_.fetch_add(1, std::memory_order_relaxed);
         }
         return true;
@@ -386,6 +391,7 @@ private:
     clap_host_params_t hostParams_{};
     clap_host_state_t hostState_{};
     mutable std::atomic<uint64_t> edits_{0};
+    std::atomic<bool> editorOpen_{false}; // read on the audio thread (output events)
     std::atomic<bool> flushWanted_{false};
     int idleCalls_ = 0; // audio thread
     mutable std::vector<std::atomic<double>> values_; // last known plain value per parameter, in cookies_ order

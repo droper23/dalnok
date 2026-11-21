@@ -207,7 +207,8 @@ void PluginHostService::setWorkgroupPort(uint32_t port) {
         if (p && p->isolated()) p->shareWorkgroup(workgroupPort_);
 }
 
-std::vector<int32_t> PluginHostService::poll() {
+// Returns the plug-ins edited in their editors; `failed` collects isolated ones whose host failed (not an edit).
+std::vector<int32_t> PluginHostService::poll(std::vector<int32_t> *failed) {
     std::vector<int32_t> changed;
     // Edits made in plug-in editors change what the project will save.
     for (const auto &[id, p] : instances_) {
@@ -221,7 +222,10 @@ std::vector<int32_t> PluginHostService::poll() {
     for (const auto &[id, p] : instances_) {
         if (!p || !p->isolated()) continue;
         p->poll();
-        if (!p->failure().empty() && failed_.insert(id).second) changed.push_back(id);
+        if (!p->failure().empty() && failed_.insert(id).second) {
+            if (failed) failed->push_back(id);
+            else changed.push_back(id);
+        }
     }
     return changed;
 }

@@ -315,8 +315,17 @@ final class PedalFootswitch: NSControl {
 @MainActor
 final class PedalBody: NSView {
     let name: String
-    var look: PedalLook { didSet { controls.forEach { $0.look = look }; footswitch.look = look; textureCache = nil; needsDisplay = true } }
-    var engaged = true { didSet { footswitch.engaged = engaged; needsDisplay = true } }
+    var look: PedalLook { didSet { controls.forEach { $0.look = look }; footswitch.look = look; screen.glow = look.ledColor; textureCache = nil; needsDisplay = true } }
+    var engaged = true { didSet { footswitch.engaged = engaged; screen.lit = engaged && message == nil; needsDisplay = true } }
+    /// The readout window under the controls (shown when the pedal has controls).
+    let screen = PedalScreen()
+    /// Signal LEDs by the jacks: input and output level 0…1 (green for signal, red near full scale).
+    var inLevel: CGFloat = 0 { didSet { if abs(inLevel - oldValue) > 0.02 { setNeedsDisplay(signalRect(left: true)) } } }
+    var outLevel: CGFloat = 0 { didSet { if abs(outLevel - oldValue) > 0.02 { setNeedsDisplay(signalRect(left: false)) } } }
+    private func signalRect(left: Bool) -> CGRect {
+        let box = enclosure
+        return CGRect(x: left ? box.minX + 4 : box.maxX - 14, y: box.minY + 3, width: 10, height: 10)
+    }
     var vendor = ""
     private(set) var controls: [PedalControl] = []
     private(set) var labels: [NSTextField] = []
@@ -339,6 +348,9 @@ final class PedalBody: NSView {
         footswitch.setAccessibilityLabel("Bypass \(name)")
         footswitch.toolTip = "Footswitch: turns \(name) on or off (bypass). Undoable."
         addSubview(footswitch)
+        screen.glow = look.ledColor
+        screen.isHidden = true
+        addSubview(screen)
         setAccessibilityElement(false)
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -352,6 +364,8 @@ final class PedalBody: NSView {
         labels = ls
         cs.forEach { addSubview($0) }
         ls.forEach { $0.textColor = look.ink; addSubview($0) }
+        screen.isHidden = cs.isEmpty
+        screen.lit = engaged && message == nil
         widthConstraint.constant = PedalGeometry.width(cs.count)
         needsLayout = true
         needsDisplay = true
@@ -373,12 +387,15 @@ final class PedalBody: NSView {
         }
         let fs: CGFloat = look.footswitch == .chrome ? 30 : 36
         footswitch.frame = CGRect(x: bounds.midX - fs / 2, y: bounds.height - fs - 6, width: fs, height: fs)
+        let rows = CGFloat(PedalGeometry.rows(n)), top = 12 + rows * rowH + 1
+        let sw = min(bounds.width - 22, 168)
+        screen.frame = CGRect(x: bounds.midX - sw / 2, y: top, width: sw, height: PedalScreen.height)
     }
 
     /// Where the name is lettered: between the controls and the LED.
     private var nameBand: CGRect {
         let n = controls.count, rows = CGFloat(PedalGeometry.rows(n)), rowH: CGFloat = n <= 4 ? 58 : 48
-        let top = n == 0 ? 18 : 12 + rows * rowH - 4
+        let top = n == 0 ? 18 : (screen.isHidden ? 12 + rows * rowH - 4 : screen.frame.maxY + 3)
         return CGRect(x: 8, y: top, width: bounds.width - 16, height: max(14, footswitch.frame.minY - 14 - top))
     }
 
@@ -421,6 +438,17 @@ final class PedalBody: NSView {
         ctx.setFillColor(NSColor(white: 0.75, alpha: 1).cgColor); ctx.fillEllipse(in: ledRect.insetBy(dx: -1.6, dy: -1.6))
         ctx.setFillColor(NSColor(white: 0.25, alpha: 1).cgColor); ctx.fillEllipse(in: ledRect.insetBy(dx: -0.6, dy: -0.6))
         Analog.led(ctx, in: ledRect, color: look.ledColor, lit: engaged)
+        // Signal LEDs by the input (left) and output (right) jacks.
+        for (left, level) in [(true, inLevel), (false, outLevel)] where !screen.isHidden {
+            let r = signalRect(left: left).insetBy(dx: 2, dy: 2)
+            let color: NSColor = level > 0.92 ? Theme.hex(0xFF3B30) : Theme.hex(0x4CD964)
+            ctx.setFillColor(NSColor(white: 0.2, alpha: 1).cgColor); ctx.fillEllipse(in: r.insetBy(dx: -1, dy: -1))
+            Analog.led(ctx, in: r, color: color, lit: engaged && level > 0.02, glow: level > 0.3)
+            let tag = (left ? "IN" : "OUT") as NSString
+            let ta: [NSAttributedString.Key: Any] = [.font: Theme.ui(5.5, .bold), .foregroundColor: look.ink.withAlphaComponent(0.75)]
+            let ts = tag.size(withAttributes: ta)
+            tag.draw(at: CGPoint(x: left ? r.maxX + 3 : r.minX - 3 - ts.width, y: r.midY - ts.height / 2), withAttributes: ta)
+        }
     }
 
     /// The finish is costly to draw; it is rendered once per size and look.

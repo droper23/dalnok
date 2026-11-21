@@ -186,6 +186,17 @@ struct RenderTrack {
 struct ClickTempo { double beat, frame, framesPerBeat; };
 struct ClickMeter { double beat, step; int32_t num; }; // step: quarter notes per click
 
+// One track's progress through a block in renderBlock. Tracks advance until they wait on an isolated plug-in, so the
+// isolated plug-ins of a callback run at the same time; tracks deliver to buses and the master in order.
+struct TrackStep {
+    uint8_t stage = 0;
+    bool any = false, waiting = false, linkedSolo = false;
+    int32_t insert = 0; // next insert to run
+    float gl = 0, gr = 0;
+    const RenderSlot *slot = nullptr;
+    PluginProcessor *pending = nullptr; // the isolated plug-in whose block is in flight
+};
+
 struct RenderState {
     std::vector<RenderTrack> tracks;
     std::vector<ClickTempo> clickTempo;
@@ -193,6 +204,9 @@ struct RenderState {
     // thread for the live snapshot, the exporting thread for an offline one).
     mutable std::vector<float> busL, busR;
     mutable std::vector<float> scL, scR; // sidechain source signals, kMaxBlock frames each
+    // Each track's signal through its chain during a block (kMaxBlock frames per track), and its progress.
+    mutable std::vector<float> chainL, chainR;
+    mutable std::vector<TrackStep> steps;
     // Plug-in delay compensation: every path to the master is delayed to this many frames, so the
     // timeline is rendered this far ahead of the playhead (and exports pre-roll by it).
     int32_t compensation = 0;

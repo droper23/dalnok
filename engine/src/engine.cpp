@@ -886,6 +886,18 @@ bool Engine::setSidechain(DalnokTrackId track, int32_t slot, DalnokTrackId sourc
     });
 }
 
+bool Engine::setPluginFolded(DalnokTrackId track, int32_t slot, bool folded, std::string &err) {
+    return edit(folded ? "Fold Plug-in" : "Unfold Plug-in", false, [&](Model &m) {
+        TrackState *t = m.track(track);
+        if (!t) return fail(err, "no such track");
+        auto it = std::find_if(t->plugins.begin(), t->plugins.end(), [slot](const PluginSlot &p) { return p.id == slot; });
+        if (it == t->plugins.end()) return fail(err, "that plug-in isn't on this track");
+        if (it->folded == folded) return fail(err, folded ? "already folded" : "not folded");
+        it->folded = folded;
+        return true;
+    });
+}
+
 bool Engine::setPluginBypassed(DalnokTrackId track, int32_t slot, bool bypassed, std::string &err) {
     return edit(bypassed ? "Bypass Plug-in" : "Enable Plug-in", true, [&](Model &m) {
         TrackState *t = m.track(track);

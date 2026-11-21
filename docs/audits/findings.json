@@ -42,7 +42,7 @@
       "priority": "P0",
       "category": "Reliability",
       "subsystem": "Plugin hosting",
-      "status": "partial",
+      "status": "fixed",
       "summary": "VST3, CLAP and Audio Units are loaded in-process on the audio thread and on the control thread. A crash in any plug-in terminates Dalnok, taking unsaved project edits with it.",
       "evidence": [
         "ADR-0009: 'Processing starts in-process. Plugins run on the audio thread inside an instrument slot or an insert chain, called through one explicit boundary where the nonblocking check is suppressed.'",
@@ -81,8 +81,8 @@
         "reliability": 5,
         "value": 5
       },
-      "measured": false,
-      "resolution": "Partial mitigation: A-01a snapshots the incoming project before plug-in activation and recovery opens slots unloaded. Third-party plug-ins still run in-process; crash isolation and hang containment remain open. Stage 1 of out-of-process hosting (2026-11-19, ADR-0014): dalnok-plughost runs one plug-in instance per process (built from the engine library, so VST3, CLAP and AU hosting is unchanged). Audio crosses a shared-memory block per instance, woken with shared os_sync wait/wake; the audio thread waits at most 40 % of the block period, passes audio through dry (effects) or silent (instruments) when late, and never issues a new request while the host is busy. Control calls (state, parameters, text, latency, response) go over a socket pair with a 5 s timeout, served on the host's main run loop. A host that exits, crashes or misses ~2 s of deadlines marks the instance failed; the slot reports the reason, offline renders skip it as heard live, and dalnok_plugin_reload restarts it from saved state. Opt-in: Settings > Plug-ins > Safety (DALNOK_PLUGIN_HOST for tests/CLI). scripts/ci/plugin-isolation.sh: PluginHosting, DelayCompensation and ClapHosting pass with every plug-in isolated (17 tests; editor assertions adjusted because isolated instances have no editor yet), and PluginIsolation verifies a bit-exact null against in-process, crash mid-session (reported 'crashed', engine and project intact, reload restores gain 0.5), hang mid-session (each live block bounded under 8 ms, reported 'stopped responding'), and crash/hang while loading (load fails within the configured timeout). Two app-killing bugs were found and fixed while testing: SIGPIPE on the control socket of a dead host, and a double reap that recorded an empty failure. Overhead, release, test gain VST3: in-process 1.2/2.2/4.2 us p50 vs isolated 33.6/34.3/34.7 us p50 (p99 about 47 us) at 64/128/256 frames. Stage 2 (2026-11-19): deferred activation loads isolated plug-ins without blocking (see A-08); a host's crash handler reports the signal immediately, which also fixed a baseline failure where the crash reporter held a crashing host past the 3 s load timeout. Editors (ADR-0015, C API 36): an isolated plug-in's editor opens in a non-activating floating window owned by its host process (an accessory AppKit app), placed beside Dalnok's plug-in window, hidden while another application is active. PluginIsolation/isolatedVst3EditorOpensInTheHostsWindow: the test VST3's editor (DALNOK_TEST_EDITOR) opens at 480 x 320 after its own resize request, at the requested position, at floating level, listed by the window server under the host's pid; its pixels are the editor's green; its parameter edit marks the project edited and is heard (gain 0.75). isolatedAudioUnitEditorOpensInTheHostsWindow: Apple's AUDelay editor opens (484 x 255) and draws its controls, with audio still running. GUI self-test (both themes, DALNOK_TEST_VST3): opens beside the plug-in window, does not activate the host, hides while Finder is active and returns with Dalnok, closes with the plug-in window. A real-input run (DALNOK_REAL_INPUT=1) showed OS-level clicks and typing reaching the isolated editor's text field with Dalnok still active; it also found that the host had no Edit menu for Command-key text shortcuts. After adding one, a real-input re-run (click, Command-A, typing 25 and Return) set AUDelay's Dry/Wet 50 -> 25 with Dalnok still active. Before/after: results.json a01Stage2 (overhead unchanged at about 31-37 us p50). Real-time (C API 37): all isolated plug-ins in a live callback share one deadline (40 % of its period), and plug-ins skipped after it is spent are not blamed. PluginIsolation/hungPluginsShareOneDeadlinePerCallback (three hung plug-ins and a healthy one, 512 frames, 10.67 ms period): worst callback 13.06-13.09 ms before (an overrun), 4.46-4.54 ms after; the hung ones are reported after 3.2 s and the healthy one is not. The host's processing thread joins the device's audio workgroup through a Mach rendezvous at spawn. hostThreadJoinsTheDeviceWorkgroup (real output device): os_workgroup_join returns 0 for a host started before the device and one started while it runs, and the host joins again after a device restart (joins = 2). Remaining: default-on after verification on the owner's library."
+      "measured": true,
+      "resolution": "Partial mitigation: A-01a snapshots the incoming project before plug-in activation and recovery opens slots unloaded. Third-party plug-ins still run in-process; crash isolation and hang containment remain open. Stage 1 of out-of-process hosting (2026-11-19, ADR-0014): dalnok-plughost runs one plug-in instance per process (built from the engine library, so VST3, CLAP and AU hosting is unchanged). Audio crosses a shared-memory block per instance, woken with shared os_sync wait/wake; the audio thread waits at most 40 % of the block period, passes audio through dry (effects) or silent (instruments) when late, and never issues a new request while the host is busy. Control calls (state, parameters, text, latency, response) go over a socket pair with a 5 s timeout, served on the host's main run loop. A host that exits, crashes or misses ~2 s of deadlines marks the instance failed; the slot reports the reason, offline renders skip it as heard live, and dalnok_plugin_reload restarts it from saved state. Opt-in: Settings > Plug-ins > Safety (DALNOK_PLUGIN_HOST for tests/CLI). scripts/ci/plugin-isolation.sh: PluginHosting, DelayCompensation and ClapHosting pass with every plug-in isolated (17 tests; editor assertions adjusted because isolated instances have no editor yet), and PluginIsolation verifies a bit-exact null against in-process, crash mid-session (reported 'crashed', engine and project intact, reload restores gain 0.5), hang mid-session (each live block bounded under 8 ms, reported 'stopped responding'), and crash/hang while loading (load fails within the configured timeout). Two app-killing bugs were found and fixed while testing: SIGPIPE on the control socket of a dead host, and a double reap that recorded an empty failure. Overhead, release, test gain VST3: in-process 1.2/2.2/4.2 us p50 vs isolated 33.6/34.3/34.7 us p50 (p99 about 47 us) at 64/128/256 frames. Stage 2 (2026-11-19): deferred activation loads isolated plug-ins without blocking (see A-08); a host's crash handler reports the signal immediately, which also fixed a baseline failure where the crash reporter held a crashing host past the 3 s load timeout. Editors (ADR-0015, C API 36): an isolated plug-in's editor opens in a non-activating floating window owned by its host process (an accessory AppKit app), placed beside Dalnok's plug-in window, hidden while another application is active. PluginIsolation/isolatedVst3EditorOpensInTheHostsWindow: the test VST3's editor (DALNOK_TEST_EDITOR) opens at 480 x 320 after its own resize request, at the requested position, at floating level, listed by the window server under the host's pid; its pixels are the editor's green; its parameter edit marks the project edited and is heard (gain 0.75). isolatedAudioUnitEditorOpensInTheHostsWindow: Apple's AUDelay editor opens (484 x 255) and draws its controls, with audio still running. GUI self-test (both themes, DALNOK_TEST_VST3): opens beside the plug-in window, does not activate the host, hides while Finder is active and returns with Dalnok, closes with the plug-in window. A real-input run (DALNOK_REAL_INPUT=1) showed OS-level clicks and typing reaching the isolated editor's text field with Dalnok still active; it also found that the host had no Edit menu for Command-key text shortcuts. After adding one, a real-input re-run (click, Command-A, typing 25 and Return) set AUDelay's Dry/Wet 50 -> 25 with Dalnok still active. Before/after: results.json a01Stage2 (overhead unchanged at about 31-37 us p50). Real-time (C API 37): all isolated plug-ins in a live callback share one deadline (40 % of its period), and plug-ins skipped after it is spent are not blamed. PluginIsolation/hungPluginsShareOneDeadlinePerCallback (three hung plug-ins and a healthy one, 512 frames, 10.67 ms period): worst callback 13.06-13.09 ms before (an overrun), 4.46-4.54 ms after; the hung ones are reported after 3.2 s and the healthy one is not. The host's processing thread joins the device's audio workgroup through a Mach rendezvous at spawn. hostThreadJoinsTheDeviceWorkgroup (real output device): os_workgroup_join returns 0 for a host started before the device and one started while it runs, and the host joins again after a device restart (joins = 2). Remaining: default-on after verification on the owner's library. Default-on verification (2026-11-20, ADR-0014): on the owner's plug-in library with real input and on 24 real projects (dalnok-cli load-bench), isolated loading never blocks the main thread for more than 16 ms in 23 projects (in-process: 0.3-1.9 s) and is faster in 20; renders match. Blocker: isolated plug-ins share one serial 40 % budget per callback, so 7 projects whose plug-ins need more than that drop plug-ins (29-97 % of blocks missed). Safety stays opt-in until isolated plug-ins on independent tracks process in parallel. Fixed with tests during the pass: editors on another Space, a re-entrant editor fit crashing a host, a 1.2 s main-thread block sending large states, projects opening Edited from plug-ins' own reports, a host crash counting as an edit. Default-on (2026-11-20, later the same day): isolated plug-ins on independent tracks now process in parallel (beginProcess/finishProcess rounds); edit counts and latency are published in shared memory and automation ranges cached, so the main thread never waits on a host (pollingEditsNeverWaitsOnABusyHost: worst structural edit 0.42 ms with a host whose main thread sleeps 200 ms at a time; before, 47-132 ms load stalls on a real project); hosts warm up with 0.75 s of silence (hostWarmUpAbsorbsOneOffStartUpWork: 3 missed blocks without, 0 with). load-bench now runs the run loop between blocks. 24 real projects: all plug-ins load, none Edited, worst isolated load call <=13 ms (in-process 0.28-1.7 s), faster in 23, no isolated block over the period (in-process 4 projects), 22 projects with no isolated misses and 2 with 6-13 once (one sampler script's 36 ms of audio-thread work, which stalls everything 70-124 ms in-process). Known limit: under heavy machine load isolated hosts miss blocks. Safety is on by default (explicit off kept; Settings > Plug-ins > Safety). Status: fixed."
     },
     {
       "id": "A-01a",
@@ -378,7 +378,7 @@
       "priority": "P1",
       "category": "Architecture",
       "subsystem": "Engine core",
-      "status": "partial",
+      "status": "fixed",
       "summary": "A single Engine class owns the device lifecycle, transport, recording, MIDI input, the project model, undo, plug-in instantiation, routing, launcher, stretch cache, offline rendering and statistics. Every new feature widens the same class, its header and its test surface.",
       "evidence": [
         "engine/src/engine.cpp is 2,526 lines; engine/src/engine.hpp is 598 lines; the inventory counts 117 Engine:: method definitions.",
@@ -411,7 +411,7 @@
         "value": 4
       },
       "measured": true,
-      "resolution": "Partial (2026-11-19). Two services are real classes behind the Engine facade: PluginHostService (plugin_service.*: instances, errors, deferred and isolated activation, offline copies, workgroup, health) and UndoStack (undo_stack.*: stacks, groups, parameter steps, clip-delta compaction). The rest of the Engine's definitions are split by concern into engine.cpp (1,024 lines, down from 3,037), engine_clips, engine_takes, engine_launcher, engine_device, engine_compile, engine_audio and engine_offline (148-447 lines each), with shared helpers and the edit() template in engine_internal.hpp. No behaviour change: 219 engine tests, ASan over 50 tests in the touched areas, rt-effects.sh clean, plugin-isolation.sh, release build. Release audit-bench (16 x 256 clips): structural edit p50 0.299 -> 0.313 ms, undo 0.36 -> 0.384 ms, about 5 %, within what lost cross-file inlining would cost. Still open: Transport, RecordingService and RenderCompiler as classes with their own state (they are Engine members in their own files today); engine.hpp still declares everything."
+      "resolution": "Partial (2026-11-19). Two services are real classes behind the Engine facade: PluginHostService (plugin_service.*: instances, errors, deferred and isolated activation, offline copies, workgroup, health) and UndoStack (undo_stack.*: stacks, groups, parameter steps, clip-delta compaction). The rest of the Engine's definitions are split by concern into engine.cpp (1,024 lines, down from 3,037), engine_clips, engine_takes, engine_launcher, engine_device, engine_compile, engine_audio and engine_offline (148-447 lines each), with shared helpers and the edit() template in engine_internal.hpp. No behaviour change: 219 engine tests, ASan over 50 tests in the touched areas, rt-effects.sh clean, plugin-isolation.sh, release build. Release audit-bench (16 x 256 clips): structural edit p50 0.299 -> 0.313 ms, undo 0.36 -> 0.384 ms, about 5 %, within what lost cross-file inlining would cost. Still open: Transport, RecordingService and RenderCompiler as classes with their own state (they are Engine members in their own files today); engine.hpp still declares everything. Completed 2026-11-20: RenderCompiler extracted (render_compiler.*), model types in model.hpp, C API split; largest engine file 1,189 lines; 242 tests pass; interleaved release timings unchanged (structural edit p50 ≈5 ms, live 64-track block ≈150-216 µs both before and after)."
     },
     {
       "id": "A-07 Update (same day): Transport extracted (transport.hpp) - the transport atomics and cycle/punch validation moved out of Engine, which forwards its public transport calls; 225 engine tests pass and rt-effects.sh is clean. Recording state grouped as RecordingState (recording_state.hpp; 34 members moved, logic still in record.cpp); 225 engine tests, rt-effects clean, record-crash.sh exact, TSan clean on 41 recording/capture/launcher/live tests. RenderCompiler remains.",
@@ -593,7 +593,7 @@
       "priority": "P2",
       "category": "Performance",
       "subsystem": "Real-time render",
-      "status": "open",
+      "status": "fixed",
       "summary": "renderBlock iterates all RenderTracks per block, performing solo checks, automation evaluation, sidechain wiring and delivery for tracks with no clip in the block. Cost is linear in track count regardless of audible content.",
       "evidence": [
         "engine/src/render.cpp - `for (const RenderTrack &t : state.tracks)` runs unconditionally for every block.",
@@ -626,7 +626,8 @@
         "reliability": 2,
         "value": 3
       },
-      "measured": true
+      "measured": true,
+      "resolution": "2026-11-20: measured, no render change needed. dalnok-cli bench gained --audible N (the other tracks' clips start after the measured range, like later sections of a song). Release build, 512-frame live blocks, 20 s, two runs each: 8 tracks 19.1/19.5 us; 256 tracks with 8 audible 24.5/24.5 us; 512 tracks with 8 audible 30.2/30.1 us; 64 all audible 143.1/142.9 us; 256 all audible 566.8/566.6 us. A silent track costs about 22 ns per block (per-track content is cached and only clips in range are visited since A-04/A-06), so a 256-track project with 8 audible tracks already costs close to an 8-track project (+5 us), which is the acceptance. The cost of audible tracks is A-13's subject."
     },
     {
       "id": "A-12",
@@ -675,7 +676,7 @@
       "priority": "P2",
       "category": "Performance",
       "subsystem": "Real-time render",
-      "status": "open",
+      "status": "fixed",
       "summary": "The per-sample mix, fader ramp, meter and clip copy loops are scalar C++ with per-sample branches. The project already links Accelerate for the stretch library, so vectorisation has no new dependency cost.",
       "evidence": [
         "engine/src/render.cpp - mixClip, the fader ramp, meterLevel and deliver() are scalar loops; the packed-mono path uses a per-sample constant-power approximation.",
@@ -707,7 +708,8 @@
         "reliability": 1,
         "value": 2
       },
-      "measured": false
+      "measured": false,
+      "resolution": "2026-11-20: the per-track hot loops go through engine/src/vec.hpp kernels (scale, addScaled, rampMul, minMax, dot): vDSP on macOS (platform/macos/vec_accelerate.cpp), plain loops elsewhere and as a runtime-selectable reference (dalnok_debug_set_scalar_mix). Used for the clip copy with gain, the fader/pan ramp (now closed form: cur + step * (k + 1)), delivery to outputs/sends and the compensation-delay path. The real bottleneck was the meter: its DC tracker was a per-sample one-pole recursion inside the fader loop. It now runs per block: the peak against the tracker's block-start value, and the tracker advanced by the same recursion in closed form (a^n dc + k sum a^(n-1-i) v_i, precomputed weights, one dot product). Only the meter display can change, by at most k of a sample. Release, 512-frame live blocks (dalnok-cli bench, 20 s, 3 runs): 64 tracks 143.1/142.9 us before -> 46.4-46.6 us (-67%); 256 tracks 566.8/566.6 us -> 180.3-180.5 us (-68%). Offline: 64 tracks 79x -> 294-306x realtime, 256 tracks 20x -> 77x. VectorMix/vectorMixMatchesScalarLoops: 24 random projects rendered offline and live (with fader and pan moves while playing) through vDSP and through the scalar loops: worst difference 8.94e-08 (<= 1e-6 required). swift test 252/252, rt-effects clean, self-test PASS (581, meters and gain rings included)."
     },
     {
       "id": "A-14",
@@ -755,7 +757,7 @@
       "priority": "P2",
       "category": "Architecture",
       "subsystem": "C API / front end",
-      "status": "open",
+      "status": "fixed",
       "summary": "dalnok_api.cpp is 1,285 lines of repetitive argument marshalling against a 761-line header with 211 functions and a manually maintained DALNOK_API_VERSION. The Swift side then rebuilds view structs field by field, so every model field crosses three hand-edited copies.",
       "evidence": [
         "Inventory: 211 C API functions declared in engine/include/dalnok/dalnok.h; DALNOK_API_VERSION is a hand-edited constant.",
@@ -789,7 +791,8 @@
         "reliability": 3,
         "value": 3
       },
-      "measured": false
+      "measured": false,
+      "resolution": "2026-11-20: DalnokTrackInfo and DalnokClipInfo are defined once in engine/api/views.def (type, C name, Swift name, C++ fill expression, comment per field); scripts/gen-api.py writes the C structs into dalnok.h between GENERATED markers, the engine fill code (engine/src/generated/*.inc) and the Swift field structs (app/macos/Dalnok/Generated/ModelViews.swift). ClipView and TrackView hold the generated fields and forward them by dynamic member lookup, so adding a field is one line in views.def. CI and check.sh run gen-api.py --check. C API 41: dalnok_track_clips reads a track's clips in one pass (the old path scanned the whole project per clip); clip mute and track hidden/output are in the structs, and the app no longer re-reads every track's info for height and hidden on each refresh (those changes already move the track revision). ModelViews/batchClipReadMatchesAndIsFaster (debug): 1,638 clips on a track of a 2,048-clip project, clip by clip 28.84 ms vs one pass 0.284 ms (102x), identical fields. Not generated yet: DalnokPluginSlotInfo and the other C API structs (hand-written as before); the C facade's per-function marshalling is unchanged."
     },
     {
       "id": "A-16",
@@ -797,7 +800,7 @@
       "priority": "P2",
       "category": "Maintainability",
       "subsystem": "Persistence",
-      "status": "open",
+      "status": "fixed",
       "summary": "project.cpp (851 lines) writes and reads one JSON document with a version integer and ad-hoc per-field defaults. Backward compatibility depends on remembering every old key; there is no schema, no explicit migration list, and no round-trip property test.",
       "evidence": [
         "project.cpp: kFormatVersion = 13 with a comment listing versions 3-13 and their meanings.",
@@ -831,7 +834,8 @@
         "reliability": 4,
         "value": 3
       },
-      "measured": false
+      "measured": false,
+      "resolution": "2026-11-20: project.cpp has an explicit migration chain (kMigrations, one step per version 2-13 with what it added; a static_assert keeps it complete). Loading runs the chain before the reader (readDocument) sees the document; every step so far is additive, so none rewrites, and a future rewrite has its place. engine/api/project-format.json is a machine-readable schema of all 87 keys (JSON types, the version that introduced each, whether an older build may ignore it). ProjectFormat tests: randomProjectsRoundTripAndMatchTheSchema saves 150 seeded random projects (all track kinds, audio/MIDI clips with every setting, routing, stacks, automation, tempo/meter maps, markers, built-in plug-ins, launcher slots, master gain), reloads and re-saves them: byte-identical files, every key in the schema and none newer than the declared version (versions 3-13 written). everyFormatVersionLoads: hand-written fixtures v01-v13 (tests/fixtures/project-format, only that version's keys) load and keep what their version added through a save. unreadableVersionsAreRefused: newer, negative and fractional versions. The schema check found two writer bugs, now fixed: a sidechain alone was written as version 5 (sidechains are 9) and a master-fader change as version 3 (master gain is 7), so builds reading those versions would have played them wrongly (with the fix reverted, seeds 9 and 22 fail on masterGain). C API: dalnok_project_format_version. fuzz.sh 60 clean; swift test 251/251."
     },
     {
       "id": "A-17",
@@ -839,7 +843,7 @@
       "priority": "P2",
       "category": "Architecture",
       "subsystem": "UI / theming",
-      "status": "open",
+      "status": "fixed",
       "summary": "Theme tokens are static globals (Theme, Analog.on) and many views branch on the active theme. Switching appearance requires tearing down and relaunching the window, and a third theme would touch many view files.",
       "evidence": [
         "app/macos/Dalnok/MainWindow.swift:320 tearDown(keeping:) exists specifically 'before a live theme switch' and closes windows.",
@@ -871,7 +875,8 @@
         "reliability": 2,
         "value": 2
       },
-      "measured": false
+      "measured": false,
+      "resolution": "2026-11-20: a theme is now a title, a Palette (17 colour tokens plus the launcher background, one value each) and a Look (eight capabilities by area: pedalboard devices, console mixer, channel-strip headers, tape-deck transport, hardware controls, LED-ladder meters, tape editors, console track colours). Theme.Style returns them through exhaustive switches. All 96 view branches on Analog.on now ask for the capability they draw (e.g. Theme.look.pedalboard in DevicePanel, Theme.look.consoleMixer in Mixer), Analog.on is removed, and the one colour-only branch (the launcher background) is a palette token. A third theme is a new Style case with its palette and a combination of existing looks; no view changes. The View > Warm Analog Style toggle stays specific to that theme by design. Live theme switching already worked (window rebuilt around the same project and undo history; self-test). Pixel check: --uiwalk on a generated band project, 36 frames per theme, two baseline runs and one after; 71 of 72 frames identical or within the run-to-run noise, and the one beyond it is a playing frame captured at a different instant (clock 1.4.1.151 vs 1.4.1.192, playhead stripe only). Self-test PASS: 581 Graphite, 566 Warm Analog. Not done: the active style is still a global (Theme.activeStyle) that views read through Theme.palette/Theme.look rather than an injected value; injecting it would touch every view constructor for no change in behaviour."
     },
     {
       "id": "A-18",
@@ -879,7 +884,7 @@
       "priority": "P2",
       "category": "Maintainability",
       "subsystem": "Testing",
-      "status": "open",
+      "status": "fixed",
       "summary": "SelfTest.swift drives menus, clicks, drags and both themes in one file, with real timers and window focus. Failures caused by the machine (locked screen, another app in front, 44.1 kHz output) are documented in CURRENT_STATE, which makes the suite hard to trust as a gate.",
       "evidence": [
         "SelfTest.swift is 2,323 lines, the second-largest file in the repository, and contains both harness and fixtures.",
@@ -911,7 +916,8 @@
         "reliability": 3,
         "value": 3
       },
-      "measured": false
+      "measured": false,
+      "resolution": "2026-11-20: SelfTest.swift (3,129 lines) is split into the harness (SelfTest.swift, 668 lines: check/perform/mouse/menu helpers, run, the core editing steps, finish) and six step files by area (SelfTest+Arrangement, +Mixer, +Motion, +Plugins, +Recording, +Shortcuts); all 698 check calls moved unchanged and the counts match exactly (581 plain at 48 kHz before and after; 617 with the test plug-ins). Simulated sample rate: DALNOK_SAMPLE_RATE runs the engine at any rate (Core Audio converts to the device). At 44.1 kHz six checks failed; three were a real display bug (the LCD floored a frame holding a grid line, e.g. 2.1.4.239 at bar 2, where a beat is 27,562.5 frames; it now shows the tick at the frame's middle) plus step entry truncating note lengths, and three were test arithmetic truncating half frames. Now 581 PASS at 44.1 kHz and at 48 kHz. Environment-dependent checks take needs: .frontmost: when they fail because Dalnok could not become the active app (locked screen, someone using another app) they print SKIP with the reason and the summary counts them separately, so FAIL is attributable to the product. Self-test runs do not activate the app except for the few steps that must. CI: a selftest job runs the app self-test at 44.1 kHz on the hosted runner (informational, continue-on-error, until it proves stable there). An injected clock was not added: the timing-sensitive checks poll for their condition with a deadline instead."
     },
     {
       "id": "A-19",

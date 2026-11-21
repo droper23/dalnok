@@ -290,7 +290,7 @@ class RotaryKnob: NSControl {
         pointer.lineCap = .round
         face.addSublayer(pointer)
         layer?.addSublayer(face)
-        if Analog.on {
+        if Theme.look.hardwareControls {
             // Discrete LED dots instead of a continuous ring (dash of zero length + round caps).
             for l in [haloTrack, haloValue] { l.lineWidth = 2.6; l.lineDashPattern = [0, 4.6] }
             haloTrack.strokeColor = Theme.hex(0xFFFFFF, 0.10).cgColor
@@ -350,7 +350,7 @@ class RotaryKnob: NSControl {
         face.position = c
         let faceR = r - 0.5
         face.path = CGPath(ellipseIn: CGRect(x: c.x - faceR, y: c.y - faceR, width: faceR * 2, height: faceR * 2), transform: nil)
-        if Analog.on { face.contents = Self.capImage(diameter: faceR * 2, hover: hovering || tracking) }
+        if Theme.look.hardwareControls { face.contents = Self.capImage(diameter: faceR * 2, hover: hovering || tracking) }
         let a = angle(value)
         let ptr = CGMutablePath()
         ptr.move(to: CGPoint(x: c.x + cos(a) * faceR * 0.28, y: c.y + sin(a) * faceR * 0.28))
@@ -375,7 +375,7 @@ class RotaryKnob: NSControl {
     }
 
     private func setRevealed(_ on: Bool, animated: Bool) {
-        if Analog.on {
+        if Theme.look.hardwareControls {
             // Hardware: the cap never shrinks; its LED ring is always there, brighter while touched.
             CATransaction.begin()
             CATransaction.setDisableActions(!animated)
@@ -643,7 +643,7 @@ final class ToggleChip: NSControl {
             guard isOn != oldValue else { return }
             let brightness = glow.presentation()?.shadowOpacity ?? glow.shadowOpacity
             applyState(animated: true)
-            if Analog.on { Motion.filament(glow, from: brightness, lit: isOn) }
+            if Theme.look.hardwareControls { Motion.filament(glow, from: brightness, lit: isOn) }
             else if isOn { Motion.bounce(face, scale: 1.12, duration: 0.2) }
         }
     }
@@ -652,8 +652,8 @@ final class ToggleChip: NSControl {
         didSet {
             guard pulsing != oldValue else { return }
             // Analog: the whole lamp breathes slowly; Graphite: the halo pulses.
-            if pulsing { Motion.pulse(Analog.on ? face : glow, from: Analog.on ? 1 : 0.9, to: Analog.on ? 0.55 : 0.2, period: Analog.on ? 1.6 : 1.1) }
-            else { Motion.stopPulse(Analog.on ? face : glow) }
+            if pulsing { Motion.pulse(Theme.look.hardwareControls ? face : glow, from: Theme.look.hardwareControls ? 1 : 0.9, to: Theme.look.hardwareControls ? 0.55 : 0.2, period: Theme.look.hardwareControls ? 1.6 : 1.1) }
+            else { Motion.stopPulse(Theme.look.hardwareControls ? face : glow) }
             applyState(animated: true)
         }
     }
@@ -688,7 +688,7 @@ final class ToggleChip: NSControl {
         layer?.addSublayer(glow)
         layer?.addSublayer(face)
         face.addSublayer(label)
-        if Analog.on {
+        if Theme.look.hardwareControls {
             // A lit-cap lamp button: the whole cap glows in its colour (the state reads from across the room).
             glow.cornerRadius = 4
             glow.shadowRadius = 7
@@ -700,7 +700,7 @@ final class ToggleChip: NSControl {
         applyState(animated: false)
     }
     required init?(coder: NSCoder) { fatalError() }
-    override var intrinsicContentSize: NSSize { NSSize(width: Analog.on ? 24 : 22, height: 18) }
+    override var intrinsicContentSize: NSSize { NSSize(width: Theme.look.hardwareControls ? 24 : 22, height: 18) }
     override var isFlipped: Bool { true }
     override var wantsUpdateLayer: Bool { true }
 
@@ -721,7 +721,7 @@ final class ToggleChip: NSControl {
     }
 
     private func applyState(animated: Bool) {
-        if Analog.on {
+        if Theme.look.hardwareControls {
             let body = { [self] in
                 // Neutral unlit caps keep color reserved for active states.
                 let unlit = Theme.hex(0x302923)

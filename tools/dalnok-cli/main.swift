@@ -26,6 +26,7 @@ usage:
   dalnok-cli play <audio-file> [--seconds N] [--churn]   live playback on the default device
   dalnok-cli render <audio-file> <out.wav> [--bits 16|24|32]
   dalnok-cli render-project <project.dalnok> <out.wav> [--bits 16|24|32]
+  dalnok-cli load-bench <project.dalnok> [--play S]                     open as the app does; load time, worst block, misses
   dalnok-cli dirty-check <project.dalnok>                               does opening and playing mark it edited? (which tracks)
   dalnok-cli export-dawproject <project.dalnok> <out.dawproject>
   dalnok-cli recover-capture <spool> <new-output.wav>
@@ -43,7 +44,7 @@ usage:
   dalnok-cli plugins [--no-au] [--folder F] [--json]                       list VST3, CLAP and Audio Unit plugins (no code loaded)
   dalnok-cli plugins --validate [--match NAME] [--folder F --only-folder] [--au] [--timeout S] [--rescan] [--cache FILE]
                                                                          load each plugin in a separate scanner process
-  dalnok-cli bench [--tracks N] [--seconds S]                          render-cost benchmark (no device)
+  dalnok-cli bench [--tracks N] [--audible N] [--seconds S]             render-cost benchmark (no device)
   dalnok-cli audit-bench <project.dalnok> [--edits N]                   audit-only: model-read, edit and undo cost
   dalnok-cli audit-ui <project.dalnok>                               audit-only: AppKit drag and refresh timings
   dalnok-cli stream-bench <file.wav> --mode memory|stream [--seconds S]  audit-only: RSS and misses playing one long file
@@ -365,6 +366,106 @@ case "dirty-check":
     dalnok_transport_play(engine)
     for _ in 0..<40 { _ = dalnok_engine_pump(engine, &l, &r, 512); usleep(10_000) }
     report("playing 0.4 s")
+    dalnok_engine_destroy(engine)
+    leave(0)
+
+case "load-bench":
+    // Opens a project as the app does (prepare, deferred apply, then activate_next until every plug-in has loaded) and
+    // reports how long that took, the slowest single activate call (what the main thread would block for), failures and
+    // memory; then plays live blocks paced like a device and reports the slowest block and isolated plug-ins' misses.
+    // DALNOK_PLUGIN_HOST=<dalnok-plughost> isolates plug-ins (ADR-0014), as Settings ▸ Plug-ins ▸ Safety does.
+    guard args.count >= 2 else { print(usage); leave(2) }
+    let playSeconds = Double(opt("--play") ?? "10") ?? 10
+    let engine = dalnok_engine_create(48_000)!
+    if let host = ProcessInfo.processInfo.environment["DALNOK_PLUGIN_HOST"] { dalnok_plugins_set_host(engine, host) }
+    var err = [CChar](repeating: 0, count: 512)
+    var missing: Int32 = 0
+    var data: OpaquePointer?
+    let t0 = Date()
+    guard dalnok_project_prepare(args[1], 48_000, &data, &missing, &err, 512) == DALNOK_OK else { fail(cstr(err)) }
+    let prepared = Date().timeIntervalSince(t0)
+    guard dalnok_project_apply_deferred(engine, data) == DALNOK_OK else { fail("apply failed") }
+    var worstCall = 0.0, calls = 0, slowest = (slot: Int32(0), seconds: 0.0)
+    let start = Date()
+    while true {
+        var slot: Int32 = 0, seconds = 0.0
+        let c0 = Date()
+        let left = dalnok_plugins_activate_next(engine, &slot, &seconds)
+        worstCall = max(worstCall, Date().timeIntervalSince(c0)); calls += 1
+        if slot != 0 && seconds > slowest.seconds { slowest = (slot, seconds) }
+        if ProcessInfo.processInfo.environment["DALNOK_LOAD_BENCH_TRACE"] != nil, Date().timeIntervalSince(c0) > 0.05 {
+            print(String(format: "  call %d took %.0f ms (slot finished %d, init %.2f s, %d left)", calls, Date().timeIntervalSince(c0) * 1000, slot, seconds, left))
+        }
+        if left < 0 || (left == 0 && dalnok_plugins_pending(engine) == 0) { break }
+        if Date().timeIntervalSince(start) > 300 { print("timeout: \(left) still loading"); break }
+        usleep(1_000) // the app returns to its run loop between calls
+    }
+    let loadedIn = Date().timeIntervalSince(start)
+    var total = 0, loaded = 0, isolated = 0, failures: [String] = []
+    var slots: [Int32] = []
+    for i in 0..<dalnok_track_count(engine) {
+        let t = dalnok_track_at(engine, i)
+        var info = DalnokPluginSlotInfo()
+        for j in 0..<dalnok_track_plugin_count(engine, t) where dalnok_track_plugin_info(engine, t, j, &info) == DALNOK_OK {
+            total += 1; if info.loaded { loaded += 1 }; if info.isolated { isolated += 1; slots.append(info.id) }
+            if !info.loaded { failures.append(withUnsafeBytes(of: info.error) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }) }
+        }
+    }
+    var rusage = rusage(); getrusage(RUSAGE_SELF, &rusage)
+    print(String(format: "LOAD prepare %.2f s, plug-ins %.2f s (%d calls, worst call %.1f ms, slowest plug-in %.2f s); %d/%d loaded, %d isolated; dirty %@; peak RSS %.0f MB",
+                 prepared, loadedIn, calls, worstCall * 1000, slowest.seconds, loaded, total, isolated,
+                 dalnok_project_dirty(engine) ? "yes" : "no", Double(rusage.ru_maxrss) / 1_048_576))
+    for f in Set(failures) { print("  not loaded: \(f)") }
+    // Live blocks paced at the device rate (no device), transport playing.
+    var l = [Float](repeating: 0, count: 512), r = l
+    let period = 512.0 / 48_000
+    dalnok_transport_play(engine)
+    var worstBlock = 0.0, over = 0, blocks = 0, sum = 0.0
+    let playStart = Date()
+    let trace = ProcessInfo.processInfo.environment["DALNOK_LOAD_BENCH_TRACE"] != nil
+    var seen: [Int32: (UInt64, UInt64)] = [:]
+    while Date().timeIntervalSince(playStart) < playSeconds {
+        let b0 = Date()
+        _ = dalnok_engine_pump(engine, &l, &r, 512)
+        let took = Date().timeIntervalSince(b0)
+        worstBlock = max(worstBlock, took); blocks += 1; sum += took; if took > period { over += 1 }
+        if took > period, ProcessInfo.processInfo.environment["DALNOK_LOAD_BENCH_TRACE"] != nil {
+            print(String(format: "  block %d took %.1f ms", blocks, took * 1000))
+        }
+        if trace {
+            for s in slots {
+                var st = DalnokPluginIsolationStats()
+                guard dalnok_plugin_isolation_stats(engine, s, &st) == DALNOK_OK else { continue }
+                let was = seen[s] ?? (0, 0)
+                if st.missed_blocks != was.0 || st.budget_skips != was.1 {
+                    print(String(format: "  block %d (%.2f ms): slot %d missed +%llu, skips +%llu", blocks, took * 1000, s,
+                                 st.missed_blocks - was.0, st.budget_skips - was.1))
+                    seen[s] = (st.missed_blocks, st.budget_skips)
+                }
+            }
+        }
+        if blocks % 64 == 0 { dalnok_engine_collect_garbage(engine) }
+        let rest = period - Date().timeIntervalSince(b0)
+        // Run the main run loop while waiting, as the app does: plug-ins schedule main-thread work (timers, script
+        // services) that changes what their audio thread does.
+        if rest > 0 { CFRunLoopRunInMode(.defaultMode, rest, false) }
+    }
+    var missed: UInt64 = 0, skips: UInt64 = 0
+    for s in slots {
+        var st = DalnokPluginIsolationStats()
+        if dalnok_plugin_isolation_stats(engine, s, &st) == DALNOK_OK { missed += st.missed_blocks; skips += st.budget_skips }
+    }
+    var failedNow: [String] = []
+    for i in 0..<dalnok_track_count(engine) {
+        let t = dalnok_track_at(engine, i)
+        var info = DalnokPluginSlotInfo()
+        for j in 0..<dalnok_track_plugin_count(engine, t) where dalnok_track_plugin_info(engine, t, j, &info) == DALNOK_OK && !info.loaded {
+            failedNow.append(withUnsafeBytes(of: info.error) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) })
+        }
+    }
+    if failedNow.count > failures.count { print("FAILED DURING PLAY: \(failedNow.count - failures.count) (\(Set(failedNow).subtracting(failures).joined(separator: "; ")))") }
+    print(String(format: "PLAY %d blocks, mean %.2f ms, worst %.2f ms of %.2f ms, %d over the period; isolated missed %llu, budget skips %llu; dirty %@",
+                 blocks, sum / Double(max(blocks, 1)) * 1000, worstBlock * 1000, period * 1000, over, missed, skips, dalnok_project_dirty(engine) ? "yes" : "no"))
     dalnok_engine_destroy(engine)
     leave(0)
 
@@ -729,6 +830,10 @@ case "bench":
     // live render path (pump, 512-frame blocks like a device) and offline throughput.
     let tracks = Int(opt("--tracks") ?? "64") ?? 64
     let seconds = Double(opt("--seconds") ?? "30") ?? 30
+    // --audible N: only the first N tracks play during the measured range; the others' clips start after it, as
+    // later sections of a song would (A-11).
+    let audible = Int(opt("--audible") ?? "") ?? tracks
+    if ProcessInfo.processInfo.environment["DALNOK_SCALAR_MIX"] != nil { dalnok_debug_set_scalar_mix(true) } // A-13 comparison
     let rate = 48_000.0, frames = Int(rate * seconds)
     let engine = dalnok_engine_create(rate)!
     var l = (0..<frames).map { Float(sin(Double($0) * 0.0577)) * 0.1 }, r = l.map { -$0 }
@@ -740,7 +845,7 @@ case "bench":
     dalnok_media_release(media)
     for t in 0..<tracks {
         let tr = dalnok_track_add(engine, "T\(t)")
-        let c = dalnok_clip_add(engine, tr, id, 0, 0, 0)
+        let c = dalnok_clip_add(engine, tr, id, t < audible ? 0 : Int64(frames) + 48_000, 0, 0)
         dalnok_clip_set_fades(engine, c, Int64(rate), Int64(rate), DALNOK_FADE_EQUAL_POWER)
         dalnok_track_set_pan(engine, tr, Float(t % 7) / 3.5 - 1)
     }
@@ -754,13 +859,13 @@ case "bench":
         worst = max(worst, dt); total += dt; blocks += 1
     }
     let budget = 512 / rate * 1e6
-    print(String(format: "live path: %d tracks, %d blocks of 512 frames: avg %.1f us, worst %.1f us (budget %.0f us, %.1f%% avg load)",
-                 tracks, blocks, total / Double(blocks), worst, budget, total / Double(blocks) / budget * 100))
+    print(String(format: "live path: %d tracks (%d audible), %d blocks of 512 frames: avg %.1f us, worst %.1f us (budget %.0f us, %.1f%% avg load)",
+                 tracks, min(audible, tracks), blocks, total / Double(blocks), worst, budget, total / Double(blocks) / budget * 100))
     var ol = [Float](repeating: 0, count: frames), or = ol
     let t0 = Date()
     dalnok_render_offline(engine, 0, Int64(frames), &ol, &or)
     let dt = Date().timeIntervalSince(t0)
-    print(String(format: "offline: %.0f s of %d tracks in %.0f ms (%.0fx realtime)", seconds, tracks, dt * 1000, seconds / dt))
+    print(String(format: "offline: %.0f s of %d tracks (%d audible) in %.0f ms (%.0fx realtime)", seconds, tracks, min(audible, tracks), dt * 1000, seconds / dt))
     dalnok_engine_destroy(engine)
 
 default:

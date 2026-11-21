@@ -8,7 +8,8 @@ import DalnokEngine
 final class PluginWindowController: NSWindowController, NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate {
     let engine: Engine
     let slot: Int32
-    let tabs = NSSegmentedControl(labels: ["Editor", "Parameters"], trackingMode: .selectOne, target: nil, action: nil)
+    /// In the title bar: the plug-in's own window (its GUI) or Controls (Dalnok's view of every parameter).
+    let tabs = NSSegmentedControl(labels: ["Plug-in", "Controls"], trackingMode: .selectOne, target: nil, action: nil)
     let editorHost = NSView()
     let table = NSTableView()
     let search = NSSearchField()
@@ -85,28 +86,36 @@ final class PluginWindowController: NSWindowController, NSWindowDelegate, NSTabl
         ])
 
         let content = NSView()
-        let bar = NSView()
-        tabs.translatesAutoresizingMaskIntoConstraints = false
-        bar.addSubview(tabs)
-        for v in [bar, editorHost, panel] as [NSView] { v.translatesAutoresizingMaskIntoConstraints = false; content.addSubview(v) }
+        for v in [editorHost, panel] as [NSView] { v.translatesAutoresizingMaskIntoConstraints = false; content.addSubview(v) }
         NSLayoutConstraint.activate([
-            bar.topAnchor.constraint(equalTo: content.topAnchor), bar.leadingAnchor.constraint(equalTo: content.leadingAnchor),
-            bar.trailingAnchor.constraint(equalTo: content.trailingAnchor), bar.heightAnchor.constraint(equalToConstant: 36),
-            tabs.centerXAnchor.constraint(equalTo: bar.centerXAnchor), tabs.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
-            editorHost.topAnchor.constraint(equalTo: bar.bottomAnchor), editorHost.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+            editorHost.topAnchor.constraint(equalTo: content.topAnchor), editorHost.leadingAnchor.constraint(equalTo: content.leadingAnchor),
             editorHost.trailingAnchor.constraint(equalTo: content.trailingAnchor), editorHost.bottomAnchor.constraint(equalTo: content.bottomAnchor),
-            panel.topAnchor.constraint(equalTo: bar.bottomAnchor), panel.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+            panel.topAnchor.constraint(equalTo: content.topAnchor), panel.leadingAnchor.constraint(equalTo: content.leadingAnchor),
             panel.trailingAnchor.constraint(equalTo: content.trailingAnchor), panel.bottomAnchor.constraint(equalTo: content.bottomAnchor),
         ])
         window.contentView = content
+        // The switch lives in the title bar, so the plug-in's window has nothing of Dalnok's above its GUI.
+        tabs.controlSize = .small
+        tabs.segmentStyle = .separated
+        tabs.setToolTip("The plug-in's own window", forSegment: 0)
+        tabs.setToolTip("Dalnok's controls: every parameter, searchable, automatable", forSegment: 1)
+        tabs.sizeToFit()
+        let holder = NSView(frame: NSRect(x: 0, y: 0, width: tabs.frame.width + 12, height: 24))
+        tabs.frame.origin = NSPoint(x: 6, y: (24 - tabs.frame.height) / 2)
+        holder.addSubview(tabs)
+        let accessory = NSTitlebarAccessoryViewController()
+        accessory.view = holder
+        accessory.layoutAttribute = .trailing
+        window.addTitlebarAccessoryViewController(accessory)
         loadParameters()
     }
     required init?(coder: NSCoder) { fatalError() }
 
-    func show() {
+    /// Shows the window: the plug-in's GUI, or its controls (`controls`, and always when it has no GUI).
+    func show(controls: Bool = false) {
         if isolated { return showIsolated() }
         let wantsEditor = dalnok_plugin_has_editor(engine.handle, slot) && openEditor()
-        tabs.selectedSegment = wantsEditor ? 0 : 1
+        tabs.selectedSegment = wantsEditor && !controls ? 0 : 1
         tabs.setEnabled(editorOpen, forSegment: 0)
         tabChanged(nil)
         window?.center()
@@ -116,12 +125,14 @@ final class PluginWindowController: NSWindowController, NSWindowDelegate, NSTabl
         }
     }
 
+    /// Isolated: this window is the controls; the plug-in's GUI is its host's window (Plug-in brings it forward).
     private func showIsolated() {
         tabs.selectedSegment = 1
         tabChanged(nil)
         window?.center()
         window?.makeKeyAndOrderFront(nil)
-        if dalnok_plugin_has_editor(engine.handle, slot) { showHostEditor() } else { tabs.setEnabled(false, forSegment: 0) }
+        tabs.setEnabled(dalnok_plugin_has_editor(engine.handle, slot), forSegment: 0)
+        note.stringValue = "The plug-in's own window runs in its own process: choose Plug-in above to show it."
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.refreshValues() }
         }
@@ -176,11 +187,26 @@ final class PluginWindowController: NSWindowController, NSWindowDelegate, NSTabl
 
     private func fitEditor(width: CGFloat, height: CGFloat) {
         guard let window, width > 0, height > 0 else { return }
-        let frame = window.frameRect(forContentRect: NSRect(x: 0, y: 0, width: max(width, 360), height: height + 36))
+        let frame = window.frameRect(forContentRect: NSRect(x: 0, y: 0, width: max(width, 360), height: height))
         var f = window.frame
         f.origin.y += f.height - frame.height
         f.size = frame.size
         window.setFrame(f, display: true)
+    }
+
+    /// Brings the window forward on its controls (the host editor's title-bar Controls, or the unit's menu).
+    func showControls() {
+        tabs.selectedSegment = 1
+        tabChanged(nil)
+        window?.makeKeyAndOrderFront(nil)
+    }
+    /// Brings the plug-in's GUI forward (this window's Plug-in view, or the isolated host's window).
+    func showGUI() {
+        if isolated { showHostEditor(); return }
+        guard editorOpen else { return showControls() }
+        tabs.selectedSegment = 0
+        tabChanged(nil)
+        window?.makeKeyAndOrderFront(nil)
     }
 
     @objc func tabChanged(_ sender: Any?) {
@@ -201,7 +227,9 @@ final class PluginWindowController: NSWindowController, NSWindowDelegate, NSTabl
     func windowWillClose(_ notification: Notification) {
         refreshTimer?.invalidate()
         refreshTimer = nil
-        if editorOpen || hostEditorOpen { dalnok_plugin_close_editor(engine.handle, slot) }
+        // An embedded GUI goes with this window. An isolated plug-in's own window is separate (the unit's Open shows it,
+        // its title bar's Controls shows this one), so it stays open.
+        if editorOpen { dalnok_plugin_close_editor(engine.handle, slot) }
         editorOpen = false
         hostEditorOpen = false
         onClose?()

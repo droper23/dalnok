@@ -98,7 +98,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         if let f = foreign.first { main.importProject(f, confirm: false) }
         if interactiveLaunch { DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in self?.main.offerCrashRecovery(previousRecovery) } }
-        if interactiveLaunch && Analog.on && !Motion.reduced { main.vfdTestUntil = Date().addingTimeInterval(0.6) }
+        if interactiveLaunch && Theme.look.tapeDeck && !Motion.reduced { main.vfdTestUntil = Date().addingTimeInterval(0.6) }
         if files.isEmpty && snapshot == nil && !args.contains("--no-welcome") && !WelcomeController.hasCompleted {
             main.welcome.show()
         }
@@ -157,6 +157,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Theme.activeStyle = style
         session.forceRefresh() // track colours come from the style's palette
         let next = MainWindowController(session: session)
+        // The arrangement keeps its zoom and scroll position: the same view, drawn in the other style.
+        next.fitOnNextChange = false
+        next.timeline.keepView(framesPerPoint: old.timeline.framesPerPoint, scrollFrame: old.timeline.scrollFrame, scrollY: old.timeline.scrollY)
         next.settings = settings
         next.openedMidiSources = old.openedMidiSources
         main = next

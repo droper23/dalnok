@@ -174,7 +174,7 @@ final class TransportBar: NSView {
         timeLabel.wantsLayer = true
         statusLabel.wantsLayer = true
         timeLabel.translatesAutoresizingMaskIntoConstraints = false
-        if Analog.on {
+        if Theme.look.tapeDeck {
             let vfd = Theme.hex(0x7DF0D8)
             timeLabel.textColor = vfd
             let glow = NSShadow()
@@ -195,7 +195,7 @@ final class TransportBar: NSView {
         }
         lcd.addSubview(timeLabel)
         subTimeLabel.font = Theme.mono(9, .medium)
-        subTimeLabel.textColor = (Analog.on ? Theme.hex(0x7DF0D8) : Theme.accent).withAlphaComponent(0.65)
+        subTimeLabel.textColor = (Theme.look.tapeDeck ? Theme.hex(0x7DF0D8) : Theme.accent).withAlphaComponent(0.65)
         subTimeLabel.alignment = .center
         subTimeLabel.translatesAutoresizingMaskIntoConstraints = false
         subTimeLabel.setAccessibilityLabel("Secondary position")
@@ -232,7 +232,7 @@ final class TransportBar: NSView {
         tempo.edgeInsets = NSEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
         tempoField.widthAnchor.constraint(equalToConstant: 44).isActive = true
         reels.setAccessibilityElement(false)
-        let transport = NSStackView(views: Analog.on ? [tapeStrip, lcd, tempo]
+        let transport = NSStackView(views: Theme.look.tapeDeck ? [tapeStrip, lcd, tempo]
                                                      : [rewind, playButton, recordButton, cycleButton, lcd, tempo])
         transport.spacing = 6
 
@@ -271,9 +271,9 @@ final class TransportBar: NSView {
     required init?(coder: NSCoder) { fatalError() }
 
     override func draw(_ dirtyRect: NSRect) {
-        (Analog.on ? Analog.faceplate : Theme.panel).setFill(); bounds.fill()
+        (Theme.look.tapeDeck ? Analog.faceplate : Theme.panel).setFill(); bounds.fill()
         Theme.separator.setFill(); NSRect(x: 0, y: 0, width: bounds.width, height: 1).fill()
-        if Analog.on, let ctx = NSGraphicsContext.current?.cgContext {
+        if Theme.look.tapeDeck, let ctx = NSGraphicsContext.current?.cgContext {
             // A faceplate: bevel highlight and screws at the corners clear of the window buttons.
             NSColor(white: 1, alpha: 0.06).setFill(); NSRect(x: 0, y: bounds.height - 1, width: bounds.width, height: 1).fill()
             for p in [CGPoint(x: bounds.width - 7, y: 7), CGPoint(x: bounds.width - 7, y: bounds.height - 7), CGPoint(x: 7, y: 7)] {
@@ -305,8 +305,8 @@ final class TransportBar: NSView {
         recordButton.setAccessibilityValue(recording ? "recording" : "stopped")
         if recording { Motion.pulse(recordButton.layer, from: 1, to: 0.4, period: 1.0) } else { Motion.stopPulse(recordButton.layer) }
         Motion.fadeNextChange(timeLabel.layer, duration: Motion.standard)
-        timeLabel.textColor = recording ? Theme.recordOn : (Analog.on ? Theme.hex(0x7DF0D8) : Theme.accent)
-        if Analog.on { timeLabel.shadow?.shadowColor = (recording ? Theme.recordOn : Theme.hex(0x7DF0D8)).withAlphaComponent(0.8) }
+        timeLabel.textColor = recording ? Theme.recordOn : (Theme.look.tapeDeck ? Theme.hex(0x7DF0D8) : Theme.accent)
+        if Theme.look.tapeDeck { timeLabel.shadow?.shadowColor = (recording ? Theme.recordOn : Theme.hex(0x7DF0D8)).withAlphaComponent(0.8) }
         // The position display's well glows red while recording.
         Motion.layers(Motion.gentle) {
             lcdWell.layer?.borderColor = (recording ? Theme.recordOn.withAlphaComponent(0.7) : Theme.hairline).cgColor
@@ -381,7 +381,7 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
         number.alignment = .right
         nameLabel.font = Theme.ui(13, .semibold)
         nameLabel.textColor = Theme.text
-        if Analog.on {
+        if Theme.look.channelStripHeaders {
             // A console scribble strip: a recessed display window (drawn by the row) with the name lit in the
             // track's color, like the backlit strips on modern analog-style consoles.
             nameLabel.font = NSFont.systemFont(ofSize: 12.5, weight: .semibold, width: .condensed)
@@ -415,7 +415,7 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
         meter.vertical = true
         meter.toolTip = "Post-fader level (click to reset the clip indicator)"
 
-        if Analog.on { addSubview(scribble) } // first, so the name draws on top of it
+        if Theme.look.channelStripHeaders { addSubview(scribble) } // first, so the name draws on top of it
         disclosure.isBordered = false
         disclosure.imagePosition = .imageOnly
         disclosure.contentTintColor = Theme.textDim
@@ -433,9 +433,9 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
             disclosure.widthAnchor.constraint(equalToConstant: 18), disclosure.heightAnchor.constraint(equalToConstant: 18),
             number.widthAnchor.constraint(equalToConstant: 18),
             number.firstBaselineAnchor.constraint(equalTo: nameLabel.firstBaselineAnchor),
-            nameLabel.leadingAnchor.constraint(equalTo: number.trailingAnchor, constant: Analog.on ? 14 : 8),
+            nameLabel.leadingAnchor.constraint(equalTo: number.trailingAnchor, constant: Theme.look.channelStripHeaders ? 14 : 8),
             nameLabel.topAnchor.constraint(equalTo: topAnchor, constant: 12),
-            nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: arm.leadingAnchor, constant: Analog.on ? -16 : -8),
+            nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: arm.leadingAnchor, constant: Theme.look.channelStripHeaders ? -16 : -8),
             arm.trailingAnchor.constraint(equalTo: mute.leadingAnchor, constant: -4),
             arm.centerYAnchor.constraint(equalTo: nameLabel.centerYAnchor),
             inputButton.trailingAnchor.constraint(equalTo: solo.trailingAnchor),
@@ -490,7 +490,7 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
         }
         numberLeading.constant = 8 + 12 * CGFloat(min(3, session.nesting(t))) // members sit inside their stack (nested ones deeper)
         if !nameLabel.isEditable { nameLabel.stringValue = t.name }
-        if Analog.on {
+        if Theme.look.channelStripHeaders {
             // Lit in the track's color; a muted channel's strip goes dark.
             let lit = OKLCH.adjust(t.color, dl: 0.2, chromaScale: 0.7)
             nameLabel.textColor = t.muted ? Theme.textFaint : lit
@@ -547,16 +547,16 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
         for v in [gain, pan, gainLabel, panLabel, inputButton] as [NSView] where v.isHidden != compact { v.isHidden = compact }
         strip.frame = CGRect(x: 0, y: 0, width: isSelected ? 5 : 3, height: bounds.height - 1)
         CATransaction.commit()
-        if Analog.on {
+        if Theme.look.channelStripHeaders {
             let n = nameLabel.frame
             scribble.frame = NSRect(x: n.minX - 7, y: n.midY - 11, width: max(40, arm.frame.minX - 9 - (n.minX - 7)), height: 22)
         }
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        (Analog.on ? Analog.faceplate : Theme.panelRaised).setFill()
+        (Theme.look.channelStripHeaders ? Analog.faceplate : Theme.panelRaised).setFill()
         bounds.fill()
-        if !Analog.on { // a wash of the track colour helps find a track in a long list
+        if !Theme.look.channelStripHeaders { // a wash of the track colour helps find a track in a long list
             (muted ? TrackTint(base: color).muted : color).withAlphaComponent(0.08).setFill()
             bounds.fill()
         }
@@ -576,7 +576,7 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
         nameLabel.isBezeled = true
         nameLabel.drawsBackground = true
         // Both themes edit in a dark well (Warm Analog: the scribble strip itself).
-        nameLabel.backgroundColor = Analog.on ? Theme.hex(0x0D0A08) : Theme.window
+        nameLabel.backgroundColor = Theme.look.channelStripHeaders ? Theme.hex(0x0D0A08) : Theme.window
         window?.makeFirstResponder(nameLabel)
         nameLabel.currentEditor()?.selectAll(nil)
     }
