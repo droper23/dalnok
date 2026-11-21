@@ -1,5 +1,6 @@
 // C API: media, pool, queries, edit commands, undo and project files (split from dalnok_api.cpp, A-06).
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "vec.hpp"
 #include "dalnok/dalnok.h"
 #include "dalnok_api_internal.hpp"
 #include "commands.hpp"
@@ -336,6 +337,7 @@ DalnokStatus dalnok_project_save_copying(DalnokEngine *e, const char *path, bool
 void dalnok_project_new(DalnokEngine *e) {
     if (e) e->impl.newProject();
 }
+void dalnok_debug_set_scalar_mix(bool scalar) { dalnok::vec::setScalar(scalar); }
 int32_t dalnok_project_format_version(void) { return dalnok::projectFormatVersion(); }
 DalnokStatus dalnok_project_save(DalnokEngine *e, const char *path, char *err, size_t err_len) {
     if (!e || !path) return DALNOK_ERR_INVALID_ARG;

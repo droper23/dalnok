@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+- Faster mixing (A-13): each track's gain ramp, meter and output now use vector routines (Accelerate's vDSP on macOS).
+  - A 64-track block takes 46 µs instead of 143 µs, and a 256-track block 180 µs instead of 567 µs (about 3x faster).
+  - Offline export is 3.8x faster at 64 and at 256 tracks.
+  - Output matches the previous scalar mix within 1e-7. Only the meters' DC tracking moved from per sample to per block.
+
 - Internal (A-17): a theme is now a palette of colour tokens plus a set of look capabilities (pedalboard devices, console mixer, tape-deck transport, and so on). Views ask for the capability they draw instead of checking whether Warm Analog is on, so a third theme needs no view changes. Both themes render the same as before: 71 of 72 frames are identical or within run-to-run noise, and the remaining one differs only in playhead timing.
 
 - Fixed: at 44.1 kHz the position display could read one tick early on bar and beat lines. For example, bar 2 showed as 2.1.4.239, because a beat at 96 BPM is 27,562.5 frames. Step-entered MIDI notes were also a frame short.

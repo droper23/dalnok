@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "render.hpp"
+#include "vec.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -10,6 +11,37 @@ namespace {
 
 void clear(float *p, int n) DALNOK_NONBLOCKING {
     for (int i = 0; i < n; ++i) p[i] = 0.0f;
+}
+
+// Block meters (A-13). The meter's DC tracker (meterLevel's one-pole, k = 5e-4) ran per sample, a serial recursion
+// that kept the fader loop of every track from vectorizing. Per block: the peak is measured against the tracker's
+// value at the block start, and the tracker advances by the same recursion in closed form,
+//   dc_n = a^n dc_0 + k sum(a^(n-1-i) v_i),  a = 1 - k,
+// as a dot product with precomputed weights. Only what the meter shows changes (by at most k of a sample), never
+// the audio.
+struct MeterTables {
+    static constexpr float k = 5e-4f;
+    float decay[kMaxBlock + 1]; // a^n
+    float weight[kMaxBlock];    // weight[m] = k a^(kMaxBlock - 1 - m): a block of n uses weight + kMaxBlock - n
+    MeterTables() {
+        for (int n = 0; n <= kMaxBlock; ++n) decay[n] = static_cast<float>(std::pow(1.0 - k, n));
+        for (int m = 0; m < kMaxBlock; ++m) weight[m] = static_cast<float>(k * std::pow(1.0 - k, kMaxBlock - 1 - m));
+    }
+};
+const MeterTables kMeterTables; // built at load, never on the audio thread
+
+float blockMeter(const float *v, int n, float &dc) DALNOK_NONBLOCKING {
+    if (n <= 0) return 0.0f;
+    if (n > kMaxBlock) { // never happens (blocks are split to kMaxBlock); keep the per-sample form for safety
+        float p = 0;
+        for (int i = 0; i < n; ++i) p = std::max(p, meterLevel(v[i], dc));
+        return p;
+    }
+    float lo, hi;
+    vec::minMax(v, n, lo, hi);
+    const float peak = std::max(std::fabs(hi - dc), std::fabs(lo - dc));
+    dc = kMeterTables.decay[n] * dc + vec::dot(v, kMeterTables.weight + (kMaxBlock - n), n);
+    return peak;
 }
 
 // Constant-power law compensated to unity at center (+3 dB at the extremes),
@@ -66,10 +98,8 @@ void mixClip(const RenderClip &clip, int64_t pos, int frames, float *l, float *r
     const bool faded = t0 < clip.fadeIn || t0 + n > len - clip.fadeOut;
     const float g = clip.gain;
     if (!faded) {
-        for (int i = 0; i < n; ++i) {
-            l[o + i] = sl[i] * g;
-            r[o + i] = sr[i] * g;
-        }
+        vec::scale(sl, g, l + o, n);
+        vec::scale(sr, g, r + o, n);
         return;
     }
     for (int i = 0; i < n; ++i) {
@@ -440,12 +470,15 @@ void renderBlock(const RenderState &state, int64_t pos, int frames, float *left,
         // Adds `src * gain` to a destination, through the connection's compensation delay if it has one.
         auto addTo = [&](float *dl, float *dr, const float *srcL, const float *srcR, float gain, DelayLine *delay) DALNOK_NONBLOCKING {
             if (!delay) {
-                for (int k = 0; k < frames; ++k) { dl[k] += srcL[k] * gain; dr[k] += srcR[k] * gain; }
+                vec::addScaled(srcL, gain, dl, frames);
+                vec::addScaled(srcR, gain, dr, frames);
                 return;
             }
-            for (int k = 0; k < frames; ++k) { s.edgeL[k] = srcL[k] * gain; s.edgeR[k] = srcR[k] * gain; }
+            vec::scale(srcL, gain, s.edgeL, frames);
+            vec::scale(srcR, gain, s.edgeR, frames);
             delay->process(s.edgeL, s.edgeR, frames);
-            for (int k = 0; k < frames; ++k) { dl[k] += s.edgeL[k]; dr[k] += s.edgeR[k]; }
+            vec::addScaled(s.edgeL, 1.0f, dl, frames);
+            vec::addScaled(s.edgeR, 1.0f, dr, frames);
         };
         // Delivers the faded signal (s.fade*) to the output and post-fader sends, and the pre-fader signal
         // (the chain buffer, silenced by mute and solo) to pre-fader sends.
@@ -497,7 +530,8 @@ void renderBlock(const RenderState &state, int64_t pos, int frames, float *left,
 
         if (!smooth) {
             if (any) {
-                for (int k = 0; k < frames; ++k) { s.fadeL[k] = L[k] * gl; s.fadeR[k] = R[k] * gr; }
+                vec::scale(L, gl, s.fadeL, frames);
+                vec::scale(R, gr, s.fadeR, frames);
                 deliver();
             }
             return;
@@ -512,16 +546,10 @@ void renderBlock(const RenderState &state, int64_t pos, int frames, float *left,
         const float dl = (gl - rt.curL) / static_cast<float>(frames);
         const float dr = (gr - rt.curR) / static_cast<float>(frames);
         if (any) {
-            float cl = rt.curL, cr = rt.curR, pl = 0, pr = 0;
-            for (int k = 0; k < frames; ++k) {
-                cl += dl;
-                cr += dr;
-                const float vl = L[k] * cl, vr = R[k] * cr;
-                s.fadeL[k] = vl;
-                s.fadeR[k] = vr;
-                pl = std::max(pl, meterLevel(vl, rt.meterDcL));
-                pr = std::max(pr, meterLevel(vr, rt.meterDcR));
-            }
+            // Sample k gets cur + d * (k + 1), reaching the target on the last sample.
+            vec::rampMul(L, rt.curL, dl, s.fadeL, frames);
+            vec::rampMul(R, rt.curR, dr, s.fadeR, frames);
+            const float pl = blockMeter(s.fadeL, frames, rt.meterDcL), pr = blockMeter(s.fadeR, frames, rt.meterDcR);
             deliver();
             raisePeak(rt.peakL, pl);
             raisePeak(rt.peakR, pr);

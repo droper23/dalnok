@@ -676,7 +676,7 @@
       "priority": "P2",
       "category": "Performance",
       "subsystem": "Real-time render",
-      "status": "open",
+      "status": "fixed",
       "summary": "The per-sample mix, fader ramp, meter and clip copy loops are scalar C++ with per-sample branches. The project already links Accelerate for the stretch library, so vectorisation has no new dependency cost.",
       "evidence": [
         "engine/src/render.cpp - mixClip, the fader ramp, meterLevel and deliver() are scalar loops; the packed-mono path uses a per-sample constant-power approximation.",
@@ -708,7 +708,8 @@
         "reliability": 1,
         "value": 2
       },
-      "measured": false
+      "measured": false,
+      "resolution": "2026-11-20: the per-track hot loops go through engine/src/vec.hpp kernels (scale, addScaled, rampMul, minMax, dot): vDSP on macOS (platform/macos/vec_accelerate.cpp), plain loops elsewhere and as a runtime-selectable reference (dalnok_debug_set_scalar_mix). Used for the clip copy with gain, the fader/pan ramp (now closed form: cur + step * (k + 1)), delivery to outputs/sends and the compensation-delay path. The real bottleneck was the meter: its DC tracker was a per-sample one-pole recursion inside the fader loop. It now runs per block: the peak against the tracker's block-start value, and the tracker advanced by the same recursion in closed form (a^n dc + k sum a^(n-1-i) v_i, precomputed weights, one dot product). Only the meter display can change, by at most k of a sample. Release, 512-frame live blocks (dalnok-cli bench, 20 s, 3 runs): 64 tracks 143.1/142.9 us before -> 46.4-46.6 us (-67%); 256 tracks 566.8/566.6 us -> 180.3-180.5 us (-68%). Offline: 64 tracks 79x -> 294-306x realtime, 256 tracks 20x -> 77x. VectorMix/vectorMixMatchesScalarLoops: 24 random projects rendered offline and live (with fader and pan moves while playing) through vDSP and through the scalar loops: worst difference 8.94e-08 (<= 1e-6 required). swift test 252/252, rt-effects clean, self-test PASS (581, meters and gain rings included)."
     },
     {
       "id": "A-14",

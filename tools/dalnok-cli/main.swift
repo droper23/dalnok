@@ -833,6 +833,7 @@ case "bench":
     // --audible N: only the first N tracks play during the measured range; the others' clips start after it, as
     // later sections of a song would (A-11).
     let audible = Int(opt("--audible") ?? "") ?? tracks
+    if ProcessInfo.processInfo.environment["DALNOK_SCALAR_MIX"] != nil { dalnok_debug_set_scalar_mix(true) } // A-13 comparison
     let rate = 48_000.0, frames = Int(rate * seconds)
     let engine = dalnok_engine_create(rate)!
     var l = (0..<frames).map { Float(sin(Double($0) * 0.0577)) * 0.1 }, r = l.map { -$0 }
