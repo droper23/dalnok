@@ -58,6 +58,16 @@ public:
     bool inputRunning() const { return duplex_ != nullptr && !simulatedInput_; }
     const std::string &inputError() const { return inputError_; }
     bool setInputMonitor(DalnokTrackId id, bool on, std::string &err);
+    // Track groups (engine_groups.cpp). Group edits are undoable; the clutch (suspending every group) is not saved.
+    int32_t createGroup(const std::string &name, const std::vector<DalnokTrackId> &members, std::string &err);
+    bool removeGroup(int32_t id, std::string &err);
+    bool setTrackGroup(DalnokTrackId track, int32_t group, std::string &err);
+    bool setGroup(const TrackGroup &g, std::string &err); // name and links
+    const std::vector<TrackGroup> &groups() const { return model_.groups; }
+    void setGroupClutch(bool suspended) { groupClutch_ = suspended; }
+    bool groupClutch() const { return groupClutch_; }
+    // The other members of `id`'s group when that group links `what` (empty with the clutch on).
+    std::vector<DalnokTrackId> groupLinked(DalnokTrackId id, bool TrackGroup::*what) const;
     // Latency measurement (loopback): clicks out, the same clicks back on an input channel.
     struct LatencyResult { bool ok = false; int64_t measured = 0, reported = 0; int32_t clicks = 0, spread = 0; float level = 0; std::string error; };
     bool startLatencyProbe(const std::string &uid, int channel, std::string &err);
@@ -432,6 +442,7 @@ private:
     void updateWorkgroup();               // after the device starts, changes or stops: tell isolated hosts
     int32_t nextPlugin_ = 1;
     int32_t nextMarker_ = 1;
+    bool groupClutch_ = false;
     // Recording (control thread)
     int64_t simulatedLatency_ = 0;
     RecordingState rec_; // capture, the take in progress and its audio-thread state (A-06)

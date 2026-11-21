@@ -693,6 +693,47 @@ DalnokStatus dalnok_track_set_armed(DalnokEngine *e, DalnokTrackId t, bool armed
     std::string err;
     return e ? statusFor(e->impl.setArmed(t, armed, err), err) : DALNOK_ERR_INVALID_ARG;
 }
+int32_t dalnok_groups(const DalnokEngine *e, DalnokGroupInfo *out, int32_t capacity) {
+    if (!e) return 0;
+    const auto &gs = e->impl.groups();
+    for (int32_t i = 0; out && i < capacity && i < static_cast<int32_t>(gs.size()); ++i) {
+        const auto &g = gs[static_cast<size_t>(i)];
+        out[i] = DalnokGroupInfo{};
+        out[i].id = g.id;
+        copyOut(out[i].name, sizeof out[i].name, g.name);
+        out[i].volume = g.volume; out[i].pan = g.pan; out[i].mute = g.mute;
+        out[i].solo = g.solo; out[i].arm = g.arm; out[i].monitor = g.monitor;
+        for (int32_t k = 0; k < dalnok_track_count(e); ++k) {
+            DalnokTrackInfo t{};
+            if (dalnok_track_info(e, dalnok_track_at(e, k), &t) == DALNOK_OK && t.group == g.id) ++out[i].members;
+        }
+    }
+    return static_cast<int32_t>(gs.size());
+}
+int32_t dalnok_group_create(DalnokEngine *e, const char *name, const DalnokTrackId *members, int32_t count) {
+    if (!e || count < 0 || (count > 0 && !members)) return 0;
+    std::string err;
+    return e->impl.createGroup(name ? name : "", std::vector<DalnokTrackId>(members, members + count), err);
+}
+DalnokStatus dalnok_group_remove(DalnokEngine *e, int32_t g) {
+    std::string err;
+    return e ? statusFor(e->impl.removeGroup(g, err), err) : DALNOK_ERR_INVALID_ARG;
+}
+DalnokStatus dalnok_group_set(DalnokEngine *e, const DalnokGroupInfo *info) {
+    if (!e || !info) return DALNOK_ERR_INVALID_ARG;
+    dalnok::TrackGroup g;
+    g.id = info->id;
+    g.name = std::string(info->name, strnlen(info->name, sizeof info->name));
+    g.volume = info->volume; g.pan = info->pan; g.mute = info->mute; g.solo = info->solo; g.arm = info->arm; g.monitor = info->monitor;
+    std::string err;
+    return statusFor(e->impl.setGroup(g, err), err);
+}
+DalnokStatus dalnok_track_set_group(DalnokEngine *e, DalnokTrackId t, int32_t g) {
+    std::string err;
+    return e ? statusFor(e->impl.setTrackGroup(t, g, err), err) : DALNOK_ERR_INVALID_ARG;
+}
+void dalnok_groups_set_clutch(DalnokEngine *e, bool on) { if (e) e->impl.setGroupClutch(on); }
+bool dalnok_groups_clutch(const DalnokEngine *e) { return e && e->impl.groupClutch(); }
 DalnokStatus dalnok_track_set_input_monitor(DalnokEngine *e, DalnokTrackId t, bool on) {
     std::string err;
     return e ? statusFor(e->impl.setInputMonitor(t, on, err), err) : DALNOK_ERR_INVALID_ARG;

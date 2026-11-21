@@ -355,6 +355,7 @@ func buildMenu(target: MainWindowController) -> NSMenu {
         item("Solo Track", #selector(W.toggleSoloTrack(_:)), "s", [.control]),
         item("Record Enable Track", #selector(W.toggleArmTrack(_:)), "r", [.control]),
         item("Input Monitoring", #selector(W.toggleSelectedInputMonitor(_:)), "i", [.control]),
+        item("Suspend Groups", #selector(W.toggleGroupClutch(_:)), "g", [.command]),
         item("Bypass Plug-ins", #selector(W.toggleTrackBypass(_:)), "b", [.control]),
         .separator(),
         colorItem,

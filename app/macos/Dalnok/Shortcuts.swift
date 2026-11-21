@@ -181,6 +181,7 @@ private let specs: [String: Spec] = [
     "removeTempoChange:": Spec(id: "transport.remove_tempo_change", category: "Transport", detail: "Remove the tempo change at the playhead."),
     "removeMeterChange:": Spec(id: "transport.remove_meter_change", category: "Transport", detail: "Remove the time signature change at the playhead."),
     "toggleInputMonitoring:": Spec(id: "recording.input_monitoring", category: "Recording", detail: "Armed tracks play their input (auto input monitoring).", keywords: ["monitor"]),
+    "toggleGroupClutch:": Spec(id: "track.group_clutch", category: "Tracks", detail: "Suspend every track group (group clutch) until pressed again.", keywords: ["group", "clutch", "link"]),
     "toggleSelectedInputMonitor:": Spec(id: "track.input_monitor", category: "Tracks", detail: "Input Monitoring (I): hear the selected track's input now, recording or not.", keywords: ["monitor", "hear input", "live"]),
     // Tracks
     "newTrack:": Spec(id: "track.create_audio", category: "Tracks", detail: "Add an audio track after the selected one.", keywords: ["add", "insert"]),

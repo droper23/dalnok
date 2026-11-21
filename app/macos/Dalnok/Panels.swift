@@ -542,7 +542,8 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
         monitor.setAccessibilityLabel("Input monitoring \(t.name)")
         let fx = t.effects.count
         let instrument = t.instrumentName ?? "Dalnok Poly"
-        inputButton.title = (t.isBus ? "BUS" : t.isInstrument ? String(instrument.prefix(12)) : "IN \(t.inputChannel + 1)") + (fx > 0 ? " · \(fx) FX" : "")
+        let group = t.group != 0 ? session.groupName(t.group).map { " · " + $0 } ?? "" : ""
+        inputButton.title = (t.isBus ? "BUS" : t.isInstrument ? String(instrument.prefix(12)) : "IN \(t.inputChannel + 1)") + (fx > 0 ? " · \(fx) FX" : "") + group
         arm.isHidden = t.isBus
         let missing = t.plugins.filter { !$0.loaded }.map(\.name)
         inputButton.toolTip = (t.isBus ? "A bus mixes what tracks route or send to it (View ▸ Mixer)"

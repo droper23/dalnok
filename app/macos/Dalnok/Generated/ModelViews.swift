@@ -18,6 +18,7 @@ struct TrackFields: Equatable {
     var armed: Bool // record-enabled
     var inputChannel: Int32 // zero-based audio input (audio tracks)
     var inputMonitor: Bool // Input Monitoring: the input plays through the track (audio tracks)
+    var group: Int32 // track group (0 = none)
     var stack: DalnokTrackId // the summing stack this track belongs to (0 = none)
     var isStack: Bool // a bus that is a summing stack
     var collapsed: Bool // stack shown closed
@@ -27,7 +28,7 @@ struct TrackFields: Equatable {
 }
 extension TrackFields {
     init(_ c: DalnokTrackInfo) {
-        self.init(id: c.id, name: fixedString(c.name), colorStep: c.color, customColor: c.custom_color, gainDb: c.gain_db, pan: c.pan, muted: c.muted, solo: c.solo, clipCount: c.clip_count, kind: c.kind, armed: c.armed, inputChannel: c.input_channel, inputMonitor: c.input_monitor, stack: c.stack, isStack: c.is_stack, collapsed: c.collapsed, laneHeight: c.height, hidden: c.hidden, output: c.output)
+        self.init(id: c.id, name: fixedString(c.name), colorStep: c.color, customColor: c.custom_color, gainDb: c.gain_db, pan: c.pan, muted: c.muted, solo: c.solo, clipCount: c.clip_count, kind: c.kind, armed: c.armed, inputChannel: c.input_channel, inputMonitor: c.input_monitor, group: c.group, stack: c.stack, isStack: c.is_stack, collapsed: c.collapsed, laneHeight: c.height, hidden: c.hidden, output: c.output)
     }
 }
 

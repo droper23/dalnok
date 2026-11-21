@@ -88,6 +88,8 @@ bool Engine::setInputMonitor(DalnokTrackId id, bool on, std::string &err) {
         if (!t) return fail(err, "no such track");
         if (t->kind != kTrackAudio) return fail(err, "only audio tracks monitor an audio input");
         t->inputMonitor = on;
+        for (DalnokTrackId o : groupLinked(id, &TrackGroup::monitor))
+            if (TrackState *g = m.track(o); g && g->kind == kTrackAudio) g->inputMonitor = on;
         return true;
     });
     if (ok) syncInput();

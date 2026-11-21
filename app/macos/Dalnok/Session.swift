@@ -340,6 +340,23 @@ final class Session {
     }
     func setInput(_ t: DalnokTrackId, _ channel: Int32) { dalnok_track_set_input(h, t, channel); refresh() }
     func setInputMonitor(_ t: DalnokTrackId, _ on: Bool) { dalnok_track_set_input_monitor(h, t, on); refresh() }
+    // Track groups
+    var groups: [DalnokGroupInfo] {
+        let n = Int(dalnok_groups(h, nil, 0))
+        var list = [DalnokGroupInfo](repeating: DalnokGroupInfo(), count: max(n, 1))
+        let got = Int(dalnok_groups(h, &list, Int32(list.count)))
+        return Array(list.prefix(min(n, got)))
+    }
+    func groupName(_ id: Int32) -> String? { groups.first { $0.id == id }.map { fixedString($0.name) } }
+    @discardableResult
+    func createGroup(_ name: String, members: [DalnokTrackId]) -> Int32 { let g = dalnok_group_create(h, name, members, Int32(members.count)); refresh(); return g }
+    func setGroup(_ t: DalnokTrackId, _ g: Int32) { dalnok_track_set_group(h, t, g); refresh() }
+    func updateGroup(_ g: DalnokGroupInfo) { var g = g; dalnok_group_set(h, &g); refresh() }
+    func removeGroup(_ g: Int32) { dalnok_group_remove(h, g); refresh() }
+    var groupClutch: Bool {
+        get { dalnok_groups_clutch(h) }
+        set { dalnok_groups_set_clutch(h, newValue) }
+    }
     /// Loads a VST3 onto a track (instrument or insert). Runs plugin code on the main thread.
     func addPlugin(_ t: DalnokTrackId, path: String) throws -> Int32 {
         var err = [CChar](repeating: 0, count: 512)

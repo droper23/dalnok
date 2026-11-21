@@ -28,7 +28,7 @@
 extern "C" {
 #endif
 
-#define DALNOK_API_VERSION 43
+#define DALNOK_API_VERSION 44
 
 typedef enum {
     DALNOK_OK = 0,
@@ -352,6 +352,7 @@ typedef struct {
     bool armed;                    /* record-enabled */
     int32_t input_channel;         /* zero-based audio input (audio tracks) */
     bool input_monitor;            /* Input Monitoring: the input plays through the track (audio tracks) */
+    int32_t group;                 /* track group (0 = none) */
     DalnokTrackId stack;           /* the summing stack this track belongs to (0 = none) */
     bool is_stack;                 /* a bus that is a summing stack */
     bool collapsed;                /* stack shown closed */
@@ -708,6 +709,25 @@ DalnokTrackId dalnok_track_add_instrument(DalnokEngine *engine, const char *name
 /* Record-enable. Arming a track disarms other tracks of the same kind. */
 DalnokStatus dalnok_track_set_armed(DalnokEngine *engine, DalnokTrackId track, bool armed);
 DalnokStatus dalnok_track_set_input(DalnokEngine *engine, DalnokTrackId track, int32_t input_channel);
+/* ---- Track groups (Logic's Groups) ---------------------------------------
+ * Members share the linked settings: a change on one applies to the others in the same undo step. Volume and pan
+ * move relatively (in dB / pan units; a fader at -inf stays there), mute, solo, record enable (audio tracks) and
+ * Input Monitoring copy. The clutch suspends every group (not saved). Groups never change the sound by themselves. */
+typedef struct {
+    int32_t id;
+    char name[128];
+    bool volume, pan, mute, solo, arm, monitor; /* what the group links */
+    int32_t members;                            /* tracks in it (read only) */
+} DalnokGroupInfo;
+int32_t dalnok_groups(const DalnokEngine *engine, DalnokGroupInfo *out, int32_t capacity); /* returns the count */
+/* A new group (default links: volume, mute, solo, record, Input Monitoring) holding `members`; returns its id or 0. */
+int32_t dalnok_group_create(DalnokEngine *engine, const char *name, const DalnokTrackId *members, int32_t count);
+DalnokStatus dalnok_group_remove(DalnokEngine *engine, int32_t group);   /* members keep their settings */
+DalnokStatus dalnok_group_set(DalnokEngine *engine, const DalnokGroupInfo *info); /* name and links, by id */
+DalnokStatus dalnok_track_set_group(DalnokEngine *engine, DalnokTrackId track, int32_t group); /* 0 = none */
+void dalnok_groups_set_clutch(DalnokEngine *engine, bool suspended);
+bool dalnok_groups_clutch(const DalnokEngine *engine);
+
 /* Input Monitoring (the I button): hear the track's input through its channel strip, recording or not. Saved with
  * the project, not an undo step. Audio tracks only. */
 DalnokStatus dalnok_track_set_input_monitor(DalnokEngine *engine, DalnokTrackId track, bool on);

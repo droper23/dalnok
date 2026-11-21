@@ -880,6 +880,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
         if menu.title == "Recording Input" { return buildRecordingInputMenu(menu) }
+        if menu.title == "Track Group" { return buildGroupMenu(menu) }
         if menu.title == "Track Plug-ins" {
             guard let track = selectedTrack.flatMap({ session.track($0) }) else { return }
             for item in pluginsMenu(for: track).items { item.menu?.removeItem(item); menu.addItem(item) }
@@ -940,6 +941,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         let mon = NSMenuItem(title: "Input Monitoring", action: #selector(toggleSelectedInputMonitor(_:)), keyEquivalent: "")
         mon.target = self
         m.addItem(mon)
+        let group = NSMenuItem(title: "Group", action: nil, keyEquivalent: "")
+        group.submenu = NSMenu(title: "Track Group") // filled for the clicked track in menuNeedsUpdate
+        group.submenu?.delegate = self
+        m.addItem(group)
         let color = NSMenuItem(title: "Color", action: nil, keyEquivalent: "")
         color.submenu = colorMenu()
         m.addItem(color)
@@ -952,6 +957,84 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         del.target = self
         m.addItem(del)
         return m
+    }
+
+    // MARK: Track groups
+
+    /// Group submenu for the selected track: membership, a new group, and the current group's links.
+    func buildGroupMenu(_ menu: NSMenu) {
+        guard let id = selectedTrack, let track = session.track(id) else { return }
+        func add(_ title: String, _ sel: Selector, tag: Int = 0, on: Bool = false, indent: Int = 0) {
+            let it = NSMenuItem(title: title, action: sel, keyEquivalent: "")
+            it.target = self; it.tag = tag; it.state = on ? .on : .off; it.indentationLevel = indent
+            menu.addItem(it)
+        }
+        add("None", #selector(setTrackGroupItem(_:)), tag: 0, on: track.group == 0)
+        for g in session.groups { add(fixedString(g.name), #selector(setTrackGroupItem(_:)), tag: Int(g.id), on: track.group == g.id) }
+        menu.addItem(.separator())
+        add("New Group", #selector(newGroupFromTrack(_:)))
+        guard track.group != 0, let g = session.groups.first(where: { $0.id == track.group }) else { return }
+        menu.addItem(.separator())
+        let header = NSMenuItem(title: "\(fixedString(g.name)) links", action: nil, keyEquivalent: "")
+        header.isEnabled = false
+        menu.addItem(header)
+        for (i, (title, on)) in [("Volume", g.volume), ("Pan", g.pan), ("Mute", g.mute), ("Solo", g.solo),
+                                 ("Record Enable", g.arm), ("Input Monitoring", g.monitor)].enumerated() {
+            add(title, #selector(toggleGroupLink(_:)), tag: i, on: on, indent: 1)
+        }
+        add("Rename Group…", #selector(renameGroup(_:)))
+        add("Delete Group", #selector(deleteGroup(_:)))
+    }
+
+    @objc func setTrackGroupItem(_ sender: NSMenuItem) {
+        guard let id = selectedTrack else { return }
+        session.setGroup(id, Int32(sender.tag))
+    }
+    @objc func newGroupFromTrack(_ sender: Any?) {
+        guard let id = selectedTrack else { return }
+        let n = (session.groups.map(\.id).max() ?? 0) + 1
+        let g = session.createGroup("Group \(n)", members: [id])
+        flash(g > 0 ? "Group \(n): add tracks from their Group menu; volume, mute, solo, record and monitoring move together" : "Couldn't create a group")
+    }
+    @objc func toggleGroupLink(_ sender: NSMenuItem) {
+        guard let t = selectedTrack.flatMap({ session.track($0) }), var g = session.groups.first(where: { $0.id == t.group }) else { return }
+        switch sender.tag {
+        case 0: g.volume.toggle()
+        case 1: g.pan.toggle()
+        case 2: g.mute.toggle()
+        case 3: g.solo.toggle()
+        case 4: g.arm.toggle()
+        default: g.monitor.toggle()
+        }
+        session.updateGroup(g)
+    }
+    @objc func renameGroup(_ sender: Any?) {
+        guard let t = selectedTrack.flatMap({ session.track($0) }), var g = session.groups.first(where: { $0.id == t.group }), let window else { return }
+        let field = NSTextField(string: fixedString(g.name))
+        field.frame = NSRect(x: 0, y: 0, width: 240, height: 24)
+        let alert = NSAlert()
+        alert.messageText = "Rename Group"
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Rename"); alert.addButton(withTitle: "Cancel")
+        alert.beginSheetModal(for: window) { [weak self] r in
+            guard r == .alertFirstButtonReturn, !field.stringValue.isEmpty else { return }
+            withUnsafeMutableBytes(of: &g.name) { buf in
+                buf.initializeMemory(as: UInt8.self, repeating: 0)
+                let bytes = Array(field.stringValue.utf8.prefix(buf.count - 1))
+                buf.copyBytes(from: bytes)
+            }
+            self?.session.updateGroup(g)
+        }
+    }
+    @objc func deleteGroup(_ sender: Any?) {
+        guard let t = selectedTrack.flatMap({ session.track($0) }), t.group != 0 else { return }
+        session.removeGroup(t.group)
+    }
+    /// Track ▸ Suspend Groups (Logic's group clutch): nothing follows until it's turned off again.
+    @objc func toggleGroupClutch(_ sender: Any?) {
+        session.groupClutch.toggle()
+        syncViewButtons()
+        flash(session.groupClutch ? "Groups suspended: tracks move on their own" : "Groups active again")
     }
 
     /// "Automatic" plus the 16 gradient swatches.
@@ -1952,6 +2035,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         case #selector(toggleArmTrack(_:)):
             item.state = selectedTrack.flatMap { session.track($0) }?.armed == true ? .on : .off
             return selectedTrack != nil && !session.engine.isRecording
+        case #selector(toggleGroupClutch(_:)):
+            item.state = session.groupClutch ? .on : .off
+            return !session.groups.isEmpty
         case #selector(toggleSelectedInputMonitor(_:)):
             let t = selectedTrack.flatMap { session.track($0) }
             item.state = t?.inputMonitor == true ? .on : .off
