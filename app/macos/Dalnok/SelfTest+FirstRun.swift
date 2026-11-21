@@ -9,12 +9,27 @@ extension SelfTest {
     func startPage() async {
         let e = s.engine
         let page = w.emptyState
-        check(page.cards.count == 2 && EmptyStateView.essentials.count == 6, "start page: two ways to add a track, six essential keys")
+        check(page.cards.count == 2, "new project screen: two ways to add the first track")
+        let texts = page.subviewsDeep.compactMap { ($0 as? NSTextField)?.stringValue } + page.subviewsDeep.compactMap { ($0 as? NSButton)?.title }
+        check(!texts.contains { $0.contains("⌘") || $0.contains("⌥") }, "the new project screen teaches no shortcuts")
         let buttons = page.subviewsDeep.compactMap { $0 as? NSButton }
-        check(buttons.allSatisfy { $0.action != nil && $0.target != nil }, "every start page button has an action")
-        guard let audio = page.cards.first(where: { $0.accessibilityLabel() == "New Audio Track" }),
-              let inst = page.cards.first(where: { $0.accessibilityLabel() == "New Instrument Track" }) else {
-            return check(false, "start page offers New Audio Track and New Instrument Track")
+        check(buttons.allSatisfy { $0.action != nil && $0.target != nil }, "every new project screen button has an action")
+        check(!buttons.contains { $0.toolTip?.hasPrefix("/") == true }, "an automated run lists no recent projects (names stay private)")
+        // Project basics: tempo and time signature set the project's, one undo step each; the audio device is shown.
+        page.reload()
+        check(!page.outputLabel.stringValue.isEmpty && !page.inputLabel.stringValue.isEmpty,
+              "the audio output and input are shown (\(page.outputLabel.stringValue) / \(page.inputLabel.stringValue))")
+        page.tempoField.stringValue = "96"
+        page.controlTextDidEndEditing(Notification(name: NSControl.textDidEndEditingNotification))
+        check(abs(s.bpm - 96) < 1e-9 && w.transport.tempoField.stringValue == "96", "the screen's tempo sets the project's (\(s.bpm))")
+        page.meterPopup.selectItem(withTitle: "3/4")
+        _ = page.meterPopup.target?.perform(page.meterPopup.action)
+        check(s.meter == (3, 4) && w.transport.meterPopup.titleOfSelectedItem == "3/4", "and the time signature (\(s.meter))")
+        _ = perform("Undo"); _ = perform("Undo")
+        check(abs(s.bpm - 120) < 1e-9 && s.meter == (4, 4), "both undo (\(s.bpm), \(s.meter))")
+        guard let audio = page.cards.first(where: { $0.accessibilityLabel() == "Audio Track" }),
+              let inst = page.cards.first(where: { $0.accessibilityLabel() == "Instrument Track" }) else {
+            return check(false, "the screen offers Audio Track and Instrument Track")
         }
         inst.performClick(nil)
         check(s.tracks.count == 1 && s.tracks.first?.isInstrument == true, "start page's New Instrument Track adds one")

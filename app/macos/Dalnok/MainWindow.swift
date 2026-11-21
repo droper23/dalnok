@@ -155,6 +155,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     func windowDidBecomeKey(_ notification: Notification) { pianoRoll.focused = false }
     lazy var conceptGuide = ConceptGuideController()
     lazy var welcome = WelcomeController(main: self)
+    /// First launch: which app's shortcuts the person knows.
+    lazy var shortcutChooser = ShortcutChooserController()
     private(set) var lastImportReport: ImportReport?
     static let foreignExtensions: Set<String> = ["rpp", "als", "logicx", "fcpxml", "fcpxmld", "dawproject"]
     private var tickCount = 0
@@ -312,6 +314,27 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         emptyState.onMigrate = { [weak self] in self?.showMigrationAssistant(nil) }
         emptyState.onNewInstrument = { [weak self] in self?.newInstrumentTrack(nil) }
         emptyState.onNewAudioTrack = { [weak self] in self?.newTrack(nil) }
+        emptyState.onOpenRecent = { [weak self] url in self?.openSelectedProject(url) }
+        emptyState.onAudioSettings = { [weak self] in self?.settings.show(.audio) }
+        emptyState.onTempo = { [weak self] bpm in
+            guard let self else { return }
+            self.transport.tempoField.stringValue = String(format: "%g", bpm)
+            self.tempoEdited(nil) // the same path as the control bar's tempo: one undo step, range checked
+            self.updateTempoDisplay()
+        }
+        emptyState.onMeter = { [weak self] n, d in
+            guard let self else { return }
+            let title = "\(n)/\(d)"
+            if self.transport.meterPopup.item(withTitle: title) == nil { self.transport.meterPopup.addItem(withTitle: title) }
+            self.transport.meterPopup.selectItem(withTitle: title)
+            self.meterChosen(nil)
+        }
+        emptyState.basics = { [weak self] in
+            guard let self else { return (120, (4, 4), "", "") }
+            let capturing = ["--snapshot", "--screenshots", "--tour"].contains { CommandLine.arguments.contains($0) }
+            let input = capturing ? "Audio input" : self.recordingDevice?.name ?? "None (choose one in Audio Settings)"
+            return (self.session.bpm, self.session.meter, self.outputDeviceDescription(), input)
+        }
 
         transport.onPlayPause = { [weak self] in self?.togglePlay() }
         transport.onRecord = { [weak self] in self?.toggleRecord(nil) }

@@ -7,7 +7,11 @@ milestone: hosting complete (VST3/AU/CLAP, editors, parameters, automation, dela
 
 ## Current priorities (2026-11-21)
 - **First run and motion pass, then big-project performance** (branch `feat/first-run-and-motion`). Design notes and evidence: `06 - Design/First Run and Motion 2026-11-21.md`.
-  - An empty project shows a short guide (two ways to add a track, six keys, links). The six templates were removed at the owner's request.
+  - The new project screen (`06 - Design/New Project Screen 2026-11-21.md`) has three parts, and no shortcuts or templates:
+    - project basics: tempo, time signature, and the output and input devices with the rate;
+    - Audio Track or Instrument Track;
+    - recent projects and the other ways in.
+  - At first launch, people choose which app's shortcuts they know, and nothing else.
   - Control bar: Count-In, Clip Launcher, Automation, Mixer and Device Panel buttons.
   - Also new: a hint line, undo/redo/save notices, gliding zoom and page turns, a glow on new lanes, a count-in overlay.
 - **Performance, measured with `--perf` on generated 128-track projects** (release build, real device, silent):
@@ -17,7 +21,7 @@ milestone: hosting complete (VST3/AU/CLAP, editors, parameters, automation, dela
   - Remaining: the first recovery snapshot after loading still asks every plug-in (about 260 ms with 512 units).
   - The owner's own projects haven't been measured: that needs their go-ahead.
 - Verification: `swift test` 255/255; `plugin-isolation.sh` PASS; `rt-effects.sh` clean.
-  - Self-test 612 checks (Graphite, 48 kHz) and 597 (Warm Analog, 44.1 kHz), both PASS, run with the screen locked.
+  - Self-test 621 checks (Graphite, 48 kHz) and 606 (Warm Analog, 44.1 kHz), both PASS, run with the screen locked.
 
 ## Priorities (2026-11-20)
 - **Safety is on by default** (ADR-0014, 2026-11-20). Both blockers from the first pass are fixed:

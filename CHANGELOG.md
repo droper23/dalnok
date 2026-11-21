@@ -10,10 +10,13 @@
   - Crash-recovery snapshots reuse unchanged isolated plug-in states (260 ms → under 6 ms on 512 units).
 - Animations always land on their final state, even while the display sleeps or the screen is locked.
 - Count-In button in the control bar, beside the metronome, lit while on.
-- New: an empty project shows a short guide:
-  - New Audio Track and New Instrument Track;
-  - six keys to get around (Space, R, ⌘K, X, ⌘Z, and hovering for hints);
-  - links to open, import, or bring in a project.
+- New project screen, modelled on Logic, Studio One, Pro Tools, Cubase and Bitwig:
+  - the project's tempo and time signature;
+  - the audio output and input with the sample rate, and a link to Audio Settings;
+  - Audio Track or Instrument Track to start;
+  - recent projects, with Open, Import Audio and Bring in a project.
+  - No shortcut lessons.
+- First launch asks one question, "Which keyboard shortcuts do you know?" (Logic Pro, Ableton Live, Pro Tools, Cubase, Studio One, REAPER or Dalnok's own), applies that set and gets out of the way.
 - Control bar buttons for the Clip Launcher, Automation, Mixer and Device Panel, lit while their view is open.
 - Hints: the line under the project name says what the control under the pointer does, including each part of a clip and the two halves of the ruler (Settings ▸ Appearance ▸ Hints, on by default).
 - Undo, Redo and Save are confirmed in a short notice that names the step ("Undo Move Clip ⌘Z"), and VoiceOver announces it.
