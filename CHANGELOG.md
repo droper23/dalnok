@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-20
+
 - **Safety is on by default:** third-party plug-ins run in their own processes, so a crash or hang in one is reported on its track instead of taking Dalnok down. Projects are unchanged. If you had turned Safety off, it stays off. Settings ▸ Plug-ins ▸ Safety is the off switch (ADR-0014). On 24 real projects:
   - Isolated plug-ins on different tracks now process in parallel. 7 projects that used to drop plug-ins in 29-97 % of blocks now drop none.
   - Opening a project never blocks the window for more than 13 ms. With plug-ins loading in-process, the worst single block is 0.3-1.7 s.

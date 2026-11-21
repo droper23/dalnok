@@ -8,12 +8,24 @@ recording, editing, and mixing in a fast, focused native app.
 
 > **Feature parity tracker:** https://droper23.github.io/dalnok-status/
 >
-> **Status: 0.1.0, first preview release (pre-alpha).** Expect rough edges and save often.
+> **Status: 0.2.0, preview release (pre-alpha).** Expect rough edges and save often.
 > What works and what doesn't is in [CURRENT_STATE.md](CURRENT_STATE.md); changes are in [CHANGELOG.md](CHANGELOG.md).
 
 ![Dalnok in the Graphite appearance: arrangement, mixer and the device panel with plug-in faceplates](assets/screenshots/graphite.png)
 
-## What's in 0.1.0
+## New in 0.2.0
+- **Safety on by default:** third-party plug-ins run in their own processes, so a crash or hang is reported on its
+  track instead of taking Dalnok down. Isolated plug-ins on different tracks process in parallel, and opening a project
+  never blocks the window for more than a few milliseconds. Settings ▸ Plug-ins ▸ Safety turns it off.
+- **Folding plug-ins:** fold a unit to a slim strip (Graphite) or tip a pedal onto its side (Warm Analog); on/off still
+  works folded. Plug-ins animate in and out of the chain.
+- **Pedals show more:** a backlit readout window (the control being turned, gain reduction, response or output trace)
+  and signal LEDs.
+- **Livelier clips:** a dragged clip lifts and follows the pointer, a ghost shows where it lands, and it settles when
+  dropped; new clips pop in and deleted ones shrink away.
+- One Open button per plug-in, with Controls in the plug-in window's title bar.
+
+## What's in Dalnok
 - **Recording and editing:** multi-track audio recording with cycle, punch and count-in, take folders with swipe
   comping, crash-safe capture and recovery, clip fades and gain, time-stretch and pitch.
 - **MIDI:** MIDI clips, a piano roll with velocity and quantize, live MIDI input and recording, the built-in Dalnok Poly
@@ -72,7 +84,7 @@ All screenshots and screen recordings come from the real app with generated proj
 `Dalnok <project> --tour <dir>`), using Dalnok's own and Apple's built-in plug-ins.
 
 ## Install (preview build)
-Download `Dalnok-0.1.0.zip` from the [Releases](https://github.com/droper23/dalnok/releases) page, unzip it and move
+Download the latest `Dalnok-<version>.zip` from the [Releases](https://github.com/droper23/dalnok/releases) page, unzip it and move
 `Dalnok.app` to Applications. Requires macOS 14 or later on Apple Silicon.
 
 The preview build is not notarized yet. The first time, right-click `Dalnok.app` and choose **Open**, then confirm.
