@@ -236,7 +236,8 @@ extension SelfTest {
         // Accessibility: every visible, enabled control has a name VoiceOver can read.
         var unnamed: [String] = []
         func walkNames(_ v: NSView) {
-            if !v.isHidden, let c = v as? NSControl, !(c is NSScroller), c.isEnabled, !(c is NSTextField && !(c as! NSTextField).isEditable) {
+            guard !v.isHidden else { return } // a hidden container hides everything in it
+            if let c = v as? NSControl, c.isAccessibilityElement(), !(c is NSScroller), c.isEnabled, !(c is NSTextField && !(c as! NSTextField).isEditable) {
                 let label = c.accessibilityLabel() ?? ""
                 let title = (c as? NSButton)?.title ?? (c as? NSPopUpButton)?.titleOfSelectedItem ?? (c as? NSSearchField)?.placeholderString ?? ""
                 let segs = (c as? NSSegmentedControl).map { sc in (0..<sc.segmentCount).compactMap { sc.label(forSegment: $0) }.joined() } ?? ""

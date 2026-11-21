@@ -55,7 +55,11 @@ extension SelfTest {
             for k in 1...6 { w.timeline.mouseDragged(with: mouse(.leftMouseDragged, CGPoint(x: p.x + dx * CGFloat(k) / 6, y: p.y))) }
             weak var lifted = w.timeline.lift // weak: the test must not keep the picture alive (that hid a bug)
             check(lifted != nil && w.timeline.lifted == [c.id], "dragging a clip lifts it off the lane")
-            try? await Task.sleep(for: .milliseconds(250)) // the follow spring catches up
+            // The follow spring settles within a few hundred ms (longer on a slow CI runner): wait for it, up to 1.5 s.
+            for _ in 0..<30 {
+                try? await Task.sleep(for: .milliseconds(50))
+                if let l = lifted, abs(l.position.x - l.target.x) < 1, abs(l.velocity.x) < 0.05 { break }
+            }
             if let l = lifted, let host = w.timeline.layer {
                 // Grid snapping: the picture settles where the clip now sits on the grid, not under the pointer.
                 let landing = s.clip(c.id).flatMap { m in s.tracks.firstIndex { $0.id == m.track }.map { w.timeline.clipRect(m, laneY: w.timeline.laneY($0)) } }
