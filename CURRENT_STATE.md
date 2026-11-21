@@ -5,9 +5,11 @@ milestone: 0.3.0, Phase 4 complete; recording I/O (separate devices, Input Monit
 ---
 # Current State
 
-## Latest (2026-11-21, later): 0.3.0, recording I/O, sidechains, latency, groups
-Branch `feat/recording-io` (on top of `feat/first-run-and-motion` and `fix/audit-followups`). Release standard:
-`08 - Testing and Benchmarks/Release Checklist.md`.
+## Latest (2026-11-21, later): 0.3.0 released, recording I/O, sidechains, latency, groups
+**Released:** PR #2 (`fix/audit-followups`) and PR #3 (`feat/recording-io`, which carried `feat/first-run-and-motion`)
+are merged into `main` with merge commits; `v0.3.0` is tagged on `main` (662c1a5) and published on GitHub with
+`Dalnok-0.3.0.zip`. CI is green on every job, including the self-test (three hover-check fixes for the runner's
+smaller screen). Release standard: `08 - Testing and Benchmarks/Release Checklist.md`. Next work starts from `main`.
 - **Recording keeps the output** (ADR-0008 amendment): different input and output devices run as one private
   aggregate (output = clock, input drift-corrected). Real check: recording from the Scarlett while the output stayed on
   the MacBook speakers (self-test `DALNOK_TEST_AUDIO_INPUT="Scarlett Solo 4th Gen"`, CLI `record … --output default`).
