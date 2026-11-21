@@ -593,7 +593,7 @@
       "priority": "P2",
       "category": "Performance",
       "subsystem": "Real-time render",
-      "status": "open",
+      "status": "fixed",
       "summary": "renderBlock iterates all RenderTracks per block, performing solo checks, automation evaluation, sidechain wiring and delivery for tracks with no clip in the block. Cost is linear in track count regardless of audible content.",
       "evidence": [
         "engine/src/render.cpp - `for (const RenderTrack &t : state.tracks)` runs unconditionally for every block.",
@@ -626,7 +626,8 @@
         "reliability": 2,
         "value": 3
       },
-      "measured": true
+      "measured": true,
+      "resolution": "2026-11-20: measured, no render change needed. dalnok-cli bench gained --audible N (the other tracks' clips start after the measured range, like later sections of a song). Release build, 512-frame live blocks, 20 s, two runs each: 8 tracks 19.1/19.5 us; 256 tracks with 8 audible 24.5/24.5 us; 512 tracks with 8 audible 30.2/30.1 us; 64 all audible 143.1/142.9 us; 256 all audible 566.8/566.6 us. A silent track costs about 22 ns per block (per-track content is cached and only clips in range are visited since A-04/A-06), so a 256-track project with 8 audible tracks already costs close to an 8-track project (+5 us), which is the acceptance. The cost of audible tracks is A-13's subject."
     },
     {
       "id": "A-12",
@@ -874,7 +875,7 @@
         "value": 2
       },
       "measured": false,
-      "resolution": "2026-11-20: a theme is now a title, a Palette (17 colour tokens plus the launcher background, one value each) and a Look (eight capabilities by area: pedalboard devices, console mixer, channel-strip headers, tape-deck transport, hardware controls, LED-ladder meters, tape editors, console track colours). Theme.Style returns them through exhaustive switches. All 112 view branches on Analog.on now ask for the capability they draw (e.g. Theme.look.pedalboard in DevicePanel, Theme.look.consoleMixer in Mixer), Analog.on is removed, and the one colour-only branch (the launcher background) is a palette token. A third theme is a new Style case with its palette and a combination of existing looks; no view changes. The View > Warm Analog Style toggle stays specific to that theme by design. Live theme switching already worked (window rebuilt around the same project and undo history; self-test). Pixel check: --uiwalk on a generated band project, 36 frames per theme, two baseline runs and one after; 71 of 72 frames identical or within the run-to-run noise, and the one beyond it is a playing frame captured at a different instant (clock 1.4.1.151 vs 1.4.1.192, playhead stripe only). Self-test PASS: 581 Graphite, 566 Warm Analog. Not done: the active style is still a global (Theme.activeStyle) that views read through Theme.palette/Theme.look rather than an injected value; injecting it would touch every view constructor for no change in behaviour."
+      "resolution": "2026-11-20: a theme is now a title, a Palette (17 colour tokens plus the launcher background, one value each) and a Look (eight capabilities by area: pedalboard devices, console mixer, channel-strip headers, tape-deck transport, hardware controls, LED-ladder meters, tape editors, console track colours). Theme.Style returns them through exhaustive switches. All 96 view branches on Analog.on now ask for the capability they draw (e.g. Theme.look.pedalboard in DevicePanel, Theme.look.consoleMixer in Mixer), Analog.on is removed, and the one colour-only branch (the launcher background) is a palette token. A third theme is a new Style case with its palette and a combination of existing looks; no view changes. The View > Warm Analog Style toggle stays specific to that theme by design. Live theme switching already worked (window rebuilt around the same project and undo history; self-test). Pixel check: --uiwalk on a generated band project, 36 frames per theme, two baseline runs and one after; 71 of 72 frames identical or within the run-to-run noise, and the one beyond it is a playing frame captured at a different instant (clock 1.4.1.151 vs 1.4.1.192, playhead stripe only). Self-test PASS: 581 Graphite, 566 Warm Analog. Not done: the active style is still a global (Theme.activeStyle) that views read through Theme.palette/Theme.look rather than an injected value; injecting it would touch every view constructor for no change in behaviour."
     },
     {
       "id": "A-18",

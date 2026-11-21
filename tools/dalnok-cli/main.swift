@@ -44,7 +44,7 @@ usage:
   dalnok-cli plugins [--no-au] [--folder F] [--json]                       list VST3, CLAP and Audio Unit plugins (no code loaded)
   dalnok-cli plugins --validate [--match NAME] [--folder F --only-folder] [--au] [--timeout S] [--rescan] [--cache FILE]
                                                                          load each plugin in a separate scanner process
-  dalnok-cli bench [--tracks N] [--seconds S]                          render-cost benchmark (no device)
+  dalnok-cli bench [--tracks N] [--audible N] [--seconds S]             render-cost benchmark (no device)
   dalnok-cli audit-bench <project.dalnok> [--edits N]                   audit-only: model-read, edit and undo cost
   dalnok-cli audit-ui <project.dalnok>                               audit-only: AppKit drag and refresh timings
   dalnok-cli stream-bench <file.wav> --mode memory|stream [--seconds S]  audit-only: RSS and misses playing one long file
@@ -830,6 +830,9 @@ case "bench":
     // live render path (pump, 512-frame blocks like a device) and offline throughput.
     let tracks = Int(opt("--tracks") ?? "64") ?? 64
     let seconds = Double(opt("--seconds") ?? "30") ?? 30
+    // --audible N: only the first N tracks play during the measured range; the others' clips start after it, as
+    // later sections of a song would (A-11).
+    let audible = Int(opt("--audible") ?? "") ?? tracks
     let rate = 48_000.0, frames = Int(rate * seconds)
     let engine = dalnok_engine_create(rate)!
     var l = (0..<frames).map { Float(sin(Double($0) * 0.0577)) * 0.1 }, r = l.map { -$0 }
@@ -841,7 +844,7 @@ case "bench":
     dalnok_media_release(media)
     for t in 0..<tracks {
         let tr = dalnok_track_add(engine, "T\(t)")
-        let c = dalnok_clip_add(engine, tr, id, 0, 0, 0)
+        let c = dalnok_clip_add(engine, tr, id, t < audible ? 0 : Int64(frames) + 48_000, 0, 0)
         dalnok_clip_set_fades(engine, c, Int64(rate), Int64(rate), DALNOK_FADE_EQUAL_POWER)
         dalnok_track_set_pan(engine, tr, Float(t % 7) / 3.5 - 1)
     }
@@ -855,13 +858,13 @@ case "bench":
         worst = max(worst, dt); total += dt; blocks += 1
     }
     let budget = 512 / rate * 1e6
-    print(String(format: "live path: %d tracks, %d blocks of 512 frames: avg %.1f us, worst %.1f us (budget %.0f us, %.1f%% avg load)",
-                 tracks, blocks, total / Double(blocks), worst, budget, total / Double(blocks) / budget * 100))
+    print(String(format: "live path: %d tracks (%d audible), %d blocks of 512 frames: avg %.1f us, worst %.1f us (budget %.0f us, %.1f%% avg load)",
+                 tracks, min(audible, tracks), blocks, total / Double(blocks), worst, budget, total / Double(blocks) / budget * 100))
     var ol = [Float](repeating: 0, count: frames), or = ol
     let t0 = Date()
     dalnok_render_offline(engine, 0, Int64(frames), &ol, &or)
     let dt = Date().timeIntervalSince(t0)
-    print(String(format: "offline: %.0f s of %d tracks in %.0f ms (%.0fx realtime)", seconds, tracks, dt * 1000, seconds / dt))
+    print(String(format: "offline: %.0f s of %d tracks (%d audible) in %.0f ms (%.0fx realtime)", seconds, tracks, min(audible, tracks), dt * 1000, seconds / dt))
     dalnok_engine_destroy(engine)
 
 default:
