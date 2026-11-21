@@ -33,6 +33,7 @@
 #include <vector>
 
 namespace dalnok {
+int32_t projectFormatVersion(); // project.cpp
 
 class Engine {
 public:
@@ -303,6 +304,9 @@ public:
                                                           std::string &reportJson, std::string &err);
     static std::unique_ptr<PreparedProject> prepareDocument(const json::Value &doc, const std::filesystem::path &dir,
                                                             double sampleRate, int32_t &missing, std::string &err);
+    // prepareDocument's reader, for a document already migrated to the current format version (project.cpp).
+    static std::unique_ptr<PreparedProject> readDocument(const json::Value &doc, const std::filesystem::path &dir,
+                                                         double sampleRate, int32_t &missing, std::string &err);
     bool dirty() const { return revision_ != savedRevision_; }
     json::Value describe() const; // model as JSON (used by save and session.describe)
 

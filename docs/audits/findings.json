@@ -798,7 +798,7 @@
       "priority": "P2",
       "category": "Maintainability",
       "subsystem": "Persistence",
-      "status": "open",
+      "status": "fixed",
       "summary": "project.cpp (851 lines) writes and reads one JSON document with a version integer and ad-hoc per-field defaults. Backward compatibility depends on remembering every old key; there is no schema, no explicit migration list, and no round-trip property test.",
       "evidence": [
         "project.cpp: kFormatVersion = 13 with a comment listing versions 3-13 and their meanings.",
@@ -832,7 +832,8 @@
         "reliability": 4,
         "value": 3
       },
-      "measured": false
+      "measured": false,
+      "resolution": "2026-11-20: project.cpp has an explicit migration chain (kMigrations, one step per version 2-13 with what it added; a static_assert keeps it complete). Loading runs the chain before the reader (readDocument) sees the document; every step so far is additive, so none rewrites, and a future rewrite has its place. engine/api/project-format.json is a machine-readable schema of all 87 keys (JSON types, the version that introduced each, whether an older build may ignore it). ProjectFormat tests: randomProjectsRoundTripAndMatchTheSchema saves 150 seeded random projects (all track kinds, audio/MIDI clips with every setting, routing, stacks, automation, tempo/meter maps, markers, built-in plug-ins, launcher slots, master gain), reloads and re-saves them: byte-identical files, every key in the schema and none newer than the declared version (versions 3-13 written). everyFormatVersionLoads: hand-written fixtures v01-v13 (tests/fixtures/project-format, only that version's keys) load and keep what their version added through a save. unreadableVersionsAreRefused: newer, negative and fractional versions. The schema check found two writer bugs, now fixed: a sidechain alone was written as version 5 (sidechains are 9) and a master-fader change as version 3 (master gain is 7), so builds reading those versions would have played them wrongly (with the fix reverted, seeds 9 and 22 fail on masterGain). C API: dalnok_project_format_version. fuzz.sh 60 clean; swift test 251/251."
     },
     {
       "id": "A-17",

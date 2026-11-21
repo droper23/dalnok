@@ -1,0 +1,97 @@
+{
+ "format": "dalnok-project",
+ "version": 7,
+ "sampleRate": 48000,
+ "tempo": 120,
+ "meter": [
+  4,
+  4
+ ],
+ "media": [
+  {
+   "id": 1,
+   "path": "/nonexistent/dalnok-fixture/source1.wav",
+   "relativePath": "Audio Files/source1.wav",
+   "frames": 48000,
+   "channels": 1
+  }
+ ],
+ "masterGain": -4.5,
+ "takeFolders": [
+  {
+   "id": 1,
+   "track": 1,
+   "takes": [
+    1,
+    2
+   ],
+   "comp": [
+    [
+     0,
+     2400,
+     0
+    ],
+    [
+     2400,
+     4800,
+     1
+    ]
+   ]
+  }
+ ],
+ "tracks": [
+  {
+   "id": 1,
+   "name": "Audio",
+   "color": 0,
+   "gainDb": 0,
+   "pan": 0,
+   "mute": false,
+   "stack": 2,
+   "output": 2,
+   "clips": [
+    {
+     "id": 1,
+     "media": 1,
+     "start": 0,
+     "offset": 0,
+     "length": 4800,
+     "name": "Take 1",
+     "folder": 1,
+     "alt": true
+    },
+    {
+     "id": 2,
+     "media": 1,
+     "start": 0,
+     "offset": 0,
+     "length": 4800,
+     "name": "Take 2",
+     "folder": 1,
+     "alt": true
+    },
+    {
+     "id": 3,
+     "media": 1,
+     "start": 0,
+     "offset": 0,
+     "length": 4800,
+     "name": "Comp",
+     "folder": 1
+    }
+   ]
+  },
+  {
+   "id": 2,
+   "name": "Stack",
+   "color": 1,
+   "gainDb": 0,
+   "pan": 0,
+   "mute": false,
+   "kind": "bus",
+   "isStack": true,
+   "collapsed": true,
+   "clips": []
+  }
+ ]
+}

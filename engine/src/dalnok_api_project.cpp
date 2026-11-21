@@ -336,6 +336,7 @@ DalnokStatus dalnok_project_save_copying(DalnokEngine *e, const char *path, bool
 void dalnok_project_new(DalnokEngine *e) {
     if (e) e->impl.newProject();
 }
+int32_t dalnok_project_format_version(void) { return dalnok::projectFormatVersion(); }
 DalnokStatus dalnok_project_save(DalnokEngine *e, const char *path, char *err, size_t err_len) {
     if (!e || !path) return DALNOK_ERR_INVALID_ARG;
     std::string msg;

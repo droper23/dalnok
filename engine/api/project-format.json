@@ -1,0 +1,381 @@
+{
+ "$comment": "Every key a Dalnok project file can hold (A-16): its JSON type(s), the format version that introduced it, and whether an older build may ignore it and still play the project the same (view or transport state). Arrays of objects are written name[]. ProjectFormat tests check saved files against this; update it with every format change.",
+ "version": 13,
+ "keys": {
+  "cycle": {
+   "type": "array",
+   "since": 4,
+   "ignorable": true,
+   "note": "[on, start, end]: transport state"
+  },
+  "format": {
+   "type": "string",
+   "since": 1
+  },
+  "markers": {
+   "type": "array",
+   "since": 11
+  },
+  "markers[].frame": {
+   "type": "number",
+   "since": 11
+  },
+  "markers[].id": {
+   "type": "number",
+   "since": 11
+  },
+  "markers[].name": {
+   "type": "string",
+   "since": 11
+  },
+  "masterGain": {
+   "type": "number",
+   "since": 7,
+   "note": "dB; -200 = silence"
+  },
+  "media": {
+   "type": "array",
+   "since": 1
+  },
+  "media[].channels": {
+   "type": "number",
+   "since": 1
+  },
+  "media[].frames": {
+   "type": "number",
+   "since": 1
+  },
+  "media[].id": {
+   "type": "number",
+   "since": 1
+  },
+  "media[].offline": {
+   "type": "bool",
+   "since": 1
+  },
+  "media[].path": {
+   "type": "string",
+   "since": 1
+  },
+  "media[].relativePath": {
+   "type": "string",
+   "since": 1
+  },
+  "meter": {
+   "type": "array",
+   "since": 2,
+   "note": "[numerator, denominator] of the first meter"
+  },
+  "meterMap": {
+   "type": "array",
+   "since": 4,
+   "note": "[[bar, numerator, denominator], …] when there is more than one meter"
+  },
+  "sampleRate": {
+   "type": "number",
+   "since": 1
+  },
+  "takeFolders": {
+   "type": "array",
+   "since": 7
+  },
+  "takeFolders[].comp": {
+   "type": "array",
+   "since": 7
+  },
+  "takeFolders[].id": {
+   "type": "number",
+   "since": 7
+  },
+  "takeFolders[].takes": {
+   "type": "array",
+   "since": 7
+  },
+  "takeFolders[].track": {
+   "type": "number",
+   "since": 7
+  },
+  "tempo": {
+   "type": "number",
+   "since": 2
+  },
+  "tempoMap": {
+   "type": "array",
+   "since": 4,
+   "note": "[[beat, bpm], …] when there is more than one tempo"
+  },
+  "tracks": {
+   "type": "array",
+   "since": 1
+  },
+  "tracks[].armed": {
+   "type": "bool",
+   "since": 2
+  },
+  "tracks[].clips": {
+   "type": "array",
+   "since": 1
+  },
+  "tracks[].clips[].alt": {
+   "type": "bool",
+   "since": 7
+  },
+  "tracks[].clips[].fadeCurve": {
+   "type": "string",
+   "since": 1
+  },
+  "tracks[].clips[].fadeIn": {
+   "type": "number",
+   "since": 1
+  },
+  "tracks[].clips[].fadeOut": {
+   "type": "number",
+   "since": 1
+  },
+  "tracks[].clips[].folder": {
+   "type": "number",
+   "since": 7
+  },
+  "tracks[].clips[].follow": {
+   "type": "number",
+   "since": 9
+  },
+  "tracks[].clips[].followLoops": {
+   "type": "number",
+   "since": 9
+  },
+  "tracks[].clips[].gainDb": {
+   "type": "number|null",
+   "since": 1
+  },
+  "tracks[].clips[].id": {
+   "type": "number",
+   "since": 1
+  },
+  "tracks[].clips[].kind": {
+   "type": "string",
+   "since": 2,
+   "note": "midi; absent = audio"
+  },
+  "tracks[].clips[].length": {
+   "type": "number",
+   "since": 1
+  },
+  "tracks[].clips[].media": {
+   "type": "number",
+   "since": 1
+  },
+  "tracks[].clips[].muted": {
+   "type": "bool",
+   "since": 12
+  },
+  "tracks[].clips[].name": {
+   "type": "string",
+   "since": 1
+  },
+  "tracks[].clips[].noteSource": {
+   "type": "number",
+   "since": 3
+  },
+  "tracks[].clips[].notes": {
+   "type": "array",
+   "since": 2,
+   "note": "[[start, length, pitch, velocity], …]"
+  },
+  "tracks[].clips[].offset": {
+   "type": "number",
+   "since": 1
+  },
+  "tracks[].clips[].pitch": {
+   "type": "number",
+   "since": 1
+  },
+  "tracks[].clips[].preservePitch": {
+   "type": "bool",
+   "since": 1
+  },
+  "tracks[].clips[].rate": {
+   "type": "number",
+   "since": 1
+  },
+  "tracks[].clips[].slot": {
+   "type": "number",
+   "since": 9
+  },
+  "tracks[].clips[].start": {
+   "type": "number",
+   "since": 1
+  },
+  "tracks[].collapsed": {
+   "type": "bool",
+   "since": 7,
+   "ignorable": true,
+   "note": "view"
+  },
+  "tracks[].color": {
+   "type": "number",
+   "since": 1
+  },
+  "tracks[].customColor": {
+   "type": "string",
+   "since": 1,
+   "ignorable": true,
+   "note": "#RRGGBB pinned by the user"
+  },
+  "tracks[].gainDb": {
+   "type": "number|null",
+   "since": 1
+  },
+  "tracks[].height": {
+   "type": "number",
+   "since": 13,
+   "ignorable": true,
+   "note": "view: lane height"
+  },
+  "tracks[].hidden": {
+   "type": "bool",
+   "since": 11,
+   "ignorable": true,
+   "note": "view: hidden tracks still play"
+  },
+  "tracks[].id": {
+   "type": "number",
+   "since": 1
+  },
+  "tracks[].input": {
+   "type": "number",
+   "since": 2
+  },
+  "tracks[].instrument": {
+   "type": "string",
+   "since": 2
+  },
+  "tracks[].isStack": {
+   "type": "bool",
+   "since": 7,
+   "ignorable": true,
+   "note": "the bus is drawn as a stack"
+  },
+  "tracks[].kind": {
+   "type": "string",
+   "since": 2,
+   "note": "instrument or bus; absent = audio"
+  },
+  "tracks[].mute": {
+   "type": "bool",
+   "since": 1
+  },
+  "tracks[].name": {
+   "type": "string",
+   "since": 1
+  },
+  "tracks[].output": {
+   "type": "number",
+   "since": 5
+  },
+  "tracks[].pan": {
+   "type": "number",
+   "since": 1
+  },
+  "tracks[].panAutomation": {
+   "type": "array",
+   "since": 6
+  },
+  "tracks[].pluginAutomation": {
+   "type": "array",
+   "since": 8
+  },
+  "tracks[].pluginAutomation[].param": {
+   "type": "number",
+   "since": 8
+  },
+  "tracks[].pluginAutomation[].points": {
+   "type": "array",
+   "since": 8
+  },
+  "tracks[].pluginAutomation[].slot": {
+   "type": "number",
+   "since": 8
+  },
+  "tracks[].plugins": {
+   "type": "array",
+   "since": 2
+  },
+  "tracks[].plugins[].bypassed": {
+   "type": "bool",
+   "since": 10
+  },
+  "tracks[].plugins[].class": {
+   "type": "string",
+   "since": 2
+  },
+  "tracks[].plugins[].controls": {
+   "type": "array",
+   "since": 2,
+   "ignorable": true,
+   "note": "parameters the unit shows (view)"
+  },
+  "tracks[].plugins[].folded": {
+   "type": "bool",
+   "since": 13,
+   "ignorable": true,
+   "note": "view"
+  },
+  "tracks[].plugins[].format": {
+   "type": "string",
+   "since": 2
+  },
+  "tracks[].plugins[].id": {
+   "type": "number",
+   "since": 2
+  },
+  "tracks[].plugins[].instrument": {
+   "type": "bool",
+   "since": 2
+  },
+  "tracks[].plugins[].name": {
+   "type": "string",
+   "since": 2
+  },
+  "tracks[].plugins[].path": {
+   "type": "string",
+   "since": 2
+  },
+  "tracks[].plugins[].sidechain": {
+   "type": "number",
+   "since": 9,
+   "note": "the track feeding the plug-in's sidechain input"
+  },
+  "tracks[].plugins[].state": {
+   "type": "string",
+   "since": 2
+  },
+  "tracks[].plugins[].vendor": {
+   "type": "string",
+   "since": 2
+  },
+  "tracks[].sends": {
+   "type": "array",
+   "since": 5,
+   "note": "[[bus, dB, pre], …]"
+  },
+  "tracks[].solo": {
+   "type": "bool",
+   "since": 1
+  },
+  "tracks[].stack": {
+   "type": "number",
+   "since": 7,
+   "ignorable": true,
+   "note": "stack membership; members also route into the stack by output"
+  },
+  "tracks[].volumeAutomation": {
+   "type": "array",
+   "since": 6
+  },
+  "version": {
+   "type": "number",
+   "since": 1
+  }
+ }
+}

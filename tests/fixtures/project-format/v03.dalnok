@@ -1,0 +1,79 @@
+{
+ "format": "dalnok-project",
+ "version": 3,
+ "sampleRate": 48000,
+ "tempo": 120,
+ "meter": [
+  4,
+  4
+ ],
+ "media": [
+  {
+   "id": 1,
+   "path": "/nonexistent/dalnok-fixture/source1.wav",
+   "relativePath": "Audio Files/source1.wav",
+   "frames": 48000,
+   "channels": 1
+  }
+ ],
+ "tracks": [
+  {
+   "id": 1,
+   "name": "Synth",
+   "color": 0,
+   "gainDb": 0,
+   "pan": 0,
+   "mute": false,
+   "kind": "instrument",
+   "instrument": "dalnok.poly",
+   "clips": [
+    {
+     "id": 1,
+     "kind": "midi",
+     "noteSource": 1,
+     "start": 0,
+     "offset": 0,
+     "length": 2400,
+     "name": "A",
+     "notes": [
+      [
+       0,
+       2400,
+       60,
+       100
+      ],
+      [
+       2400,
+       2400,
+       64,
+       90
+      ]
+     ]
+    },
+    {
+     "id": 2,
+     "kind": "midi",
+     "noteSource": 1,
+     "start": 2400,
+     "offset": 2400,
+     "length": 2400,
+     "name": "B",
+     "notes": [
+      [
+       0,
+       2400,
+       60,
+       100
+      ],
+      [
+       2400,
+       2400,
+       64,
+       90
+      ]
+     ]
+    }
+   ]
+  }
+ ]
+}

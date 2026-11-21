@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+- Fixed: two kinds of project could be written with a format version too old for what they contain. A sidechain alone was written as version 5 (sidechains need 9), and a master-fader change as version 3 (master gain needs 7). An older Dalnok would have opened such a file and played it without the sidechain or at the wrong master level.
+- Internal (A-16): the project format has an explicit migration chain and a machine-readable schema (`engine/api/project-format.json`).
+  - Tests save 150 random projects, reload them and save again: the files come out identical, and every key matches the schema.
+  - A hand-written file for each of the 13 format versions loads.
+
 - Internal (A-15): the clip and track structs of the C API are defined once, in `engine/api/views.def`. `scripts/gen-api.py` generates the C structs, the engine code that fills them and the app's Swift fields, and CI checks that the generated files are current.
   - Reading a track's clips takes one pass (C API 41, `dalnok_track_clips`): about 100x faster for a track with 1,638 clips.
   - The app no longer re-reads every track's info on each refresh.
