@@ -531,6 +531,10 @@ final class SelfTest {
         // ADR-0014: Settings > Plug-ins > Safety runs plug-ins loaded afterwards in their own processes.
         let isolation = w.settings.isolatePlugins
         if isolation.isEnabled, let action = isolation.action, let track = s.tracks.first?.id {
+            let saved = UserDefaults.standard.object(forKey: "isolatePlugins")
+            UserDefaults.standard.removeObject(forKey: "isolatePlugins")
+            check(Engine.isolatePlugins, "Safety is on by default (nothing chosen yet)")
+            UserDefaults.standard.set(saved, forKey: "isolatePlugins")
             isolation.state = .on; _ = NSApp.sendAction(action, to: isolation.target, from: isolation)
             check(s.engine.pluginHost == Engine.pluginHostPath, "Safety on: new plug-ins go to dalnok-plughost")
             var err = [CChar](repeating: 0, count: 256)
@@ -543,6 +547,10 @@ final class SelfTest {
             if slot != 0 { _ = perform("Undo") }
             isolation.state = .off; _ = NSApp.sendAction(action, to: isolation.target, from: isolation)
             check(s.engine.pluginHost.isEmpty, "Safety off: plug-ins load in the app again")
+            check(UserDefaults.standard.object(forKey: "isolatePlugins") as? Bool == false && !Engine.isolatePlugins,
+                  "turning Safety off is remembered (the off switch survives the new default)")
+            isolation.state = .on; _ = NSApp.sendAction(action, to: isolation.target, from: isolation)
+            check(s.engine.pluginHost == Engine.pluginHostPath, "Safety back on")
         } else { check(false, "the Safety setting is available (dalnok-plughost next to the app)") }
         for pane in SettingsController.Pane.allCases { w.settings.show(pane) }
         check(w.settings.pane == .shortcuts && w.shortcutsEditor.table.window === w.settings.window,
@@ -2525,6 +2533,50 @@ final class SelfTest {
         } else { check(false, "a track with clips for the per-track refresh check") }
         Motion.override = true
         defer { Motion.override = false }
+        // FL-style clip motion (ClipMotion.swift): a dragged clip lifts off the lane and follows the pointer while a
+        // ghost shows where it lands; dropped, it settles onto that place. New clips pop in, deleted ones poof.
+        if let c = s.tracks.first(where: { !$0.clips.isEmpty })?.clips.first, let p = w.timeline.windowPoint(ofClip: c.id, zone: "body") {
+            let dx = CGFloat(Double(c.length) / w.timeline.framesPerPoint) * 0.5
+            w.timeline.mouseDown(with: mouse(.leftMouseDown, p))
+            check(w.timeline.lift == nil, "a click alone lifts nothing")
+            for k in 1...6 { w.timeline.mouseDragged(with: mouse(.leftMouseDragged, CGPoint(x: p.x + dx * CGFloat(k) / 6, y: p.y))) }
+            let lifted = w.timeline.lift
+            check(lifted != nil && w.timeline.lifted == [c.id], "dragging a clip lifts it off the lane")
+            try? await Task.sleep(for: .milliseconds(250)) // the follow spring catches up
+            if let lifted, let host = w.timeline.layer {
+                let area = w.timeline.windowPoint(ofClip: c.id, zone: "body").map { w.timeline.convert($0, from: nil) }
+                check(abs(lifted.position.x - lifted.target.x) < 2 && area != nil,
+                      String(format: "the lifted clip follows the pointer (at %.1f, target %.1f)", lifted.position.x, lifted.target.x))
+                check(lifted.layer.superlayer === host && abs(lifted.layer.transform.m11 - ClipLift.liftScale) < 0.02,
+                      "it is drawn above the lanes, a little larger (scale \(lifted.layer.transform.m11))")
+                if let view = w.window?.contentView, let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
+                    view.cacheDisplay(in: view.bounds, to: bitmap)
+                    try? bitmap.representation(using: .png, properties: [:])?.write(to: workdir.appendingPathComponent("clip-lift.png"))
+                }
+            }
+            w.timeline.mouseUp(with: mouse(.leftMouseUp, CGPoint(x: p.x + dx, y: p.y)))
+            check(w.timeline.lift == nil && w.timeline.lifted == [c.id], "dropped, the picture settles onto the clip's new place")
+            try? await Task.sleep(for: .milliseconds(500))
+            check(w.timeline.lifted.isEmpty && lifted?.layer.superlayer == nil, "after settling the real clip is drawn again")
+            check((s.clip(c.id)?.start ?? 0) > c.start && e.undoName == "Move Clip", "the drag still moved the clip, one undo step")
+            _ = perform("Undo")
+            w.timeline.selectClips([c.id])
+            let active = ClipFlourish.active
+            _ = perform("Duplicate", exact: true)
+            check(ClipFlourish.active > active, "a duplicated clip pops in")
+            _ = perform("Delete")
+            check(ClipFlourish.active > active, "a deleted clip poofs")
+            try? await Task.sleep(for: .milliseconds(450))
+            check(ClipFlourish.active == active, "the flourishes clean up after themselves")
+            _ = perform("Undo"); _ = perform("Undo")
+            Motion.override = false
+            w.timeline.mouseDown(with: mouse(.leftMouseDown, p))
+            for k in 1...6 { w.timeline.mouseDragged(with: mouse(.leftMouseDragged, CGPoint(x: p.x + dx * CGFloat(k) / 6, y: p.y))) }
+            check(w.timeline.lift == nil, "with Reduce Motion the clip just moves (nothing lifts)")
+            w.timeline.mouseUp(with: mouse(.leftMouseUp, CGPoint(x: p.x + dx, y: p.y)))
+            _ = perform("Undo")
+            Motion.override = true
+        } else { check(false, "a clip on screen for the clip-motion checks") }
         // Knob glide: an undone volume change animates instead of jumping.
         s.setGain(track, db: -12)
         try? await Task.sleep(for: .milliseconds(400))

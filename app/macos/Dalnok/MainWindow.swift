@@ -600,6 +600,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         }
         timelineLayout = l
         timelineGlobals = g
+        timeline.noteClipChanges()
     }
 
     func updateTitle() {

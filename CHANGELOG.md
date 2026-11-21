@@ -2,12 +2,24 @@
 
 ## [Unreleased]
 
+- **Safety is on by default:** third-party plug-ins run in their own processes, so a crash or hang in one is reported on its track instead of taking Dalnok down. Projects are unchanged. If you had turned Safety off, it stays off. Settings ▸ Plug-ins ▸ Safety is the off switch (ADR-0014). On 24 real projects:
+  - Isolated plug-ins on different tracks now process in parallel. 7 projects that used to drop plug-ins in 29-97 % of blocks now drop none.
+  - Opening a project never blocks the window for more than 13 ms. With plug-ins loading in-process, the worst single block is 0.3-1.7 s.
+  - Loading is faster in 23 of 24 projects.
+  - Fixed: each edit asked every isolated plug-in for its latency and waited for the answer, which caused 47-132 ms stalls while loading.
+  - An isolated plug-in now processes 0.75 s of silence before it starts, so one-off start-up work some instruments do no longer drops blocks on the first play.
+- Clips move with more life, in the spirit of FL Studio's playlist:
+  - A dragged clip lifts off its lane (a little larger, with a shadow) and follows the pointer on a spring, leaning into the direction it travels.
+  - A dashed ghost shows where it will land on the grid. Dropped, it glides onto the ghost and settles with a small squash.
+  - Pasted, duplicated or recorded clips pop in, and deleted ones shrink away.
+  - All of it follows Reduce Motion.
+- `dalnok-cli load-bench` now runs the main run loop between blocks, as the app does. Its in-process numbers were too optimistic: some plug-ins' main-thread work stalls playback, and the benchmark never let that work run.
 - Plug-ins fold, like Ableton's devices, so a long chain fits the panel (fold chevron, unit menu, or click the strip to unfold; saved with the project and undoable; C API 40). Graphite folds a unit to a slim rack blank with its name, power key and output level column. Warm Analog stands the pedal on its side edge: seen from above, the box tips over (its face foreshortens and darkens while its side panel comes up beside it), the patch cables stay plugged into its sides throughout, and the folded edge keeps its LED, a working footswitch and jack sockets. On/off works while folded.
 - More motion in the device chain: an added plug-in opens its place and settles in (Warm Analog: set down on the board with a small bounce, then its cables are plugged in); a removed one lifts off while the gap closes and the neighbours are re-patched. Units that didn't change are no longer rebuilt. All of it follows Reduce Motion.
 - Each unit has one Open button for the plug-in's own window. That window's title bar has Controls, which shows Dalnok's view of every parameter (searchable, automatable). For an isolated plug-in, Open shows only its own window; before, Dalnok's parameter window opened beside it. Edit Controls… (which parameters the unit shows) is in the unit's menu.
 - Warm Analog pedals show as much as a Graphite faceplate: a backlit readout window in the pedal's LED colour shows the control being turned (name and value), otherwise a gain-reduction LED ladder, the frequency response or the output trace with a one-line reading, and IN/OUT signal LEDs sit by the jacks.
 - Fixed: switching between Graphite and Warm Analog squeezed the arrangement into a few hundred points (the rebuilt window zoomed to fit before it had a width). The zoom and scroll position now carry over.
-- Safety (isolated plug-ins), verified on the owner's plug-in library and 24 real projects; it stays opt-in for now (ADR-0014): isolated loading never blocks the window for more than a few milliseconds and is faster in 20 of 24 projects, but 7 projects whose plug-ins need more than 40 % of each audio block would drop plug-ins until isolated plug-ins on independent tracks process in parallel. Fixed on the way, each with a test:
+- Safety (isolated plug-ins), verified on the owner's plug-in library and 24 real projects (first pass; see the default-on entry above). Fixed on the way, each with a test:
   - An isolated plug-in's editor could open on another Space and stay invisible.
   - Opening an Apple sampler's editor isolated crashed its host (a re-entrant resize), and its editor grew to 3,937 pt wide.
   - Loading a plug-in with a multi-megabyte saved state blocked the main thread for up to 1.2 s (macOS ignores MSG_DONTWAIT on the socket pair).

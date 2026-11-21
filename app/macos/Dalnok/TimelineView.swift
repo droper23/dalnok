@@ -69,10 +69,20 @@ final class TimelineView: NSView {
         let moving: [ClipView]
         let zone: Zone
         let startX: CGFloat
+        var startY: CGFloat = 0
         var changed = false
         var stretch = false // ⌥-drag on the right edge: time-stretch instead of trim
     }
     private var drag: Drag?
+    /// FL-style clip motion (ClipMotion.swift): the picture of the clips being moved, lifted off the lanes while they
+    /// follow the pointer. `lifted` clips are drawn as a ghost (their landing place on the grid) meanwhile, and not at
+    /// all while the picture settles onto them.
+    private(set) var lift: ClipLift?
+    private var liftOrigin = CGPoint.zero, liftCentre = CGPoint.zero // pointer and picture centre when lifted
+    private(set) var lifted: Set<DalnokClipId> = []
+    private var landing = false
+    /// The clips last drawn, for pop-in and poof (`noteClipChanges`).
+    private var knownClips: [DalnokClipId: (clip: ClipView, track: TrackView, laneIndex: Int)] = [:]
     private struct Marquee { let start: CGPoint; var end: CGPoint; let initial: Set<DalnokClipId>; var moved = false }
     private var marquee: Marquee?
     /// Ruler gesture: a click seeks; a drag draws, moves or resizes the cycle region.
@@ -501,7 +511,10 @@ final class TimelineView: NSView {
             guard dirtyRect.intersects(CGRect(x: 0, y: y, width: bounds.width, height: session.laneHeight(i))) else { continue }
             lanesDrawn += 1
             if track.isStack { drawStackSummary(ctx, track, laneY: y) }
-            for clip in track.clips { drawClip(ctx, clip, track: track, laneY: y, scale: scale) }
+            for clip in track.clips {
+                if lifted.contains(clip.id) { if !landing { drawGhost(ctx, clipRect(clip, laneY: y), color: track.color) }; continue }
+                drawClip(ctx, clip, track: track, laneY: y, scale: scale)
+            }
             if let rec = recording, rec.tracks.contains(track.id) { drawRecording(ctx, rec, laneY: y) }
         }
         if let m = marquee, m.moved {
@@ -806,6 +819,109 @@ final class TimelineView: NSView {
         return String(format: "%d:%06.3f", m, s)
     }
 
+    // MARK: Clip motion (ClipMotion.swift)
+
+    /// Where the clips with these ids are now (their union), if any is on screen.
+    private func rect(of ids: Set<DalnokClipId>) -> CGRect? {
+        var r: CGRect?
+        for (i, t) in session.tracks.enumerated() {
+            for c in t.clips where ids.contains(c.id) { let cr = clipRect(c, laneY: laneY(i)); r = r?.union(cr) ?? cr }
+        }
+        return r
+    }
+
+    /// A picture of just these clips (no lanes or grid behind them), in view coordinates.
+    private func picture(of ids: Set<DalnokClipId>) -> (CGImage, CGRect)? {
+        guard let area = rect(of: ids)?.insetBy(dx: -1, dy: -1), area.width >= 1, area.height >= 1 else { return nil }
+        let scale = window?.backingScaleFactor ?? 2
+        guard let ctx = CGContext(data: nil, width: Int(ceil(area.width * scale)), height: Int(ceil(area.height * scale)), bitsPerComponent: 8,
+                                  bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        ctx.scaleBy(x: scale, y: -scale) // flipped, like the view
+        ctx.translateBy(x: -area.minX, y: -area.maxY)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: true)
+        for (i, t) in session.tracks.enumerated() {
+            for c in t.clips where ids.contains(c.id) { drawClip(ctx, c, track: t, laneY: laneY(i), scale: scale) }
+        }
+        NSGraphicsContext.restoreGraphicsState()
+        return ctx.makeImage().map { ($0, area) }
+    }
+
+    /// The outline left where lifted clips will land: a dashed edge and a faint wash of the track colour.
+    private func drawGhost(_ ctx: CGContext, _ rect: CGRect, color: NSColor) {
+        let path = CGPath(roundedRect: rect.insetBy(dx: 0.75, dy: 0.75), cornerWidth: 3, cornerHeight: 3, transform: nil)
+        ctx.saveGState()
+        ctx.setFillColor(color.withAlphaComponent(0.16).cgColor)
+        ctx.addPath(path); ctx.fillPath()
+        ctx.setStrokeColor(color.withAlphaComponent(0.85).cgColor)
+        ctx.setLineWidth(1.5); ctx.setLineDash(phase: 0, lengths: [4, 3])
+        ctx.addPath(path); ctx.strokePath()
+        ctx.restoreGState()
+    }
+
+    /// Body drags: after 3 pt the clips lift and from then on follow the pointer (unsnapped, also across lanes).
+    private func liftClips(_ d: Drag, pointer p: CGPoint) {
+        if let lift { lift.target = CGPoint(x: liftCentre.x + p.x - liftOrigin.x, y: liftCentre.y + p.y - liftOrigin.y); return }
+        guard !Motion.reduced, hypot(p.x - d.startX, p.y - d.startY) >= 3, let host = layer else { return }
+        let ids = Set(d.moving.map(\.id))
+        guard let (image, area) = picture(of: ids) else { return }
+        liftOrigin = CGPoint(x: d.startX, y: d.startY)
+        liftCentre = CGPoint(x: area.midX, y: area.midY)
+        let l = ClipLift(image: image, frame: area, in: host, scale: window?.backingScaleFactor ?? 2)
+        l.target = CGPoint(x: liftCentre.x + p.x - d.startX, y: liftCentre.y + p.y - d.startY)
+        lift = l
+        lifted = ids
+        landing = false
+        needsDisplay = true
+    }
+
+    /// Drops the lifted picture onto where the clips ended up (or ends it at once).
+    func endLift(animated: Bool) {
+        guard let l = lift else { return }
+        lift = nil
+        guard animated, !Motion.reduced, let target = rect(of: lifted)?.insetBy(dx: -1, dy: -1) else {
+            l.cancel(); lifted = []; landing = false; needsDisplay = true
+            return
+        }
+        landing = true
+        needsDisplay = true
+        l.drop(onto: target) { [weak self] in
+            guard let self, self.lift == nil else { return }
+            self.lifted = []; self.landing = false; self.needsDisplay = true
+        }
+    }
+
+    /// Clips that appeared since the last call pop in; clips that went away shrink and fade where they were. Called
+    /// after each model change; large changes (opening a project, switching tracks wholesale) are not animated.
+    func noteClipChanges() {
+        var now: [DalnokClipId: (clip: ClipView, track: TrackView, laneIndex: Int)] = [:]
+        for (i, t) in session.tracks.enumerated() { for c in t.clips { now[c.id] = (c, t, i) } }
+        defer { knownClips = now }
+        guard !Motion.reduced, !knownClips.isEmpty, drag == nil, let host = layer else { return }
+        let added = now.keys.filter { knownClips[$0] == nil }, removed = knownClips.keys.filter { now[$0] == nil }
+        guard !(added.isEmpty && removed.isEmpty), added.count + removed.count <= 16,
+              Set(knownClips.values.map(\.track.id)).intersection(session.tracks.map(\.id)).count > 0 else { return } // another project
+        let scale = window?.backingScaleFactor ?? 2
+        for id in added {
+            guard let (image, area) = picture(of: [id]), area.intersects(visibleRect) else { continue }
+            ClipFlourish.pop(image, frame: area, in: host, scale: scale)
+        }
+        for id in removed {
+            guard let old = knownClips[id], old.laneIndex < session.tracks.count else { continue }
+            let y = laneY(old.laneIndex)
+            let area = clipRect(old.clip, laneY: y).insetBy(dx: -1, dy: -1)
+            guard area.intersects(visibleRect),
+                  let ctx = CGContext(data: nil, width: Int(ceil(area.width * scale)), height: Int(ceil(area.height * scale)), bitsPerComponent: 8,
+                                      bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { continue }
+            ctx.scaleBy(x: scale, y: -scale); ctx.translateBy(x: -area.minX, y: -area.maxY)
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: true)
+            drawClip(ctx, old.clip, track: old.track, laneY: y, scale: scale)
+            NSGraphicsContext.restoreGraphicsState()
+            if let image = ctx.makeImage() { ClipFlourish.poof(image, frame: area, in: host, scale: scale) }
+        }
+    }
+
     func clipRect(_ clip: ClipView, laneY: CGFloat) -> CGRect {
         let x0 = xPos(forFrame: Double(clip.start)), x1 = xPos(forFrame: Double(clip.end))
         return CGRect(x: x0, y: laneY + 3, width: max(2, x1 - x0), height: laneHeight(atLaneY: laneY) - 7)
@@ -1076,7 +1192,7 @@ final class TimelineView: NSView {
         if event.clickCount == 2 && (clip.isMidi || clip.folder != 0) { onOpenClip?(clip); return }
         let stretch = zone == .rightEdge && event.modifierFlags.contains(.option)
         let moving = zone == .body ? selectedClips.compactMap { session.clip($0) } : [clip]
-        drag = Drag(clip: clip, moving: moving, zone: zone, startX: p.x, stretch: stretch)
+        drag = Drag(clip: clip, moving: moving, zone: zone, startX: p.x, startY: p.y, stretch: stretch)
         session.engine.beginGroup(stretch ? "Time Stretch" : zone == .body ? "Move Clip"
                                   : (zone == .fadeIn || zone == .fadeOut) ? "Fade" : "Trim Clip")
         if zone == .body { NSCursor.closedHand.set() }
@@ -1134,6 +1250,7 @@ final class TimelineView: NSView {
         guard let current = session.clip(c.id) else { return }
         switch d.zone {
         case .body:
+            liftClips(d, pointer: p)
             let start = snap(Double(c.start) + delta, bypass: bypass)
             if d.moving.count > 1 {
                 let earliest = d.moving.map(\.start).min() ?? 0
@@ -1224,10 +1341,12 @@ final class TimelineView: NSView {
         drag = nil
         if d.zone == .body, convert(event.locationInWindow, from: nil).x < 0, let drop = onDropToLauncher {
             if d.changed { session.undo() } // the clip stays where it was; the slot gets a copy
+            endLift(animated: false)
             _ = drop(d.clip.id, event.locationInWindow)
             needsDisplay = true
             return
         }
+        endLift(animated: true)
         mouseMoved(with: event)
         onSelectionChange?()
     }
