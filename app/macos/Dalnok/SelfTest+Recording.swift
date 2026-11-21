@@ -260,7 +260,8 @@ extension SelfTest {
         defer { dalnok_engine_stop_device(e.handle) } // later steps run without a device
         MainWindowController.recordingInputUID = device.uid
         w.syncInputDevice()
-        let track = s.tracks.first(where: { !$0.isInstrument && !$0.isBus && $0.stack == 0 })?.id ?? s.addTrack("Real Input")
+        let found: DalnokTrackId? = s.tracks.first(where: { !$0.isInstrument && !$0.isBus && $0.stack == 0 })?.id
+        let track: DalnokTrackId = found ?? s.addTrack("Real Input")
         let gain = s.track(track)?.gainDb ?? 0
         s.setGain(track, db: -24)
         defer { s.setGain(track, db: gain) }
