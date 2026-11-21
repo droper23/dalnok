@@ -23,12 +23,17 @@ mkdir -p "$clap/Contents/MacOS"
 printf '<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>CFBundleExecutable</key><string>DalnokTestGain</string><key>CFBundlePackageType</key><string>BNDL</string></dict></plist>' > "$clap/Contents/Info.plist"
 "$CXX" -std=c++20 -bundle -isysroot "$(xcrun --show-sdk-path)" -Iengine/third_party/clap/include \
   tools/dalnok-scan/fixtures/host_clap.cpp -o "$clap/Contents/MacOS/DalnokTestGain"
-DALNOK_TEST_CLAP="$clap" DALNOK_TEST_VST3="$dir" swift test --disable-sandbox --filter 'PluginHosting|DelayCompensation|ClapHosting' ${DALNOK_HOST_SANITIZE:+--sanitize=$DALNOK_HOST_SANITIZE} 2>&1 \
+# Test Audio Unit (sidechain ducker): a dylib that registers itself in the loading process only.
+au="$work/DalnokTestAU.dylib"
+"$CXX" -std=c++20 -dynamiclib -isysroot "$(xcrun --show-sdk-path)" tools/dalnok-scan/fixtures/host_au.cpp \
+  -framework AudioToolbox -framework CoreFoundation -o "$au"
+export DALNOK_TEST_AU="$au"
+DALNOK_TEST_CLAP="$clap" DALNOK_TEST_VST3="$dir" swift test --disable-sandbox --filter 'PluginHosting|DelayCompensation|ClapHosting|AudioUnitSidechain' ${DALNOK_HOST_SANITIZE:+--sanitize=$DALNOK_HOST_SANITIZE} 2>&1 \
   | grep -E "✔|✘|error:|Test run" | tail -8
 clap="$(dirname "$dir")/DalnokTestGain.clap"
 mkdir -p "$clap/Contents/MacOS"
 printf '<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>CFBundleExecutable</key><string>DalnokTestGain</string><key>CFBundlePackageType</key><string>BNDL</string></dict></plist>' > "$clap/Contents/Info.plist"
 "$CXX" -std=c++20 -bundle -isysroot "$(xcrun --show-sdk-path)" -Iengine/third_party/clap/include \
   tools/dalnok-scan/fixtures/host_clap.cpp -o "$clap/Contents/MacOS/DalnokTestGain"
-DALNOK_TEST_CLAP="$clap" DALNOK_TEST_VST3="$dir" swift test --disable-sandbox --filter 'PluginHosting|DelayCompensation|ClapHosting' ${DALNOK_HOST_SANITIZE:+--sanitize=$DALNOK_HOST_SANITIZE} >/dev/null 2>&1 \
+DALNOK_TEST_CLAP="$clap" DALNOK_TEST_VST3="$dir" swift test --disable-sandbox --filter 'PluginHosting|DelayCompensation|ClapHosting|AudioUnitSidechain' ${DALNOK_HOST_SANITIZE:+--sanitize=$DALNOK_HOST_SANITIZE} >/dev/null 2>&1 \
   && echo 'plugin hosting: PASS' || { echo 'plugin hosting: FAIL' >&2; exit 1; }

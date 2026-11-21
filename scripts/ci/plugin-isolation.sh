@@ -19,11 +19,14 @@ mkdir -p "$clap/Contents/MacOS"
 printf '<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>CFBundleExecutable</key><string>DalnokTestGain</string><key>CFBundlePackageType</key><string>BNDL</string></dict></plist>' > "$clap/Contents/Info.plist"
 "$CXX" -std=c++20 -bundle -isysroot "$SDK" -Iengine/third_party/clap/include tools/dalnok-scan/fixtures/host_clap.cpp \
   -o "$clap/Contents/MacOS/DalnokTestGain"
+au="$work/DalnokTestAU.dylib" # test Audio Unit (sidechain ducker); registers itself in the loading process
+"$CXX" -std=c++20 -dynamiclib -isysroot "$SDK" tools/dalnok-scan/fixtures/host_au.cpp -framework AudioToolbox \
+  -framework CoreFoundation -o "$au"
 swift build --product dalnok-plughost >/dev/null
 swift build --build-tests >/dev/null
 host="$PWD/.build/debug/dalnok-plughost"
-export DALNOK_TEST_VST3="$dir" DALNOK_TEST_CLAP="$clap" DALNOK_PLUGIN_LOAD_TIMEOUT_MS=3000
-DALNOK_PLUGIN_HOST="$host" swift test --disable-sandbox --skip-build --filter 'PluginHosting|DelayCompensation|ClapHosting' \
+export DALNOK_TEST_VST3="$dir" DALNOK_TEST_CLAP="$clap" DALNOK_TEST_AU="$au" DALNOK_PLUGIN_LOAD_TIMEOUT_MS=3000
+DALNOK_PLUGIN_HOST="$host" swift test --disable-sandbox --skip-build --filter 'PluginHosting|DelayCompensation|ClapHosting|AudioUnitSidechain' \
   > "$work/hosting.log" 2>&1 || { grep -E "✘|error" "$work/hosting.log" | head -30; echo 'isolated hosting suites: FAIL' >&2; exit 1; }
 grep -E "Test run with" "$work/hosting.log" | tail -1
 echo 'isolated hosting suites: PASS'
