@@ -87,6 +87,7 @@ struct TrackState {
     std::vector<Send> sends;   // to bus tracks
     bool armed = false;       // record-enabled
     int32_t inputChannel = 0; // zero-based input of the recording device (audio tracks)
+    bool inputMonitor = false; // Input Monitoring: hear the input through this track's strip (audio tracks)
     std::vector<PluginSlot> plugins; // instrument first (if any), then inserts in processing order
     std::string name;
     int32_t color = 0;        // gradient step (see "06 - Design/Track Colors")

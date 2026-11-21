@@ -189,9 +189,11 @@ func files(_ dir: URL) -> [String] {
         var take = SimulatedTake(engine: e)
         take.pump(1) { #expect($0 == 0) }
         dalnok_record_set_monitoring(e, true)
+        take.pump(1) { _ in } // the armed track's fader ramps in over its first monitored block
         var heard: [Float] = []
         take.pump(2) { heard.append($0) }
-        #expect(heard == [inputSample(512 + 100), inputSample(1_024 + 100)])
+        // Through the armed track's strip (unity fader, centre pan): the same samples as the input.
+        #expect(zip(heard, [inputSample(1_024 + 100), inputSample(1_536 + 100)]).allSatisfy { abs($0 - $1) < 1e-6 }, "\(heard)")
         dalnok_record_set_monitoring(e, false)
         var result = DalnokRecordResult()
         #expect(dalnok_record_stop(e, &result, nil, 0) == DALNOK_OK)

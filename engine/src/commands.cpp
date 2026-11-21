@@ -287,6 +287,11 @@ const CommandDef kCommands[] = {
          if (!needInt(a, "track", t, err)) return DALNOK_ERR_INVALID_ARG;
          return status(e.setArmed(t, a.getBool("armed", true), err), err);
      }},
+    {"track.setInputMonitor", "Input Monitoring", "{track, on}", [](ARGS) {
+         DalnokTrackId t;
+         if (!needInt(a, "track", t, err)) return DALNOK_ERR_INVALID_ARG;
+         return status(e.setInputMonitor(t, a.getBool("on", true), err), err);
+     }},
     {"track.setInput", "Set Track Input", "{track, channel (zero-based)}", [](ARGS) {
          DalnokTrackId t;
          int32_t ch;

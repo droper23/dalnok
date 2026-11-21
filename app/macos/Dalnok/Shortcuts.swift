@@ -180,7 +180,8 @@ private let specs: [String: Spec] = [
     "addMeterChange:": Spec(id: "transport.add_meter_change", category: "Transport", detail: "Add a time signature change at the playhead.", keywords: ["meter", "signature"]),
     "removeTempoChange:": Spec(id: "transport.remove_tempo_change", category: "Transport", detail: "Remove the tempo change at the playhead."),
     "removeMeterChange:": Spec(id: "transport.remove_meter_change", category: "Transport", detail: "Remove the time signature change at the playhead."),
-    "toggleInputMonitoring:": Spec(id: "recording.input_monitoring", category: "Recording", detail: "Hear the input of armed tracks.", keywords: ["monitor"]),
+    "toggleInputMonitoring:": Spec(id: "recording.input_monitoring", category: "Recording", detail: "Armed tracks play their input (auto input monitoring).", keywords: ["monitor"]),
+    "toggleSelectedInputMonitor:": Spec(id: "track.input_monitor", category: "Tracks", detail: "Input Monitoring (I): hear the selected track's input now, recording or not.", keywords: ["monitor", "hear input", "live"]),
     // Tracks
     "newTrack:": Spec(id: "track.create_audio", category: "Tracks", detail: "Add an audio track after the selected one.", keywords: ["add", "insert"]),
     "newInstrumentTrack:": Spec(id: "track.create_midi", category: "Tracks", detail: "Add an instrument (MIDI) track.", keywords: ["software instrument", "midi"]),

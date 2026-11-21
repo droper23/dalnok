@@ -347,6 +347,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         transport.meterPopup.target = self
         transport.meterPopup.action = #selector(meterChosen(_:))
         headers.onInputMenu = { [weak self] row in self?.showInputMenu(for: row) }
+        headers.onInputMonitorColumn = { [weak self] id in self?.toggleTrackInputMonitor(id) }
         headers.onToggleStack = { [weak self] id, closed in self?.session.setStackCollapsed(id, closed) }
         transport.onRewind = { [weak self] in self?.goToStart() }
         transport.onImport = { [weak self] in self?.importAudio() }
@@ -934,6 +935,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         let arm = NSMenuItem(title: "Record Enable", action: #selector(toggleArmTrack(_:)), keyEquivalent: "")
         arm.target = self
         m.addItem(arm)
+        let mon = NSMenuItem(title: "Input Monitoring", action: #selector(toggleSelectedInputMonitor(_:)), keyEquivalent: "")
+        mon.target = self
+        m.addItem(mon)
         let color = NSMenuItem(title: "Color", action: nil, keyEquivalent: "")
         color.submenu = colorMenu()
         m.addItem(color)
@@ -1946,6 +1950,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         case #selector(toggleArmTrack(_:)):
             item.state = selectedTrack.flatMap { session.track($0) }?.armed == true ? .on : .off
             return selectedTrack != nil && !session.engine.isRecording
+        case #selector(toggleSelectedInputMonitor(_:)):
+            let t = selectedTrack.flatMap { session.track($0) }
+            item.state = t?.inputMonitor == true ? .on : .off
+            return t.map { !$0.isBus && !$0.isInstrument } ?? false
         case #selector(toggleRecord(_:)):
             item.title = session.engine.isRecording ? "Stop Recording" : "Record"
             return true

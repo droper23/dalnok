@@ -28,7 +28,7 @@
 extern "C" {
 #endif
 
-#define DALNOK_API_VERSION 41
+#define DALNOK_API_VERSION 42
 
 typedef enum {
     DALNOK_OK = 0,
@@ -114,9 +114,9 @@ bool dalnok_capture_active(const DalnokEngine *engine);
 DalnokStatus dalnok_capture_status(const DalnokEngine *engine, DalnokCaptureStats *stats);
 
 /* ---- Recording -------------------------------------------------------
- * Records the armed audio track (at most one; from its input channel on
- * `input_device_uid`, which must equal the explicitly selected output device,
- * or DALNOK_SIMULATED_INPUT) and/or the armed instrument track (MIDI).
+ * Records every armed audio track (from its input channel on `input_device_uid`, or DALNOK_SIMULATED_INPUT) and/or
+ * the armed instrument track (MIDI). The input device may differ from the output device: the engine then runs both
+ * as one private aggregate clocked by the output (the input drift-corrected), so the output never changes.
  * Starts the transport; the take begins at the first block in which the
  * transport rolls. Pausing or seeking during the take ends it with an error.
  * Audio goes to "<directory>/<Track> Take N.wav" (32-bit float) with a
@@ -165,8 +165,25 @@ int32_t dalnok_record_slot(const DalnokEngine *engine);
 /* Device-reported round trip (input + output) plus the manual offset. Not loopback-measured. */
 int64_t dalnok_record_latency(const DalnokEngine *engine);
 void dalnok_record_set_latency_offset(DalnokEngine *engine, int64_t frames);
-/* Software input monitoring while recording audio (off by default; risk of feedback). */
+/* Armed-track monitoring (off by default; risk of feedback): every record-enabled audio track also plays its input
+ * through its channel strip, as with Input Monitoring. */
 void dalnok_record_set_monitoring(DalnokEngine *engine, bool on);
+/* Live waveform of the take in progress: the peak (absolute) of every DALNOK_LIVE_PEAK_FRAMES frames recorded on
+ * `track`, from the start of the take (timeline position: dalnok_record_start_frame, wrapping at the cycle for a
+ * cycle take). Copies up to `capacity`; returns the total number (0 when the track is not recording). */
+#define DALNOK_LIVE_PEAK_FRAMES 256
+int32_t dalnok_record_live_peaks(DalnokEngine *engine, DalnokTrackId track, float *out, int32_t capacity);
+
+/* ---- Input monitoring --------------------------------------------------
+ * The input device used for Input Monitoring (and the default for recording). While any audio track monitors
+ * (dalnok_track_set_input_monitor, or armed with dalnok_record_set_monitoring), the engine opens this input together
+ * with the current output device and plays each monitored track's input channel through its inserts, fader, pan
+ * and routing, whether or not the transport rolls. Empty or NULL = no input. Control thread only. */
+DalnokStatus dalnok_input_set_device(DalnokEngine *engine, const char *device_uid, char *err, size_t err_len);
+/* True while the input device is open (monitoring or recording). */
+bool dalnok_input_running(const DalnokEngine *engine);
+/* Why the input could not be opened for monitoring (empty if it is fine). Returns the length. */
+int32_t dalnok_input_error(const DalnokEngine *engine, char *out, size_t out_len);
 /* Simulated device only: the round trip it reports. Tests and simulation. */
 void dalnok_record_set_simulated_latency(DalnokEngine *engine, int64_t frames);
 /* One duplex cycle on DALNOK_SIMULATED_INPUT: `input` is mono, `frames` long, and appears on every
@@ -313,6 +330,7 @@ typedef struct {
     int32_t kind;                  /* DalnokTrackKind */
     bool armed;                    /* record-enabled */
     int32_t input_channel;         /* zero-based audio input (audio tracks) */
+    bool input_monitor;            /* Input Monitoring: the input plays through the track (audio tracks) */
     DalnokTrackId stack;           /* the summing stack this track belongs to (0 = none) */
     bool is_stack;                 /* a bus that is a summing stack */
     bool collapsed;                /* stack shown closed */
@@ -669,6 +687,9 @@ DalnokTrackId dalnok_track_add_instrument(DalnokEngine *engine, const char *name
 /* Record-enable. Arming a track disarms other tracks of the same kind. */
 DalnokStatus dalnok_track_set_armed(DalnokEngine *engine, DalnokTrackId track, bool armed);
 DalnokStatus dalnok_track_set_input(DalnokEngine *engine, DalnokTrackId track, int32_t input_channel);
+/* Input Monitoring (the I button): hear the track's input through its channel strip, recording or not. Saved with
+ * the project, not an undo step. Audio tracks only. */
+DalnokStatus dalnok_track_set_input_monitor(DalnokEngine *engine, DalnokTrackId track, bool on);
 
 /* Auditions a note on an instrument track (piano-roll edits, as other DAWs do): `on` starts it at `velocity`, and the
  * same pitch with on = false releases it. It plays through the track's instrument (built-in or plug-in, isolated or not)

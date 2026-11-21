@@ -67,7 +67,7 @@ int64_t Engine::recordLatency() const {
 }
 
 bool Engine::startRecording(const std::string &inputUid, const std::string &directory, std::string &err) {
-    if (rec_.active || duplex_) return fail(err, "already recording");
+    if (rec_.active || rec_.captureWriter) return fail(err, "already recording");
     const TrackState *audio = nullptr, *midi = nullptr;
     std::vector<const TrackState *> audioTracks;
     for (const auto &t : model_.tracks) {

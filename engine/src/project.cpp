@@ -264,6 +264,7 @@ json::Value Engine::describe() const {
         }
         if (t.armed) tv.set("armed", true);
         if (t.inputChannel != 0) tv.set("input", t.inputChannel);
+        if (t.inputMonitor) tv.set("monitor", true);
         if (!t.plugins.empty()) {
             Value list = Value::makeArray();
             for (const auto &slot : t.plugins) {
@@ -611,6 +612,7 @@ std::unique_ptr<Engine::PreparedProject> Engine::readDocument(const json::Value 
                 }
             t.armed = tv.getBool("armed", false);
             t.inputChannel = static_cast<int32_t>(std::clamp<int64_t>(toInt(tv, "input"), 0, 63));
+            t.inputMonitor = t.kind == kTrackAudio && tv.getBool("monitor", false);
             if (const json::Value *pl = tv.get("plugins"); pl && pl->isArray()) {
                 std::set<int32_t> seen;
                 for (const auto &pv : pl->array) {

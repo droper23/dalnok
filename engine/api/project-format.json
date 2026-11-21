@@ -108,6 +108,12 @@
    "type": "array",
    "since": 1
   },
+  "tracks[].monitor": {
+   "type": "bool",
+   "since": 13,
+   "ignorable": true,
+   "note": "Input Monitoring (live input only; never changes what plays back)"
+  },
   "tracks[].armed": {
    "type": "bool",
    "since": 2

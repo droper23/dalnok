@@ -18,17 +18,36 @@ extension SelfTest {
         print("STATE countIn=\(UserDefaults.standard.bool(forKey: "countIn")) metronome=\(MainWindowController.metronomeOn) playing=\(e.isPlaying) recording=\(e.isRecording) tracks=\(s.tracks.map(\.name)) armed=\(s.tracks.filter(\.armed).map(\.name)) key=\(NSApp.keyWindow?.title ?? "nil")")
         guard let track = s.tracks.first?.id else { return check(false, "an audio track exists for recording") }
         w.headers.select(track)
+        var l = [Float](repeating: 0, count: 512), r = l
+        // Input Monitoring (I): the input plays through the track's strip while stopped, and the input closes again.
+        do {
+            check(s.track(track)?.inputMonitor == false, "Input Monitoring starts off")
+            check(w.headers.row(track)?.subviews.contains { ($0 as? ToggleChip)?.toolTip?.hasPrefix("Input Monitoring") == true && !$0.isHidden } == true,
+                  "audio track headers show the I button")
+            check(perform("Input Monitoring", exact: true) && s.track(track)?.inputMonitor == true, "menu Track > Input Monitoring turns it on")
+            let probe = [Float](repeating: 0.5, count: 512)
+            var heard: Float = 0
+            for _ in 0..<4 {
+                check(dalnok_engine_pump_input(e.handle, probe, &l, &r, 512) == DALNOK_OK, "the input runs while a track monitors it")
+                heard = l.map(abs).max() ?? 0
+            }
+            check(!e.isPlaying && heard > 0.05, "the monitored input is heard with the transport stopped (\(heard); meter \(e.trackMeter(track)); plugins \(s.track(track)?.plugins.map(\.name) ?? []); stack \(s.track(track)?.stack ?? -1); track \(s.track(track).map { "muted \($0.muted) solo \($0.solo) gain \($0.gainDb) out \($0.output) in \($0.inputChannel) kind \($0.kind)" } ?? "-"); solo any \(s.tracks.contains(where: \.solo)))")
+            check(perform("Input Monitoring", exact: true) && s.track(track)?.inputMonitor == false, "Input Monitoring turns off")
+            check(dalnok_engine_pump_input(e.handle, probe, &l, &r, 512) != DALNOK_OK, "the input closes when nothing monitors it")
+        }
         check(perform("Record Enable Track") && s.track(track)?.armed == true, "menu Track > Record Enable Track arms the track")
         check(w.headers.row(track)?.inputButton.title == "IN 1", "header shows the track input (IN 1)")
         e.seek(0)
         let clipsBefore = s.track(track)?.clips.count ?? 0
         check(perform("Record", exact: true) && e.isRecording, "menu Transport > Record starts recording")
         check(menuItem("Stop Recording") != nil, "record menu item becomes Stop Recording")
-        var l = [Float](repeating: 0, count: 512), r = l
         let input = [Float](repeating: 0.25, count: 512)
         for _ in 0..<20 { dalnok_engine_pump_input(e.handle, input, &l, &r, 512) }
         w.updateRecording()
         check(w.timeline.recording?.tracks.contains(track) == true, "timeline shows the take in progress")
+        let livePeaks = w.timeline.recording?.peaks[track] ?? []
+        check(livePeaks.count >= 19 * 512 / Int(DALNOK_LIVE_PEAK_FRAMES) && livePeaks.allSatisfy { abs($0 - 0.25) < 1e-6 },
+              "the take's waveform draws while recording (\(livePeaks.count) peaks)")
         check(perform("Stop Recording", exact: true) && !e.isRecording, "menu Transport > Stop Recording")
         let take = s.track(track)?.clips.last
         check(s.track(track)?.clips.count == clipsBefore + 1 && (take?.length ?? 0) >= 19 * 512,
@@ -209,6 +228,55 @@ extension SelfTest {
     }
 
     /// Piano roll through real menus, mouse gestures (synthesized events) and keys.
+    /// DALNOK_TEST_AUDIO_INPUT=<input device name>: Input Monitoring and a short take on real hardware, listening on the
+    /// system default output (another device), so recording must not move the output. The monitored track sits at
+    /// -40 dB (no feedback through speakers). Skipped without the variable.
+    func realAudioInput() async {
+        guard let name = ProcessInfo.processInfo.environment["DALNOK_TEST_AUDIO_INPUT"], !name.isEmpty else { return }
+        guard let device = Engine.recordingDevices().first(where: { $0.name == name }) else {
+            return check(false, "real audio input \(name) is connected")
+        }
+        let e = s.engine
+        e.pause()
+        MainWindowController.simulatedInput = false
+        do { try e.startDevice(); try e.setOutputDevice(nil) } catch { return check(false, "output device starts: \(error)") }
+        defer { dalnok_engine_stop_device(e.handle) } // later steps run without a device
+        MainWindowController.recordingInputUID = device.uid
+        w.syncInputDevice()
+        let track = s.tracks.first(where: { !$0.isInstrument && !$0.isBus && $0.stack == 0 })?.id ?? s.addTrack("Real Input")
+        let gain = s.track(track)?.gainDb ?? 0
+        s.setGain(track, db: -40)
+        defer { s.setGain(track, db: gain) }
+        w.headers.select(track)
+        let outputBefore = e.outputDeviceUid
+        if s.track(track)?.inputMonitor != true { _ = perform("Input Monitoring", exact: true) }
+        await wait(0.6)
+        _ = e.trackMeter(track)
+        await wait(0.4)
+        let (ml, _) = e.trackMeter(track)
+        check(e.inputRunning && e.inputError.isEmpty, "real input: \(name) opens for Input Monitoring (\(e.inputError))")
+        check(e.outputDeviceUid == outputBefore, "real input: monitoring keeps the output device")
+        check(ml > 0, "real input: the monitored track's meter moves with \(name)'s input (\(ml))")
+        if s.track(track)?.armed != true { _ = perform("Record Enable Track") }
+        e.seek(0)
+        check(perform("Record", exact: true) && e.isRecording, "real input: recording starts while monitoring")
+        await wait(1.5)
+        w.updateRecording()
+        let peaks = w.timeline.recording?.peaks[track] ?? []
+        check(peaks.count > 200 && peaks.contains { $0 > 0 }, "real input: the waveform draws while recording (\(peaks.count) peaks, max \(peaks.max() ?? 0))")
+        let clipsBefore = s.track(track)?.clips.count ?? 0
+        check(perform("Stop Recording", exact: true) && !e.isRecording, "real input: recording stops")
+        let take = s.track(track)?.clips.last
+        check(s.track(track)?.clips.count == clipsBefore + 1 && (take?.length ?? 0) > 48_000, "real input: the take is placed (\(take?.length ?? 0) frames)")
+        check(e.outputDeviceUid == outputBefore, "real input: recording keeps the output device (no switch to \(name))")
+        check(e.inputRunning, "real input: the input stays open after the take while the track monitors")
+        _ = perform("Record Enable Track")
+        _ = perform("Input Monitoring", exact: true)
+        check(!e.inputRunning && s.track(track)?.inputMonitor == false, "real input: the input closes when monitoring stops")
+        MainWindowController.simulatedInput = true
+        w.syncInputDevice()
+    }
+
     func pianoRoll(clip: DalnokClipId) async {
         let e = s.engine
         w.timeline.selectedClip = clip

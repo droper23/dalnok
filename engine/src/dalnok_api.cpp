@@ -188,6 +188,26 @@ int64_t dalnok_record_start_frame(const DalnokEngine *e) { return e && e->impl.r
 int64_t dalnok_record_latency(const DalnokEngine *e) { return e ? e->impl.recordLatency() : 0; }
 void dalnok_record_set_latency_offset(DalnokEngine *e, int64_t frames) { if (e) e->impl.setRecordLatencyOffset(frames); }
 void dalnok_record_set_monitoring(DalnokEngine *e, bool on) { if (e) e->impl.setMonitoring(on); }
+int32_t dalnok_record_live_peaks(DalnokEngine *e, DalnokTrackId track, float *out, int32_t capacity) {
+    if (!e || !e->impl.recording()) return 0;
+    const std::vector<float> *p = e->impl.livePeaks(track);
+    if (!p) return 0;
+    const auto n = static_cast<int32_t>(std::min<size_t>(p->size(), INT32_MAX));
+    for (int32_t i = 0; out && i < capacity && i < n; ++i) out[i] = (*p)[static_cast<size_t>(i)];
+    return n;
+}
+DalnokStatus dalnok_input_set_device(DalnokEngine *e, const char *uid, char *err, size_t err_len) {
+    if (!e) return DALNOK_ERR_INVALID_ARG;
+    std::string msg;
+    if (!e->impl.setInputDevice(uid ? uid : "", msg)) { copyOut(err, err_len, msg); return DALNOK_ERR_DEVICE; }
+    return DALNOK_OK;
+}
+bool dalnok_input_running(const DalnokEngine *e) { return e && e->impl.inputRunning(); }
+int32_t dalnok_input_error(const DalnokEngine *e, char *out, size_t out_len) {
+    if (!e) return 0;
+    copyOut(out, out_len, e->impl.inputError());
+    return static_cast<int32_t>(e->impl.inputError().size());
+}
 void dalnok_record_set_simulated_latency(DalnokEngine *e, int64_t frames) { if (e) e->impl.setSimulatedLatency(frames); }
 DalnokStatus dalnok_engine_pump_input(DalnokEngine *e, const float *in, float *l, float *r, int32_t frames) {
     return e && in && e->impl.pumpInput(in, l, r, frames) ? DALNOK_OK : DALNOK_ERR_INVALID_ARG;
@@ -654,6 +674,10 @@ int32_t dalnok_track_automation(const DalnokEngine *e, DalnokTrackId t, int32_t 
 DalnokStatus dalnok_track_set_armed(DalnokEngine *e, DalnokTrackId t, bool armed) {
     std::string err;
     return e ? statusFor(e->impl.setArmed(t, armed, err), err) : DALNOK_ERR_INVALID_ARG;
+}
+DalnokStatus dalnok_track_set_input_monitor(DalnokEngine *e, DalnokTrackId t, bool on) {
+    std::string err;
+    return e ? statusFor(e->impl.setInputMonitor(t, on, err), err) : DALNOK_ERR_INVALID_ARG;
 }
 DalnokStatus dalnok_track_set_input(DalnokEngine *e, DalnokTrackId t, int32_t ch) {
     std::string err;

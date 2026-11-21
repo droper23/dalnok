@@ -379,6 +379,8 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
     private let mute = ToggleChip("M", on: Theme.muteOn, onText: .white, help: "Mute (⌃M)")
     private let solo = ToggleChip("S", on: Theme.soloOn, onText: Theme.hex(0x1A1400), help: "Solo (⌃S)")
     private let arm = ToggleChip("R", on: Theme.recordOn, onText: .white, help: "Record Enable (⌃R)")
+    private let monitor = ToggleChip("I", on: Theme.monitorOn, onText: .white, help: "Input Monitoring: hear this track's input now, recording or not (⌃I)")
+    var onInputMonitor: ((DalnokTrackId) -> Void)?
     /// Input source: "IN 1" for audio tracks, "MIDI" for instrument tracks. Click to choose.
     let inputButton = NSButton(title: "IN 1", target: nil, action: nil)
     var onInputMenu: ((TrackHeaderRow) -> Void)?
@@ -417,6 +419,7 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
         mute.onToggle = { [weak self] on in guard let self else { return }; self.session.setMute(self.trackId, on) }
         solo.onToggle = { [weak self] on in guard let self else { return }; self.session.setSolo(self.trackId, on) }
         arm.onToggle = { [weak self] on in guard let self else { return }; self.session.setArmed(self.trackId, on) }
+        monitor.onToggle = { [weak self] _ in guard let self else { return }; self.onInputMonitor?(self.trackId) }
         inputButton.isBordered = false
         inputButton.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         (inputButton.cell as? NSButtonCell)?.lineBreakMode = .byTruncatingTail
@@ -445,7 +448,7 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
         disclosure.target = self
         disclosure.action = #selector(toggleStack)
         disclosure.isHidden = true
-        for v in [number, nameLabel, arm, mute, solo, gain, pan, gainLabel, panLabel, meter, inputButton, disclosure] as [NSView] {
+        for v in [number, nameLabel, arm, monitor, mute, solo, gain, pan, gainLabel, panLabel, meter, inputButton, disclosure] as [NSView] {
             v.translatesAutoresizingMaskIntoConstraints = false
             addSubview(v)
         }
@@ -459,8 +462,10 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
             nameLabel.leadingAnchor.constraint(equalTo: number.trailingAnchor, constant: Theme.look.channelStripHeaders ? 14 : 8),
             nameLabel.topAnchor.constraint(equalTo: topAnchor, constant: 12),
             nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: arm.leadingAnchor, constant: Theme.look.channelStripHeaders ? -16 : -8),
-            arm.trailingAnchor.constraint(equalTo: mute.leadingAnchor, constant: -4),
+            arm.trailingAnchor.constraint(equalTo: monitor.leadingAnchor, constant: -4),
             arm.centerYAnchor.constraint(equalTo: nameLabel.centerYAnchor),
+            monitor.trailingAnchor.constraint(equalTo: mute.leadingAnchor, constant: -4),
+            monitor.centerYAnchor.constraint(equalTo: nameLabel.centerYAnchor),
             inputButton.trailingAnchor.constraint(equalTo: solo.trailingAnchor),
             inputButton.centerYAnchor.constraint(equalTo: pan.centerYAnchor),
             // Never over the pan knob: a long instrument name truncates instead.
@@ -488,7 +493,7 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
         ])
         // Long names truncate; the chips never shrink.
         nameLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        for chip in [arm, mute, solo] { chip.setContentCompressionResistancePriority(.required, for: .horizontal) }
+        for chip in [arm, monitor, mute, solo] { chip.setContentCompressionResistancePriority(.required, for: .horizontal) }
         update(track, index: index)
     }
 
@@ -532,6 +537,9 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
         mute.isOn = t.muted
         solo.isOn = t.solo
         arm.isOn = t.armed
+        monitor.isOn = t.inputMonitor
+        monitor.isHidden = t.isBus || t.isInstrument
+        monitor.setAccessibilityLabel("Input monitoring \(t.name)")
         let fx = t.effects.count
         let instrument = t.instrumentName ?? "Dalnok Poly"
         inputButton.title = (t.isBus ? "BUS" : t.isInstrument ? String(instrument.prefix(12)) : "IN \(t.inputChannel + 1)") + (fx > 0 ? " · \(fx) FX" : "")
@@ -711,6 +719,7 @@ final class TrackHeaderColumn: NSView, TrackScrollHost {
     var onSelect: ((DalnokTrackId?) -> Void)?
     var onAddTrack: (() -> Void)?
     var onInputMenu: ((TrackHeaderRow) -> Void)?
+    var onInputMonitorColumn: ((DalnokTrackId) -> Void)?
     var contextMenu: NSMenu?
 
     func select(_ id: DalnokTrackId) { selectedTrack = id }
@@ -797,6 +806,7 @@ final class TrackHeaderColumn: NSView, TrackScrollHost {
             rows.forEach { if $0.superview == nil { rowClip.addSubview($0) } }
             rows.forEach {
                 $0.column = self; $0.isSelected = $0.trackId == selectedTrack; $0.onInputMenu = { [weak self] r in self?.onInputMenu?(r) }
+                $0.onInputMonitor = { [weak self] id in self?.onInputMonitorColumn?(id) }
                 $0.onToggleStack = { [weak self] id, closed in self?.onToggleStack?(id, closed) }
             }
             if let sel = selectedTrack, !tracks.contains(where: { $0.id == sel }) { selectedTrack = nil }

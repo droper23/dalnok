@@ -317,7 +317,7 @@ bool Engine::setArmed(DalnokTrackId id, bool armed, std::string &err) {
 
 bool Engine::setInputChannel(DalnokTrackId id, int32_t channel, std::string &err) {
     if (rec_.active) return fail(err, "cannot change input while recording");
-    return edit("Track Input", false, [&](Model &m) {
+    return edit("Track Input", true, [&](Model &m) { // structural: monitored tracks read their channel from the snapshot
         TrackState *t = m.track(id);
         if (!t) return fail(err, "no such track");
         if (t->kind != kTrackAudio) return fail(err, "only audio tracks have an audio input");

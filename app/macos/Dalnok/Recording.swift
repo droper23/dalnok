@@ -25,12 +25,21 @@ extension MainWindowController {
             ?? Self.scratchRecordingFolder
     }
 
-    /// The device recordings come from: the saved choice, else the current output if it has inputs, else the first.
+    /// The device recordings come from: the saved choice, else the current output if it has inputs, else the
+    /// system's default input, else the first.
     var recordingDevice: Engine.InputDevice? {
         let devices = Engine.recordingDevices()
         if let uid = Self.recordingInputUID, let d = devices.first(where: { $0.uid == uid }) { return d }
         if let d = devices.first(where: { $0.uid == session.engine.outputDeviceUid }) { return d }
-        return devices.first
+        return devices.first(where: \.isDefault) ?? devices.first
+    }
+
+    /// Tells the engine which input monitored tracks hear (it opens the device only while something monitors).
+    func syncInputDevice() {
+        let uid = Self.simulatedInput ? DALNOK_SIMULATED_INPUT : recordingDevice?.uid
+        do { try session.engine.setInputDevice(uid) } catch {
+            flash("Input monitoring unavailable: \(error)")
+        }
     }
 
     // MARK: Record
@@ -86,23 +95,14 @@ extension MainWindowController {
                 uid = DALNOK_SIMULATED_INPUT
             } else {
                 guard let device = recordingDevice else {
-                    return recordingProblem("No audio interface for recording",
-                        "Dalnok records from a device that has both inputs and outputs (such as an audio interface), so one clock drives recording and playback. Separate built-in microphones and speakers aren’t supported yet.")
-                }
-                guard abs(device.sampleRate - e.sampleRate) < 0.5 else {
-                    return recordingProblem("Sample rates don’t match",
-                        String(format: "%@ runs at %g kHz, but this session runs at %g kHz. Set the device to %g kHz in Audio MIDI Setup, or make it the system output and reopen Dalnok.",
-                               device.name, device.sampleRate / 1000, e.sampleRate / 1000, e.sampleRate / 1000))
+                    return recordingProblem("No audio input for recording",
+                        "Connect an audio interface or microphone, then choose it in Transport ▸ Recording Input.")
                 }
                 for t in session.tracks where t.armed && !t.isInstrument && Int(t.inputChannel) >= device.channels {
                     return recordingProblem("Input not available",
                                             "\(device.name) has \(device.channels) inputs; choose another input for \(t.name).")
                 }
-                if e.outputDeviceUid != device.uid {
-                    do { try e.setOutputDevice(device.uid) } catch {
-                        return recordingProblem("Couldn’t use \(device.name)", "\(error)")
-                    }
-                }
+                // The output stays where it is: the engine pairs this input with it (one clock, drift-corrected).
                 uid = device.uid
                 // Ask for microphone access before opening the input (ADR-0008).
                 switch AVCaptureDevice.authorizationStatus(for: .audio) {
@@ -195,8 +195,20 @@ extension MainWindowController {
             return
         }
         let start = e.recordStartFrame
-        timeline.recording = start < 0 ? nil : .init(start: start, end: e.position,
-                                                     tracks: Set(session.tracks.filter(\.armed).map(\.id)))
+        guard start >= 0 else { timeline.recording = nil; return }
+        let armed = session.tracks.filter(\.armed)
+        var peaks: [DalnokTrackId: [Float]] = [:]
+        for t in armed where !t.isInstrument {
+            let n = Int(dalnok_record_live_peaks(e.handle, t.id, nil, 0))
+            guard n > 0 else { continue }
+            var buf = [Float](repeating: 0, count: n)
+            let got = Int(dalnok_record_live_peaks(e.handle, t.id, &buf, Int32(n)))
+            peaks[t.id] = Array(buf.prefix(min(n, got)))
+        }
+        let c = session.cycle
+        let cycleTake = c.on && c.end > c.start && !Self.autopunch
+        timeline.recording = .init(start: start, end: e.position, tracks: Set(armed.map(\.id)), peaks: peaks,
+                                   cycle: cycleTake ? (c.start, c.end) : nil)
     }
 
     // MARK: Inputs
@@ -204,6 +216,7 @@ extension MainWindowController {
     @objc func selectRecordingInput(_ sender: NSMenuItem) {
         guard let uid = sender.representedObject as? String else { return }
         Self.recordingInputUID = uid
+        syncInputDevice()
         flash("Recording input: \(Engine.recordingDevices().first { $0.uid == uid }?.name ?? uid)")
     }
 
@@ -211,13 +224,13 @@ extension MainWindowController {
         let devices = Engine.recordingDevices()
         let current = recordingDevice?.uid
         if devices.isEmpty {
-            let none = NSMenuItem(title: "No device with inputs and outputs", action: nil, keyEquivalent: "")
+            let none = NSMenuItem(title: "No audio inputs", action: nil, keyEquivalent: "")
             none.isEnabled = false
             menu.addItem(none)
         }
         for d in devices {
             let rateOK = abs(d.sampleRate - session.engine.sampleRate) < 0.5
-            let title = d.name + (rateOK ? "" : String(format: " (%g kHz — session is %g kHz)", d.sampleRate / 1000, session.engine.sampleRate / 1000))
+            let title = d.name + (rateOK ? "" : String(format: " (switches to %g kHz)", session.engine.sampleRate / 1000))
             let it = NSMenuItem(title: title, action: #selector(selectRecordingInput(_:)), keyEquivalent: "")
             it.representedObject = d.uid
             it.state = d.uid == current ? .on : .off
@@ -293,10 +306,28 @@ extension MainWindowController {
         session.setInput(id, Int32(sender.tag))
     }
 
+    /// Transport ▸ Monitor Armed Tracks: every record-enabled audio track plays its input (Logic's auto input monitoring).
     @objc func toggleInputMonitoring(_ sender: Any?) {
         Self.inputMonitoring.toggle()
+        syncInputDevice()
         dalnok_record_set_monitoring(session.engine.handle, Self.inputMonitoring)
-        flash(Self.inputMonitoring ? "Input monitoring on — use headphones to avoid feedback" : "Input monitoring off")
+        flash(Self.inputMonitoring ? "Armed tracks play their input — use headphones to avoid feedback" : "Armed tracks no longer play their input")
+    }
+
+    /// The I button: hear this track's input through its channel strip now, recording or not.
+    func toggleTrackInputMonitor(_ id: DalnokTrackId) {
+        guard let t = session.track(id), !t.isBus, !t.isInstrument else { return }
+        syncInputDevice()
+        session.setInputMonitor(id, !t.inputMonitor)
+        if !t.inputMonitor {
+            let problem = session.engine.inputError
+            flash(problem.isEmpty ? "Input Monitoring on \(t.name): Input \(t.inputChannel + 1) of \(recordingDevice?.name ?? "no input") — use headphones to avoid feedback"
+                                  : "Input Monitoring couldn't open the input: \(problem)")
+        }
+    }
+    @objc func toggleSelectedInputMonitor(_ sender: Any?) {
+        guard let id = selectedTrack else { return }
+        toggleTrackInputMonitor(id)
     }
 
     /// Opens every MIDI source not yet connected (sources can appear at any time).

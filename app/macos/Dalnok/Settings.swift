@@ -46,7 +46,7 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
     // Audio & MIDI
     let outputPopup = NSPopUpButton(frame: .zero, pullsDown: true)
     let inputPopup = NSPopUpButton(frame: .zero, pullsDown: true)
-    let inputMonitoring = NSButton(checkboxWithTitle: "Hear armed tracks' inputs while recording (input monitoring)", target: nil, action: nil)
+    let inputMonitoring = NSButton(checkboxWithTitle: "Armed tracks play their input (auto input monitoring)", target: nil, action: nil)
     private let midiInputs = NSTextField(wrappingLabelWithString: "")
     // Recording
     let countIn = NSButton(checkboxWithTitle: "Count in one bar before recording", target: nil, action: nil)

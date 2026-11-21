@@ -329,6 +329,16 @@ void renderBlock(const RenderState &state, int64_t pos, int frames, float *left,
         float *L = state.chainL.data() + i * kMaxBlock, *R = state.chainR.data() + i * kMaxBlock;
         if (st.stage == kStepSource) {
             if ((t.bus || !t.sidechainFeeds.empty()) && i != cursor) return false;
+            const bool monitoring = !synths && monitorsInput(t, s);
+            if (s.timelineOff && !t.bus && !monitoring) {
+                // Stopped, monitoring input elsewhere: this track is silent (its plug-ins got their idle call).
+                if (t.scSlot >= 0) {
+                    clear(state.scL.data() + static_cast<size_t>(t.scSlot) * kMaxBlock, frames);
+                    clear(state.scR.data() + static_cast<size_t>(t.scSlot) * kMaxBlock, frames);
+                }
+                st.stage = kStepReady;
+                return true;
+            }
             if (synth.mutedMidiSignature != t.mutedMidiSignature) {
                 // Stop notes that may have belonged to a newly muted clip, including hosted instruments.
                 synth.reset(); synth.pluginExpected = -1; synth.mutedMidiSignature = t.mutedMidiSignature;
@@ -347,7 +357,7 @@ void renderBlock(const RenderState &state, int64_t pos, int frames, float *left,
                 lane.plugin->automate(lane.param, lane.lo + static_cast<double>(v) * (lane.hi - lane.lo));
             }
             // Clip launcher (live only): a playing slot replaces this track's timeline clips and notes.
-            if (!synths && !t.content->slots.empty()) {
+            if (!synths && !s.timelineOff && !t.content->slots.empty()) {
                 const int32_t ps = rt.playingSlot.load(std::memory_order_relaxed);
                 for (const RenderSlot &sl : t.content->slots) if (sl.slot == ps && sl.length > 0) st.slot = &sl;
             }
@@ -399,10 +409,16 @@ void renderBlock(const RenderState &state, int64_t pos, int frames, float *left,
         }
         if (st.stage == kStepClips) {
             for (const RenderClip &c : t.content->clips) {
-                if (st.slot) break; // the launcher clip plays instead of the arrangement
+                if (st.slot || s.timelineOff) break; // the launcher clip plays instead of the arrangement
                 if (c.start >= pos + frames || c.start + c.length <= pos) continue;
                 if (!st.any) { clear(L, frames); clear(R, frames); st.any = true; }
                 mixClip(c, pos, frames, L, R);
+            }
+            // Input Monitoring: the device input joins the track's source, before its inserts, fader and pan.
+            if (!synths && monitorsInput(t, s)) {
+                if (!st.any) { clear(L, frames); clear(R, frames); st.any = true; }
+                const float *in = s.liveInputs[t.inputChannel];
+                for (int k = 0; k < frames; ++k) { L[k] += in[k]; R[k] += in[k]; }
             }
             if (!t.inserts.empty()) {
                 if (!st.any) { clear(L, frames); clear(R, frames); st.any = true; }
@@ -589,6 +605,7 @@ void renderBlock(const RenderState &state, int64_t pos, int frames, float *left,
 
 void idlePlugins(const RenderState &state, Scratch &s) DALNOK_NONBLOCKING {
     for (const RenderTrack &t : state.tracks) {
+        if (s.timelineOff && (t.bus || monitorsInput(t, s))) continue; // renderBlock runs these this callback
         if (t.instrumentPlugin) { t.instrumentPlugin->setDeadline(s.deadlineNs, &s.isolatedWaitNs); t.instrumentPlugin->idle(); }
         for (PluginProcessor *p : t.inserts) { p->setDeadline(s.deadlineNs, &s.isolatedWaitNs); p->idle(); }
     }

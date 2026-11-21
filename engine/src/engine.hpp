@@ -51,6 +51,15 @@ public:
     const std::string &outputDeviceUid() const { return outputUid_; }
     bool deviceAlive() const { return duplex_ ? duplex_->alive() : (!device_ || device_->alive()); }
     double hardwareSampleRate() const { return duplex_ ? duplex_->hardwareSampleRate() : (device_ ? device_->hardwareSampleRate() : 0); }
+    // Input device for monitoring and recording (empty = none). While any track monitors its input (Input Monitoring,
+    // or armed with armed-track monitoring on), the engine runs the input and output devices as one duplex device.
+    bool setInputDevice(const std::string &uid, std::string &err);
+    const std::string &inputDeviceUid() const { return inputUid_; }
+    bool inputRunning() const { return duplex_ != nullptr && !simulatedInput_; }
+    const std::string &inputError() const { return inputError_; }
+    bool setInputMonitor(DalnokTrackId id, bool on, std::string &err);
+    // Live waveform of the take in progress: peaks (one per kLivePeakFrames) of the spool channel recording `track`.
+    const std::vector<float> *livePeaks(DalnokTrackId track);
     // Captures the given device input channels (zero-based) into one interleaved spool.
     bool startCapture(const std::string &uid, const std::vector<int> &channels, const std::string &path, std::string &err);
     bool startCapture(const std::string &uid, int channel, const std::string &path, std::string &err) {
@@ -83,7 +92,7 @@ public:
     bool recordBroken() const { return rec_.recordBroken.load(std::memory_order_acquire); }
     void setRecordLatencyOffset(int64_t frames) { rec_.latencyOffset = frames; }
     int64_t recordLatency() const; // device-reported round trip + offset
-    void setMonitoring(bool on) { rec_.monitoring.store(on, std::memory_order_relaxed); }
+    void setMonitoring(bool on) { rec_.monitoring.store(on, std::memory_order_relaxed); syncInput(); }
     // Metronome: a click on every beat (accented on the bar) while the transport rolls. Live path only;
     // offline renders and exports never contain it.
     void setMetronome(bool on, float level) { transport_.setMetronome(on, level); }
@@ -109,7 +118,7 @@ public:
     uint64_t midiDropped() const;
     int32_t recordedMidiEvents() const { return static_cast<int32_t>(rec_.midiTake.size()); }
     bool stopCapture(DalnokCaptureStats &stats, std::string &err, bool restoreOutput = true);
-    bool captureActive() const { return duplex_ != nullptr; }
+    bool captureActive() const { return rec_.captureWriter != nullptr; }
     bool captureStatus(DalnokCaptureStats &stats) const;
     void collectGarbage();
     // Runs the live render path manually (no device may be running). For tests and simulation.
@@ -395,6 +404,13 @@ private:
     DalnokMediaId nextMedia_ = 1;
     int32_t nextColor_ = 0;
     std::unique_ptr<AudioDuplexDevice> duplex_;
+    std::string duplexInputUid_, inputUid_, inputError_;
+    bool monitorWanted() const;        // some track monitors its input (control thread, from the model)
+    void syncInput();                  // opens or closes the monitoring input to match monitorWanted()
+    bool openDuplex(const std::string &uid, int highestChannel, std::string &err); // replaces the output device
+    void closeDuplex();                // back to the output device
+    const float *const *rtInputs_ = nullptr; // this callback's device inputs (audio thread)
+    int rtInputCount_ = 0;
     static constexpr int kMaxCaptureBlock = 8192;
     std::unique_ptr<AudioDevice> device_;
     std::string outputUid_;

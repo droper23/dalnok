@@ -339,6 +339,7 @@ final class Session {
         refresh()
     }
     func setInput(_ t: DalnokTrackId, _ channel: Int32) { dalnok_track_set_input(h, t, channel); refresh() }
+    func setInputMonitor(_ t: DalnokTrackId, _ on: Bool) { dalnok_track_set_input_monitor(h, t, on); refresh() }
     /// Loads a VST3 onto a track (instrument or insert). Runs plugin code on the main thread.
     func addPlugin(_ t: DalnokTrackId, path: String) throws -> Int32 {
         var err = [CChar](repeating: 0, count: 512)

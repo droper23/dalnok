@@ -13,6 +13,7 @@ out->clip_count = clipCount(m, t->id);
 out->kind = t->kind;
 out->armed = t->armed;
 out->input_channel = t->inputChannel;
+out->input_monitor = t->inputMonitor;
 out->stack = t->stack;
 out->is_stack = t->isStack;
 out->collapsed = t->collapsed;

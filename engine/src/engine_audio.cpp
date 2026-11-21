@@ -23,7 +23,17 @@ using namespace detail;
 void Engine::duplexCallback(void *ctx, float *left, float *right, const float *const *inputs, int inputCount,
                             int frames) DALNOK_NONBLOCKING {
     auto *self = static_cast<Engine *>(ctx);
+    // Monitored tracks read the inputs inside process() (sub-block slices set there).
+    self->rtInputs_ = inputs;
+    self->rtInputCount_ = inputs ? std::min(inputCount, 64) : 0;
+    self->scratch_.monitorArmed = self->rec_.monitoring.load(std::memory_order_relaxed);
     audioCallback(ctx, left, right, frames);
+    self->rtInputs_ = nullptr;
+    self->rtInputCount_ = 0;
+    self->scratch_.liveInputCount = 0;
+
+    CaptureWriter *writer = self->rec_.captureRT.load(std::memory_order_acquire);
+    if (!writer) return; // monitoring only
     const int n = self->rec_.captureChannels;
     bool ok = inputs != nullptr && frames <= kMaxCaptureBlock;
     for (int c = 0; ok && c < n; ++c) {
@@ -38,18 +48,29 @@ void Engine::duplexCallback(void *ctx, float *left, float *right, const float *c
     // Outside a recording session every frame is captured; in one, only the part of the block inside the
     // punch window, and only where the transport rolled continuously.
     const bool session = self->rec_.recordSession.load(std::memory_order_acquire);
-    if (self->rec_.captureRT && n > 0 && (!session || self->rec_.rtRecordingBlock)) {
+    if (n > 0 && (!session || self->rec_.rtRecordingBlock)) {
         const int from = session ? self->rec_.rtRecordOffset : 0, count = session ? self->rec_.rtRecordCount : frames;
         float *out = self->rec_.captureScratch.data();
-        for (int i = 0; i < count; ++i)
-            for (int c = 0; c < n; ++c) out[i * n + c] = inputs[self->rec_.captureMap[static_cast<size_t>(c)]][from + i];
-        self->rec_.captureRT->push(out, static_cast<uint32_t>(count));
-    }
-    if (self->rec_.monitoring.load(std::memory_order_relaxed))
-        for (int c = 0; c < n; ++c) {
-            const float *in = inputs[self->rec_.captureMap[static_cast<size_t>(c)]];
-            for (int i = 0; i < frames; ++i) { left[i] += in[i]; right[i] += in[i]; }
+        RecordingState &r = self->rec_;
+        for (int i = 0; i < count; ++i) {
+            for (int c = 0; c < n; ++c) {
+                const float v = inputs[r.captureMap[static_cast<size_t>(c)]][from + i];
+                out[i * n + c] = v;
+                const float a = v < 0 ? -v : v;
+                if (a > r.rtPeakAcc[static_cast<size_t>(c)]) r.rtPeakAcc[static_cast<size_t>(c)] = a;
+            }
+            // Live waveform: one peak per channel every kLivePeakFrames frames of the take.
+            if (session && ++r.rtPeakFill == kLivePeakFrames) {
+                for (int c = 0; c < n; ++c) {
+                    r.livePeakQueue->push(LivePeak{r.rtPeakIndex, static_cast<uint16_t>(c), r.rtPeakAcc[static_cast<size_t>(c)]});
+                    r.rtPeakAcc[static_cast<size_t>(c)] = 0;
+                }
+                r.rtPeakFill = 0;
+                ++r.rtPeakIndex;
+            }
         }
+        writer->push(out, static_cast<uint32_t>(count));
+    }
 }
 
 void Engine::renderClick(float *left, float *right, int frames, int64_t pos) DALNOK_NONBLOCKING {
@@ -240,6 +261,8 @@ void Engine::process(float *left, float *right, int frames) DALNOK_NONBLOCKING {
             }
         }
         float *l = left + off, *r = right + off;
+        scratch_.liveInputCount = rtInputCount_;
+        for (int c = 0; c < rtInputCount_; ++c) scratch_.liveInputs[c] = rtInputs_[c] ? rtInputs_[c] + off : nullptr;
         off += n;
 
         if (pendingSeek_ >= 0 && transportGain_ == 0.0f) {
@@ -254,7 +277,14 @@ void Engine::process(float *left, float *right, int frames) DALNOK_NONBLOCKING {
             scratch_.liveNotes = rtLiveNotes_;
             scratch_.liveNoteCount = off == n ? rtLiveNoteCount_ : 0; // live notes go to the first sub-block
             if (current_) {
+                // Input Monitoring while stopped: monitored tracks (and the buses they feed) play their input.
+                bool monitor = false;
+                for (int k = 0; scratch_.liveInputCount > 0 && k < static_cast<int>(current_->tracks.size()) && !monitor; ++k)
+                    monitor = monitorsInput(current_->tracks[static_cast<size_t>(k)], scratch_);
+                scratch_.timelineOff = monitor;
                 if (off == n) idlePlugins(*current_, scratch_); // once per callback
+                if (monitor) renderBlock(*current_, rtPosition_ + current_->compensation, n, l, r, scratch_, true, anySolo);
+                scratch_.timelineOff = false;
                 renderLiveInput(*current_, n, l, r, scratch_, anySolo, true);
                 // The master meter shows live input and auditioned notes while stopped, as the track meter does.
                 float pl = 0, pr = 0;

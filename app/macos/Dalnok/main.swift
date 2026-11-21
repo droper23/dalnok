@@ -34,6 +34,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             main.flash("Audio device unavailable: \(error)")
         }
         main.connectMidiInputs()
+        main.syncInputDevice()
         let unfinished = MainWindowController.unfinishedTakes(in: MainWindowController.scratchRecordingFolder)
         if !unfinished.isEmpty && !args0.contains("--selftest") {
             main.flash("\(unfinished.count) unfinished recording(s) found — choose File ▸ Recover Recordings…")
@@ -353,6 +354,7 @@ func buildMenu(target: MainWindowController) -> NSMenu {
         item("Mute Track", #selector(W.toggleMuteTrack(_:)), "m", [.control]),
         item("Solo Track", #selector(W.toggleSoloTrack(_:)), "s", [.control]),
         item("Record Enable Track", #selector(W.toggleArmTrack(_:)), "r", [.control]),
+        item("Input Monitoring", #selector(W.toggleSelectedInputMonitor(_:)), "i", [.control]),
         item("Bypass Plug-ins", #selector(W.toggleTrackBypass(_:)), "b", [.control]),
         .separator(),
         colorItem,
@@ -425,7 +427,7 @@ func buildMenu(target: MainWindowController) -> NSMenu {
     midiMenu.submenu = NSMenu(title: "MIDI Inputs")
     midiMenu.submenu?.delegate = target
     menu("Audio", [outputMenu, inputMenu,
-                   item("Input Monitoring", #selector(W.toggleInputMonitoring(_:)), ""),
+                   item("Monitor Armed Tracks", #selector(W.toggleInputMonitoring(_:)), ""),
                    .separator(), midiMenu,
                    .separator(), item("Plug-ins…", #selector(W.showPlugins(_:)), "p", [.command, .option])])
     menu("View", [

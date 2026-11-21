@@ -21,12 +21,18 @@ namespace dalnok {
 struct RecordAudio { DalnokTrackId track; std::string name; int channel; std::string wav; };
 // A MIDI event captured during a take, at its timeline position.
 struct RecordedMidi { int64_t pos; uint8_t status, data1, data2; };
+// Live waveform while recording: the peak of `kLivePeakFrames` captured frames of one spool channel. `index` counts
+// buckets from the start of the take (its frames are contiguous in the take).
+constexpr int kLivePeakFrames = 256;
+struct LivePeak { uint32_t index; uint16_t channel; float peak; };
 
 struct RecordingState {
     // Device capture (set up before the duplex device starts; captureRT is what the audio thread writes to).
     std::unique_ptr<CaptureSpool> captureSpool;
     std::unique_ptr<CaptureWriter> captureWriter;
-    CaptureWriter *captureRT = nullptr; // published before start; cleared after synchronous stop
+    // What the audio thread writes to. Published (release) after captureMap/captureChannels/captureScratch are set, so
+    // capture can attach to an input device that is already running for monitoring; cleared before they change.
+    std::atomic<CaptureWriter *> captureRT{nullptr};
     std::array<int, 64> captureMap{};   // device input channel for each spool channel
     int captureChannels = 0;
     std::vector<float> captureScratch;  // interleaving space
@@ -52,7 +58,14 @@ struct RecordingState {
     std::atomic<int32_t> recordSlot{-1};    // a take into a launcher slot
     std::atomic<bool> recordCycle{false};   // the take loops the cycle
 
+    // Live waveform (audio thread → control thread), drained into livePeaks (one list per spool channel).
+    // On the heap: 384 KB would not fit an Engine built on a thread's stack.
+    std::unique_ptr<SpscQueue<LivePeak, 32768>> livePeakQueue = std::make_unique<SpscQueue<LivePeak, 32768>>();
+    std::vector<std::vector<float>> livePeaks;
     // Audio thread only.
+    std::array<float, 64> rtPeakAcc{};
+    int rtPeakFill = 0;
+    uint32_t rtPeakIndex = 0;
     int64_t rtRecordNext = -1;
     bool rtRecordingBlock = false;
     int rtRecordOffset = 0, rtRecordCount = 0; // the part of this callback's block that belongs to the take

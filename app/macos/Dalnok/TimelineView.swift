@@ -568,7 +568,7 @@ final class TimelineView: NSView {
                 if lifted.contains(clip.id) { if !landing { drawGhost(ctx, clipRect(clip, laneY: y), color: track.color) }; continue }
                 drawClip(ctx, clip, track: track, laneY: y, scale: scale)
             }
-            if let rec = recording, rec.tracks.contains(track.id) { drawRecording(ctx, rec, laneY: y) }
+            if let rec = recording, rec.tracks.contains(track.id) { drawRecording(ctx, rec, laneY: y, track: track.id) }
         }
         if let m = marquee, m.moved {
             let r = CGRect(x: min(m.start.x, m.end.x), y: min(m.start.y, m.end.y),
@@ -598,10 +598,26 @@ final class TimelineView: NSView {
     }
 
     /// The take in progress: drawn as a growing red region on its armed tracks.
-    struct RecordingRegion: Equatable { var start: Int64; var end: Int64; var tracks: Set<DalnokTrackId> }
-    var recording: RecordingRegion? { didSet { if oldValue != recording { needsDisplay = true } } }
+    struct RecordingRegion: Equatable {
+        var start: Int64; var end: Int64; var tracks: Set<DalnokTrackId>
+        /// Live waveform: one peak per DALNOK_LIVE_PEAK_FRAMES recorded frames, per recording audio track.
+        var peaks: [DalnokTrackId: [Float]] = [:]
+        /// A cycle take wraps here; only the current pass is drawn.
+        var cycle: (start: Int64, end: Int64)? = nil
+        static func == (a: Self, b: Self) -> Bool {
+            a.start == b.start && a.end == b.end && a.tracks == b.tracks && a.peaks == b.peaks &&
+                a.cycle?.start == b.cycle?.start && a.cycle?.end == b.cycle?.end
+        }
+    }
+    var recording: RecordingRegion? {
+        didSet {
+            guard oldValue != recording else { return }
+            // Only the recording lanes change (a take can run for an hour; the rest of the arrangement stays put).
+            if let o = oldValue, let n = recording, o.tracks == n.tracks { invalidateLanes(of: n.tracks) } else { needsDisplay = true }
+        }
+    }
 
-    private func drawRecording(_ ctx: CGContext, _ rec: RecordingRegion, laneY: CGFloat) {
+    private func drawRecording(_ ctx: CGContext, _ rec: RecordingRegion, laneY: CGFloat, track: DalnokTrackId) {
         let x0 = xPos(forFrame: Double(rec.start)), x1 = xPos(forFrame: Double(max(rec.start, rec.end)))
         let rect = CGRect(x: x0, y: laneY + 3, width: max(2, x1 - x0), height: laneHeight(atLaneY: laneY) - 7)
         let path = CGPath(roundedRect: rect, cornerWidth: 3, cornerHeight: 3, transform: nil)
@@ -612,8 +628,46 @@ final class TimelineView: NSView {
         ctx.setStrokeColor(Theme.recordOn.withAlphaComponent(0.85).cgColor)
         ctx.setLineWidth(1)
         ctx.strokePath()
+        if let peaks = rec.peaks[track], !peaks.isEmpty { drawLivePeaks(ctx, peaks, rec, in: rect) }
         let attrs: [NSAttributedString.Key: Any] = [.font: Theme.ui(10.5, .semibold), .foregroundColor: Theme.text]
         ("● Recording" as NSString).draw(at: CGPoint(x: max(rect.minX, 0) + 6, y: rect.minY + 1.5), withAttributes: attrs)
+    }
+
+    /// The take's waveform as it records: the loudest peak in each pixel column, mirrored about the lane's centre.
+    private func drawLivePeaks(_ ctx: CGContext, _ peaks: [Float], _ rec: RecordingRegion, in rect: CGRect) {
+        let step = Int64(DALNOK_LIVE_PEAK_FRAMES)
+        let top = rect.minY + 16, bottom = rect.maxY - 3
+        guard bottom - top > 4 else { return }
+        let mid = (top + bottom) / 2, half = (bottom - top) / 2
+        // A cycle take: positions wrap at the cycle end; only the pass in progress is shown.
+        var first = 0
+        var origin = rec.start // timeline frame of peak 0
+        if let c = rec.cycle, c.end > c.start {
+            let len = c.end - c.start, lead = rec.start - c.start
+            let pass = (lead + Int64(peaks.count) * step) / len
+            first = max(0, Int((pass * len - lead + step - 1) / step))
+            origin = rec.start - pass * len
+        }
+        let visible = bounds.intersection(ctx.boundingBoxOfClipPath)
+        var column = Int.min, colPeak: Float = 0
+        ctx.setStrokeColor(Theme.text.withAlphaComponent(0.85).cgColor)
+        ctx.setLineWidth(1)
+        func flush() {
+            guard column != Int.min, colPeak > 0 else { return }
+            let h = max(0.5, CGFloat(min(colPeak, 1)) * half)
+            let x = CGFloat(column) + 0.5
+            ctx.move(to: CGPoint(x: x, y: mid - h)); ctx.addLine(to: CGPoint(x: x, y: mid + h))
+        }
+        for i in first..<peaks.count {
+            let x = xPos(forFrame: Double(origin + Int64(i) * step))
+            if x < visible.minX - 1 { continue }
+            if x > visible.maxX + 1 { break }
+            let col = Int(x.rounded(.down))
+            if col != column { flush(); column = col; colPeak = 0 }
+            colPeak = max(colPeak, peaks[i])
+        }
+        flush()
+        ctx.strokePath()
     }
 
     /// MIDI clips: notes as bars, vertical position by pitch within the clip's own range.

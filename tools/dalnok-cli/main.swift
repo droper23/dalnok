@@ -35,7 +35,7 @@ usage:
   dalnok-cli inputs                                                    list audio input devices
   dalnok-cli midi-inputs                                               list MIDI sources
   dalnok-cli capture-test <device-name> <channel> <seconds> <new-spool>  experimental duplex capture
-  dalnok-cli record <device-name> <channel> <seconds> <folder> [--save p.dalnok] [--monitor]  record an armed track
+  dalnok-cli record <device-name> <channel> <seconds> <folder> [--save p.dalnok] [--monitor] [--output <name|default>]  record an armed track
   dalnok-cli simulate-record <folder> <seconds>                         record generated input in real time (crash tests)
   dalnok-cli recover-takes <folder>                                      recover unfinished takes from their journals
   dalnok-cli midi-play <source-id> <seconds> [--record]                  play (and record) the built-in synth from MIDI
@@ -118,7 +118,17 @@ case "record", "simulate-record":
     defer { dalnok_engine_destroy(engine) }
     var err = [CChar](repeating: 0, count: 1_024)
     if !simulated {
-        guard dalnok_engine_set_output_device(engine, uid, &err, err.count) == DALNOK_OK else { fail(cstr(err)) }
+        // --output <name|default>: listen elsewhere (the engine pairs the two devices); otherwise the input device.
+        var out = uid
+        if let name = opt("--output") {
+            var list = [DalnokDeviceInfo](repeating: DalnokDeviceInfo(), count: 64)
+            let n = Int(dalnok_output_devices(&list, 64))
+            if name == "default" { out = "" }
+            else if let d = list.prefix(min(n, 64)).first(where: { withUnsafeBytes(of: $0.name) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) } == name }) {
+                out = withUnsafeBytes(of: d.uid) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }
+            } else { fail("output device not found") }
+        }
+        guard dalnok_engine_set_output_device(engine, out, &err, err.count) == DALNOK_OK else { fail(cstr(err)) }
     }
     let track = dalnok_track_add(engine, "Input \(channel)")
     _ = dalnok_track_set_input(engine, track, channel - 1)

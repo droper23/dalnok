@@ -425,6 +425,7 @@ extension SelfTest {
         w.conceptGuide.window.orderOut(nil)
 
         await recordingAndMidi()
+        await realAudioInput()
         await motion()
         await navigation()
         pluginManager()
