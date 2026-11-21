@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Fixed: a dragged clip grew in proportion to its length, so a long clip swelled by 100 pt or more, swung far when it leaned and squashed hard when dropped. The lift, lean, squash and pop are now sized in points: every clip grows by the same few points (6.5 pt at the default Clip bounce).
+
 ## [0.2.0] - 2026-11-20
 
 - **Safety is on by default:** third-party plug-ins run in their own processes, so a crash or hang in one is reported on its track instead of taking Dalnok down. Projects are unchanged. If you had turned Safety off, it stays off. Settings ▸ Plug-ins ▸ Safety is the off switch (ADR-0014). On 24 real projects:

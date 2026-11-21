@@ -2548,8 +2548,9 @@ final class SelfTest {
                 let landing = s.clip(c.id).flatMap { m in s.tracks.firstIndex { $0.id == m.track }.map { w.timeline.clipRect(m, laneY: w.timeline.laneY($0)) } }
                 check(landing.map { abs(l.position.x - $0.midX) < 2 && abs(l.target.x - $0.midX) < 1.5 } == true,
                       String(format: "the lifted clip springs to its snapped place (at %.1f, landing %.1f)", l.position.x, landing?.midX ?? -1))
-                check(l.layer.superlayer === host && abs(l.layer.transform.m11 - ClipLift.liftScale) < 0.02,
-                      "it is drawn above the lanes, a little larger (scale \(l.layer.transform.m11))")
+                let grownBy = (l.layer.transform.m11 - 1) * l.layer.bounds.width, grownH = (l.layer.transform.m22 - 1) * l.layer.bounds.height
+                check(l.layer.superlayer === host && abs(grownBy - ClipLift.liftPoints) < 0.5 && abs(grownH - ClipLift.liftPoints) < 0.5,
+                      String(format: "it is drawn above the lanes, a few points larger whatever its length (%.1f x %.1f pt, clip %.0f pt wide)", grownBy, grownH, l.layer.bounds.width))
                 if let view = w.window?.contentView, let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
                     view.cacheDisplay(in: view.bounds, to: bitmap)
                     try? bitmap.representation(using: .png, properties: [:])?.write(to: workdir.appendingPathComponent("clip-lift.png"))
@@ -2569,9 +2570,9 @@ final class SelfTest {
                 let saved = ClipLift.bounce
                 let slider = w.settings.clipBounce
                 slider.doubleValue = 0; _ = slider.target.map { NSApp.sendAction(slider.action!, to: $0, from: slider) }
-                check(ClipLift.bounce == 0 && ClipLift.liftScale == 1, "Clip bounce at Calm: no lift growth")
+                check(ClipLift.bounce == 0 && ClipLift.liftPoints == 0, "Clip bounce at Calm: no lift growth")
                 slider.doubleValue = 1; _ = slider.target.map { NSApp.sendAction(slider.action!, to: $0, from: slider) }
-                check(ClipLift.bounce == 1 && abs(ClipLift.liftScale - 1.09) < 1e-6, "Clip bounce at Bouncy: 9 % lift")
+                check(ClipLift.bounce == 1 && ClipLift.liftPoints == 10, "Clip bounce at Bouncy: a 10 pt lift")
                 ClipLift.bounce = saved
             }
             _ = perform("Undo")
