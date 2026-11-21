@@ -207,6 +207,17 @@ final class CommandPalette: NSObject, NSTableViewDataSource, NSTableViewDelegate
             panel.animator().alphaValue = 1
             panel.animator().setFrameOrigin(origin)
         }
+        // Spotlight-style: the panel also grows from 97 % as it drops in.
+        if !Motion.reduced, let l = panel.contentView?.layer {
+            Motion.centerAnchor(l)
+            let grow = CASpringAnimation(keyPath: "transform.scale")
+            grow.fromValue = 0.97
+            grow.toValue = 1
+            grow.damping = 18
+            grow.stiffness = 320
+            grow.duration = grow.settlingDuration
+            l.add(grow, forKey: "grow")
+        }
     }
 
     func close() {

@@ -28,6 +28,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     let session: Session
     let palette = CommandPalette()
     let emptyState = EmptyStateView()
+    /// Names invisible actions as they happen (Undo Move Clip, Saved).
+    let toast = ToastView()
+    let countInOverlay = CountInOverlay()
     lazy var settings = SettingsController()
     lazy var pianoRoll = PianoRollController(session: session)
     lazy var compEditor = CompEditorController(session: session)
@@ -223,7 +226,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             }
         }
         window.contentView = root
-        for v in [transport, headers, launcher, timeline, mixer, devicePanel, emptyState] as [NSView] {
+        for v in [transport, headers, launcher, timeline, mixer, devicePanel, emptyState, countInOverlay, toast] as [NSView] {
             v.translatesAutoresizingMaskIntoConstraints = false
             root.addSubview(v)
         }
@@ -253,6 +256,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             emptyState.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             emptyState.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             emptyState.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            countInOverlay.leadingAnchor.constraint(equalTo: timeline.leadingAnchor),
+            countInOverlay.trailingAnchor.constraint(equalTo: timeline.trailingAnchor),
+            countInOverlay.topAnchor.constraint(equalTo: timeline.topAnchor),
+            countInOverlay.bottomAnchor.constraint(equalTo: timeline.bottomAnchor),
+            toast.centerXAnchor.constraint(equalTo: timeline.centerXAnchor),
+            toast.bottomAnchor.constraint(equalTo: timeline.bottomAnchor, constant: -22),
         ])
         devicePanelHeight = devicePanel.heightAnchor.constraint(equalToConstant: Self.showDevicePanel ? DevicePanel.height : 0)
         devicePanelHeight.isActive = true
@@ -303,6 +312,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         emptyState.onMigrate = { [weak self] in self?.showMigrationAssistant(nil) }
         emptyState.onNewInstrument = { [weak self] in self?.newInstrumentTrack(nil) }
         emptyState.onNewAudioTrack = { [weak self] in self?.newTrack(nil) }
+        emptyState.onTemplate = { [weak self] t in self?.start(from: t) }
+        emptyState.onOpenRecent = { [weak self] url in self?.openSelectedProject(url) }
 
         transport.onPlayPause = { [weak self] in self?.togglePlay() }
         transport.onRecord = { [weak self] in self?.toggleRecord(nil) }
@@ -319,6 +330,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         transport.onRewind = { [weak self] in self?.goToStart() }
         transport.onImport = { [weak self] in self?.importAudio() }
         transport.onPalette = { [weak self] in self?.showCommandPalette(nil) }
+        transport.onLauncher = { [weak self] in self?.toggleLauncher(nil) }
+        transport.onAutomation = { [weak self] in self?.toggleAutomation(nil) }
+        transport.onMixer = { [weak self] in self?.toggleMixer(nil) }
+        transport.onDevices = { [weak self] in self?.toggleDevicePanel(nil) }
+        syncViewButtons()
+        installHints()
         headers.onAddTrack = { [weak self] in self?.newTrack(nil) }
         timeline.onVerticalScroll = { [weak self] y in self?.headers.scrollY = y; self?.launcher.scrollY = y }
         headers.onScroll = { [weak self] e in self?.timeline.scroll(with: e, zoomAnchorX: 0) }
@@ -626,6 +643,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             transport.statusLabel.stringValue = "Loading plug-ins \(min(p.done + 1, p.total)) of \(p.total)…"
             return
         }
+        if let hint = hoverHint {
+            if transport.statusLabel.stringValue != hint { Motion.fadeNextChange(transport.statusLabel.layer, duration: Motion.quick) }
+            transport.statusLabel.stringValue = hint
+            return
+        }
         let e = session.engine
         let sr = e.sampleRate
         let n = session.tracks.count
@@ -633,6 +655,39 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         let text = outputDeviceDescription()
         if transport.statusLabel.stringValue != text { Motion.fadeNextChange(transport.statusLabel.layer, duration: Motion.gentle) }
         transport.statusLabel.stringValue = text
+    }
+
+    // MARK: Hint line (FL Studio's hint bar, Ableton's Info View)
+
+    /// Settings ▸ Appearance ▸ Show hints: the control bar's second line says what the control under the pointer does.
+    static var showsHints: Bool {
+        get { UserDefaults.standard.object(forKey: "showHints") as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: "showHints") }
+    }
+    private(set) var hoverHint: String?
+    /// One app-wide monitor; it asks whichever main window is current (themes rebuild the window).
+    private static var hintMonitor: Any?
+    func installHints() {
+        window?.acceptsMouseMovedEvents = true
+        guard Self.hintMonitor == nil else { return }
+        Self.hintMonitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved]) { e in
+            MainActor.assumeIsolated { (NSApp.delegate as? AppDelegate)?.main?.pointerMoved(e) }
+            return e
+        }
+    }
+    func pointerMoved(_ e: NSEvent) {
+        var hint: String?
+        if Self.showsHints, e.window === window, let content = window?.contentView, let frame = content.superview {
+            var v = content.hitTest(frame.convert(e.locationInWindow, from: nil))
+            if v === timeline { hint = timeline.hoverHint }
+            while hint == nil, let view = v, view !== content {
+                if let t = view.toolTip, !t.isEmpty { hint = t } else if let h = view.accessibilityHelp(), !h.isEmpty { hint = h }
+                v = view.superview
+            }
+        }
+        guard hint != hoverHint else { return }
+        hoverHint = hint
+        if transientMessageUntil < Date() { updateStatus() }
     }
 
     func outputDeviceDescription() -> String {
@@ -690,6 +745,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             let beatLen = 4.0 / Double(b.den)
             let left = Int(((session.frameToBeat(Double(countInUntil)) - session.frameToBeat(Double(e.position))) / beatLen).rounded(.up))
             position = "COUNT \(max(1, left))"
+            countInOverlay.show(max(1, left), beat: 60 / max(1, session.tempo(atBeat: session.frameToBeat(Double(e.position)))) * beatLen)
+        } else if countInOverlay.shown != nil {
+            countInOverlay.show(nil, beat: 0)
         }
         // Warm Analog power-on: every segment lit for a moment, like a display's lamp test.
         if Date() < vfdTestUntil { position = String(position.map { $0.isNumber ? "8" : $0 }) }
@@ -711,6 +769,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         if Theme.look.tapeDeck { transport.ghost.stringValue = String(position.map { $0.isNumber ? "8" : $0 }) } // unlit segments
         timeline.followPlayhead()
         timeline.updatePlayhead()
+        syncViewButtons()
         // Meters reset on read: read each once and feed the headers, the control bar and the mixer.
         let (ml0, mr0) = e.masterMeter()
         var levels: [DalnokTrackId: (Float, Float)] = [:]
@@ -762,7 +821,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     @objc func goToStart() {
         if session.engine.isRecording { return } // a jump would end the take
         session.engine.seek(0)
-        timeline.scrollFrame = 0
+        timeline.glide(framesPerPoint: timeline.framesPerPoint, scrollFrame: 0, duration: 0.3, curve: .easeInOut)
     }
 
     // MARK: Audio devices
@@ -896,6 +955,21 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         headers.selectedTrack = id
     }
 
+    /// Start page templates: their tracks, added as one undo step, with the first one selected.
+    func start(from t: ProjectTemplate) {
+        var first: DalnokTrackId?
+        session.engine.group("New \(t.title) Project") {
+            for tr in t.tracks {
+                let id = tr.instrument ? session.addInstrumentTrack(tr.name) : session.addTrack(tr.name)
+                if first == nil { first = id }
+            }
+        }
+        session.refresh()
+        if t.tracks.contains(where: \.instrument) { connectMidiInputs() }
+        if let first { headers.select(first) }
+        toast.show("\(t.title): \(t.tracks.count) track\(t.tracks.count == 1 ? "" : "s") ready", symbol: t.symbol)
+    }
+
     @objc func deleteTrack(_ sender: Any?) {
         guard let t = selectedTrack else { return }
         let index = session.tracks.firstIndex { $0.id == t } ?? 0
@@ -1011,8 +1085,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
     // MARK: Edit
 
-    @objc func undo(_ sender: Any?) { session.undo() }
-    @objc func redo(_ sender: Any?) { session.redo() }
+    @objc func undo(_ sender: Any?) {
+        let name = session.engine.canUndo ? session.engine.undoName : ""
+        session.undo()
+        if !name.isEmpty { toast.show("Undo \(name)", symbol: "arrow.uturn.backward", keys: "⌘Z") }
+    }
+    @objc func redo(_ sender: Any?) {
+        let name = session.engine.canRedo ? session.engine.redoName : ""
+        session.redo()
+        if !name.isEmpty { toast.show("Redo \(name)", symbol: "arrow.uturn.forward", keys: "⇧⌘Z") }
+    }
 
     /// Clip ▸ Open Take Folder: the comp editor for the selected comp.
     @objc func openTakeFolder(_ sender: Any?) {
@@ -1176,7 +1258,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     }
 
     @objc func saveDocument(_ sender: Any?) {
-        if let url = session.projectURL { saveProject(to: url) } else { saveDocumentAs(sender) }
+        if let url = session.projectURL {
+            if saveProject(to: url) { toast.show("Saved", symbol: "checkmark.circle.fill") }
+        } else { saveDocumentAs(sender) }
     }
 
     @objc func saveDocumentAs(_ sender: Any?) { saveAs() }
@@ -1349,6 +1433,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
     @objc func toggleDevicePanel(_ sender: Any?) {
         Self.showDevicePanel.toggle()
+        syncViewButtons()
         let show = Self.showDevicePanel
         if show { devicePanel.isHidden = false }
         let panel = devicePanel
@@ -1363,12 +1448,31 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     }
 
     /// View ▸ Clip Launcher (⌘L): launcher slots beside each track's lane.
+    /// Lights the control bar's view buttons for the views that are open.
+    func syncViewButtons() {
+        transport.launcherButton.isActive = Self.showLauncher
+        transport.mixerButton.isActive = Self.showMixer
+        transport.devicesButton.isActive = Self.showDevicePanel
+        transport.automationButton.isActive = timeline.showAutomation
+    }
+
     @objc func toggleLauncher(_ sender: Any?) {
         Self.showLauncher.toggle()
-        launcherWidth.constant = Self.showLauncher ? launcher.width : 0
-        launcher.isHidden = !Self.showLauncher
+        let show = Self.showLauncher
         launcher.needsDisplay = true
-        if Self.showLauncher { flash("Clip launcher: select a clip, click an empty slot on its track to put it there, click to launch") }
+        if show { flash("Clip launcher: select a clip, click an empty slot on its track to put it there, click to launch") }
+        syncViewButtons()
+        if show { launcher.isHidden = false }
+        let panel = launcher
+        if Motion.reduced {
+            launcherWidth.constant = show ? launcher.width : 0
+            launcher.isHidden = !show
+            return
+        }
+        // Slides open from the track headers, as the mixer and device panel do from the bottom.
+        Motion.views(Motion.gentle, { launcherWidth.animator().constant = show ? launcher.width : 0 }, completion: {
+            DispatchQueue.main.async { if !show && !MainWindowController.showLauncher { panel.isHidden = true } }
+        })
     }
     /// Transport ▸ Record Launcher to Arrangement: while on, launches are logged; turning it off writes them as clips.
     @objc func toggleLauncherRecording(_ sender: Any?) {
@@ -1495,8 +1599,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         let clips = timeline.selectedClips.compactMap { session.clip($0) }
         guard let a = clips.map(\.start).min(), let b = clips.map(\.end).max(), b > a else { return NSSound.beep() }
         let width = max(100, timeline.bounds.width)
-        timeline.framesPerPoint = max(0.25, Double(b - a) / Double(width * 0.9))
-        timeline.scrollFrame = max(0, Double(a) - Double(width * 0.05) * timeline.framesPerPoint)
+        let fpp = max(0.25, Double(b - a) / Double(width * 0.9))
+        timeline.glide(framesPerPoint: fpp, scrollFrame: max(0, Double(a) - Double(width * 0.05) * fpp), duration: 0.3)
     }
     @objc func tallerTracks(_ sender: Any?) { setTrackHeight(Theme.trackHeight * 1.25) }
     @objc func shorterTracks(_ sender: Any?) { setTrackHeight(Theme.trackHeight / 1.25) }
@@ -1563,6 +1667,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     /// View ▸ Mixer (X): channel strips for every track and bus above the device panel.
     @objc func toggleMixer(_ sender: Any?) {
         Self.showMixer.toggle()
+        syncViewButtons()
         let show = Self.showMixer
         if show { mixer.isHidden = false; mixer.rebuild(); mixer.select(selectedTrack) }
         let panel = mixer
@@ -1580,6 +1685,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     /// ⌥-click to delete. Clips aren't editable while it's on.
     @objc func toggleAutomation(_ sender: Any?) {
         timeline.showAutomation.toggle()
+        syncViewButtons()
         flash(timeline.showAutomation ? "Automation: click a lane to add a point, drag to move, ⌥-click to delete (A to hide)" : "Automation hidden")
     }
     @objc func automateVolume(_ sender: Any?) { timeline.pluginLanes = [:]; TimelineView.automationTarget = 0; if !timeline.showAutomation { toggleAutomation(nil) }; timeline.needsDisplay = true }
@@ -1756,9 +1862,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         let x = timeline.xPos(forFrame: Double(session.engine.position))
         return x >= 0 && x <= timeline.bounds.width ? x : timeline.bounds.midX
     }
-    @objc func zoomIn() { timeline.zoom(by: 0.5, around: zoomAnchor) }
-    @objc func zoomOut() { timeline.zoom(by: 2, around: zoomAnchor) }
-    @objc func zoomToFit() { timeline.zoomToFit() }
+    @objc func zoomIn() { timeline.zoomSmoothly(by: 0.5, around: zoomAnchor) }
+    @objc func zoomOut() { timeline.zoomSmoothly(by: 2, around: zoomAnchor) }
+    @objc func zoomToFit() { timeline.zoomToFit(animated: true) }
 
     // MARK: Menu validation
 

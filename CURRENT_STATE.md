@@ -1,11 +1,18 @@
 ---
-updated: 2026-11-20
+updated: 2026-11-21
 phase: Phases 1 and 3 complete; 2 and 4 in progress
 milestone: hosting complete (VST3/AU/CLAP, editors, parameters, automation, delay compensation); isolation and streaming next
 ---
 # Current State
 
-## Current priorities (2026-11-20)
+## Current priorities (2026-11-21)
+- **First run and motion pass** (branch `feat/first-run-and-motion`, based on `fix/audit-followups`). Research, decisions and evidence are in `06 - Design/First Run and Motion 2026-11-21.md`.
+  - Start page with templates and recent projects; view buttons in the control bar; a hint line; undo/redo/save notices.
+  - Gliding zoom and page turns; a glow on new lanes; mute cross-fades; the launcher slides; a count-in overlay; theme cross-fade.
+  - Self-test 614 checks (48 kHz, Graphite) and 599 (44.1 kHz, Warm Analog), both PASS.
+  - Next candidates are listed at the end of that note.
+
+## Priorities (2026-11-20)
 - **Safety is on by default** (ADR-0014, 2026-11-20). Both blockers from the first pass are fixed:
   - Isolated plug-ins on independent tracks process in parallel.
   - The main thread never waits on a host: edit counts and latency come from shared memory, and automation ranges are cached.

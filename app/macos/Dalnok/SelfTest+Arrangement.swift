@@ -426,6 +426,7 @@ extension SelfTest {
 
         await recordingAndMidi()
         await motion()
+        await navigation()
         pluginManager()
         hostedPlugins()
         devicePanel()

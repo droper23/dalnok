@@ -419,11 +419,7 @@ final class SelfTest {
         check(perform("New"), "menu File > New")
         check(s.tracks.isEmpty, "new project is empty")
         check(!w.emptyState.isHidden && w.timeline.isHidden, "empty state shown for an empty project")
-        if let b = w.emptyState.subviewsDeep.compactMap({ $0 as? NSButton }).first(where: { $0.title == "New Instrument Track" }) {
-            b.performClick(nil)
-            check(s.tracks.count == 1 && s.tracks.first?.isInstrument == true, "empty state's New Instrument Track adds one")
-            _ = perform("Undo")
-        } else { check(false, "empty state offers New Instrument Track") }
+        await startPage()
         let opened = await withCheckedContinuation { cont in w.openProject(project) { cont.resume(returning: $0) } }
         check(opened, "background open completed")
         check(s.tracks.count == files.count, "reopened \(s.tracks.count) tracks")

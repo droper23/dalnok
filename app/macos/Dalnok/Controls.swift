@@ -786,8 +786,22 @@ final class IconButton: NSButton {
         image = NSImage(systemSymbolName: name, accessibilityDescription: toolTip)?.withSymbolConfiguration(cfg)
         contentTintColor = tint
     }
-    override func mouseEntered(with event: NSEvent) { Motion.layers(Motion.quick) { layer?.backgroundColor = Theme.hex(0xFFFFFF, 0.07).cgColor } }
-    override func mouseExited(with event: NSEvent) { Motion.layers(Motion.standard) { layer?.backgroundColor = NSColor.clear.cgColor } }
+    /// A view toggle (mixer, launcher…) that is showing: accent icon on a tinted pill, eased in and out.
+    var isActive = false {
+        didSet {
+            guard isActive != oldValue else { return }
+            Motion.layers(Motion.standard) { restyle() }
+            contentTintColor = isActive ? Theme.accent : Theme.text
+            setAccessibilityValue(isActive ? "shown" : "hidden")
+        }
+    }
+    private var hovering = false
+    private func restyle() {
+        layer?.backgroundColor = (isActive ? Theme.accent.withAlphaComponent(hovering ? 0.24 : 0.16)
+                                           : hovering ? Theme.hex(0xFFFFFF, 0.07) : .clear).cgColor
+    }
+    override func mouseEntered(with event: NSEvent) { hovering = true; Motion.layers(Motion.quick) { restyle() } }
+    override func mouseExited(with event: NSEvent) { hovering = false; Motion.layers(Motion.standard) { restyle() } }
     override func mouseDown(with event: NSEvent) {
         Motion.centerAnchor(layer)
         Motion.layers(Motion.quick) { layer?.transform = CATransform3DMakeScale(0.9, 0.9, 1) }

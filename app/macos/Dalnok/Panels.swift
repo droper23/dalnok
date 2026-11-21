@@ -124,6 +124,13 @@ final class TransportBar: NSView {
     private let rewind = IconButton("backward.end.fill", help: "Go to Start (Return)")
     private let paletteButton = IconButton("magnifyingglass", help: "Command Palette (⌘K)")
     private let importButton = IconButton("plus.rectangle.on.rectangle", help: "Import Audio… (⌘I)")
+    /// View toggles, lit while their view is open (Logic's control bar and Bitwig's panel buttons put these in reach
+    /// so nobody has to know the shortcut or the menu).
+    let launcherButton = IconButton("square.grid.3x2", help: "Clip Launcher (⌘L)")
+    let automationButton = IconButton("point.topleft.down.to.point.bottomright.curvepath", help: "Automation (A)")
+    let mixerButton = IconButton("slider.vertical.3", help: "Mixer (X)")
+    let devicesButton = IconButton("rectangle.3.group", help: "Device Panel (⌥⌘D): the selected track's plug-ins")
+    var onLauncher: (() -> Void)?, onAutomation: (() -> Void)?, onMixer: (() -> Void)?, onDevices: (() -> Void)?
     var onPlayPause: (() -> Void)?
     var onRecord: (() -> Void)?
     /// Project tempo (type and press Return) and meter.
@@ -238,8 +245,15 @@ final class TransportBar: NSView {
 
         masterMeter.toolTip = "Output level (click to reset the clip indicator)"
         masterMeter.setAccessibilityLabel("Master level meter")
-        let tools = NSStackView(views: [masterMeter, paletteButton, importButton])
+        for (b, sel) in [(launcherButton, #selector(launcherTapped)), (automationButton, #selector(automationTapped)),
+                         (mixerButton, #selector(mixerTapped)), (devicesButton, #selector(devicesTapped))] {
+            b.target = self; b.action = sel
+        }
+        let views = NSStackView(views: [launcherButton, automationButton, mixerButton, devicesButton])
+        views.spacing = 2
+        let tools = NSStackView(views: [views, masterMeter, paletteButton, importButton])
         tools.spacing = 8
+        tools.setCustomSpacing(16, after: views)
 
         for v in [titles, transport, tools] as [NSView] {
             v.translatesAutoresizingMaskIntoConstraints = false
@@ -318,6 +332,10 @@ final class TransportBar: NSView {
     @objc private func rewindTapped() { onRewind?() }
     @objc private func importTapped() { onImport?() }
     @objc private func paletteTapped() { onPalette?() }
+    @objc private func launcherTapped() { onLauncher?() }
+    @objc private func automationTapped() { onAutomation?() }
+    @objc private func mixerTapped() { onMixer?() }
+    @objc private func devicesTapped() { onDevices?() }
 }
 
 // MARK: - Track header

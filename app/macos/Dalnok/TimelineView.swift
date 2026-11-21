@@ -62,6 +62,20 @@ final class TimelineView: NSView {
     private var mins: [Float] = [], maxs: [Float] = []
 
     private enum Zone { case body, leftEdge, rightEdge, fadeIn, fadeOut }
+    /// What the pointer would do here, for the control bar's hint line (Settings ▸ Appearance ▸ Hints).
+    private(set) var hoverHint: String?
+    private func hint(_ p: CGPoint, _ h: (ClipView, Zone)?) -> String? {
+        if p.y < Theme.rulerHeight / 2 { return "Ruler, top half: drag to set the cycle range; drag its ends to adjust it" }
+        if p.y < Theme.rulerHeight { return "Ruler, bottom half: click or drag to move the playhead" }
+        guard let (clip, zone) = h else { return "Arrangement: drag to select clips, drop audio files to import, ⌘-scroll to zoom" }
+        switch zone {
+        case .leftEdge: return "Clip start: drag to trim (hold ⌃ to ignore the grid)"
+        case .rightEdge: return "Clip end: drag to trim, ⌥-drag to time-stretch (hold ⌃ to ignore the grid)"
+        case .fadeIn, .fadeOut: return "Fade handle: drag to lengthen or shorten the fade"
+        case .body: return clip.isMidi ? "MIDI clip: drag to move (hold ⌃ to ignore the grid), double-click to edit its notes"
+                                       : "Audio clip: drag to move (hold ⌃ to ignore the grid), drag an edge to trim"
+        }
+    }
     private let titleH: CGFloat = 16
     private let fadeHandleZone: CGFloat = 14
     private struct Drag {
@@ -360,18 +374,55 @@ final class TimelineView: NSView {
     /// Shows exactly this view (a rebuilt window taking over an earlier one's zoom and scroll); cancels a pending fit.
     func keepView(framesPerPoint fpp: Double, scrollFrame sf: Double, scrollY sy: CGFloat) {
         fitPending = false
+        stopGlide()
         framesPerPoint = fpp
         scrollFrame = sf
         scrollY = sy
     }
-    func zoomToFit() {
+    func zoomToFit(animated: Bool = false) {
         // Fitting a not-yet-laid-out timeline used a 200 pt stand-in width, squeezing the song into the first 200 pt
         // (seen after switching between Graphite and Warm Analog, which rebuilds the window).
         guard bounds.width >= 200 else { fitPending = true; needsLayout = true; return }
         fitPending = false
         let len = Double(max(session.length, Int64(sampleRate * 10)))
-        framesPerPoint = max(1, len * 1.05 / Double(bounds.width))
+        let fpp = max(1, len * 1.05 / Double(bounds.width))
+        if animated { glide(framesPerPoint: fpp, scrollFrame: 0); return }
+        stopGlide()
+        framesPerPoint = fpp
         scrollFrame = 0
+    }
+
+    // MARK: Gliding view changes (menu and keyboard zoom, zoom to fit or selection, page turns while playing)
+
+    private var glider: MotionDriver?
+    /// Where the running glide ends, so a repeated zoom key builds on it rather than on a half-way view.
+    private(set) var glideTarget: (fpp: Double, sf: Double)?
+    var isGliding: Bool { glider?.running == true }
+    func stopGlide() { glider?.cancel(); glider = nil; glideTarget = nil }
+    /// Moves the view to a zoom and left edge as one continuous camera move: the zoom eases in log space around the
+    /// one point that is at the same place on screen before and after (so a keyboard zoom keeps its anchor still).
+    func glide(framesPerPoint fpp: Double, scrollFrame sf: Double, duration: Double = 0.26, curve: Motion.Curve = .easeOut) {
+        let f1 = min(max(fpp, 0.25), sampleRate * 10), s1 = max(0, sf)
+        stopGlide()
+        let f0 = framesPerPoint, s0 = scrollFrame
+        guard f0 != f1 || s0 != s1 else { return }
+        glideTarget = (f1, s1)
+        let sameZoom = abs(f0 - f1) < 1e-9 * f0
+        let x = sameZoom ? 0 : (s1 - s0) / (f0 - f1), anchor = s0 + x * f0 // screen point x shows frame `anchor` throughout
+        glider = Motion.drive(self, duration: duration, curve: curve, { [weak self] t in
+            guard let self else { return }
+            if sameZoom { self.scrollFrame = s0 + (s1 - s0) * t; return }
+            let f = t >= 1 ? f1 : exp(log(f0) + (log(f1) - log(f0)) * t)
+            self.framesPerPoint = f
+            self.scrollFrame = t >= 1 ? s1 : anchor - x * f
+        }, completion: { [weak self] in self?.glideTarget = nil })
+    }
+    /// Keyboard and menu zoom: a short glide around `x`, building on a glide already running.
+    func zoomSmoothly(by factor: Double, around x: CGFloat) {
+        let (f0, s0) = glideTarget ?? (framesPerPoint, scrollFrame)
+        let anchor = s0 + Double(x) * f0
+        let f1 = min(max(f0 * factor, 0.25), sampleRate * 10)
+        glide(framesPerPoint: f1, scrollFrame: anchor - Double(x) * f1, duration: 0.22)
     }
 
     // MARK: Playhead
@@ -391,8 +442,11 @@ final class TimelineView: NSView {
     func followPlayhead() {
         guard session.engine.isPlaying, drag == nil else { return }
         let x = xPos(forFrame: Double(session.engine.position))
+        guard !isGliding else { return }
         if x > bounds.width - 24 || x < 0 {
-            scrollFrame = Double(session.engine.position) - 24 * framesPerPoint
+            // A quick page turn (as Bitwig and Studio One do) rather than a jump, so the eye can follow the playhead.
+            let target = Double(session.engine.position) - 24 * framesPerPoint
+            if x < 0 || x > bounds.width + 4 { scrollFrame = target } else { glide(framesPerPoint: framesPerPoint, scrollFrame: target, duration: 0.2, curve: .easeInOut) }
         }
     }
 
@@ -587,6 +641,65 @@ final class TimelineView: NSView {
 
     var highlightedTrack: DalnokTrackId? { didSet { if oldValue != highlightedTrack { needsDisplay = true } } }
 
+    /// New tracks (added by hand, a template, duplicate or undo) glow in the accent colour for a moment, as Bitwig and
+    /// Studio One mark where a new lane landed. Not on project open: those tracks are all new.
+    private func noteTrackChanges() {
+        let ids = Set(session.tracks.map(\.id))
+        defer { knownTracks = ids }
+        guard let known = knownTracks, !Motion.reduced else { return }
+        let added = ids.subtracting(known)
+        guard !added.isEmpty, added.count <= 8, !known.isDisjoint(with: ids) || (known.isEmpty && session.projectURL == nil) else { return }
+        let t0 = CACurrentMediaTime()
+        for id in added { laneFlash[id] = t0 }
+        flashDriver?.cancel()
+        flashDriver = Motion.drive(self, duration: Self.laneFlashSeconds, curve: .easeOut, { [weak self] _ in
+            self?.needsDisplay = true
+        }, completion: { [weak self] in self?.laneFlash = [:]; self?.needsDisplay = true })
+    }
+
+    /// Muting a track or clip hatches and greys its clips: the old look fades out over the new one instead of
+    /// switching in one frame.
+    private func crossfadeMuteChanges(_ now: [DalnokClipId: (clip: ClipView, track: TrackView, laneIndex: Int)], in host: CALayer) {
+        let changed = now.compactMap { id, n -> (ClipView, TrackView, Int)? in
+            guard let old = knownClips[id], old.laneIndex == n.laneIndex,
+                  old.track.muted != n.track.muted || old.clip.muted != n.clip.muted else { return nil }
+            return (old.clip, old.track, n.laneIndex)
+        }
+        guard !changed.isEmpty, changed.count <= 64 else { return }
+        let scale = window?.backingScaleFactor ?? 2
+        for (clip, track, lane) in changed {
+            let y = laneY(lane)
+            let area = clipRect(clip, laneY: y).intersection(visibleRect)
+            guard !area.isEmpty, let image = render(area, scale: scale, { ctx in self.drawClip(ctx, clip, track: track, laneY: y, scale: scale) }) else { continue }
+            let l = CALayer()
+            l.contents = image
+            l.contentsScale = scale
+            l.frame = area
+            host.addSublayer(l)
+            CATransaction.begin()
+            CATransaction.setCompletionBlock { l.removeFromSuperlayer() }
+            let fade = CABasicAnimation(keyPath: "opacity")
+            fade.fromValue = 1
+            fade.toValue = 0
+            fade.duration = 0.22
+            fade.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            l.opacity = 0
+            l.add(fade, forKey: "fade")
+            CATransaction.commit()
+        }
+    }
+    /// Draws into an offscreen image of `area` (view coordinates).
+    private func render(_ area: CGRect, scale: CGFloat, _ body: (CGContext) -> Void) -> CGImage? {
+        guard let ctx = CGContext(data: nil, width: Int(ceil(area.width * scale)), height: Int(ceil(area.height * scale)), bitsPerComponent: 8,
+                                  bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        ctx.scaleBy(x: scale, y: -scale); ctx.translateBy(x: -area.minX, y: -area.maxY)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: true)
+        body(ctx)
+        NSGraphicsContext.restoreGraphicsState()
+        return ctx.makeImage()
+    }
+
     private func drawLanes(_ ctx: CGContext) {
         ctx.setFillColor(Theme.laneA.cgColor)
         ctx.fill(bounds)
@@ -595,6 +708,11 @@ final class TimelineView: NSView {
             ctx.setFillColor((t.id == highlightedTrack ? Theme.laneHighlight : (i % 2 == 0 ? Theme.laneA : Theme.laneB)).cgColor)
             let lh = session.laneHeight(i)
             ctx.fill(CGRect(x: 0, y: y, width: bounds.width, height: lh))
+            if let t0 = laneFlash[t.id] {
+                let k = min(1, (CACurrentMediaTime() - t0) / Self.laneFlashSeconds)
+                ctx.setFillColor(t.color.withAlphaComponent(0.28 * (1 - Motion.Curve.easeOut(k))).cgColor)
+                ctx.fill(CGRect(x: 0, y: y, width: bounds.width, height: lh))
+            }
             ctx.setFillColor(Theme.separator.cgColor)
             ctx.fill(CGRect(x: 0, y: y + lh - 1, width: bounds.width, height: 1))
         }
@@ -898,11 +1016,20 @@ final class TimelineView: NSView {
 
     /// Clips that appeared since the last call pop in; clips that went away shrink and fade where they were. Called
     /// after each model change; large changes (opening a project, switching tracks wholesale) are not animated.
+    /// Tracks seen at the last model change, and when each new one arrived (its lane glows, then settles).
+    private var knownTracks: Set<DalnokTrackId>?
+    private(set) var laneFlash: [DalnokTrackId: CFTimeInterval] = [:]
+    private var flashDriver: MotionDriver?
+    static let laneFlashSeconds = 0.8
+
     func noteClipChanges() {
         var now: [DalnokClipId: (clip: ClipView, track: TrackView, laneIndex: Int)] = [:]
         for (i, t) in session.tracks.enumerated() { for c in t.clips { now[c.id] = (c, t, i) } }
         defer { knownClips = now }
-        guard !Motion.reduced, !knownClips.isEmpty, drag == nil, let host = layer else { return }
+        noteTrackChanges()
+        guard !Motion.reduced, drag == nil, let host = layer else { return }
+        crossfadeMuteChanges(now, in: host)
+        guard !knownClips.isEmpty else { return }
         let added = now.keys.filter { knownClips[$0] == nil }, removed = knownClips.keys.filter { now[$0] == nil }
         guard !(added.isEmpty && removed.isEmpty), added.count + removed.count <= 16,
               Set(knownClips.values.map(\.track.id)).intersection(session.tracks.map(\.id)).count > 0 else { return } // another project
@@ -1148,6 +1275,7 @@ final class TimelineView: NSView {
         let p = convert(event.locationInWindow, from: nil)
         let h = hit(p)
         hoveredClip = h?.0.id
+        hoverHint = hint(p, h)
         switch h?.1 {
         case .leftEdge?, .rightEdge?: NSCursor.resizeLeftRight.set()
         case .fadeIn?, .fadeOut?: NSCursor.crosshair.set()
@@ -1386,6 +1514,7 @@ final class TimelineView: NSView {
         }
         let dx = event.hasPreciseScrollingDeltas ? event.scrollingDeltaX : event.scrollingDeltaX * 8
         let dy = event.hasPreciseScrollingDeltas ? event.scrollingDeltaY : event.scrollingDeltaY * 8
+        if dx != 0 || event.modifierFlags.contains(.shift) { stopGlide() }
         scrollFrame -= Double(dx) * framesPerPoint
         if event.modifierFlags.contains(.shift) && dx == 0 {
             scrollFrame -= Double(dy) * framesPerPoint
@@ -1399,6 +1528,7 @@ final class TimelineView: NSView {
     }
 
     func zoom(by factor: Double, around x: CGFloat) {
+        stopGlide() // a gesture takes over from a running glide
         let anchor = frame(forX: x)
         framesPerPoint = min(max(framesPerPoint * factor, 0.25), sampleRate * 10)
         scrollFrame = anchor - Double(x) * framesPerPoint

@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+- New start page for empty projects: six templates named for what you came to make (Record Audio, Play an Instrument, Make a Beat, Record a Band, Write a Song, Podcast or Voice-over), each one undo step. It also lists recent projects, the other ways in, and three tips.
+- Control bar buttons for the Clip Launcher, Automation, Mixer and Device Panel, lit while their view is open.
+- Hints: the line under the project name says what the control under the pointer does, including each part of a clip and the two halves of the ruler (Settings ▸ Appearance ▸ Hints, on by default).
+- Undo, Redo and Save are confirmed in a short notice that names the step ("Undo Move Clip ⌘Z"), and VoiceOver announces it.
+- Motion (all off with Reduce Motion):
+  - Keyboard and menu zoom, Zoom to Fit, Zoom to Selection and Go to Start glide, with the zoom anchor held still.
+  - Page turns while playing glide.
+  - New tracks' lanes glow for a moment, and muting cross-fades.
+  - The clip launcher slides open, the command palette grows in, and switching themes cross-fades.
+  - The count-in shows big beat numbers over the arrangement.
+
 - Faster mixing (A-13): each track's gain ramp, meter and output now use vector routines (Accelerate's vDSP on macOS).
   - A 64-track block takes 46 µs instead of 143 µs, and a 256-track block 180 µs instead of 567 µs (about 3x faster).
   - Offline export is 3.8x faster at 64 and at 256 tracks.

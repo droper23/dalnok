@@ -152,6 +152,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard !engine.isRecording else { return false }
         let old = main!
         let frame = old.window?.frame
+        // A picture of the old style, faded out over the new window so the switch reads as one change (as macOS does
+        // for Light and Dark), not as a window closing and another opening.
+        var before: NSImage?
+        if !Motion.reduced, let v = old.window?.contentView, let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) {
+            v.cacheDisplay(in: v.bounds, to: rep)
+            let image = NSImage(size: v.bounds.size)
+            image.addRepresentation(rep)
+            before = image
+        }
         let settings = old.settings
         old.tearDown(keeping: [settings.window].compactMap { $0 })
         Theme.activeStyle = style
@@ -170,6 +179,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         old.window?.delegate = nil
         old.window?.close()
         if settings.window?.isVisible == true { settings.window?.orderFront(nil) }
+        if let before, let content = next.window?.contentView {
+            let cover = NSImageView(frame: content.bounds)
+            cover.image = before
+            cover.imageScaling = .scaleAxesIndependently
+            cover.autoresizingMask = [.width, .height]
+            content.addSubview(cover, positioned: .above, relativeTo: nil)
+            Motion.views(0.35, { cover.animator().alphaValue = 0 }, completion: {
+                DispatchQueue.main.async { cover.removeFromSuperview() }
+            })
+        }
         next.flash("Appearance: \(style.title)")
         return true
     }

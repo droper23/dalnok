@@ -101,6 +101,27 @@ enum Motion {
         plug.add(seat, forKey: "seat")
     }
 
+    /// Eases a value from 0 to 1 over `duration`, one step per display refresh, for things drawn in `draw(_:)` (zoom,
+    /// scrolling, lane highlights) that layer animations can't reach. With Reduce Motion it jumps straight to 1.
+    /// Keep the returned driver to cancel it; it stops itself when done.
+    @discardableResult
+    static func drive(_ view: NSView, duration: Double = gentle, curve: Curve = .easeOut,
+                      _ step: @escaping @MainActor (Double) -> Void, completion: (@MainActor () -> Void)? = nil) -> MotionDriver {
+        let d = MotionDriver(duration: reduced ? 0 : duration, curve: curve, step: step, completion: completion)
+        d.start(on: view)
+        return d
+    }
+    enum Curve {
+        case easeOut, easeInOut, spring
+        func callAsFunction(_ t: Double) -> Double {
+            switch self {
+            case .easeOut: return 1 - pow(1 - t, 3)
+            case .easeInOut: return t < 0.5 ? 4 * t * t * t : 1 - pow(-2 * t + 2, 3) / 2
+            case .spring: return 1 - exp(-6 * t) * cos(9 * t) * (1 - t) // one soft overshoot, settles exactly at 1
+            }
+        }
+    }
+
     /// Centers a layer's anchor point without moving it, so scale animations grow from the middle.
     static func centerAnchor(_ layer: CALayer?) {
         guard let layer, layer.anchorPoint != CGPoint(x: 0.5, y: 0.5) else { return }
@@ -108,4 +129,41 @@ enum Motion {
         layer.anchorPoint = CGPoint(x: 0.5, y: 0.5)
         layer.frame = frame
     }
+}
+
+/// A display-linked 0→1 progress (see `Motion.drive`).
+@MainActor
+final class MotionDriver: NSObject {
+    private let duration: Double, curve: Motion.Curve
+    private let step: @MainActor (Double) -> Void
+    private let completion: (@MainActor () -> Void)?
+    private var link: CADisplayLink?
+    private var began = 0.0
+    private(set) var running = false
+    init(duration: Double, curve: Motion.Curve, step: @escaping @MainActor (Double) -> Void, completion: (@MainActor () -> Void)?) {
+        self.duration = duration; self.curve = curve; self.step = step; self.completion = completion
+    }
+    func start(on view: NSView) {
+        guard duration > 0, view.window != nil else { finish(); return }
+        began = CACurrentMediaTime()
+        running = true
+        let l = view.displayLink(target: self, selector: #selector(tick))
+        l.add(to: .main, forMode: .common)
+        link = l
+    }
+    @objc private func tick(_ l: CADisplayLink) {
+        let t = min(1, (CACurrentMediaTime() - began) / duration)
+        if t >= 1 { finish() } else { step(curve(t)) }
+    }
+    private var ended = false
+    private func finish() {
+        guard !ended else { return }
+        ended = true
+        link?.invalidate(); link = nil
+        running = false
+        step(1)
+        completion?()
+    }
+    /// Stops where it is (the value stays at its last step) without calling the completion.
+    func cancel() { ended = true; link?.invalidate(); link = nil; running = false }
 }
