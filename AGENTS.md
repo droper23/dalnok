@@ -36,7 +36,10 @@ Swift/AppKit front end on macOS. GPL-3.0-or-later. This repo is also the project
   makes the next real launch offer crash recovery. Restore any preferences the run changed (`defaults read Dalnok`).
   The driver presses and releases modifier keys, so it never leaves ⌘/⌥ latched system-wide.
 - `.build/debug/Dalnok <files…> --selftest <dir>` drives real menus and synthesized drags end to end.
-  Extend `app/macos/Dalnok/SelfTest.swift` for every new UI interaction.
+  Extend the self-test for every new UI interaction: the harness is `app/macos/Dalnok/SelfTest.swift`, steps live in
+  `SelfTest+<Area>.swift`. A check that depends on the machine rather than Dalnok (e.g. becoming the active app)
+  passes `needs: .frontmost` and reports SKIP with the reason instead of failing. `DALNOK_SAMPLE_RATE=44100` runs
+  the engine at 44.1 kHz whatever the device's rate (the self-test must pass at 44.1 and 48 kHz).
 - `.build/debug/dalnok-cli commands`, `command <proj> <name> '<json>' [--save]`, `render-project`,
   `bench --tracks N` (release build for meaningful numbers),
   `import <.rpp|.als|.logicx|.fcpxml|stems-folder> [--report-only] [--save x.dalnok] [--render x.wav]`.

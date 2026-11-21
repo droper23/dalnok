@@ -881,7 +881,7 @@
       "priority": "P2",
       "category": "Maintainability",
       "subsystem": "Testing",
-      "status": "open",
+      "status": "fixed",
       "summary": "SelfTest.swift drives menus, clicks, drags and both themes in one file, with real timers and window focus. Failures caused by the machine (locked screen, another app in front, 44.1 kHz output) are documented in CURRENT_STATE, which makes the suite hard to trust as a gate.",
       "evidence": [
         "SelfTest.swift is 2,323 lines, the second-largest file in the repository, and contains both harness and fixtures.",
@@ -913,7 +913,8 @@
         "reliability": 3,
         "value": 3
       },
-      "measured": false
+      "measured": false,
+      "resolution": "2026-11-20: SelfTest.swift (3,129 lines) is split into the harness (SelfTest.swift, 668 lines: check/perform/mouse/menu helpers, run, the core editing steps, finish) and six step files by area (SelfTest+Arrangement, +Mixer, +Motion, +Plugins, +Recording, +Shortcuts); all 698 check calls moved unchanged and the counts match exactly (581 plain at 48 kHz before and after; 617 with the test plug-ins). Simulated sample rate: DALNOK_SAMPLE_RATE runs the engine at any rate (Core Audio converts to the device). At 44.1 kHz six checks failed; three were a real display bug (the LCD floored a frame holding a grid line, e.g. 2.1.4.239 at bar 2, where a beat is 27,562.5 frames; it now shows the tick at the frame's middle) plus step entry truncating note lengths, and three were test arithmetic truncating half frames. Now 581 PASS at 44.1 kHz and at 48 kHz. Environment-dependent checks take needs: .frontmost: when they fail because Dalnok could not become the active app (locked screen, someone using another app) they print SKIP with the reason and the summary counts them separately, so FAIL is attributable to the product. Self-test runs do not activate the app except for the few steps that must. CI: a selftest job runs the app self-test at 44.1 kHz on the hosted runner (informational, continue-on-error, until it proves stable there). An injected clock was not added: the timing-sensitive checks poll for their condition with a deadline instead."
     },
     {
       "id": "A-19",

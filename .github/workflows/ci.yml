@@ -62,6 +62,24 @@ jobs:
         if: matrix.sanitizer == 'thread'
         run: DALNOK_MIDI_TSAN=1 scripts/ci/midi-parser.sh
 
+  selftest:
+    # The app's end-to-end self-test (A-18), at 44.1 kHz so the beat/frame rounding paths run. Hosted runners have
+    # a window server but no audio hardware; informational until it has proven stable there.
+    runs-on: macos-15
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: swift build
+      - name: App self-test (44.1 kHz)
+        run: |
+          work=$(mktemp -d)
+          DALNOK_SAMPLE_RATE=44100 DALNOK_RECOVERY_DIR="$work/recovery" .build/debug/Dalnok \
+            /System/Library/Sounds/Submarine.aiff /System/Library/Sounds/Glass.aiff --selftest "$work/run" > "$work/selftest.log" 2>&1 && status=0 || status=$?
+          grep -E '^FAIL|^SKIP' "$work/selftest.log" || true
+          tail -1 "$work/selftest.log"
+          exit $status
+
   rt-effects:
     # Xcode's clang on hosted runners may predate [[clang::nonblocking]]; use Homebrew LLVM.
     runs-on: macos-15

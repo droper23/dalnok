@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+- Fixed: at 44.1 kHz the position display could read one tick early on bar and beat lines. For example, bar 2 showed as 2.1.4.239, because a beat at 96 BPM is 27,562.5 frames. Step-entered MIDI notes were also a frame short.
+- Internal (A-18): the self-test is split into a harness and one file per area. It passes at both 44.1 and 48 kHz (`DALNOK_SAMPLE_RATE`). Checks that depend on the machine rather than on Dalnok report SKIP with the reason instead of failing. CI also runs the self-test.
+
 - Fixed: two kinds of project could be written with a format version too old for what they contain. A sidechain alone was written as version 5 (sidechains need 9), and a master-fader change as version 3 (master gain needs 7). An older Dalnok would have opened such a file and played it without the sidechain or at the wrong master level.
 - Internal (A-16): the project format has an explicit migration chain and a machine-readable schema (`engine/api/project-format.json`).
   - Tests save 150 random projects, reload them and save again: the files come out identical, and every key matches the schema.
