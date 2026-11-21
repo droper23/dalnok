@@ -408,6 +408,9 @@ std::unique_ptr<RenderState> RenderCompiler::compile(const CompileInputs &inputs
             it = it->second.use_count() == 1 && std::none_of(s->delayKeep.begin(), s->delayKeep.end(),
                                                              [&](const auto &k) { return k == it->second; })
                      ? delays_.erase(it) : std::next(it);
+    s->chainL.assign(s->tracks.size() * kMaxBlock, 0.0f);
+    s->chainR.assign(s->tracks.size() * kMaxBlock, 0.0f);
+    s->steps.assign(s->tracks.size(), TrackStep{});
     s->busL.assign(static_cast<size_t>(buses) * kMaxBlock, 0.0f);
     s->busR.assign(static_cast<size_t>(buses) * kMaxBlock, 0.0f);
     return s;

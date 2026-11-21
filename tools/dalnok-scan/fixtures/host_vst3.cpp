@@ -330,6 +330,8 @@ public:
 
     tresult PLUGIN_API process(ProcessData &data) override {
         // Isolation tests (ADR-0014): crash or hang after a few blocks, as a faulty plug-in would mid-session.
+        // DALNOK_TEST_PROCESS_SLOW_US=n: every block takes n microseconds (a heavy plug-in).
+        if (const char *slow = std::getenv("DALNOK_TEST_PROCESS_SLOW_US"); slow && data.numSamples > 0) ::usleep(static_cast<useconds_t>(std::atoi(slow)));
         if (const char *mode = std::getenv("DALNOK_TEST_PROCESS_FAILURE"); mode && data.numSamples > 0) {
             const char *after = std::getenv("DALNOK_TEST_PROCESS_AFTER");
             if (++blocks_ > (after ? std::atoi(after) : 4)) {

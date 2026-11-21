@@ -467,6 +467,77 @@ struct PluginIsolation {
         #expect(!editorWindow(e, slot).open && info(e, t).loaded)
     }
 
+    // MARK: Isolated plug-ins run at the same time (ADR-0014, default-on)
+
+    /// Four tracks, each with an isolated plug-in that takes 2 ms per 512-frame block. One after another that is 8 ms,
+    /// more than the callback's 4.27 ms budget, so most blocks used to pass dry. Started together, their hosts work in
+    /// parallel: every block is answered in time and the audio is the plug-ins' (gain 0.5), with nothing skipped.
+    @Test func isolatedPluginsOnDifferentTracksProcessInParallel() throws {
+        let e = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(e) }
+        var x = [Float](repeating: 0, count: 48_000)
+        for i in 0..<x.count { x[i] = Float(0.5 * sin(Double(i) * 2 * .pi * 440 / 48_000)) }
+        let m = makeMedia([x]); defer { dalnok_media_release(m) }
+        let id = dalnok_pool_add(e, m, "")
+        dalnok_plugins_set_host(e, isolationHost)
+        setenv("DALNOK_TEST_PROCESS_SLOW_US", "2000", 1); defer { unsetenv("DALNOK_TEST_PROCESS_SLOW_US") }
+        var slots: [Int32] = []
+        for k in 0..<4 {
+            let t = dalnok_track_add(e, "T\(k)")
+            DalnokEngine.dalnok_clip_add(e, t, id, 0, 0, 0)
+            let slot = dalnok_plugin_add(e, t, testVst3, gainClass, nil, 0)
+            #expect(slot != 0 && info(e, t).isolated)
+            slots.append(slot)
+        }
+        dalnok_transport_play(e)
+        _ = pumpLive(e, blocks: 8) // warm up (hosts paging in)
+        func stats() -> (missed: UInt64, skips: UInt64) {
+            var missed: UInt64 = 0, skips: UInt64 = 0
+            for s in slots {
+                var st = DalnokPluginIsolationStats()
+                _ = dalnok_plugin_isolation_stats(e, s, &st)
+                missed += st.missed_blocks; skips += st.budget_skips
+            }
+            return (missed, skips)
+        }
+        let before = stats()
+        var l = [Float](repeating: 0, count: 512), r = l, worst = 0.0, peak: Float = 0
+        for _ in 0..<60 {
+            let t0 = DispatchTime.now().uptimeNanoseconds
+            _ = dalnok_engine_pump(e, &l, &r, 512)
+            worst = max(worst, Double(DispatchTime.now().uptimeNanoseconds - t0) / 1e6)
+            peak = max(peak, l.map(abs).max() ?? 0)
+            usleep(4_000) // leave the hosts idle between blocks, as a device period would
+        }
+        let after = stats()
+        print(String(format: "PARALLEL 4 x 2 ms isolated: worst callback %.2f ms (budget 4.27), missed %llu, skips %llu, peak %.3f",
+                     worst, after.missed - before.missed, after.skips - before.skips, peak))
+        #expect(after.skips - before.skips <= 2 && after.missed - before.missed <= 2,
+                "4 x 2 ms fit one 4.27 ms budget when run together (missed \(after.missed - before.missed), skips \(after.skips - before.skips))")
+        #expect(worst < 4.27 + 1.5, "the callback stays within its budget (worst \(worst) ms)")
+        // Four mono tracks at -3 dB pan law centre, through gain 0.5 each: about 4 x 0.5 x 0.5 = 1.0 peak.
+        #expect(abs(peak - 1.0) < 0.05, "every block carries the plug-ins' output (peak \(peak))")
+    }
+
+    /// Polling plug-ins for editor edits (every display frame in the app) asked each isolated host over its socket and
+    /// waited for the answer, so a host whose main thread was busy stalled the caller (60 ms spikes on real projects).
+    /// The count now comes from the shared block: polling never waits on a host.
+    @Test func pollingEditsNeverWaitsOnABusyHost() throws {
+        setenv("DALNOK_TEST_MAIN_BUSY", "1", 1); defer { unsetenv("DALNOK_TEST_MAIN_BUSY") }
+        let (e, t) = audioSession(); defer { dalnok_engine_destroy(e) }
+        dalnok_plugins_set_host(e, isolationHost)
+        let slot = dalnok_plugin_add(e, t, testVst3, gainClass, nil, 0)
+        #expect(slot != 0 && info(e, t).isolated)
+        var worst = 0.0
+        for _ in 0..<20 {
+            let t0 = DispatchTime.now().uptimeNanoseconds
+            dalnok_engine_collect_garbage(e)
+            worst = max(worst, Double(DispatchTime.now().uptimeNanoseconds - t0) / 1e6)
+            usleep(5_000)
+        }
+        print(String(format: "EDITPOLL busy host: worst collect %.2f ms", worst))
+        #expect(worst < 5, "polling for edits does not wait on the busy host (worst \(worst) ms; its main thread sleeps 200 ms at a time)")
+    }
+
     // MARK: One deadline budget per callback (A-01 stage 2)
 
     /// Three isolated plug-ins in series all hang mid-session, followed by a healthy one. Each callback waits on the

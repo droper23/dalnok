@@ -56,6 +56,9 @@ struct Shared {
     alignas(64) std::atomic<uint32_t> request; // engine: bumped after writing a block's inputs
     alignas(64) std::atomic<uint32_t> done;    // host: set to `request` after writing the outputs
     alignas(64) std::atomic<uint32_t> quit;
+    // Host: the plug-in's editor edit count, published after every block and idle request and every 100 ms, so the
+    // engine reads it without a round trip (polling it over the socket blocked the caller while a host was busy).
+    alignas(64) std::atomic<uint64_t> edits;
     int32_t frames, noteCount, automationCount, sidechain;
     PluginNote notes[kMaxNotes];
     struct { uint32_t id; double value; } automation[kMaxAutomation];
@@ -448,13 +451,19 @@ public:
     bool isolated() const override { return true; }
 
     void process(float *left, float *right, int frames, const PluginNote *notes, int noteCount) DALNOK_NONBLOCKING override {
+        if (beginProcess(left, right, frames, notes, noteCount)) finishProcess(left, right, frames);
+    }
+
+    // Sends the block to the host and wakes it; finishProcess collects it. Between the two the engine can start the
+    // other isolated plug-ins of the callback, so their hosts run at the same time instead of one after another.
+    bool beginProcess(float *left, float *right, int frames, const PluginNote *notes, int noteCount) DALNOK_NONBLOCKING override {
         Shared *s = shared_;
         const int automation = autoCount_;
         autoCount_ = 0;
-        if (failed_.load(std::memory_order_acquire) || frames <= 0 || frames > kMaxFrames) { silenceIfInstrument(left, right, frames); return; }
+        if (failed_.load(std::memory_order_acquire) || frames <= 0 || frames > kMaxFrames) { silenceIfInstrument(left, right, frames); return false; }
         const uint32_t request = s->request.load(std::memory_order_relaxed);
         if (s->done.load(std::memory_order_acquire) != request) { // the previous block is still in the host
-            missed(); silenceIfInstrument(left, right, frames); return;
+            missed(); silenceIfInstrument(left, right, frames); return false;
         }
         // Live: the callback's shared budget. Once other isolated plug-ins have spent it, this one passes for a block
         // without being blamed (budget skips never count towards "stopped responding").
@@ -465,7 +474,7 @@ public:
             if (now >= deadlineNs_) {
                 budgetSkips_.fetch_add(1, std::memory_order_relaxed);
                 silenceIfInstrument(left, right, frames);
-                return;
+                return false;
             }
             timeout = std::min(timeout, deadlineNs_ - now);
         }
@@ -481,10 +490,27 @@ public:
         s->request.store(request + 1, std::memory_order_release);
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wfunction-effects"
-        // The one IPC exception on the audio thread (ADR-0014): a bounded wake and a bounded wait.
+        // The one IPC exception on the audio thread (ADR-0014): a bounded wake here and a bounded wait in finishProcess.
         wake(s->request);
-        const bool answered = waitChange(s->done, request, timeout);
 #pragma clang diagnostic pop
+        inflight_ = request;
+        inflightUntil_ = nowNs() + timeout;
+        return true;
+    }
+
+    void finishProcess(float *left, float *right, int frames) DALNOK_NONBLOCKING override {
+        Shared *s = shared_;
+        const uint32_t request = inflight_;
+        bool answered = s->done.load(std::memory_order_acquire) != request;
+        if (!answered) {
+            const uint64_t now = nowNs();
+            if (now < inflightUntil_) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wfunction-effects"
+                answered = waitChange(s->done, request, inflightUntil_ - now);
+#pragma clang diagnostic pop
+            }
+        }
         if (!answered) { missed(); silenceIfInstrument(left, right, frames); return; }
         consecutiveMisses_.store(0, std::memory_order_relaxed);
         for (int i = 0; i < frames; ++i) { left[i] = s->outL[i]; right[i] = s->outR[i]; }
@@ -589,13 +615,7 @@ public:
         }
     }
     uint64_t editCount() const override {
-        std::string reply;
-        if (call(opEditCount, {}, reply)) {
-            Reader r{reply};
-            const uint64_t v = r.raw<uint64_t>();
-            if (r.ok) edits_ = v;
-        }
-        return edits_;
+        return shared_ ? shared_->edits.load(std::memory_order_acquire) : 0;
     }
     bool automationRange(uint32_t id, double &lo, double &hi) override {
         Writer w;
@@ -798,6 +818,8 @@ private:
     mutable std::atomic<uint32_t> latency_{0};
     mutable uint64_t edits_ = 0;
     uint64_t lastIdleNs_ = 0; // audio thread
+    uint32_t inflight_ = 0;          // audio thread: the request beginProcess issued
+    uint64_t inflightUntil_ = 0;     // audio thread: when finishProcess stops waiting for it
     mutable std::mutex callMutex_, failureMutex_;
     mutable std::string failure_;
     mutable std::atomic<bool> failed_{false};
@@ -901,7 +923,7 @@ void audioLoop(Host *h) {
             adoptWorkgroup(h, workgroup, token);
         }
         const int frames = s->frames;
-        if (frames == 0) h->plugin->idle(); // the engine's transport is stopped (parameter flushes)
+        if (frames == 0) { h->plugin->idle(); s->edits.store(h->plugin->editCount(), std::memory_order_release); } // transport stopped (parameter flushes)
         if (frames <= 0 || frames > kMaxFrames) { s->done.store(seen, std::memory_order_release); wake(s->done); continue; }
         for (int i = 0; i < s->automationCount && i < kMaxAutomation; ++i) h->plugin->automate(s->automation[i].id, s->automation[i].value);
         const int n = std::min(s->noteCount, kMaxNotes);
@@ -910,6 +932,7 @@ void audioLoop(Host *h) {
         std::memcpy(s->outL, s->inL, sizeof(float) * size_t(frames));
         std::memcpy(s->outR, s->inR, sizeof(float) * size_t(frames));
         h->plugin->process(s->outL, s->outR, frames, notes, n);
+        s->edits.store(h->plugin->editCount(), std::memory_order_release);
         s->done.store(seen, std::memory_order_release);
         wake(s->done);
     }
@@ -1167,6 +1190,7 @@ int plughostMain(int argc, char **argv) {
     hello.str(host.plugin->categories());
     hello.u8(stateAccepted);
     hello.str(stateError);
+    host.shared->edits.store(host.plugin->editCount(), std::memory_order_release); // the engine's baseline at load
     reply(host.fd, true, hello.b);
     // Control requests are served on the main thread inside its run loop, as the plug-in formats expect.
     CFFileDescriptorRef ref = CFFileDescriptorCreate(nullptr, host.fd, false, onControl, nullptr);
@@ -1175,6 +1199,11 @@ int plughostMain(int argc, char **argv) {
     // knob never looks like a hang to the engine.
     CFRunLoopAddSource(CFRunLoopGetMain(), source, kCFRunLoopCommonModes);
     CFFileDescriptorEnableCallBacks(ref, kCFFileDescriptorReadCallBack);
+    // Editor edits made while no blocks are being processed are published too (main thread, every 100 ms).
+    CFRunLoopTimerRef editTimer = CFRunLoopTimerCreateWithHandler(nullptr, CFAbsoluteTimeGetCurrent() + 0.1, 0.1, 0, 0, ^(CFRunLoopTimerRef) {
+        if (gHost && gHost->plugin && gHost->shared) gHost->shared->edits.store(gHost->plugin->editCount(), std::memory_order_release);
+    });
+    CFRunLoopAddTimer(CFRunLoopGetMain(), editTimer, kCFRunLoopCommonModes);
     CFRunLoopRun();
     if (hostui::appStarted()) hostui::runApp(); // the first editor turned the host into an AppKit application
     return 0;

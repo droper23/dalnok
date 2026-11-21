@@ -42,6 +42,14 @@ public:
     // Processes in place: effects read left/right, instruments overwrite them. frames <= kMaxBlock.
     // Calls into plugin code, which cannot be checked for real-time safety (ADR-0009).
     virtual void process(float *left, float *right, int frames, const PluginNote *notes, int noteCount) DALNOK_NONBLOCKING = 0;
+    // Split processing, so isolated plug-ins on different tracks run at the same time (ADR-0014): beginProcess
+    // starts a block and returns true when the result is still to come, in which case finishProcess must be called
+    // later with the same buffers (untouched in between). In-process plug-ins process at once and return false.
+    virtual bool beginProcess(float *left, float *right, int frames, const PluginNote *notes, int noteCount) DALNOK_NONBLOCKING {
+        process(left, right, frames, notes, noteCount);
+        return false;
+    }
+    virtual void finishProcess(float *left, float *right, int frames) DALNOK_NONBLOCKING { (void)left; (void)right; (void)frames; }
     // Peak levels entering and leaving process() since the UI last read them (the render raises, the UI resets).
     std::atomic<float> meterIn[2]{}, meterOut[2]{};
     // Recent mono input and output for displays (spectrum, scope). Created on the main thread the first time the UI
