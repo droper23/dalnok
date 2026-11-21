@@ -2,10 +2,14 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-21
+
+Phase 4 (professional production) is complete, and recording got its input and output right. Release standard: `08 - Testing and Benchmarks/Release Checklist.md`.
+
 - **Recording no longer changes your output.** Recording from an interface while listening on another device (the Mac's speakers, headphones) used to switch the output to the interface for every take. Dalnok now pairs the input and the output itself (a private aggregate, clocked by the output, with the input drift-corrected), so you keep listening where you were. Any device with inputs can record.
 - **Input Monitoring (I):** each audio track has an I button (Track ▸ Input Monitoring, ⌃I) to hear its input now, recording or not, through the track's plug-ins, fader, pan and routing. It's saved with the project. Audio ▸ Monitor Armed Tracks (was Input Monitoring) does the same for every record-enabled track; it used to add the input straight to the output.
 - **The waveform draws while you record**, as the take comes in.
-- **Measured latency compensation:** Audio ▸ Recording Input ▸ Measure Recording Latency plays short tones and listens for them on an input that hears the output (a cable, or the interface's loopback input). The correction is kept for that input and output pair and used for every take; Use Reported Latency goes back. On a Scarlett Solo 4th Gen the loopback measures 1136 samples at 48 kHz (the device reports 1200, including its converters), and a take recorded back through the loopback lands on exactly the sample it was played from.
+- **Measured latency compensation:** Audio ▸ Recording Input ▸ Measure Recording Latency plays short tones and listens for them on an input that hears the output (a cable, or the interface's loopback input). The correction is kept for that input and output pair and used for every take; Use Reported Latency goes back. On a Scarlett Solo 4th Gen the loopback measures 1136 samples at 48 kHz (the device reports 1200, including its converters), and a take recorded back through the loopback lands on exactly the sample it was played from. The interface's own round trip varies by 6 samples (0.13 ms) from one start of its audio stream to the next (1136 or 1142); while the input stays open, as it does with Input Monitoring on, takes line up exactly.
 - **Track groups** (like Logic's Groups): track context menu ▸ Group. Members move together: volume and pan relatively, mute, solo, record enable and Input Monitoring the same, in one undo step. Each group chooses what it links. Track ▸ Suspend Groups (⌘G) is the clutch. Groups are saved; older versions open the project and ignore them.
 - **Audio Unit sidechains verified:** a test Audio Unit with a sidechain bus ducks exactly as keyed by another track, in-process and with Safety on. TDR Nova and Guitar Rig 7 FX expose their sidechain inputs.
 - Fixed: with plug-in delay compensation, cycle playback ran on past the cycle end by the compensation (300 frames with a 300-frame plug-in) and skipped as much of the start on every pass.

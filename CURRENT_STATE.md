@@ -16,7 +16,9 @@ Branch `feat/recording-io` (on top of `feat/first-run-and-motion` and `fix/audit
 - **Live waveform** while recording (`dalnok_record_live_peaks`, one peak per 256 frames).
 - **Latency measured** (C API 43, Audio ▸ Recording Input ▸ Measure Recording Latency…, per device pair). Scarlett @48k:
   loopback 1136 vs 1200 reported (converters), speakers → Scarlett mic 2163 vs 2006 (≈1.1 m of air). HardwareLoopback:
-  a take recorded back through the loopback lands on the exact sample.
+  a take recorded back through the loopback lands on the exact sample. The Scarlett's round trip is 1136 or 1142 per
+  stream start (6 samples, 0.13 ms); with the input kept open (Input Monitoring) measurement and take share a session
+  and line up exactly (6 of 6 runs, both values). Release gate 2026-11-21: all 13 checks pass.
 - **AU sidechains verified** with a test AU (`tools/dalnok-scan/fixtures/host_au.cpp`, `DALNOK_TEST_AU`), in-process and
   isolated. TDR Nova and Guitar Rig 7 FX expose sidechain buses; Nova accepted the connection (its own dynamics settings
   weren't made to duck in the probe, so that's not a behavioural check of Nova).

@@ -22,6 +22,13 @@ struct HardwareLoopback {
         let e = dalnok_engine_create(device.sample_rate)!; defer { dalnok_engine_destroy(e) }
         var err = [CChar](repeating: 0, count: 512)
         #expect(dalnok_engine_set_output_device(e, uid, &err, 512) == DALNOK_OK, "\(cstr(err))")
+        // Keep the input open across the measurement and the take, as Input Monitoring does: the device's round trip can
+        // change by a few samples each time its stream restarts (a Scarlett Solo 4th Gen measures 1136 or 1142 per start).
+        let keepOpen = dalnok_track_add(e, "Keep input open")
+        _ = dalnok_track_set_input(e, keepOpen, channel == 0 ? 1 : 0)
+        _ = dalnok_track_set_mute(e, keepOpen, true)
+        #expect(dalnok_input_set_device(e, uid, &err, 512) == DALNOK_OK && dalnok_track_set_input_monitor(e, keepOpen, true) == DALNOK_OK)
+        #expect(dalnok_input_running(e))
 
         // 1. Measure.
         #expect(dalnok_latency_measure_start(e, uid, channel, &err, 512) == DALNOK_OK, "\(cstr(err))")
