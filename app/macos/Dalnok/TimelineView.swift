@@ -1399,6 +1399,7 @@ final class TimelineView: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
+        if window?.firstResponder is KeyOwner { window?.makeFirstResponder(nil) } // the arrangement keys come back
         onActivate?()
         let p = convert(event.locationInWindow, from: nil)
         if p.y < Theme.rulerHeight, let m = marker(atPoint: p) {

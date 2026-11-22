@@ -12,6 +12,17 @@ extension UTType {
 /// A click outside the text field being edited (a track name, the tempo) ends the edit and keeps the text, as
 /// Return does; the click then goes where it landed.
 final class CommittingWindow: NSWindow {
+    /// True while Tab / ⇧Tab move keyboard focus. Views that only take focus from the keyboard (the tempo field, the
+    /// launcher grid) accept it then, never when AppKit picks a first responder on its own or a click lands on them.
+    @MainActor static var navigating = false
+    override func selectNextKeyView(_ sender: Any?) {
+        Self.navigating = true; defer { Self.navigating = false }
+        super.selectNextKeyView(sender)
+    }
+    override func selectPreviousKeyView(_ sender: Any?) {
+        Self.navigating = true; defer { Self.navigating = false }
+        super.selectPreviousKeyView(sender)
+    }
     override func sendEvent(_ event: NSEvent) {
         if event.type == .leftMouseDown || event.type == .rightMouseDown || event.type == .otherMouseDown,
            let editor = firstResponder as? NSTextView, editor.isFieldEditor,
@@ -220,6 +231,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         let window = CommittingWindow(contentRect: NSRect(x: 0, y: 0, width: 1280, height: 760),
                               styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                               backing: .buffered, defer: false)
+        window.autorecalculatesKeyViewLoop = true // Tab follows the layout (keyboard-only use)
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden // the control bar shows the title
         window.appearance = Theme.appearance
@@ -1752,6 +1764,33 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     /// Track ▸ Select Previous/Next Track (↑ / ↓ in the arrangement).
     @objc func selectPreviousTrack(_ sender: Any?) { selectAdjacentTrack(-1) }
     @objc func selectNextTrack(_ sender: Any?) { selectAdjacentTrack(1) }
+    /// Edit ▸ Select Previous/Next Clip (⌥← / ⌥→): steps through the selected track's clips in time order, so clips can
+    /// be chosen without a mouse. With nothing selected it starts from the playhead.
+    @objc func selectPreviousClip(_ sender: Any?) { selectAdjacentClip(-1) }
+    @objc func selectNextClip(_ sender: Any?) { selectAdjacentClip(1) }
+    private func selectAdjacentClip(_ d: Int) {
+        let current = timeline.selectedClip.flatMap { session.clip($0) }
+        guard let trackId = current?.track ?? selectedTrack ?? session.tracks.first?.id,
+              let i = session.tracks.firstIndex(where: { $0.id == trackId }) else { return }
+        let clips = session.tracks[i].clips.sorted { ($0.start, $0.id) < ($1.start, $1.id) }
+        guard !clips.isEmpty else { return flash("\(session.tracks[i].name) has no clips") }
+        let next: ClipView?
+        if let current, let k = clips.firstIndex(where: { $0.id == current.id }) {
+            next = clips.indices.contains(k + d) ? clips[k + d] : nil
+        } else {
+            let at = session.engine.position
+            next = d > 0 ? clips.first { $0.start + $0.length > at } ?? clips.last : clips.last { $0.start < at } ?? clips.first
+        }
+        guard let next else { return NSSound.beep() }
+        if selectedTrack != trackId { headers.select(trackId) }
+        timeline.selectedClip = next.id
+        timeline.revealTrack(at: i)
+        let visible = Double(timeline.bounds.width) * timeline.framesPerPoint
+        if Double(next.start) < timeline.scrollFrame || Double(next.start) > timeline.scrollFrame + visible * 0.9 {
+            timeline.scrollFrame = max(0, Double(next.start) - visible * 0.1)
+        }
+        NSAccessibility.post(element: timeline, notification: .selectedChildrenChanged)
+    }
     private func selectAdjacentTrack(_ d: Int) {
         let ids = session.tracks.map(\.id)
         guard !ids.isEmpty else { return }
@@ -2156,6 +2195,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         case #selector(chooseTheme(_:)):
             item.state = Theme.Style.allCases.firstIndex(of: Theme.activeStyle) == item.tag - 1 ? .on : .off
             return !session.engine.isRecording
+        case #selector(selectPreviousClip(_:)), #selector(selectNextClip(_:)):
+            return session.tracks.contains { !$0.clips.isEmpty } && !pianoRollIsKey
         case #selector(selectPreviousTrack(_:)), #selector(selectNextTrack(_:)):
             return !session.tracks.isEmpty && !pianoRollIsKey
         case #selector(toggleTrackBypass(_:)):

@@ -82,6 +82,7 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
     init() {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 860, height: 620),
                               styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)
+        window.autorecalculatesKeyViewLoop = true // Tab follows the layout (keyboard-only use)
         window.title = "Settings"
         window.appearance = Theme.appearance
         window.isReleasedWhenClosed = false
@@ -205,7 +206,10 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
         grid.rowSpacing = 6
         grid.columnSpacing = 14
         for (name, control, explain) in rows {
-            grid.addRow(with: [label(name), control])
+            let l = label(name)
+            // VoiceOver names the control by its row label (unless it already has its own name).
+            if (control.accessibilityLabel() ?? "").isEmpty { control.setAccessibilityTitleUIElement(l) }
+            grid.addRow(with: [l, control])
             if let explain { grid.addRow(with: [NSGridCell.emptyContentView, note(explain)]) }
             if let r = grid.row(at: grid.numberOfRows - 1) as NSGridRow? { r.bottomPadding = 10 }
         }

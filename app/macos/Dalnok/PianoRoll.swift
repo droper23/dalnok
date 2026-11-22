@@ -20,6 +20,7 @@ final class PianoRollController: NSWindowController, NSWindowDelegate {
         roll = PianoRollView(session: session)
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 960, height: 560),
                               styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
+        window.autorecalculatesKeyViewLoop = true // Tab follows the layout (keyboard-only use)
         window.appearance = Theme.appearance
         window.backgroundColor = Theme.window
         window.minSize = NSSize(width: 480, height: 300)

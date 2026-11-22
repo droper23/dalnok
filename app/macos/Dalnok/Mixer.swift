@@ -349,6 +349,8 @@ final class ChannelStrip: NSView {
         name.stringValue = t.name
         fader.setAccessibilityLabel("Volume, \(t.name)")
         pan.setAccessibilityLabel("Pan, \(t.name)")
+        output.setAccessibilityLabel("Output, \(t.name)")
+        addSend.setAccessibilityLabel("Add send, \(t.name)")
         name.textColor = Theme.look.consoleMixer ? (t.muted ? Theme.textFaint : OKLCH.adjust(t.color, dl: 0.2, chromaScale: 0.7))
                                    : (t.muted ? Theme.textDim : Theme.text)
         scribble.color = t.color

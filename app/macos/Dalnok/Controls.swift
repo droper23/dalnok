@@ -940,6 +940,14 @@ final class IconButton: NSButton {
 
 // MARK: - Accessibility items for drawn content
 
+/// A button Tab reaches with keyboard navigation on, whatever its bezel (recessed buttons otherwise refuse focus).
+final class FocusableButton: NSButton {
+    override var canBecomeKeyView: Bool { NSApp.isFullKeyboardAccessEnabled && isEnabled && !isHiddenOrHasHiddenAncestor }
+}
+
+/// A focusable view that handles some keys itself while it has keyboard focus (they skip the menu shortcuts).
+@MainActor protocol KeyOwner: AnyObject { func ownsKey(_ event: NSEvent) -> Bool }
+
 /// An element VoiceOver can find and press inside a view that draws its content (clips, launcher slots).
 final class AXItem: NSAccessibilityElement {
     var onPress: (() -> Bool)?

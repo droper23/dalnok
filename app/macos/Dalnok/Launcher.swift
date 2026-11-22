@@ -11,7 +11,7 @@ import AppKit
 import DalnokEngine
 
 @MainActor
-final class LauncherView: NSView, TrackScrollHost {
+final class LauncherView: NSView, TrackScrollHost, KeyOwner {
     var onScroll: ((NSEvent) -> Void)?
     func scrollTracks(with event: NSEvent) { onScroll?(event) }
     override func scrollWheel(with event: NSEvent) { scrollTracks(with: event) }
@@ -64,6 +64,66 @@ final class LauncherView: NSView, TrackScrollHost {
         let row = session.laneIndex(atY: p.y + scrollY - Theme.rulerHeight)
         let k = Int(((p.x - 4) / Self.slotWidth).rounded(.down))
         return row >= 0 && row < session.tracks.count && k >= 0 && k < Int(session.scenes) ? (row, k) : nil
+    }
+
+    // MARK: Keyboard (Tab to the grid, arrows move between slots, Space or Return presses one, Esc stops every clip)
+
+    private(set) var cursor = (row: 0, slot: 0)
+    /// Tab reaches the grid; a click doesn't take the keyboard (Space keeps playing and stopping the transport).
+    override var acceptsFirstResponder: Bool { !session.tracks.isEmpty && CommittingWindow.navigating }
+    override var canBecomeKeyView: Bool { !isHiddenOrHasHiddenAncestor && bounds.width > 1 && !session.tracks.isEmpty }
+    override func becomeFirstResponder() -> Bool {
+        cursor = (min(cursor.row, max(0, session.tracks.count - 1)), min(cursor.slot, Int(session.scenes) - 1))
+        needsDisplay = true
+        return true
+    }
+    override func resignFirstResponder() -> Bool { needsDisplay = true; return true }
+    func ownsKey(_ event: NSEvent) -> Bool { window?.firstResponder === self && [123, 124, 125, 126, 36, 76, 49, 53].contains(event.keyCode) }
+    override func keyDown(with event: NSEvent) {
+        let rows = session.tracks.count, slots = Int(session.scenes)
+        guard rows > 0 else { return super.keyDown(with: event) }
+        switch event.keyCode {
+        case 123: cursor.slot = max(0, cursor.slot - 1)
+        case 124: cursor.slot = min(slots - 1, cursor.slot + 1)
+        case 126: cursor.row = max(0, cursor.row - 1)
+        case 125: cursor.row = min(rows - 1, cursor.row + 1)
+        case 36, 76, 49: press(row: cursor.row, slot: cursor.slot, keyboard: true)
+        case 53: dalnok_launcher_stop_all(session.engine.handle)
+        default: return super.keyDown(with: event)
+        }
+        if (123...126).contains(event.keyCode) { announceCursor() }
+        needsDisplay = true
+    }
+    /// VoiceOver reads the slot under the keyboard cursor as it moves.
+    private func announceCursor() {
+        guard cursor.row < session.tracks.count else { return }
+        let track = session.tracks[cursor.row]
+        let text = session.slotClip(track.id, Int32(cursor.slot)).map { "Slot \(cursor.slot + 1) on \(track.name): \($0.name)" }
+            ?? "Slot \(cursor.slot + 1) on \(track.name), empty"
+        NSAccessibility.post(element: self, notification: .announcementRequested,
+                             userInfo: [.announcement: text, .priority: NSAccessibilityPriorityLevel.high.rawValue])
+    }
+
+    /// What a click (or Space/Return on the keyboard cursor) does to a slot.
+    func press(row i: Int, slot k: Int, keyboard: Bool) {
+        guard i < session.tracks.count else { return }
+        let track = session.tracks[i], h = session.engine.handle
+        if let clip = session.slotClip(track.id, Int32(k)) {
+            let playing = dalnok_launcher_playing(h, track.id) == Int32(k) && dalnok_launcher_queued(h, track.id, nil) != -1
+            dalnok_launcher_launch(h, track.id, playing ? -1 : Int32(k))
+            if keyboard { onMessage?(playing ? "\(clip.name) stops on the next bar" : "\(clip.name) starts on the next bar") }
+        } else if track.armed && keyboard {
+            onRecordInto?(k)
+        } else if let sel = selectedClip(), session.clip(sel)?.track == track.id {
+            session.copyToSlot(sel, Int32(k))
+            onMessage?("Copied to slot \(k + 1): \(keyboard ? "press Space" : "click it") to launch")
+            animateChanges()
+        } else if dalnok_launcher_playing(h, track.id) >= 0 {
+            dalnok_launcher_launch(h, track.id, -1)
+        } else {
+            onMessage?("Select a clip on \(track.name), then \(keyboard ? "press Space on" : "click") an empty slot to put it there")
+        }
+        needsDisplay = true
     }
 
     /// Called from the window's tick: progress, queued launches and the record mark breathe.
@@ -202,6 +262,11 @@ final class LauncherView: NSView, TrackScrollHost {
                 ctx.restoreGState()
             }
         }
+        if window?.firstResponder === self, cursor.row < session.tracks.count { // the keyboard cursor
+            let r = slotRect(row: cursor.row, slot: cursor.slot).insetBy(dx: -3, dy: -3)
+            ctx.setStrokeColor(NSColor.keyboardFocusIndicatorColor.cgColor); ctx.setLineWidth(2.5)
+            ctx.addPath(CGPath(roundedRect: r, cornerWidth: 6, cornerHeight: 6, transform: nil)); ctx.strokePath()
+        }
         Theme.separator.setFill(); CGRect(x: bounds.width - 1, y: 0, width: 1, height: bounds.height).fill()
     }
 
@@ -317,6 +382,7 @@ final class LauncherView: NSView, TrackScrollHost {
     }
 
     override func mouseDown(with event: NSEvent) {
+        if window?.firstResponder === self { window?.makeFirstResponder(nil) } // a click hands the keyboard back
         let p = convert(event.locationInWindow, from: nil)
         let h = session.engine.handle
         if p.y < Theme.rulerHeight {
@@ -335,14 +401,10 @@ final class LauncherView: NSView, TrackScrollHost {
                     return
                 } else if track.armed && recordMarkRect(row: i, slot: k).insetBy(dx: -4, dy: -4).contains(p) {
                     onRecordInto?(k)
-                } else if let sel = selectedClip(), session.clip(sel)?.track == track.id {
-                    session.copyToSlot(sel, Int32(k))
-                    onMessage?("Copied to slot \(k + 1): click it to launch")
-                } else if dalnok_launcher_playing(h, track.id) >= 0 {
-                    dalnok_launcher_launch(h, track.id, -1) // empty slot on a playing track: stop
                 } else {
-                    onMessage?("Select a clip on \(track.name), then click an empty slot to put it there")
+                    press(row: i, slot: k, keyboard: false) // copy the selection here, or stop a playing track
                 }
+                cursor = (i, k)
                 needsDisplay = true
                 return
             }

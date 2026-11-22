@@ -198,6 +198,8 @@ private let specs: [String: Spec] = [
     "toggleArmTrack:": Spec(id: "track.arm", category: "Tracks", detail: "Arm or disarm the selected track for recording.", keywords: ["record enable"]),
     "recolorTracksAsGradient:": Spec(id: "track.recolor_gradient", category: "Tracks", detail: "Recolour all tracks as a gradient.", keywords: ["color"]),
     "selectPreviousTrack:": Spec(id: "track.select_previous", category: "Timeline and Navigation", detail: "Select the track above.", keywords: ["move between tracks"], context: .arrangement),
+    "selectPreviousClip:": Spec(id: "clip.select_previous", category: "Timeline and Navigation", detail: "Select the clip before the selected one on its track (keyboard-only editing).", keywords: ["previous region"], context: .arrangement),
+    "selectNextClip:": Spec(id: "clip.select_next", category: "Timeline and Navigation", detail: "Select the clip after the selected one on its track (keyboard-only editing).", keywords: ["next region"], context: .arrangement),
     "selectNextTrack:": Spec(id: "track.select_next", category: "Timeline and Navigation", detail: "Select the track below.", keywords: ["move between tracks"], context: .arrangement),
     // Automation
     "clearAutomation:": Spec(id: "automation.clear", category: "Automation", detail: "Remove the selected track's automation."),

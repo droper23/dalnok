@@ -257,6 +257,14 @@ final class MainMenu: NSMenu {
         // A focused tape key owns its activation keys, including keys also bound to transport commands.
         if event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty,
            [36, 49, 76].contains(event.keyCode), MainActor.assumeIsolated({ (NSApp.keyWindow ?? e.window)?.firstResponder is DeckKey }) { return false }
+        // Keyboard focus on a view that takes keys (the launcher grid) or on any control: its keys, and Tab / ⇧Tab
+        // (which move focus to the next control even where a preset binds Tab, as Ableton's does), go to it.
+        if event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
+           MainActor.assumeIsolated({ () -> Bool in
+               let r = (NSApp.keyWindow ?? e.window)?.firstResponder
+               if let owner = r as? KeyOwner, owner.ownsKey(e) { return true }
+               return e.keyCode == 48 && r is NSView && !(r is NSTextView)
+           }) { return false }
         // The registry decides: it runs the command bound in the active context, leaves piano-roll keys to the
         // piano roll, and never lets a menu item fire a key that belongs to another context.
         let verdict: Bool? = MainActor.assumeIsolated {
@@ -339,6 +347,8 @@ func buildMenu(target: MainWindowController) -> NSMenu {
         item("Split at Playhead", #selector(W.splitAtPlayhead), "t"),
         item("Nudge Clips Left", #selector(W.nudgeClipsLeft(_:)), String(UnicodeScalar(NSLeftArrowFunctionKey)!), []),
         item("Nudge Clips Right", #selector(W.nudgeClipsRight(_:)), String(UnicodeScalar(NSRightArrowFunctionKey)!), []),
+        item("Select Previous Clip", #selector(W.selectPreviousClip(_:)), String(UnicodeScalar(NSLeftArrowFunctionKey)!), [.option]),
+        item("Select Next Clip", #selector(W.selectNextClip(_:)), String(UnicodeScalar(NSRightArrowFunctionKey)!), [.option]),
     ])
     let colorItem = NSMenuItem(title: "Track Color", action: nil, keyEquivalent: "")
     colorItem.submenu = target.colorMenu()

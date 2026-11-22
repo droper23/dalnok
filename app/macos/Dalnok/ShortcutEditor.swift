@@ -74,6 +74,7 @@ final class ShortcutEditorController: NSWindowController, NSWindowDelegate, NSTa
     init() {
         let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 820, height: 620), styleMask: [.titled, .closable, .resizable, .miniaturizable],
                          backing: .buffered, defer: false)
+        w.autorecalculatesKeyViewLoop = true // Tab follows the layout (keyboard-only use)
         w.title = "Keyboard Shortcuts"
         w.minSize = NSSize(width: 640, height: 460)
         w.isReleasedWhenClosed = false
@@ -278,7 +279,7 @@ final class ShortcutEditorController: NSWindowController, NSWindowDelegate, NSTa
         detailTitle.stringValue = a.title
         detailText.stringValue = [a.detail, "Menu: \(a.menuPath)", "Works: \(a.context.title)"].filter { !$0.isEmpty }.joined(separator: "   ·   ")
         for k in registry.keys(a.id) {
-            let b = NSButton(title: "\(k.description)  ×", target: self, action: #selector(removeKey(_:)))
+            let b = FocusableButton(title: "\(k.description)  ×", target: self, action: #selector(removeKey(_:)))
             b.bezelStyle = .recessed; b.controlSize = .small; b.font = Theme.mono(11)
             b.identifier = .init(k.storage)
             b.toolTip = "Remove \(k.description) from \(a.title)"
@@ -290,6 +291,7 @@ final class ShortcutEditorController: NSWindowController, NSWindowDelegate, NSTa
         }
         addButton.isEnabled = true
         restoreButton.isEnabled = registry.overrides[a.id] != nil
+        keysStack.window?.recalculateKeyViewLoop() // the new key chips join the Tab order
         if pending == nil {
             let clash = registry.keys(a.id).flatMap { k in registry.conflicts(for: k, in: a.context, excluding: a.id).map { "\(k.description) is also \($0.title)" } }
             let shadow = registry.keys(a.id).flatMap { k in registry.shadows(for: k, of: a).map { "\(k.description) does \($0.title) in \($0.context.title)" } }

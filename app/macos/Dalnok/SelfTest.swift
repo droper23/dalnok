@@ -34,9 +34,11 @@ final class SelfTest {
     /// it is reported as SKIP with the reason and does not fail the run, so failures are attributable to the product.
     enum Environment: String {
         case frontmost = "Dalnok could not become the active application (screen locked, or someone is using another app)"
+        case fullKeyboardAccess = "Keyboard navigation is off in System Settings, so Tab skips buttons and menus in every app"
         @MainActor var met: Bool {
             switch self {
             case .frontmost: NSApp.isActive && NSWorkspace.shared.frontmostApplication?.processIdentifier == getpid()
+            case .fullKeyboardAccess: NSApp.isFullKeyboardAccessEnabled
             }
         }
     }
@@ -107,6 +109,7 @@ final class SelfTest {
 
     func steps() async {
         let e = s.engine
+        if ProcessInfo.processInfo.environment["DALNOK_A11Y_ONLY"] != nil { await accessibilityPass(); return finish() }
         check(s.tracks.count == files.count, "import \(files.count) files -> \(s.tracks.count) tracks")
         check(e.undoName.hasPrefix("Import"), "import is one undo step (\(e.undoName))")
         guard let first = s.tracks.first?.clips.first else { return finish() }
@@ -542,6 +545,7 @@ final class SelfTest {
         await isolatedPluginEditors()
         try? w.snapshot(to: workdir.appendingPathComponent("selftest.png"))
         await migrationSteps()
+        await accessibilityPass()
         // Settings: exercise the menu, appearance selection, and project preference.
         let oldTheme = UserDefaults.standard.object(forKey: "appearanceStyle")
         let oldVariant = UserDefaults.standard.object(forKey: "appearanceVariant")

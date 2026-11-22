@@ -30,7 +30,13 @@ final class TempoField: NSTextField {
     private var armed = false
     /// Called with the new tempo while dragging, then once with nil when the drag ends.
     var onDrag: ((Double?) -> Void)?
-    override var acceptsFirstResponder: Bool { armed }
+    /// A click arms it from mouseDown (a drag changes the tempo instead); Tab reaches it like any field (keyboard-only use).
+    override var acceptsFirstResponder: Bool { armed || CommittingWindow.navigating }
+    override func becomeFirstResponder() -> Bool {
+        guard super.becomeFirstResponder() else { return false }
+        if !armed { armed = true; showEditing(true) }
+        return true
+    }
     override init(frame: NSRect) { super.init(frame: frame); setUp() }
     required init?(coder: NSCoder) { super.init(coder: coder); setUp() }
     private func setUp() {
