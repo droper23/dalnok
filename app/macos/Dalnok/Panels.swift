@@ -271,7 +271,9 @@ final class TransportBar: NSView {
             titles.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Theme.trafficLightInset + 8),
             titles.centerYAnchor.constraint(equalTo: centerYAnchor),
             titles.trailingAnchor.constraint(lessThanOrEqualTo: transport.leadingAnchor, constant: -16),
-            transport.centerXAnchor.constraint(equalTo: centerXAnchor),
+            // Centred while there is room; in a narrow window the transport moves left rather than under the tools.
+            transport.centerXAnchor.constraint(equalTo: centerXAnchor).withPriority(.defaultHigh),
+            tools.leadingAnchor.constraint(greaterThanOrEqualTo: transport.trailingAnchor, constant: 20),
             transport.centerYAnchor.constraint(equalTo: centerYAnchor),
             lcd.widthAnchor.constraint(equalToConstant: 150),
             lcd.heightAnchor.constraint(equalToConstant: 34),
@@ -1020,4 +1022,12 @@ final class ScribbleStrip: NSView {
 
 extension Comparable {
     func clamped(to r: ClosedRange<Self>) -> Self { min(max(self, r.lowerBound), r.upperBound) }
+}
+
+extension NSLayoutConstraint {
+    /// The constraint with `priority` set (for inline use in `NSLayoutConstraint.activate`).
+    func withPriority(_ priority: NSLayoutConstraint.Priority) -> NSLayoutConstraint {
+        self.priority = priority
+        return self
+    }
 }

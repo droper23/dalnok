@@ -171,6 +171,11 @@ enum Screenshots {
             app.engine.play()
             try? await Task.sleep(for: .seconds(1.2))
             shot("06-devices")
+            // The README's hero frame: arrangement playing, mixer and device chain open.
+            if !MainWindowController.showMixer { w.toggleMixer(nil) }
+            try? await Task.sleep(for: .seconds(1.0))
+            shot("00-hero")
+            if MainWindowController.showMixer { w.toggleMixer(nil) }
             app.engine.pause()
             w.pluginManager.show()
             w.pluginManager.filter("Dalnok")

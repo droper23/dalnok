@@ -5,6 +5,31 @@ milestone: 0.3.0, Phase 4 complete; recording I/O (separate devices, Input Monit
 ---
 # Current State
 
+## Latest (2026-11-21, night): Prism and Atelier themes, Dalnok Compressor, Composition Overview
+Branch `feat/themes-prism-atelier` (off `feat/compressor-launcher-a11y`, off `main` e6d788f). Not merged or released.
+- **Backlog** cleaned (done items removed).
+- **Dalnok Compressor** (built-in, `engine/src/fx/compressor.*`): feed-forward, stereo-linked, peak/RMS, soft knee,
+  attack/release in dB, make-up, auto gain, mix; sidechain key from another track with a high-pass filter and Listen; a
+  read-only Gain Reduction meter. `CompressorTests` (8): reference renders within 2e-6, static curve and meter within
+  0.01 dB, attack/release one time constant within 0.01 dB, sidechain keying sample-accurate. Its sound is Dalnok's own:
+  Logic's Compressor isn't in the parity template yet (needs the owner; see Logic Effect Parity).
+- **Fixed:** a disconnected sidechain kept reading the old key buffer (freed memory) in every format; live test fails
+  without the fix.
+- **Themes** (owner brief 2026-11-21): Prism (Liquid-style glass, dark and light) and Atelier (drafting/typography, light
+  and dark). Architecture in `06 - Design/Theme System.md`; designs in `Prism.md`, `Atelier.md`. Bundled OFL fonts.
+  View ▸ Theme, ⌥⌘A Next Theme, Settings ▸ Appearance ▸ Light or dark (Match System follows macOS).
+- **View ▸ Composition Overview (⌥⌘O)**, every theme: sections from markers, per-track coverage and automation.
+- **Review tool:** `Dalnok <project> --gallery <dir>` (DALNOK_THEME, DALNOK_VARIANT): hero frame plus eleven screens.
+- **Verification:** `swift test` CompressorPlugin + BuiltinPlugins pass. Self-test (full suite) PASS: Prism dark 908,
+  Atelier dark 908; earlier runs: Prism light 882 and Atelier light 888 with only since-fixed failures. See the
+  journal for the final matrix.
+- **Known issue (pre-existing, not theme-related):** the self-test's save/relink step sometimes fails ("save copied 14/15
+  audio files"): takes from an earlier run's workdir appear in the new workdir's Audio Files and take numbering
+  continues from them. Seen on Graphite and on the compressor branch before any theme work.
+- **Not done yet from the queue:** clip launcher recording/dragging/animations, VoiceOver and keyboard pass of every
+  window, automatic latency re-measure on stream restart. README stills/tours for the new themes: at the next release
+  (rule now in the Release Checklist, section 4).
+
 ## Latest (2026-11-21, later): 0.3.0 released, recording I/O, sidechains, latency, groups
 **Released:** PR #2 (`fix/audit-followups`) and PR #3 (`feat/recording-io`, which carried `feat/first-run-and-motion`)
 are merged into `main` with merge commits; `v0.3.0` is tagged on `main` (662c1a5) and published on GitHub with
