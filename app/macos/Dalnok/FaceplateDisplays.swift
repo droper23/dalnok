@@ -114,10 +114,7 @@ enum FaceplateDisplay {
     static func bezel(_ ctx: CGContext, _ rect: CGRect, radius: CGFloat = 5) -> CGRect {
         switch Theme.look.devices {
         case .schematic: return rect.insetBy(dx: 4, dy: 4) // the plot's frame is drawn after the ink pass
-        case .cards: // a dark glass well in the card, with a light rim
-            let outer = CGPath(roundedRect: rect.insetBy(dx: 1, dy: 1), cornerWidth: 8, cornerHeight: 8, transform: nil)
-            ctx.addPath(outer); ctx.setFillColor(Theme.hex(0x05070F, 0.85).cgColor); ctx.fillPath()
-            ctx.addPath(outer); ctx.setStrokeColor(NSColor.white.withAlphaComponent(0.14).cgColor); ctx.setLineWidth(0.75); ctx.strokePath()
+        case .cards: // no well: the screen is drawn straight onto the card's glass (FaceplateScreen.drawOnGlass)
             return rect.insetBy(dx: 4, dy: 4)
         case .rack, .pedalboard: break
         }
@@ -139,7 +136,7 @@ enum FaceplateDisplay {
 
     /// Glass over a window: a soft diagonal glare and an inner shadow at the top edge.
     static func glass(_ ctx: CGContext, _ window: CGRect, radius: CGFloat) {
-        if Theme.look.devices == .schematic { return }
+        if Theme.look.devices == .schematic || Theme.look.devices == .cards { return }
         let path = CGPath(roundedRect: window, cornerWidth: radius, cornerHeight: radius, transform: nil)
         ctx.saveGState()
         ctx.addPath(path); ctx.clip()
@@ -178,8 +175,11 @@ class FaceplateScreen: NSView {
     /// A light face behind the glass (the VU meter's paper): dirt shows dark on it rather than pale.
     var lightFace: Bool { false }
     override var isFlipped: Bool { true }
+    /// Prism: displays that already draw themselves for the glass (the moving-coil meter).
+    var drawsOnGlass: Bool { false }
     final override func draw(_ dirtyRect: NSRect) {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+        if Theme.look.devices == .cards && !drawsOnGlass { drawOnGlass(ctx, dirtyRect); return }
         // The screen's contents fade with its backlight into dark glass (fully dark: only the glass is drawn).
         let off = drawsOwnOffState ? 0 : 1 - light
         if off < 0.99 { drawScreen(dirtyRect) }
@@ -201,6 +201,57 @@ class FaceplateScreen: NSView {
         }
         if Theme.look.devices == .cards { return } // glass doesn't gather dust
         FaceplateDisplay.wear(ctx, bounds.insetBy(dx: 4, dy: 4), radius: 3, seed: seed, amount: Faceplate.wear, lightFace: lightFace)
+    }
+
+    /// Prism: the screen has no window of its own. It is drawn offscreen as usual (light on a dark screen), then only its
+    /// light is kept, with brightness as coverage, so the traces sit straight on the card's glass. One pass for every
+    /// display, so each keeps its own drawing code. On the light version the light becomes ink of the same hue.
+    private func drawOnGlass(_ ctx: CGContext, _ dirtyRect: NSRect) {
+        let alpha = poweredOff ? 0.25 : max(0.25, light)
+        let scale = window?.backingScaleFactor ?? 2
+        let w = Int((bounds.width * scale).rounded(.up)), h = Int((bounds.height * scale).rounded(.up))
+        guard w > 0, h > 0,
+              let off = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return }
+        off.setFillColor(NSColor.black.cgColor); off.fill(CGRect(x: 0, y: 0, width: w, height: h))
+        off.scaleBy(x: scale, y: scale)
+        off.translateBy(x: 0, y: bounds.height); off.scaleBy(x: 1, y: -1) // this view is flipped
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: off, flipped: true)
+        drawScreen(dirtyRect)
+        NSGraphicsContext.restoreGraphicsState()
+        guard let image = off.makeImage(),
+              let grey = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceGray(),
+                                   bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return }
+        grey.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+        // Coverage from brightness: the screen's own background (up to about 14 %) drops out, and faint traces (grids,
+        // spectra) are lifted so they still read on the glass.
+        if let data = grey.data {
+            let px = data.bindMemory(to: UInt8.self, capacity: grey.bytesPerRow * h)
+            for i in 0..<(grey.bytesPerRow * h) { px[i] = Self.glassCurve[Int(px[i])] }
+        }
+        guard let mask = grey.makeImage() else { return }
+        let r = bounds.insetBy(dx: 2, dy: 2)
+        ctx.saveGState()
+        ctx.clip(to: r)
+        ctx.translateBy(x: 0, y: bounds.height); ctx.scaleBy(x: 1, y: -1) // images draw upright
+        ctx.clip(to: bounds, mask: mask)
+        ctx.setAlpha(alpha)
+        if Theme.isLight {
+            // Ink on milky glass: deep text colour, carrying each trace's hue.
+            ctx.setFillColor(Theme.text.cgColor); ctx.fill(bounds)
+            ctx.setBlendMode(.color); ctx.draw(image, in: bounds)
+        } else {
+            // Light in smoky glass: the traces, then the same light again added on top so dim fills still glow.
+            ctx.draw(image, in: bounds)
+            ctx.setBlendMode(.plusLighter); ctx.setAlpha(alpha * 0.6); ctx.draw(image, in: bounds)
+        }
+        ctx.restoreGState()
+    }
+
+    private static let glassCurve: [UInt8] = (0..<256).map { i in
+        let v = max(0, (Double(i) / 255 - 0.14) / 0.86)
+        return UInt8(min(255, (pow(v, 0.55) * 255).rounded()))
     }
 
     /// Atelier: turns a lit screen into a plot in an engineering notebook. Light traces on dark glass become ink lines
@@ -373,6 +424,7 @@ final class MovingCoilMeter: FaceplateScreen {
     private(set) var levelVu: Double = -20
     override var drawsOwnOffState: Bool { true }
     override var lightFace: Bool { true }
+    override var drawsOnGlass: Bool { true }
 
     override var isFlipped: Bool { true }
     init(mode: Mode) {
@@ -431,6 +483,7 @@ final class MovingCoilMeter: FaceplateScreen {
 
     override func drawScreen(_ dirtyRect: NSRect) {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+        if Theme.look.devices == .cards { drawGlass(ctx); return }
         let window = FaceplateDisplay.bezel(ctx, bounds, radius: 6)
         let faceR: CGFloat = 3
         let facePath = CGPath(roundedRect: window, cornerWidth: faceR, cornerHeight: faceR, transform: nil)
@@ -550,6 +603,77 @@ final class MovingCoilMeter: FaceplateScreen {
         }
         ctx.restoreGState()
         ctx.addPath(facePath); ctx.setStrokeColor(NSColor.black.withAlphaComponent(0.9).cgColor); ctx.setLineWidth(1); ctx.strokePath()
+    }
+}
+
+extension MovingCoilMeter {
+    /// Prism: the meter etched into the card's glass. No paper and no bridge: a fine printed scale, a red zone that
+    /// glows, and a needle of light that pivots on a small glass bead. Same scale geometry as the paper meter.
+    fileprivate func drawGlass(_ ctx: CGContext) {
+        let window = bounds.insetBy(dx: 4, dy: 4)
+        let lit = poweredOff ? 0.3 : max(0.3, light)
+        let ink: NSColor = Theme.isLight ? Theme.text : .white
+        let red = Theme.isLight ? Theme.hex(0xD8354A) : Theme.hex(0xFF5C6C)
+        let pivot = CGPoint(x: window.midX, y: window.maxY + window.height * 0.10)
+        let R = window.height * 0.80, span = 0.80
+        func ang(_ pos: Double) -> CGFloat { CGFloat(-span + 2 * span * pos) }
+        func pt(_ a: CGFloat, _ r: CGFloat) -> CGPoint { CGPoint(x: pivot.x + r * sin(a), y: pivot.y - r * cos(a)) }
+        func arc(_ p0: Double, _ p1: Double, _ r: CGFloat) {
+            ctx.addArc(center: pivot, radius: r, startAngle: -.pi / 2 + ang(p0), endAngle: -.pi / 2 + ang(p1), clockwise: false)
+        }
+        let p0 = Self.position(0)
+        ctx.saveGState()
+        ctx.clip(to: window)
+        ctx.setLineCap(.round)
+        // Scale: a hairline arc of light, and the red zone as a glowing band.
+        ctx.setStrokeColor(ink.withAlphaComponent(0.42).cgColor); ctx.setLineWidth(0.8); arc(0, p0, R); ctx.strokePath()
+        ctx.saveGState()
+        ctx.setShadow(offset: .zero, blur: 5, color: red.withAlphaComponent(0.7 * lit).cgColor)
+        ctx.setStrokeColor(red.withAlphaComponent(0.85).cgColor); ctx.setLineWidth(2.4); arc(p0, 1, R + 1.4); ctx.strokePath()
+        ctx.restoreGState()
+        let numFont = Theme.ui(7, .medium)
+        for vu in [-20.0, -10, -7, -5, -3, -2, -1, 0, 1, 2, 3] {
+            let a = ang(Self.position(vu)), plus = vu >= 0
+            ctx.setStrokeColor((plus ? red : ink.withAlphaComponent(0.55)).cgColor); ctx.setLineWidth(vu == 0 ? 1.2 : 0.8)
+            ctx.move(to: pt(a, R)); ctx.addLine(to: pt(a, R + (vu == 0 || vu == -20 ? 6.5 : 5))); ctx.strokePath()
+            let label = vu == 0 ? "0" : String(format: "%.0f", abs(vu))
+            let p = pt(a, R + 11.5)
+            FaceplateDisplay.text(label, at: CGRect(x: p.x - 9, y: p.y - 5, width: 18, height: 10), font: numFont,
+                                  color: plus ? red : ink.withAlphaComponent(0.62))
+        }
+        for vu in [-15.0, -6, -4, -0.5, 0.5, 1.5, 2.5] {
+            let a = ang(Self.position(vu))
+            ctx.setStrokeColor((vu >= 0 ? red : ink.withAlphaComponent(0.4)).cgColor); ctx.setLineWidth(0.6)
+            ctx.move(to: pt(a, R)); ctx.addLine(to: pt(a, R + 3)); ctx.strokePath()
+        }
+        FaceplateDisplay.text("VU", at: CGRect(x: window.minX, y: window.maxY - window.height * 0.50, width: window.width, height: window.height * 0.2),
+                              font: Theme.ui(window.height * 0.15, .semibold), color: ink.withAlphaComponent(0.22))
+        FaceplateDisplay.text(mode == .gainReduction ? "GAIN REDUCTION" : "OUTPUT", at: CGRect(x: window.minX, y: window.maxY - window.height * 0.29,
+                              width: window.width, height: 8), font: Theme.ui(5.5, .semibold), color: ink.withAlphaComponent(0.4))
+        // The needle: a beam of light, bright at the tip, from a glass bead at the pivot.
+        let a = ang(needle)
+        let base = pt(a, R * 0.32), tip = pt(a, R + 7)
+        ctx.saveGState()
+        ctx.setShadow(offset: .zero, blur: 6, color: (Theme.isLight ? Theme.hex(0x5B7CFF) : NSColor.white).withAlphaComponent(0.85 * lit).cgColor)
+        if let g = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
+                              colors: [ink.withAlphaComponent(0.15).cgColor, ink.withAlphaComponent(0.95 * lit).cgColor] as CFArray, locations: [0, 1]) {
+            let path = CGMutablePath()
+            let nx = cos(a), ny = sin(a)
+            path.move(to: CGPoint(x: base.x - nx * 1.1, y: base.y - ny * 1.1))
+            path.addLine(to: CGPoint(x: tip.x - nx * 0.35, y: tip.y - ny * 0.35))
+            path.addLine(to: CGPoint(x: tip.x + nx * 0.35, y: tip.y + ny * 0.35))
+            path.addLine(to: CGPoint(x: base.x + nx * 1.1, y: base.y + ny * 1.1))
+            path.closeSubpath()
+            ctx.setFillColor(ink.withAlphaComponent(0.9 * lit).cgColor); ctx.addPath(path); ctx.fillPath()
+            ctx.setShadow(offset: .zero, blur: 0, color: nil)
+            ctx.addPath(path); ctx.clip()
+            ctx.drawLinearGradient(g, start: base, end: tip, options: [])
+        }
+        ctx.restoreGState()
+        let beadR = R * 0.13
+        let bead = CGRect(x: pivot.x - beadR, y: window.maxY - beadR * 1.2, width: 2 * beadR, height: 2 * beadR)
+        Prism.slab(ctx, bead, radius: beadR, tint: Theme.hex(0xA8B8FF), body: 0.22, lift: 0.3)
+        ctx.restoreGState()
     }
 }
 

@@ -8,6 +8,7 @@
   - Fonts (Sora, Geist Mono, IBM Plex Sans Condensed, IBM Plex Mono, Source Serif 4) are bundled under the SIL Open Font License.
 - **View ▸ Composition Overview (⌥⌘O):** the project as a roadmap. Its sections come from your markers (or 8-bar ranges if there are none), with each track's part in every section and its volume automation; click a section, or use the arrow keys and Return, to show it in the arrangement. Esc returns. Works in every theme.
 - **Dalnok Compressor**, a built-in compressor with a sidechain: threshold, ratio, soft knee, attack, release, make-up and auto gain, peak or RMS detection, a side-chain filter with Listen, and Mix, with a gain-reduction meter. Choose another track in the unit's sidechain menu to key it (ducking). Its sound is Dalnok's own; it has not yet been matched to Logic's Compressor.
+- Prism plug-ins are all glass: each unit is a pane of liquid glass, and its screens, VU meter, values, knobs and level meters are drawn straight onto it (no boxes or wells). Knobs are just a coloured arc and a white dot on the glass.
 - View ▸ Next Theme (⌥⌘A) steps through the themes; it was Warm Analog Style. Custom key bindings for it carry over.
 - Fixed: after a plug-in's sidechain was disconnected, the plug-in kept reading the old key signal from memory that had been freed (all formats).
 - Developer: `Dalnok <project> --gallery <dir>` captures every screen a theme has to get right (`DALNOK_THEME`, `DALNOK_VARIANT`).

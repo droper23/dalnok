@@ -39,15 +39,22 @@ light shows. Panes are per region, not per track, so a 200-track session draws t
 - **Track headers**: rows on the column's pane, each with a breath of its colour; the colour edge is a light pipe
   that glows (it goes out when the track is muted). The selected row is a raised pane.
 - **Controls**: chips are glass capsules; a lit chip is a coloured gel with light behind it (letter plus fill).
-  Knobs are clear glass beads in a ring of light that always shows the value. Faders are a thin track of light lit
+  Plug-in knobs have no body of their own: they are the glass they sit on, with only a coloured arc and a white
+  pointer dot showing the value. Faders are a thin track of light lit
   in the channel colour, with a glass bead cap.
 - **Meters**: light pipes, glass tubes filling with light from cool to warm to red near 0 dBFS, with a bright peak
   bead.
 - **Transport**: a glass-encased clock with light-weight Geist Mono figures; recording turns them red and the well
   glows red.
 - **Mixer**: floating modules of glass with a light bar in the channel colour; the selected module rises.
-- **Device chain**: plug-ins are floating cards; a spectral beam runs through them as the signal path. Bypassed
-  cards turn to clear frosted glass. Screens are dark glass wells.
+- **Device chain**: each plug-in is its own pane of liquid glass (lensed, frosted, faintly tinted by the track); a
+  spectral beam runs through them as the signal path. Bypassed cards are clear glass. Nothing sits in a box:
+  - screens (EQ, scope, transfer, history, goniometer, analyzer) are drawn straight on the glass: each display draws
+    as usual offscreen, then only its light is kept (brightness as coverage, with a black point and a lift for faint
+    traces; ink of the same hue on the light version), so every display keeps its own code;
+  - the VU is etched into the glass: a fine scale, a glowing red zone and a needle of light on a glass bead;
+  - values under the controls are plain, slightly transparent sans text;
+  - the input and output meters are light drawn on the glass with a hairline at the top of the scale.
 - **Piano roll**: notes are glass capsules whose body thickens with velocity; velocities are pillars of light with
   bright beads; pitch classes used by the clip are lit dots on the keyboard.
 
