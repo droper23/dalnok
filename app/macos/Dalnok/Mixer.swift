@@ -307,9 +307,13 @@ final class ChannelStrip: NSView {
             // and the selected channel underlined in vermilion beneath its name.
             guard let ctx = NSGraphicsContext.current?.cgContext else { return }
             if isSelected { Theme.laneHighlight.setFill(); bounds.fill() }
-            ctx.setFillColor(color.cgColor); ctx.fill(CGRect(x: 6, y: 0, width: bounds.width - 12, height: 2.5))
-            Atelier.rule(ctx, CGPoint(x: bounds.width - 0.25, y: 8), CGPoint(x: bounds.width - 0.25, y: bounds.height - 8), weight: Atelier.hair, color: Theme.ink(0.35))
-            if isSelected { ctx.setFillColor(Atelier.vermilion.cgColor); ctx.fill(CGRect(x: 14, y: bounds.height - 5, width: bounds.width - 28, height: 1.5)) }
+            let s = Int(truncatingIfNeeded: trackId) &* 31
+            Atelier.pen(ctx, Atelier.handPoints(CGPoint(x: 8, y: 1.8), CGPoint(x: bounds.width - 8, y: 1.8), seed: s, wobble: 0.6), weight: 3, color: color, seed: s)
+            Atelier.rule(ctx, CGPoint(x: bounds.width - 0.25, y: 8), CGPoint(x: bounds.width - 0.25, y: bounds.height - 8), weight: Atelier.hair, color: Theme.ink(0.35), seed: s &+ 1)
+            if isSelected { // underlined in red pen
+                Atelier.pen(ctx, Atelier.handPoints(CGPoint(x: 14, y: bounds.height - 4.5), CGPoint(x: bounds.width - 14, y: bounds.height - 4.5), seed: s &+ 2),
+                            weight: 1.8, color: Atelier.vermilion, seed: s &+ 2)
+            }
             return
         case .flat, .console: break
         }
@@ -463,11 +467,11 @@ final class ChannelStrip: NSView {
             b.layer?.cornerRadius = 8
             b.layer?.borderWidth = 0.75
             b.layer?.borderColor = Theme.ink(dim ? 0.08 : 0.18).cgColor
-        case .instrument: // slots in the drawing: a ruled box, a dashed one when empty
+        case .instrument: // slots in the drawing: a box sketched in pen (none when empty: just the italic note)
             b.layer?.backgroundColor = dim ? nil : Theme.panelRaised.cgColor
             b.layer?.cornerRadius = 0
-            b.layer?.borderWidth = dim ? 0 : 0.75
-            b.layer?.borderColor = Theme.ink(0.55).cgColor
+            b.layer?.borderWidth = 0
+            if !dim, let l = b.layer { SketchBorderLayer.attach(to: l, color: Theme.ink(0.7), seed: Atelier.seed(CGPoint(x: CGFloat(title.count), y: CGFloat(b.tag)))) }
             if dim { b.font = Theme.note(10.5) }
         case .flat, .console: break
         }
@@ -548,7 +552,7 @@ final class MasterStrip: NSView {
         if Theme.look.mixer == .instrument, let ctx = NSGraphicsContext.current?.cgContext {
             Atelier.rule(ctx, CGPoint(x: 1, y: 8), CGPoint(x: 1, y: bounds.height - 8), weight: Atelier.medium) // the master stands apart: a double rule
             Atelier.rule(ctx, CGPoint(x: 4, y: 8), CGPoint(x: 4, y: bounds.height - 8), weight: Atelier.hair)
-            ctx.setFillColor(Atelier.vermilion.cgColor); ctx.fill(CGRect(x: 10, y: 0, width: bounds.width - 20, height: 2.5))
+            Atelier.pen(ctx, Atelier.handPoints(CGPoint(x: 10, y: 1.8), CGPoint(x: bounds.width - 10, y: 1.8), seed: 77, wobble: 0.6), weight: 3, color: Atelier.vermilion, seed: 77)
             return
         }
         (Theme.look.consoleMixer ? Analog.faceplate : Theme.panelRaised).setFill(); bounds.fill()

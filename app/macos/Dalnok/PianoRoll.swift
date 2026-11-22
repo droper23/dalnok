@@ -237,17 +237,18 @@ final class PianoRollView: NSView {
                 // end tick marks where it stops (and where to grab it). Selected notes are boxed in ink.
                 let ink = OKLCH.adjust(tint.base, dl: Theme.isLight ? -0.12 : 0.1, chromaScale: 1)
                 let weight = 1 + 4 * v, mid = r.midY
+                let ns = Atelier.seed(CGPoint(x: CGFloat(n.start % 100_000), y: CGFloat(n.pitch)))
+                // The duration as one pen stroke whose pressure (weight) is the velocity.
+                Atelier.pen(ctx, Atelier.handPoints(CGPoint(x: r.minX, y: mid), CGPoint(x: r.maxX, y: mid), seed: ns, wobble: 0.5), weight: max(1, weight), color: ink, seed: ns)
+                Atelier.rule(ctx, CGPoint(x: r.maxX - 0.5, y: r.minY + 1), CGPoint(x: r.maxX - 0.5, y: r.maxY - 1), weight: Atelier.fine, color: ink, seed: ns &+ 1)
                 ctx.setFillColor(ink.cgColor)
-                ctx.fill(CGRect(x: r.minX, y: mid - weight / 2, width: r.width, height: weight))
-                Atelier.rule(ctx, CGPoint(x: r.maxX - 0.5, y: r.minY + 1), CGPoint(x: r.maxX - 0.5, y: r.maxY - 1), weight: Atelier.fine, color: ink)
                 let d = min(rowHeight - 1, 10)
                 let head = CGRect(x: r.minX - 0.5, y: mid - d / 2, width: d * 1.25, height: d)
                 ctx.saveGState(); ctx.translateBy(x: head.midX, y: head.midY); ctx.rotate(by: -0.35)
                 ctx.fillEllipse(in: CGRect(x: -head.width / 2, y: -head.height / 2, width: head.width, height: head.height))
                 ctx.restoreGState()
                 if sel {
-                    ctx.setStrokeColor(Theme.text.cgColor); ctx.setLineWidth(Atelier.fine); ctx.stroke(r.insetBy(dx: -2, dy: -1))
-                    Atelier.cropMarks(ctx, r.insetBy(dx: -2, dy: -1), length: 4, gap: 1.5, weight: Atelier.hair)
+                    Atelier.box(ctx, r.insetBy(dx: -2, dy: -1), weight: Atelier.fine, color: Theme.text, seed: ns &+ 2, overshoot: 2)
                 }
                 continue
             }
@@ -441,7 +442,7 @@ final class PianoRollView: NSView {
                 Atelier.rule(ctx, CGPoint(x: sx + 1, y: lane.maxY - 4), CGPoint(x: sx + 1, y: lane.maxY - 4 - h), weight: Atelier.fine, color: sel ? Theme.text : ink)
                 let head = CGRect(x: sx - 2, y: lane.maxY - 4 - h - 3, width: 6, height: 6)
                 ctx.setFillColor(Theme.panel.cgColor); ctx.fillEllipse(in: head)
-                ctx.setStrokeColor((sel ? Theme.text : ink).cgColor); ctx.setLineWidth(Atelier.fine); ctx.strokeEllipse(in: head)
+                Atelier.loop(ctx, head, weight: Atelier.fine, color: sel ? Theme.text : ink)
                 if sel { ctx.setFillColor(Theme.text.cgColor); ctx.fillEllipse(in: head.insetBy(dx: 1.5, dy: 1.5)) }
             case .grid, .tape:
                 ctx.setFillColor((sel ? Theme.selection : tint.waveform).cgColor)

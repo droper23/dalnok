@@ -114,6 +114,7 @@ final class DevicePanel: NSView {
         if Theme.look.devices == .schematic { emptyCard.layer?.cornerRadius = 0; emptyCard.layer?.borderColor = Theme.ink(0.35).cgColor }
         emptyCard.layer?.borderColor = Theme.hairline.cgColor
         emptyCard.layer?.borderWidth = 1
+        if Theme.look.devices == .schematic, let l = emptyCard.layer { SketchBorderLayer.attach(to: l, color: Theme.ink(0.55), seed: 33, overshoot: 4) }
         emptyCard.layer?.cornerRadius = 6
         emptyTitle.font = Theme.ui(10, .semibold)
         emptyTitle.textColor = Theme.textDim

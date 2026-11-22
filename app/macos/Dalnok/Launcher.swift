@@ -182,6 +182,7 @@ final class LauncherView: NSView, TrackScrollHost, KeyOwner {
             ctx.setFillColor(Theme.recordOn.cgColor)
             ctx.fillEllipse(in: CGRect(x: r.maxX - 12, y: r.midY - 3.5, width: 7, height: 7))
         }
+        let sketch = Theme.activeStyle == .atelier // Atelier: every slot drawn by hand
         var queued: [DalnokTrackId: Int32] = [:]
         for track in session.tracks { queued[track.id] = dalnok_launcher_queued(session.engine.handle, track.id, nil) }
         for (i, track) in session.tracks.enumerated() {
@@ -197,7 +198,8 @@ final class LauncherView: NSView, TrackScrollHost, KeyOwner {
                     let target = recordSlot == k && track.armed
                     ctx.setStrokeColor(target ? Theme.recordOn.withAlphaComponent(0.85).cgColor : Theme.hairline.cgColor)
                     ctx.setLineWidth(target ? 1.5 : 1)
-                    ctx.addPath(path); ctx.strokePath()
+                    if sketch { Atelier.box(ctx, r, weight: target ? Atelier.medium : Atelier.hair, color: target ? Theme.recordOn : Theme.ink(0.35), seed: i &* 97 &+ k, overshoot: 2) }
+                    else { ctx.addPath(path); ctx.strokePath() }
                     if track.armed { // the record mark: hollow, solid where takes go, breathing while one comes in
                         let m = recordMarkRect(row: i, slot: k)
                         let live = target && session.engine.isRecording
@@ -223,8 +225,13 @@ final class LauncherView: NSView, TrackScrollHost, KeyOwner {
                     ctx.translateBy(x: r.midX, y: r.midY); ctx.scaleBy(x: sc, y: sc); ctx.translateBy(x: -r.midX, y: -r.midY)
                     ctx.setAlpha(0.35 + 0.65 * CGFloat(min(1, a)))
                 }
-                ctx.setFillColor((isPlaying ? tint.base : tint.base.withAlphaComponent(0.45)).cgColor)
-                ctx.addPath(path); ctx.fillPath()
+                if sketch { // a washed card with a pen outline; playing ones washed darker and gone over again
+                    Atelier.wash(ctx, r, color: tint.base, alpha: isPlaying ? 0.55 : 0.22, seed: Int(truncatingIfNeeded: clip.id))
+                    Atelier.box(ctx, r, weight: isPlaying ? Atelier.medium : Atelier.fine, color: isPlaying ? Theme.text : tint.base, seed: Int(truncatingIfNeeded: clip.id), overshoot: 2.5)
+                } else {
+                    ctx.setFillColor((isPlaying ? tint.base : tint.base.withAlphaComponent(0.45)).cgColor)
+                    ctx.addPath(path); ctx.fillPath()
+                }
                 if let t = launchSweep[SlotKey(track: track.id, slot: Int32(k))], t < 1 { // light sweeps across as it starts
                     ctx.saveGState(); ctx.addPath(path); ctx.clip()
                     let x = r.minX + (r.width + 24) * CGFloat(t) - 24
@@ -247,7 +254,7 @@ final class LauncherView: NSView, TrackScrollHost, KeyOwner {
                     ctx.setFillColor(Theme.ink(0.8).cgColor)
                     ctx.fill(CGRect(x: r.minX + 3, y: r.maxY - 4, width: (r.width - 6) * f, height: 2))
                 }
-                let fg = TrackTint.textColor(on: tint.base)
+                let fg = sketch ? (isPlaying ? Theme.text : OKLCH.adjust(tint.base, dl: Theme.isLight ? -0.2 : 0.15, chromaScale: 1)) : TrackTint.textColor(on: tint.base)
                 let symbol = isPlaying ? "■" : "▶"
                 if clip.follow != 0 { // follow action badge
                     ((clip.follow == 1 ? "→" : "■") + "\(clip.followLoops)" as NSString)

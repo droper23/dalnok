@@ -146,13 +146,11 @@ enum Faceplate {
             Prism.slab(ctx, rect.insetBy(dx: 1, dy: 1), radius: 10, tint: dimmed ? Theme.textFaint : accent, body: dimmed ? 0.035 : 0.07, lift: dimmed ? 0 : 0.4)
             return
         case .schematic:
-            // Atelier: a sheet in the drawing. A fine ink border with a title block (rule under the name) and the
-            // track's ink as a margin rule; bypassed sheets are hatched like an unused section.
-            ctx.setFillColor(Theme.panelRaised.cgColor); ctx.fill(rect)
-            if dimmed { Atelier.hatch(ctx, rect.insetBy(dx: 1, dy: 1), spacing: 7, color: Theme.ink(0.08)) }
-            ctx.setStrokeColor(Theme.ink(0.75).cgColor); ctx.setLineWidth(Atelier.fine); ctx.stroke(rect.insetBy(dx: 0.5, dy: 0.5))
-            Atelier.rule(ctx, CGPoint(x: rect.minX + 6, y: rect.maxY - 22), CGPoint(x: rect.maxX - 6, y: rect.maxY - 22), weight: Atelier.hair, color: Theme.ink(0.35))
-            ctx.setFillColor(accent.cgColor); ctx.fill(CGRect(x: rect.minX, y: rect.minY, width: 2.5, height: rect.height))
+            // Atelier: the unit as a pen sketch of the hardware: a box in oblique projection with a hatched side, rack
+            // ears and screws, the track's ink along its foot; bypassed units are cross-hatched through.
+            let front = Atelier.hardware(ctx, rect, accent: accent, dimmed: dimmed, seed: Int(truncatingIfNeeded: seed))
+            Atelier.rule(ctx, CGPoint(x: front.minX + 16, y: front.maxY - 22), CGPoint(x: front.maxX - 16, y: front.maxY - 22), weight: Atelier.hair,
+                         color: Theme.ink(0.35), seed: Int(truncatingIfNeeded: seed) &+ 5)
             return
         case .rack, .pedalboard: break
         }
@@ -336,10 +334,8 @@ enum Faceplate {
         case .cards: // a glass capsule that fills with the colour's light when on
             Prism.slab(ctx, rect.insetBy(dx: 1, dy: 3), radius: (rect.height - 6) / 2, tint: on ? color : Theme.hex(0xA8B8FF), body: on ? 0.32 * max(0.3, lit) : 0.08, lift: on ? 0.6 * lit : 0)
             return
-        case .schematic: // a drawn box: empty when off, a solid square of ink when on
-            let box = CGRect(x: rect.midX - 7, y: rect.midY - 7, width: 14, height: 14)
-            ctx.setStrokeColor(Theme.ink(0.75).cgColor); ctx.setLineWidth(Atelier.fine); ctx.stroke(box)
-            if on { ctx.setFillColor(Theme.text.cgColor); ctx.fill(box.insetBy(dx: 3, dy: 3)) }
+        case .schematic: // a sketched check box: empty when off, ticked when on
+            Atelier.checkbox(ctx, CGRect(x: rect.midX - 7, y: rect.midY - 7, width: 14, height: 14), on: on)
             return
         case .rack, .pedalboard: break
         }
@@ -899,8 +895,9 @@ final class PlateButton: NSButton {
             if Theme.look.devices == .cards {
                 Prism.slab(ctx, r, radius: r.height / 2, tint: Theme.hex(0xA8B8FF), body: pressed ? 0.2 : 0.09, flipped: false)
             } else {
-                ctx.setFillColor((pressed ? Theme.ink(0.12) : Theme.panelRaised).cgColor); ctx.fill(r)
-                ctx.setStrokeColor(Theme.ink(enabled ? 0.7 : 0.3).cgColor); ctx.setLineWidth(Atelier.fine); ctx.stroke(r.insetBy(dx: 0.4, dy: 0.4))
+                ctx.setFillColor(Theme.panelRaised.cgColor); ctx.fill(r)
+                if pressed { Atelier.hatch(ctx, r, spacing: 2.5, color: Theme.ink(0.35), weight: 0.6) }
+                Atelier.box(ctx, r.insetBy(dx: 1, dy: 1), weight: Atelier.fine, color: Theme.ink(enabled ? 0.8 : 0.3), overshoot: 2)
             }
             let f = Theme.mono(8, .medium), text = label as NSString
             let size = text.size(withAttributes: [.font: f])

@@ -205,7 +205,10 @@ final class FaderControl: NSControl {
     private func drawDraftedVertical(_ ctx: CGContext, _ g: CGRect, _ capY: CGFloat) {
         let x = g.midX.rounded() + 0.5
         Atelier.rule(ctx, CGPoint(x: x, y: g.minY), CGPoint(x: x, y: g.maxY), weight: Atelier.fine, color: Theme.ink(0.55))
-        ctx.setFillColor(tint.withAlphaComponent(0.85).cgColor); ctx.fill(CGRect(x: x - 1.25, y: capY, width: 2.5, height: max(0, g.maxY - capY)))
+        if g.maxY - capY > 1 { // the level below the cap, drawn with a broad pen in the channel's ink
+            Atelier.pen(ctx, Atelier.handPoints(CGPoint(x: x, y: capY), CGPoint(x: x, y: g.maxY), seed: Atelier.seed(CGPoint(x: x, y: g.maxY)), wobble: 0.5),
+                        weight: 2.6, color: tint.withAlphaComponent(0.85), seed: 1)
+        }
         var marks: [(y: CGFloat, label: String?, major: Bool)] = []
         for d: Float in [6, 3, 0, -3, -6, -9, -12, -18, -24, -36, -48] {
             let major = [6, 0, -6, -12, -24, -48].contains(d)
@@ -215,8 +218,9 @@ final class FaderControl: NSControl {
         Atelier.scale(ctx, x: g.maxX + 3, marks: marks.map { ($0.y, nil, $0.major) }, left: false, font: Theme.mono(7))
         let cap = CGRect(x: x - 10, y: capY - 6, width: 20, height: 12)
         ctx.setFillColor(Theme.panelRaised.cgColor); ctx.fill(cap)
-        ctx.setStrokeColor((colorCap ? tint : Theme.text).cgColor); ctx.setLineWidth(tracking ? Atelier.heavy : Atelier.medium); ctx.stroke(cap.insetBy(dx: 0.5, dy: 0.5))
-        Atelier.rule(ctx, CGPoint(x: cap.minX - 3, y: capY), CGPoint(x: cap.maxX + 3, y: capY), weight: Atelier.fine, color: Theme.text)
+        Atelier.hatch(ctx, cap.insetBy(dx: 1.5, dy: 1.5), spacing: 2.6, color: (colorCap ? tint : Theme.text).withAlphaComponent(tracking ? 0.55 : 0.3), weight: 0.6, seed: 4)
+        Atelier.box(ctx, cap.insetBy(dx: 0.5, dy: 0.5), weight: tracking ? Atelier.heavy : Atelier.medium, color: colorCap ? tint : Theme.text, seed: 9, overshoot: 2)
+        Atelier.rule(ctx, CGPoint(x: cap.minX - 4, y: capY), CGPoint(x: cap.maxX + 4, y: capY), weight: Atelier.fine, color: Theme.text, seed: 12)
         focusRing(ctx, cap)
     }
     private func focusRing(_ ctx: CGContext, _ cap: CGRect) {
@@ -430,7 +434,9 @@ class RotaryKnob: NSControl {
         face.bounds = bounds
         face.position = c
         let faceR = r - 0.5
-        face.path = CGPath(ellipseIn: CGRect(x: c.x - faceR, y: c.y - faceR, width: faceR * 2, height: faceR * 2), transform: nil)
+        face.path = Theme.look.controls == .drafted // Atelier: one looped pen stroke
+            ? Atelier.loopPath(CGRect(x: c.x - faceR, y: c.y - faceR, width: faceR * 2, height: faceR * 2), seed: Atelier.seed(frame.origin))
+            : CGPath(ellipseIn: CGRect(x: c.x - faceR, y: c.y - faceR, width: faceR * 2, height: faceR * 2), transform: nil)
         if Theme.look.hardwareControls { face.contents = Self.capImage(diameter: faceR * 2, hover: hovering || tracking) }
         let a = angle(value)
         let ptr = CGMutablePath()
@@ -759,6 +765,8 @@ final class ToggleChip: NSControl {
     private var pressed = false { didSet { applyState(animated: true) } }
     private var hovering = false { didSet { applyState(animated: true) } }
     private let face = CALayer(), glow = CALayer(), label = CATextLayer()
+    /// Atelier: the chip's outline drawn by hand (a box, or a loop for record), and a rough edge for its fill.
+    private let sketch = CAShapeLayer(), fillEdge = CAShapeLayer()
     init(_ letter: String, on: NSColor, onText: NSColor, help: String) {
         self.letter = letter
         self.onColor = on
@@ -796,8 +804,11 @@ final class ToggleChip: NSControl {
         switch Theme.look.controls {
         case .glass: // Prism: capsules of glass; a lit chip is a coloured gel with light behind it
             face.cornerRadius = 9; glow.cornerRadius = 9; glow.shadowRadius = 8
-        case .drafted: // Atelier: letters in drawn boxes; record is round (a record mark), the rest square
-            face.cornerRadius = letter == "R" ? 9 : 1; glow.cornerRadius = face.cornerRadius
+        case .drafted: // Atelier: letters in boxes drawn by hand; record is a looped circle (a record mark), the rest boxes
+            face.cornerRadius = 0; glow.cornerRadius = letter == "R" ? 9 : 1
+            sketch.fillColor = nil; sketch.lineWidth = 0.9; sketch.lineCap = .round; sketch.lineJoin = .round
+            layer?.addSublayer(sketch)
+            face.mask = fillEdge
             label.font = Theme.mono(10, .medium); label.fontSize = 10
         case .flat, .hardware: break
         }
@@ -823,6 +834,15 @@ final class ToggleChip: NSControl {
         glow.shadowPath = CGPath(roundedRect: glow.bounds, cornerWidth: face.cornerRadius, cornerHeight: face.cornerRadius, transform: nil)
         label.frame = CGRect(x: 0, y: (bounds.height - 13) / 2, width: bounds.width, height: 13)
         label.contentsScale = window?.backingScaleFactor ?? 2
+        if Theme.look.controls == .drafted {
+            let s = Int(letter.unicodeScalars.first?.value ?? 0) &* 7 &+ Atelier.seed(frame.origin)
+            let r = bounds.insetBy(dx: 1.5, dy: 1.5)
+            sketch.frame = bounds
+            sketch.path = letter == "R" ? Atelier.loopPath(r, seed: s) : Atelier.boxPath(r, seed: s, overshoot: 1.8)
+            fillEdge.frame = bounds
+            fillEdge.path = Atelier.washPath(r.insetBy(dx: 0.5, dy: 0.5), seed: s)
+            if letter == "R" { fillEdge.path = CGPath(ellipseIn: r.insetBy(dx: 0.5, dy: 0.5), transform: nil) }
+        }
         CATransaction.commit()
     }
 
@@ -854,10 +874,11 @@ final class ToggleChip: NSControl {
                     glow.shadowOpacity = isOn ? (pulsing ? 1 : 0.7) : 0
                     face.transform = pressed ? CATransform3DMakeScale(0.94, 0.94, 1) : CATransform3DIdentity
                 } else {
-                    // Drawn: off is an ink outline; on is solid (form changes, not only colour).
+                    // Drawn by hand: off is a pen outline; on is filled in with the colour (form changes, not only colour).
                     face.backgroundColor = (isOn ? onColor : (pressed ? Theme.ink(0.12) : hovering ? Theme.ink(0.06) : NSColor.clear)).cgColor
-                    face.borderColor = (isOn ? onColor : Theme.ink(hovering ? 0.7 : 0.42)).cgColor
-                    face.borderWidth = isOn ? 1 : 0.75
+                    face.borderWidth = 0
+                    sketch.strokeColor = (isOn ? Theme.text.withAlphaComponent(0.85) : Theme.ink(hovering ? 0.8 : 0.55)).cgColor
+                    sketch.lineWidth = isOn ? 1.2 : 0.9
                     glow.shadowOpacity = isOn && pulsing ? 0.6 : 0
                     face.transform = CATransform3DIdentity
                 }

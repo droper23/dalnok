@@ -319,8 +319,7 @@ final class TransportBar: NSView {
         case .typeset:
             lcd.layer?.backgroundColor = Theme.lcd.cgColor
             lcd.layer?.cornerRadius = 0
-            lcd.layer?.borderWidth = 0.75
-            lcd.layer?.borderColor = Theme.text.withAlphaComponent(0.6).cgColor
+            if let l = lcd.layer { SketchBorderLayer.attach(to: l, color: Theme.text.withAlphaComponent(0.75), width: 1.1, seed: 404, overshoot: 4) }
             timeLabel.textColor = Theme.text
             subTimeLabel.textColor = Theme.textDim
             tempoField.font = Theme.display(15)

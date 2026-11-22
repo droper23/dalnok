@@ -256,6 +256,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             v.translatesAutoresizingMaskIntoConstraints = false
             root.addSubview(v)
         }
+        if Theme.activeStyle == .atelier { // the sketchbook's paper: grain over the whole page (never takes clicks)
+            let paper = PaperGrainView(frame: root.bounds)
+            paper.autoresizingMask = [.width, .height]
+            root.addSubview(paper, positioned: .above, relativeTo: toast)
+        }
         NSLayoutConstraint.activate([
             transport.topAnchor.constraint(equalTo: root.topAnchor),
             transport.leadingAnchor.constraint(equalTo: root.leadingAnchor),
@@ -2261,8 +2266,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
     /// Renders the window contents to a PNG (used for automated UI checks).
     func snapshot(to url: URL) throws {
-        guard let view = window?.contentView, let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else {
+        guard let view = window?.contentView, var rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else {
             throw EngineError(description: "no content view")
+        }
+        // DALNOK_SNAPSHOT_SCALE=2: a Retina-resolution capture whatever screen (or none) the window is on.
+        if let s = ProcessInfo.processInfo.environment["DALNOK_SNAPSHOT_SCALE"].flatMap(Double.init), s > 1,
+           let big = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(view.bounds.width * s), pixelsHigh: Int(view.bounds.height * s),
+                                      bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
+                                      bytesPerRow: 0, bitsPerPixel: 0) {
+            big.size = view.bounds.size
+            rep = big
         }
         if ProcessInfo.processInfo.environment["DALNOK_DEBUG_VIEWS"] != nil {
             for v in view.subviews { print("view \(type(of: v)) hidden=\(v.isHidden) frame=\(v.frame) alpha=\(v.alphaValue) layer=\(String(describing: v.layer?.opacity))") }

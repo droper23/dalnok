@@ -13,7 +13,7 @@ project file; only drawing differs. A theme never writes to the project.
 | Graphite | Modern digital workstation | Dark | Efficiency, clarity, minimalism |
 | Warm Analog | Physical recording studio | Dark | Tactility, hardware, warmth |
 | Prism | Spatial glass canvas | Dark, Light | Light, depth, material (Liquid-style glass) |
-| Atelier | Composer's workspace | Light, Dark | Typography, drafting, ink |
+| Atelier | Sketchbook | Light, Dark | Pen, ink wash and hatching, drawn by hand |
 
 ## How a theme is put together (`app/macos/Dalnok/Theme.swift`)
 A theme (`Theme.Style`) is four parts. Views ask for tokens and families, never "which theme is on".
@@ -33,7 +33,7 @@ A theme (`Theme.Style`) is four parts. Views ask for tokens and families, never 
    names, headings), the large clock and italic annotations. Faces are bundled (SIL OFL, `Resources/Fonts`,
    registered at launch by `Fonts.swift`) and fall back to the system faces if missing.
 4. **Kits**: shared primitives per material, `PrismKit.swift` (light field, liquid pane, glass slab, light pipe,
-   glass knob) and `AtelierKit.swift` (rules, crop marks, hatching, graduated scale, drafted dial and meter). A view's
+   glass knob) and `AtelierKit.swift` (the hand: pen lines, sketched boxes and loops, ink wash, hatching, paper grain, sketched hardware). A view's
    family branch calls these; business logic is never duplicated.
 
 A fifth theme is a new `Style` case, a palette per version, a choice of families (reusing existing ones or adding
