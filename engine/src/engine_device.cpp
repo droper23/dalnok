@@ -113,7 +113,9 @@ void Engine::syncInput() {
             duplex_ = std::make_unique<SimulatedDuplex>(sampleRate_, simulatedLatency_);
             duplexInputUid_ = kSimulatedInput;
             simulatedInput_ = true;
+            streamStarted();
         } else if (!wantSim && duplex_ && simulatedInput_) {
+            streamEnded();
             duplex_.reset();
             duplexInputUid_.clear();
             simulatedInput_ = false;
@@ -133,6 +135,7 @@ void Engine::syncInput() {
 }
 
 bool Engine::openDuplex(const std::string &uid, int highestChannel, std::string &err) {
+    if (uid == checkUid_ && checkChannel_ > highestChannel) highestChannel = checkChannel_; // the loopback rides along
     auto duplex = createDuplexDevice(uid, outputUid_, sampleRate_, highestChannel, err);
     if (!duplex) return false;
     if (device_) { device_->stop(); device_.reset(); }
@@ -144,12 +147,14 @@ bool Engine::openDuplex(const std::string &uid, int highestChannel, std::string 
     duplex_ = std::move(duplex);
     duplexInputUid_ = uid;
     updateWorkgroup();
+    streamStarted();
     return true;
 }
 
 void Engine::closeDuplex() {
     if (!duplex_) return;
     duplex_->stop(); // synchronous: the callback no longer runs
+    streamEnded();
     duplex_.reset();
     duplexInputUid_.clear();
     rtInputs_ = nullptr;
@@ -239,11 +244,117 @@ bool Engine::pollLatencyProbe(LatencyResult &r) {
     probeOwnsInput_ = false;
     probeDone_.store(false, std::memory_order_relaxed);
     if (simulatedInput_ && !rec_.captureWriter && !(inputUid_ == kSimulatedInput && monitorWanted())) {
-        duplex_.reset(); duplexInputUid_.clear(); simulatedInput_ = false;
+        streamEnded(); duplex_.reset(); duplexInputUid_.clear(); simulatedInput_ = false;
     }
     syncInput(); // back to monitoring, or to the output alone
     if (duplex_ && !monitorWanted() && !simulatedInput_) closeDuplex();
     return true;
+}
+
+// ---- Stream check (automatic latency) -------------------------------------------
+
+namespace {
+constexpr double kCheckSeconds = 0.75;          // capture length
+constexpr int64_t kCheckMaxLag = 8192;          // longest round trip looked for (170 ms at 48 kHz)
+constexpr float kCheckLevel = 1e-4f;            // -80 dBFS: inaudible, and exact on a digital loopback
+// Burst starts (seconds), irregular so neither they nor a looping program line up with a wrong lag.
+constexpr double kCheckBursts[] = {0.05, 0.13, 0.23, 0.29, 0.41};
+} // namespace
+
+bool Engine::setStreamCheck(const std::string &uid, int channel, std::string &err) {
+    if (uid.empty() || channel < 0) {
+        checkUid_.clear(); checkChannel_ = -1;
+        streamLatency_ = -1; // takes go back to reported + offset at once
+        return true;
+    }
+    if (channel > 63) return fail(err, "input channel out of range");
+    if (uid != kSimulatedInput) {
+        int inputs = 0;
+        for (const auto &d : listInputDevices()) if (d.uid == uid) inputs = d.inputChannels;
+        if (channel >= inputs) return fail(err, inputs ? "the input device does not have that input" : "the input device is not available");
+    }
+    checkUid_ = uid;
+    checkChannel_ = channel;
+    return true;
+}
+
+void Engine::streamStarted() {
+    ++streamGeneration_;
+    streamLatency_ = -1;
+    streamCheck_ = {};
+    checkActive_.store(false, std::memory_order_relaxed);
+    checkDone_.store(false, std::memory_order_relaxed);
+    if (checkChannel_ < 0 || probeOwnsInput_ || !duplex_ || duplexInputUid_ != checkUid_) {
+        streamCheck_.error = checkChannel_ < 0 ? "off" : "this stream is not on the loopback device";
+        return;
+    }
+    streamCheck_.reported = duplex_->roundTripLatency();
+    const auto size = static_cast<size_t>(sampleRate_ * kCheckSeconds) + static_cast<size_t>(kCheckMaxLag);
+    checkAdd_.assign(size, 0.0f);
+    const auto burst = static_cast<size_t>(sampleRate_ / 500); // 2 ms of 2 kHz, Hann-windowed
+    for (double at : kCheckBursts) {
+        const auto start = static_cast<size_t>(at * sampleRate_);
+        for (size_t i = 0; i < burst && start + i < size; ++i) {
+            const double t = static_cast<double>(i), n = static_cast<double>(burst);
+            checkAdd_[start + i] = kCheckLevel * static_cast<float>(std::sin(2 * M_PI * 2000.0 * t / sampleRate_) * (0.5 - 0.5 * std::cos(2 * M_PI * t / n)));
+        }
+    }
+    checkRef_.assign(size, 0.0f);
+    checkIn_.assign(size, 0.0f);
+    checkFrame_ = 0;
+    streamCheck_.error = "listening";
+    checkActive_.store(true, std::memory_order_release); // the callback starts at frame 0 from here
+}
+
+void Engine::streamEnded() {
+    analyzeStreamCheck(); // so the result can still be read; takes compute their latency before the stream stops
+    checkActive_.store(false, std::memory_order_relaxed);
+    streamLatency_ = -1;  // it belonged to that stream only
+}
+
+void Engine::analyzeStreamCheck() {
+    if (!checkDone_.exchange(false, std::memory_order_acq_rel)) return;
+    LatencyResult &r = streamCheck_;
+    r.error.clear();
+    const auto size = static_cast<int64_t>(checkIn_.size());
+    const int64_t n = size - kCheckMaxLag; // reference window
+    for (float v : checkIn_) r.level = std::max(r.level, std::fabs(v));
+    // Coarse: rectified envelopes in 16-frame cells, so the search is cheap; then every lag near the best cell.
+    constexpr int64_t cell = 16;
+    const int64_t cells = size / cell, refCells = n / cell;
+    std::vector<double> eIn(static_cast<size_t>(cells)), eRef(static_cast<size_t>(refCells));
+    for (int64_t k = 0; k < cells; ++k)
+        for (int64_t j = 0; j < cell; ++j) eIn[static_cast<size_t>(k)] += std::fabs(checkIn_[static_cast<size_t>(k * cell + j)]);
+    for (int64_t k = 0; k < refCells; ++k)
+        for (int64_t j = 0; j < cell; ++j) eRef[static_cast<size_t>(k)] += std::fabs(checkRef_[static_cast<size_t>(k * cell + j)]);
+    auto demean = [](std::vector<double> &v) { double m = 0; for (double x : v) m += x; m /= std::max<size_t>(1, v.size()); for (double &x : v) x -= m; };
+    demean(eIn); demean(eRef);
+    int64_t bestCell = 0; double bestC = -1e300;
+    for (int64_t lag = 0; lag + refCells <= cells && lag * cell <= kCheckMaxLag; ++lag) {
+        double acc = 0;
+        for (int64_t k = 0; k < refCells; ++k) acc += eIn[static_cast<size_t>(k + lag)] * eRef[static_cast<size_t>(k)];
+        if (acc > bestC) { bestC = acc; bestCell = lag; }
+    }
+    int64_t best = 0; double peak = 0, refEnergy = 0, inEnergy = 0;
+    for (int64_t t = 0; t < n; ++t) refEnergy += static_cast<double>(checkRef_[static_cast<size_t>(t)]) * checkRef_[static_cast<size_t>(t)];
+    for (int64_t lag = std::max<int64_t>(0, (bestCell - 2) * cell); lag <= std::min(kCheckMaxLag, (bestCell + 2) * cell); ++lag) {
+        double acc = 0;
+        for (int64_t t = 0; t < n; ++t) acc += static_cast<double>(checkIn_[static_cast<size_t>(t + lag)]) * checkRef_[static_cast<size_t>(t)];
+        if (std::fabs(acc) > std::fabs(peak)) { peak = acc; best = lag; }
+    }
+    for (int64_t t = 0; t < n; ++t) inEnergy += static_cast<double>(checkIn_[static_cast<size_t>(t + best)]) * checkIn_[static_cast<size_t>(t + best)];
+    const double rho = refEnergy > 0 && inEnergy > 0 ? peak / std::sqrt(refEnergy * inEnergy) : 0;
+    r.clicks = static_cast<int32_t>(std::size(kCheckBursts));
+    r.spread = static_cast<int32_t>(std::lround(rho * 1000)); // reported as correlation x 1000
+    if (rho > 0.9) { r.ok = true; r.measured = best; streamLatency_ = best; }
+    else r.error = inEnergy <= 0 ? "the loopback input was silent (is the output on the same interface?)"
+                                 : "the loopback input didn't match the output (correlation " + std::to_string(rho).substr(0, 4) + ")";
+}
+
+uint64_t Engine::pollStreamCheck(LatencyResult &result) {
+    analyzeStreamCheck();
+    result = streamCheck_;
+    return streamGeneration_;
 }
 
 const std::vector<float> *Engine::livePeaks(DalnokTrackId track) {
@@ -329,8 +440,10 @@ bool Engine::startCapture(const std::string &uid, const std::vector<int> &channe
         rec_.captureWriter->stop(); rec_.captureWriter.reset(); rec_.captureSpool.reset();
     };
     if (simulated) {
-        if (!duplex_) duplex_ = std::make_unique<SimulatedDuplex>(sampleRate_, simulatedLatency_);
+        const bool fresh = !duplex_;
+        if (fresh) duplex_ = std::make_unique<SimulatedDuplex>(sampleRate_, simulatedLatency_);
         duplexInputUid_ = kSimulatedInput;
+        if (fresh) streamStarted();
         rec_.captureRT.store(rec_.captureWriter.get(), std::memory_order_release);
         simulatedInput_ = true;
         return true;
@@ -371,7 +484,7 @@ bool Engine::stopCapture(DalnokCaptureStats &stats, std::string &err, bool resto
     rec_.captureChannels = 0;
     rec_.captureWriter->stop();
     captureStatus(stats);
-    if (!keep) { duplex_.reset(); duplexInputUid_.clear(); }
+    if (!keep) { streamEnded(); duplex_.reset(); duplexInputUid_.clear(); }
     rec_.captureWriter.reset(); rec_.captureSpool.reset();
     updateWorkgroup();
     const bool valid = !stats.input_error && !stats.overflow && !stats.write_error && !stats.finalize_error &&
@@ -403,6 +516,7 @@ void Engine::stopDevice() {
     if (rec_.captureWriter && duplex_) { DalnokCaptureStats stats{}; std::string ignored; stopCapture(stats, ignored, false); }
     if (duplex_) { // monitoring only
         duplex_->stop();
+        streamEnded();
         duplex_.reset();
         duplexInputUid_.clear();
         rtInputs_ = nullptr;

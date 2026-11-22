@@ -72,6 +72,12 @@ public:
     struct LatencyResult { bool ok = false; int64_t measured = 0, reported = 0; int32_t clicks = 0, spread = 0; float level = 0; std::string error; };
     bool startLatencyProbe(const std::string &uid, int channel, std::string &err);
     bool pollLatencyProbe(LatencyResult &result); // true once finished
+    // Stream check (automatic latency): with a loopback input set, every new duplex stream on that device measures its
+    // own round trip in its first 0.75 s (quiet bursts added to the output, cross-correlated with what came back).
+    // Takes recorded on that stream use it instead of reported + offset. uid empty or channel < 0: off.
+    bool setStreamCheck(const std::string &uid, int channel, std::string &err);
+    // The current stream's generation (0: none yet) and its check (ok false while listening or after a failure).
+    uint64_t pollStreamCheck(LatencyResult &result);
     // Live waveform of the take in progress: peaks (one per kLivePeakFrames) of the spool channel recording `track`.
     const std::vector<float> *livePeaks(DalnokTrackId track);
     // Captures the given device input channels (zero-based) into one interleaved spool.
@@ -430,6 +436,19 @@ private:
     int probeChannel_ = 0, probePeriod_ = 12000, probeFirst_ = 2400;
     int64_t probeFrame_ = 0;
     bool probeOwnsInput_ = false;
+    // Stream check: armed by streamStarted(); the audio thread owns checkFrame_ and writes checkRef_/checkIn_ until
+    // checkDone_. checkAdd_ is the burst train it adds to the output.
+    std::string checkUid_;
+    int checkChannel_ = -1;
+    std::vector<float> checkAdd_, checkRef_, checkIn_;
+    std::atomic<bool> checkActive_{false}, checkDone_{false};
+    int64_t checkFrame_ = 0;
+    uint64_t streamGeneration_ = 0;
+    int64_t streamLatency_ = -1; // this stream's measured round trip (-1: not measured)
+    LatencyResult streamCheck_;
+    void streamStarted();        // a new duplex stream (real or simulated) is running
+    void streamEnded();
+    void analyzeStreamCheck();   // control thread, once checkDone_
     const float *const *rtInputs_ = nullptr; // this callback's device inputs (audio thread)
     int rtInputCount_ = 0;
     static constexpr int kMaxCaptureBlock = 8192;

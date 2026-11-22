@@ -63,6 +63,7 @@ bool writeJournal(const std::string &path, const json::Value &j, std::string &er
 // ---- Sessions ---------------------------------------------------------------
 
 int64_t Engine::recordLatency() const {
+    if (streamLatency_ >= 0) return streamLatency_; // measured on this very stream (automatic check)
     return (duplex_ ? duplex_->roundTripLatency() : 0) + rec_.latencyOffset;
 }
 
@@ -190,6 +191,7 @@ bool Engine::stopRecording(RecordResult &r, std::string &err) {
     const bool broken = rec_.recordBroken.load(std::memory_order_acquire);
     r.start = rec_.recordStart.load(std::memory_order_acquire);
     const int64_t end = rec_.recordEnd.load(std::memory_order_acquire);
+    analyzeStreamCheck(); // a check that finished during the take applies to it
     r.latency = rec_.recordAudioTrack ? recordLatency() : 0;
     std::vector<std::string> problems;
     if (broken) problems.push_back("the transport stopped or jumped during the take");

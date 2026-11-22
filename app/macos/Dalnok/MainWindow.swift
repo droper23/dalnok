@@ -212,6 +212,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     static var simulatedInput = false
     static var inputMonitoring = false
     var latencyInput: String?
+    var latencyChannel = 0
     var lastLatencyResult: DalnokLatencyResult?
     var openedMidiSources = Set<Int32>()
     var lastRecordingProblem: String?

@@ -13,7 +13,7 @@ final class SelfTest {
     let workdir: URL
     var failures = 0
     /// Preferences the test changes; all are restored at the end so a run never alters the owner's settings.
-    static let restoredKeys = ["copyAudioOnSave", "comingFrom", "onboardingDone", "recordingInputUID", "latencyOffsets", "rulerBarsAndBeats", "metronome", "showDevicePanel", "countIn", "showMixer", "showLauncher", "automationMode", "pedal.AUDelay", "shortcuts.preset", "shortcuts.overrides", "shortcuts.userPresets"] + PluginLibrary.keys + ["tapeSpeed", "trackHeight", "secondaryClock", "gainRingLevel", "isolatePlugins", "clipBounce"] + Faceplate.preferenceKeys
+    static let restoredKeys = ["copyAudioOnSave", "comingFrom", "onboardingDone", "recordingInputUID", "latencyOffsets", "latencyChecks", "rulerBarsAndBeats", "metronome", "showDevicePanel", "countIn", "showMixer", "showLauncher", "automationMode", "pedal.AUDelay", "shortcuts.preset", "shortcuts.overrides", "shortcuts.userPresets"] + PluginLibrary.keys + ["tapeSpeed", "trackHeight", "secondaryClock", "gainRingLevel", "isolatePlugins", "clipBounce"] + Faceplate.preferenceKeys
     let previousPreferences: [String: Any]
     var w: MainWindowController { app.main }
     var s: Session { app.session }

@@ -214,6 +214,24 @@ bool dalnok_latency_measure_poll(DalnokEngine *e, DalnokLatencyResult *out) {
     }
     return true;
 }
+DalnokStatus dalnok_latency_auto_set(DalnokEngine *e, const char *uid, int32_t channel, char *err, size_t err_len) {
+    if (!e) return DALNOK_ERR_INVALID_ARG;
+    std::string msg;
+    if (!e->impl.setStreamCheck(uid ? uid : "", channel, msg)) { copyOut(err, err_len, msg); return DALNOK_ERR_DEVICE; }
+    return DALNOK_OK;
+}
+uint64_t dalnok_latency_auto_result(DalnokEngine *e, DalnokLatencyResult *out) {
+    if (!e) return 0;
+    dalnok::Engine::LatencyResult r;
+    const uint64_t gen = e->impl.pollStreamCheck(r);
+    if (out) {
+        *out = DalnokLatencyResult{};
+        out->ok = r.ok; out->measured_frames = r.measured; out->reported_frames = r.reported;
+        out->clicks = r.clicks; out->spread_frames = r.spread; out->level = r.level;
+        copyOut(out->error, sizeof out->error, r.error);
+    }
+    return gen;
+}
 DalnokStatus dalnok_input_set_device(DalnokEngine *e, const char *uid, char *err, size_t err_len) {
     if (!e) return DALNOK_ERR_INVALID_ARG;
     std::string msg;

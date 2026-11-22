@@ -37,6 +37,7 @@ extension MainWindowController {
     /// Tells the engine which input monitored tracks hear (it opens the device only while something monitors).
     func syncInputDevice() {
         let uid = Self.simulatedInput ? DALNOK_SIMULATED_INPUT : recordingDevice?.uid
+        syncLatencyCheck(input: uid)
         do { try session.engine.setInputDevice(uid) } catch {
             flash("Input monitoring unavailable: \(error)")
         }
@@ -155,7 +156,10 @@ extension MainWindowController {
         dalnok_metronome_count_in(e.handle, countInEnd)
         countInUntil = countInEnd
         do {
-            if let uid { dalnok_record_set_latency_offset(e.handle, latencyOffset(input: uid)) } // measured correction, if any
+            if let uid { // measured correction, if any; and the per-stream check on the loopback it was measured on
+                dalnok_record_set_latency_offset(e.handle, latencyOffset(input: uid))
+                syncLatencyCheck(input: uid)
+            }
             try e.startRecording(input: uid, folder: audio == nil ? nil : recordingFolder)
         } catch {
             dalnok_record_set_punch(e.handle, false, 0, 0); dalnok_metronome_count_in(e.handle, 0)
@@ -194,6 +198,11 @@ extension MainWindowController {
                          + (tracks > 1 ? " on \(tracks) tracks" : ""))
         }
         if result.midi_clip != 0 { parts.append(result.notes == 1 ? "1 note" : "\(result.notes) notes") }
+        var check = DalnokLatencyResult()
+        _ = dalnok_latency_auto_result(e.handle, &check)
+        if result.audio_clip != 0 && check.ok && check.measured_frames == result.latency_frames {
+            parts.append("placed with this stream's measured round trip (\(result.latency_frames) samples)")
+        }
         flash(parts.isEmpty ? "Nothing was recorded" : "Recorded " + parts.joined(separator: " and ")
               + (slot >= 0 ? " into slot \(slot + 1) (whole bars): click it to launch" : ""))
     }
@@ -277,6 +286,7 @@ extension MainWindowController {
         }
         flash("Measuring latency on Input \(channel + 1)…")
         latencyInput = uid
+        latencyChannel = channel
         if SelfTest.running { return } // the self-test pumps the simulated device and polls itself
         func poll() {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
@@ -300,15 +310,40 @@ extension MainWindowController {
         }
         let key = latencyKey(input: input)
         Self.latencyOffsets[key] = Int(r.measured_frames - r.reported_frames)
+        // The input that heard the output can check every new stream too (inaudibly): on by default.
+        Self.latencyChecks[key] = latencyChannel
+        syncLatencyCheck(input: input)
         lastLatencyResult = r
-        flash("Round trip \(ms(r.measured_frames)) (\(r.measured_frames) samples; devices report \(ms(r.reported_frames))). Takes now use the measurement.")
+        flash("Round trip \(ms(r.measured_frames)) (\(r.measured_frames) samples; devices report \(ms(r.reported_frames))). Takes now use the measurement, re-checked on Input \(latencyChannel + 1) each time the device starts.")
         return true
     }
 
     @objc func resetLatency(_ sender: Any?) {
         guard let uid = recordingDevice?.uid else { return }
         Self.latencyOffsets[latencyKey(input: uid)] = nil
+        Self.latencyChecks[latencyKey(input: uid)] = nil
+        syncLatencyCheck(input: uid)
         flash("Latency compensation: as the devices report")
+    }
+
+    /// Per input|output pair: the loopback (or cabled) input channel that re-measures every new device stream
+    /// (-(channel + 1) while turned off).
+    static var latencyChecks: [String: Int] {
+        get { UserDefaults.standard.dictionary(forKey: "latencyChecks") as? [String: Int] ?? [:] }
+        set { UserDefaults.standard.set(newValue, forKey: "latencyChecks") }
+    }
+    /// Tells the engine which input re-measures new streams for the pair in use (or none).
+    func syncLatencyCheck(input uid: String?) {
+        let channel = uid.flatMap { Self.latencyChecks[latencyKey(input: $0)] }.flatMap { $0 >= 0 ? $0 : nil }
+        dalnok_latency_auto_set(session.engine.handle, channel == nil ? nil : uid, Int32(channel ?? -1), nil, 0)
+    }
+    /// Audio ▸ Recording Input ▸ Re-measure on Every Device Start.
+    @objc func toggleLatencyCheck(_ sender: Any?) {
+        guard let uid = Self.simulatedInput ? DALNOK_SIMULATED_INPUT : recordingDevice?.uid else { return }
+        let key = latencyKey(input: uid)
+        if let ch = Self.latencyChecks[key] { Self.latencyChecks[key] = -ch - 1 } // off keeps the channel: -(channel + 1)
+        syncLatencyCheck(input: uid)
+        flash((Self.latencyChecks[key] ?? -1) >= 0 ? "Every device start re-measures the round trip (inaudibly)" : "Takes use the stored measurement")
     }
 
     // MARK: Inputs
@@ -339,7 +374,8 @@ extension MainWindowController {
             menu.addItem(it)
         }
         menu.addItem(.separator())
-        let offset = current.map { latencyOffset(input: $0) } ?? 0
+        let effective = Self.simulatedInput ? DALNOK_SIMULATED_INPUT : current
+        let offset = effective.map { latencyOffset(input: $0) } ?? 0
         let latency = NSMenuItem(title: String(format: "Latency compensation: %.1f ms (%@)",
                                                Double(session.engine.recordLatency) / session.engine.sampleRate * 1000,
                                                offset != 0 ? "measured" : "reported by the devices"),
@@ -353,7 +389,14 @@ extension MainWindowController {
         let measure = NSMenuItem(title: "Measure Recording Latency…", action: #selector(measureLatency(_:)), keyEquivalent: "")
         measure.target = self
         menu.addItem(measure)
-        if offset != 0 {
+        if offset != 0, let uid = effective {
+            let key = latencyKey(input: uid)
+            let check = NSMenuItem(title: "Re-measure on Every Device Start", action: #selector(toggleLatencyCheck(_:)), keyEquivalent: "")
+            check.target = self
+            check.state = (Self.latencyChecks[key] ?? -1) >= 0 ? .on : .off
+            check.isEnabled = Self.latencyChecks[key] != nil
+            check.toolTip = "The round trip can change by a few samples each time the device starts. Dalnok measures it again, inaudibly, on the input you measured with."
+            menu.addItem(check)
             let reset = NSMenuItem(title: "Use Reported Latency", action: #selector(resetLatency(_:)), keyEquivalent: "")
             reset.target = self
             menu.addItem(reset)
