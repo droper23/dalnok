@@ -11,6 +11,8 @@
 - View ▸ Next Theme (⌥⌘A) steps through the themes; it was Warm Analog Style. Custom key bindings for it carry over.
 - Fixed: after a plug-in's sidechain was disconnected, the plug-in kept reading the old key signal from memory that had been freed (all formats).
 - Developer: `Dalnok <project> --gallery <dir>` captures every screen a theme has to get right (`DALNOK_THEME`, `DALNOK_VARIANT`).
+- README: screenshots, tours and plug-in clips for all four themes in both versions. Developer: `scripts/dev/readme-media.sh` regenerates them; `--tour` with `DALNOK_TOUR_MODE=plugin-ops` plays the plug-in script (add, adjust, sidechain, bypass, fold, reorder, remove).
+- Fixed: in a narrow window the transport could overlap the tools in the control bar (every theme).
 
 ## [0.3.0] - 2026-11-21
 

@@ -6,7 +6,7 @@ milestone: 0.3.0, Phase 4 complete; recording I/O (separate devices, Input Monit
 # Current State
 
 ## Latest (2026-11-21, night): Prism and Atelier themes, Dalnok Compressor, Composition Overview
-Branch `feat/themes-prism-atelier` (off `feat/compressor-launcher-a11y`, off `main` e6d788f). Not merged or released.
+Merged to `main` (2026-11-22): PR #4 (compressor, 484b9bf), then PR #5 (themes, 1a4cb73); CI green on both. Not released yet.
 - **Backlog** cleaned (done items removed).
 - **Dalnok Compressor** (built-in, `engine/src/fx/compressor.*`): feed-forward, stereo-linked, peak/RMS, soft knee,
   attack/release in dB, make-up, auto gain, mix; sidechain key from another track with a high-pass filter and Listen; a
@@ -20,15 +20,18 @@ Branch `feat/themes-prism-atelier` (off `feat/compressor-launcher-a11y`, off `ma
   View ▸ Theme, ⌥⌘A Next Theme, Settings ▸ Appearance ▸ Light or dark (Match System follows macOS).
 - **View ▸ Composition Overview (⌥⌘O)**, every theme: sections from markers, per-track coverage and automation.
 - **Review tool:** `Dalnok <project> --gallery <dir>` (DALNOK_THEME, DALNOK_VARIANT): hero frame plus eleven screens.
-- **Verification:** `swift test` CompressorPlugin + BuiltinPlugins pass. Self-test (full suite) PASS: Prism dark 908,
-  Atelier dark 908; earlier runs: Prism light 882 and Atelier light 888 with only since-fixed failures. See the
-  journal for the final matrix.
+- **Verification:** `swift test --disable-sandbox` 279 pass. Self-test PASS in every look: Graphite 908, Prism Dark
+  908, Atelier Dark 908 (48 kHz); Prism Light 889, Atelier Light 889, Warm Analog 874 (44.1 kHz).
+- **README** rewritten with media for all six looks (PR from `docs/readme-media-v2`): hero stills, mixer, piano roll and
+  Composition Overview per look, window tours and new plug-in clips (add, turn, key, bypass, fold, reorder, remove)
+  cropped to the device panel. `scripts/dev/readme-media.sh` regenerates all of it (`--tour` with
+  `DALNOK_TOUR_MODE=plugin-ops` is the plug-in script).
 - **Known issue (pre-existing, not theme-related):** the self-test's save/relink step sometimes fails ("save copied 14/15
   audio files"): takes from an earlier run's workdir appear in the new workdir's Audio Files and take numbering
   continues from them. Seen on Graphite and on the compressor branch before any theme work.
 - **Not done yet from the queue:** clip launcher recording/dragging/animations, VoiceOver and keyboard pass of every
-  window, automatic latency re-measure on stream restart. README stills/tours for the new themes: at the next release
-  (rule now in the Release Checklist, section 4).
+  window, automatic latency re-measure on stream restart. Prism vs Graphite `--perf` comparison (release build). VoiceOver in
+  the new themes.
 
 ## Latest (2026-11-21, later): 0.3.0 released, recording I/O, sidechains, latency, groups
 **Released:** PR #2 (`fix/audit-followups`) and PR #3 (`feat/recording-io`, which carried `feat/first-run-and-motion`)

@@ -52,8 +52,15 @@ previous ones, and updates the README and all documentation that describes what 
   `DALNOK_THEME=<theme> DALNOK_VARIANT=<dark|light> Dalnok <project> --gallery <dir>` writes the hero frame
   (arrangement playing with the mixer and the device chain open, `00-hero.png`) and the eleven review frames. README
   stills are the hero frame scaled to 1800 px wide (`sips -Z 1800`), plus the piano roll and Settings.
-- **Tours** (GIF + MP4 per theme): `Dalnok <project> --tour <dir>` writes TIFF frames and `times.txt`; encode them with
-  ffmpeg to `assets/videos/tour-<theme>.mp4` and a GIF in `assets/screenshots/`.
+- **One command does all of it:** `scripts/dev/readme-media.sh` (unlocked screen, Screen Recording allowed, ffmpeg,
+  no other Dalnok running). For each of the six looks it writes the hero, mixer, piano roll and Composition Overview
+  stills, a window tour and a plug-in clip (GIF in `assets/screenshots/`, MP4 in `assets/videos/`), and restores the
+  preferences it changed.
+- **Tours** (per theme and version): real screen recordings of `Dalnok <project> --tour` with `DALNOK_TOUR_FRAMES=0`,
+  cropped to the window it prints, with the pointer parked off-window so no tooltip shows.
+- **Plug-in clips** (per theme and version): `DALNOK_TOUR_MODE=plugin-ops` adds Channel EQ and Compressor to an empty
+  track, turns them, keys the compressor from the kick, bypasses, folds, adds and reorders Apple's AUDelay and
+  removes them all, over a 4-bar loop. The recording is cropped to the device panel it prints.
 - Update the README's feature list and theme section, `06 - Design/` notes that changed, and the site screenshots
   (`--screenshots site/screenshots`; publishing the site still needs the owner's go-ahead).
 
