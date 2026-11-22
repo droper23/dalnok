@@ -168,5 +168,20 @@ The order follows payoff per effort and how often each effect appears in the own
   - **Corner scaling**: first-order corners scale in Hz; second-order corners scale tan(πf/fs). Low cut multiplies, high cut divides. This held from 200 Hz to 5 kHz on high and low cuts: −138 to −148 dB.
 - **Next**: HQ (oversampling) and the master gain; the processing modes (stereo/mid/side) if Logic stores any; then the other effects.
 
+### Compressor (2026-11-21): Dalnok Compressor built, not yet measured
+- Logic's Compressor isn't in the measurement template (tracks 1-10 above), so nothing about it has been measured.
+  Dalnok Compressor (`engine/src/fx/compressor.*`) is therefore **Dalnok's own design**, with the controls Logic's
+  Compressor offers (threshold, ratio, knee, attack, release, make up, auto gain, peak/RMS, side chain filter,
+  listen, mix) plus a read-only Gain Reduction meter. Its parameter ids are Dalnok's own, not Logic slot numbers.
+- Design: feed-forward, stereo-linked detector (max of |L|, |R|, or a 10 ms RMS), quadratic soft knee, attack and
+  release one-poles in the dB domain. The key is the sidechain track's pre-fader signal when connected, else the input.
+  Pinned by `CompressorTests` against an independent Swift reference.
+- Not modelled: Logic's circuit types (Platinum Digital, VCA, FET, Opto), its auto release, distortion and
+  limiter stages, and its side-chain filter modes beyond a 12 dB/Oct high-pass.
+- **To reach parity** (needs the owner, as before): add a track with Logic's Compressor to the template, then diff
+  the saved float block one control at a time to learn the slot layout, and render the step/burst signals per circuit
+  type. When the slots are known, the importer maps them and, where Dalnok's ids differ, a version-2 state keeps old
+  projects loading. Circuit types are nonlinear: the target is the Limiter's (null -60 to -90 dB), measured per type.
+
 ## Open questions for the owner
 - Decided 2026-11-18; see Working rules.

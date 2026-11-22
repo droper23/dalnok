@@ -832,6 +832,26 @@ extension SelfTest {
             } else { check(false, "Channel EQ gets a response screen") }
             s.removePlugin(track, eqSlot); panel.rebuild()
         }
+        // Dalnok Compressor (built-in): a gain-reduction display, a sidechain menu that keys it from another track
+        // (one undo step), and a read-only Gain Reduction meter.
+        if let other = s.tracks.first(where: { $0.id != track })?.id, let comp = try? s.addPlugin(track, path: "dalnok:compressor") {
+            panel.rebuild(); panel.layoutSubtreeIfNeeded()
+            if let unit = panel.devices.first(where: { $0.slot == comp }) {
+                check(unit.displayKind == .gainReduction, "Dalnok Compressor gets a gain-reduction display (\(unit.displayKind))")
+                check(!unit.sidechain.isHidden && unit.sidechain.itemTitles.first == "SC: None" && unit.sidechain.indexOfItem(withTag: Int(other)) > 0,
+                      "the compressor shows a sidechain menu with None and the other tracks (\(unit.sidechain.itemTitles))")
+                unit.sidechain.selectItem(withTag: Int(other))
+                _ = unit.sidechain.sendAction(unit.sidechain.action, to: unit.sidechain.target)
+                check(dalnok_plugin_sidechain(s.engine.handle, track, comp) == other && s.engine.undoName == "Sidechain",
+                      "choosing a track in the menu keys the compressor from it (undo: \(s.engine.undoName))")
+                var gr = DalnokPluginParameter()
+                check(dalnok_plugin_parameter(s.engine.handle, comp, 12, &gr) == DALNOK_OK && gr.read_only && fixedString(gr.title) == "Gain Reduction",
+                      "the compressor reports a read-only Gain Reduction meter")
+                _ = perform("Undo")
+                check(dalnok_plugin_sidechain(s.engine.handle, track, comp) == 0, "undo disconnects the sidechain")
+            } else { check(false, "Dalnok Compressor appears in the device panel") }
+            s.removePlugin(track, comp); panel.rebuild()
+        } else { check(false, "Dalnok Compressor inserts on a track") }
         check(perform("Device Panel") && w.devicePanel.isHidden, "View > Device Panel hides it")
         _ = perform("Device Panel")
         s.removePlugin(track, limiter)

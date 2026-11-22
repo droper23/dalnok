@@ -24,6 +24,7 @@ public:
         double min, max, def;
         enum Scale { Linear, Log, Toggle, Choice } scale = Linear;
         const char *const *choices = nullptr; // Choice: labels for min..max (integers)
+        bool readOnly = false;                // a meter: its value comes from `meter`, never from the host
     };
     BuiltinProcessor(const char *id, const char *name, std::vector<Param> params);
 
@@ -57,6 +58,8 @@ protected:
     // Audio thread: applies queued changes and automation, then calls `changed` once if anything moved.
     void applyPending() DALNOK_NONBLOCKING;
     virtual void changed() DALNOK_NONBLOCKING = 0;
+    // Read-only parameters (meters): their current plain value (control thread).
+    virtual double meter(uint32_t id) const { (void)id; return 0; }
     double rt(uint32_t id) const DALNOK_NONBLOCKING { return id < rtValues_.size() ? rtValues_[id] : 0.0; }
     // Values a saved state or an import may carry beyond the parameter table (for example from a newer version).
     std::vector<std::pair<std::string, double>> extra_;
