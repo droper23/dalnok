@@ -221,6 +221,7 @@ public:
     void stopLauncher();                                                         // every track back to the arrangement
     int32_t playingSlot(DalnokTrackId track) const;
     int64_t slotStart(DalnokTrackId track) const;
+    int32_t queuedSlot(DalnokTrackId track, int64_t *at) const; // -2: nothing queued
     bool setFollowAction(DalnokClipId clip, int32_t action, int32_t loops, std::string &err);
     // Launcher performance recording: while on, every switch is logged; turning it off writes the
     // performance into the arrangement as clips (one undo step "Record Launcher").

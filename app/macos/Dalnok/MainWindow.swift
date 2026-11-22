@@ -204,6 +204,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     var lastLatencyResult: DalnokLatencyResult?
     var openedMidiSources = Set<Int32>()
     var lastRecordingProblem: String?
+    /// The record slot to go back to after a take started from a slot's record mark (nil: none pending).
+    var restoreRecordSlot: Int32?
     var lastRecoveredTakes: [URL] = []
     var fitOnNextChange = true
 
@@ -286,6 +288,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         launcher.isHidden = !Self.showLauncher
         launcher.selectedClip = { [weak self] in self?.timeline.selectedClip }
         launcher.onMessage = { [weak self] m in self?.flash(m) }
+        launcher.onRecordInto = { [weak self] k in self?.recordIntoSlot(k) }
         launcher.onDropToTimeline = { [weak self] clip, windowPoint in
             guard let self else { return false }
             let p = self.timeline.convert(windowPoint, from: nil)
@@ -302,8 +305,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             guard let self, !self.launcher.isHidden, let (row, k) = self.launcher.slot(atWindow: windowPoint) else { return false }
             let track = self.session.tracks[row]
             guard self.session.clip(clip)?.track == track.id else { self.flash("Drop it on a slot in its own track's row"); return true }
-            if self.session.slotClip(track.id, Int32(k)) != nil { self.flash("Slot \(k + 1) is taken: remove its clip first"); return true }
-            if self.session.copyToSlot(clip, Int32(k)) { self.flash("Copied to slot \(k + 1): click it to launch") } else { self.flash("That clip can't go in a slot") }
+            let replaced = self.session.slotClip(track.id, Int32(k)) != nil
+            if self.session.copyToSlot(clip, Int32(k)) {
+                self.flash(replaced ? "Replaced slot \(k + 1) (⌘Z brings the old clip back)" : "Copied to slot \(k + 1): click it to launch")
+            } else { self.flash("That clip can't go in a slot") }
+            self.launcher.animateChanges()
             self.launcher.needsDisplay = true
             return true
         }

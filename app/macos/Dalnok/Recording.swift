@@ -80,6 +80,24 @@ extension MainWindowController {
         session.engine.isRecording ? finishRecording() : beginRecording()
     }
 
+    /// A slot's record mark (clip launcher): record the armed tracks straight into slot `k`, or stop that take.
+    /// Takes started this way go back to where takes went before (the arrangement, usually) when they finish.
+    func recordIntoSlot(_ k: Int) {
+        let h = session.engine.handle
+        if session.engine.isRecording {
+            if dalnok_record_slot(h) == Int32(k) { finishRecording() }
+            else { flash("Already recording: stop this take first") }
+            return
+        }
+        restoreRecordSlot = dalnok_record_slot(h)
+        dalnok_record_set_slot(h, Int32(k))
+        beginRecording()
+        if !session.engine.isRecording && AVCaptureDevice.authorizationStatus(for: .audio) != .notDetermined, let r = restoreRecordSlot {
+            dalnok_record_set_slot(h, r); restoreRecordSlot = nil
+        }
+        launcher.needsDisplay = true
+    }
+
     func beginRecording() {
         let e = session.engine
         // Nothing armed: record on the selected track, like most DAWs.
@@ -159,7 +177,10 @@ extension MainWindowController {
         timeline.recording = nil
         session.refresh()
         let clip = result.audio_clip != 0 ? result.audio_clip : result.midi_clip
-        if clip != 0 && dalnok_record_slot(session.engine.handle) < 0 { timeline.selectedClip = clip }
+        let slot = dalnok_record_slot(session.engine.handle)
+        if clip != 0 && slot < 0 { timeline.selectedClip = clip }
+        if let r = restoreRecordSlot { dalnok_record_set_slot(e.handle, r); restoreRecordSlot = nil }
+        if slot >= 0 { launcher.animateChanges(); launcher.needsDisplay = true }
         if let problem {
             let path = fixedString(result.path)
             let detail = problem + (result.recovered ? "\n\nRecovered file: \(path)" : "")
@@ -173,7 +194,8 @@ extension MainWindowController {
                          + (tracks > 1 ? " on \(tracks) tracks" : ""))
         }
         if result.midi_clip != 0 { parts.append(result.notes == 1 ? "1 note" : "\(result.notes) notes") }
-        flash(parts.isEmpty ? "Nothing was recorded" : "Recorded " + parts.joined(separator: " and "))
+        flash(parts.isEmpty ? "Nothing was recorded" : "Recorded " + parts.joined(separator: " and ")
+              + (slot >= 0 ? " into slot \(slot + 1) (whole bars): click it to launch" : ""))
     }
 
     /// Shows a problem without blocking: a sheet normally, a status message during self-tests.

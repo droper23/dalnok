@@ -28,7 +28,7 @@
 extern "C" {
 #endif
 
-#define DALNOK_API_VERSION 44
+#define DALNOK_API_VERSION 45
 
 typedef enum {
     DALNOK_OK = 0,
@@ -405,6 +405,9 @@ DalnokStatus dalnok_launcher_launch_scene(DalnokEngine *engine, int32_t slot);
 void dalnok_launcher_stop_all(DalnokEngine *engine);
 int32_t dalnok_launcher_playing(const DalnokEngine *engine, DalnokTrackId track);              /* slot or -1 */
 int64_t dalnok_launcher_slot_start(const DalnokEngine *engine, DalnokTrackId track); /* where the playing slot's first loop began */
+/* A launch waiting for its bar (API 45): returns the slot it will switch to (-1 = back to the arrangement) and, if
+ * `at` is given, the timeline frame where it lands; returns -2 when nothing is queued on that track. */
+int32_t dalnok_launcher_queued(const DalnokEngine *engine, DalnokTrackId track, int64_t *at);
 /* Follow action for a slot clip: after `loops` loops, 1 = play the next filled slot, 2 = stop (0 = none). Undoable. */
 DalnokStatus dalnok_launcher_set_follow(DalnokEngine *engine, DalnokClipId clip, int32_t action, int32_t loops);
 /* Performance recording: while on, every launch and follow is logged; turning it off writes the

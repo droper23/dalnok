@@ -1,8 +1,11 @@
 // Clip launcher (View ▸ Clip Launcher): a grid of slots on the same rows as the track lanes, between the
 // headers and the timeline (one track model: each track has a timeline lane and launcher slots).
 // Click a clip to launch it (it starts on the next bar and loops); click an empty slot on a playing track to
-// stop it; with a clip selected on a track, click one of its empty slots to put a copy there. The top row
-// launches scenes (whole columns) and stops everything.
+// stop it; with a clip selected on a track, click one of its empty slots to put a copy there. On a record-enabled
+// track every empty slot carries a record mark: click it to record straight into that slot (the take keeps the
+// whole bars it covers), click it again to stop. Drag clips between slots and the arrangement (a copy each way, one
+// undo step). The top row launches scenes (whole columns). Launches, queued launches and clips arriving in a slot
+// animate through Motion (Reduce Motion: instant, and a queued launch is a steady dashed outline).
 // SPDX-License-Identifier: GPL-3.0-or-later
 import AppKit
 import DalnokEngine
@@ -18,7 +21,15 @@ final class LauncherView: NSView, TrackScrollHost {
     /// The selected timeline clip (copied into an empty slot on its track when clicked).
     var selectedClip: () -> DalnokClipId? = { nil }
     var onMessage: ((String) -> Void)?
-    private var blink = false
+    /// Click on an empty slot's record mark (record-enabled tracks): record into that slot, or stop that take.
+    var onRecordInto: ((Int) -> Void)?
+    /// Motion state: launch sweeps per (track, slot) and arrivals per slot clip, 0…1 while running.
+    struct SlotKey: Hashable { let track: DalnokTrackId; let slot: Int32 }
+    private(set) var launchSweep: [SlotKey: Double] = [:]
+    private(set) var arrival: [DalnokClipId: Double] = [:]
+    private var lastPlaying: [DalnokTrackId: Int32] = [:]
+    private var knownSlotClips: Set<DalnokClipId>?
+    private var drivers: [MotionDriver] = []
 
     init(session: Session) {
         self.session = session
@@ -38,6 +49,12 @@ final class LauncherView: NSView, TrackScrollHost {
     func slotRect(row: Int, slot: Int) -> CGRect {
         CGRect(x: 4 + CGFloat(slot) * Self.slotWidth, y: laneY(row) + 6, width: Self.slotWidth - 6, height: session.laneHeight(row) - 12)
     }
+    /// The record mark of an empty slot on a record-enabled track (a circle in the middle of the slot).
+    func recordMarkRect(row: Int, slot: Int) -> CGRect {
+        let r = slotRect(row: row, slot: slot)
+        let d = min(18, r.height - 6)
+        return CGRect(x: r.midX - d / 2, y: r.midY - d / 2, width: d, height: d)
+    }
     func sceneRect(_ slot: Int) -> CGRect { CGRect(x: 4 + CGFloat(slot) * Self.slotWidth, y: 4, width: Self.slotWidth - 6, height: Theme.rulerHeight - 8) }
 
     /// The (track row, slot) under a window point, if any.
@@ -49,10 +66,38 @@ final class LauncherView: NSView, TrackScrollHost {
         return row >= 0 && row < session.tracks.count && k >= 0 && k < Int(session.scenes) ? (row, k) : nil
     }
 
-    /// Called from the window's tick: progress and queued blinking.
+    /// Called from the window's tick: progress, queued launches and the record mark breathe.
     func tick() {
-        blink.toggle()
+        animateChanges()
         needsDisplay = true
+    }
+
+    /// Starts Motion for what changed since the last look: a launch sweeps light across the slot as it starts,
+    /// and a clip that arrives in a slot (copied, dropped or recorded) settles into it.
+    func animateChanges() {
+        let h = session.engine.handle
+        let ids = Set(session.slotClips.map(\.id))
+        if let known = knownSlotClips {
+            for clip in session.slotClips where !known.contains(clip.id) {
+                let id = clip.id
+                arrival[id] = 0
+                drivers.append(Motion.drive(self, duration: Motion.gentle, curve: .spring, { [weak self] t in
+                    self?.arrival[id] = t; self?.needsDisplay = true
+                }, completion: { [weak self] in self?.arrival[id] = nil; self?.needsDisplay = true }))
+            }
+        }
+        knownSlotClips = ids
+        for track in session.tracks {
+            let p = dalnok_launcher_playing(h, track.id)
+            defer { lastPlaying[track.id] = p }
+            guard let was = lastPlaying[track.id], was != p, p >= 0 else { continue }
+            let key = SlotKey(track: track.id, slot: p)
+            launchSweep[key] = 0
+            drivers.append(Motion.drive(self, duration: Motion.gentle * 1.5, { [weak self] t in
+                self?.launchSweep[key] = t; self?.needsDisplay = true
+            }, completion: { [weak self] in self?.launchSweep[key] = nil; self?.needsDisplay = true }))
+        }
+        drivers.removeAll { !$0.running }
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -62,7 +107,7 @@ final class LauncherView: NSView, TrackScrollHost {
         let sceneAttrs: [NSAttributedString.Key: Any] = [.font: Theme.mono(9.5, .semibold), .foregroundColor: Theme.textDim]
         for k in 0..<Int(session.scenes) {
             let r = sceneRect(k)
-            ctx.setFillColor(Theme.hex(0x000000, 0.25).cgColor)
+            ctx.setFillColor(Theme.shade(0.25).cgColor)
             ctx.addPath(CGPath(roundedRect: r, cornerWidth: 3, cornerHeight: 3, transform: nil)); ctx.fillPath()
             ("▶ \(k + 1)" as NSString).draw(at: CGPoint(x: r.minX + 6, y: r.minY + 3), withAttributes: sceneAttrs)
         }
@@ -77,6 +122,8 @@ final class LauncherView: NSView, TrackScrollHost {
             ctx.setFillColor(Theme.recordOn.cgColor)
             ctx.fillEllipse(in: CGRect(x: r.maxX - 12, y: r.midY - 3.5, width: 7, height: 7))
         }
+        var queued: [DalnokTrackId: Int32] = [:]
+        for track in session.tracks { queued[track.id] = dalnok_launcher_queued(session.engine.handle, track.id, nil) }
         for (i, track) in session.tracks.enumerated() {
             let y = laneY(i)
             guard y + session.laneHeight(i) > Theme.rulerHeight, y < bounds.height else { continue }
@@ -87,14 +134,20 @@ final class LauncherView: NSView, TrackScrollHost {
                 let r = slotRect(row: i, slot: k)
                 let path = CGPath(roundedRect: r, cornerWidth: 4, cornerHeight: 4, transform: nil)
                 guard let clip = session.slotClip(track.id, Int32(k)) else {
-                    if recordSlot == k && track.armed { // the take lands here: a red ring and dot
-                        ctx.setStrokeColor(Theme.recordOn.withAlphaComponent(0.85).cgColor); ctx.setLineWidth(1.5)
-                        ctx.addPath(path); ctx.strokePath()
-                        ctx.setFillColor(Theme.recordOn.cgColor)
-                        ctx.fillEllipse(in: CGRect(x: r.midX - 4, y: r.midY - 4, width: 8, height: 8))
-                    } else {
-                        ctx.setStrokeColor(Theme.hairline.cgColor); ctx.setLineWidth(1)
-                        ctx.addPath(path); ctx.strokePath()
+                    let target = recordSlot == k && track.armed
+                    ctx.setStrokeColor(target ? Theme.recordOn.withAlphaComponent(0.85).cgColor : Theme.hairline.cgColor)
+                    ctx.setLineWidth(target ? 1.5 : 1)
+                    ctx.addPath(path); ctx.strokePath()
+                    if track.armed { // the record mark: hollow, solid where takes go, breathing while one comes in
+                        let m = recordMarkRect(row: i, slot: k)
+                        let live = target && session.engine.isRecording
+                        let level = live ? 0.45 + 0.55 * Motion.breathe(period: 1.2) : 1
+                        ctx.setStrokeColor(Theme.recordOn.withAlphaComponent(0.9).cgColor); ctx.setLineWidth(1.5)
+                        ctx.strokeEllipse(in: m.insetBy(dx: 1, dy: 1))
+                        if target {
+                            ctx.setFillColor(Theme.recordOn.withAlphaComponent(CGFloat(level)).cgColor)
+                            ctx.fillEllipse(in: m.insetBy(dx: 4, dy: 4))
+                        }
                     }
                     continue
                 }
@@ -104,8 +157,28 @@ final class LauncherView: NSView, TrackScrollHost {
                 }
                 let tint = TrackTint(base: track.color)
                 let isPlaying = playing == Int32(k)
+                ctx.saveGState()
+                if let a = arrival[clip.id] { // settling into the slot
+                    let sc = 0.6 + 0.4 * CGFloat(a)
+                    ctx.translateBy(x: r.midX, y: r.midY); ctx.scaleBy(x: sc, y: sc); ctx.translateBy(x: -r.midX, y: -r.midY)
+                    ctx.setAlpha(0.35 + 0.65 * CGFloat(min(1, a)))
+                }
                 ctx.setFillColor((isPlaying ? tint.base : tint.base.withAlphaComponent(0.45)).cgColor)
                 ctx.addPath(path); ctx.fillPath()
+                if let t = launchSweep[SlotKey(track: track.id, slot: Int32(k))], t < 1 { // light sweeps across as it starts
+                    ctx.saveGState(); ctx.addPath(path); ctx.clip()
+                    let x = r.minX + (r.width + 24) * CGFloat(t) - 24
+                    ctx.setFillColor(Theme.ink(0.35 * (1 - CGFloat(t))).cgColor)
+                    ctx.fill(CGRect(x: x, y: r.minY, width: 24, height: r.height))
+                    ctx.restoreGState()
+                }
+                if queued[track.id] == Int32(k) || (queued[track.id] == -1 && isPlaying) { // waiting for its bar
+                    let level = CGFloat(Motion.breathe(period: 0.5))
+                    ctx.setStrokeColor(Theme.ink(0.35 + 0.55 * level).cgColor); ctx.setLineWidth(1.5)
+                    ctx.setLineDash(phase: 0, lengths: [4, 3])
+                    ctx.addPath(CGPath(roundedRect: r.insetBy(dx: -2, dy: -2), cornerWidth: 5, cornerHeight: 5, transform: nil)); ctx.strokePath()
+                    ctx.setLineDash(phase: 0, lengths: [])
+                }
                 if isPlaying { // loop progress along the bottom
                     let len = Double(max(1, clip.length))
                     let start = Double(dalnok_launcher_slot_start(session.engine.handle, track.id))
@@ -126,6 +199,7 @@ final class LauncherView: NSView, TrackScrollHost {
                                              withAttributes: [.font: Theme.ui(10, .semibold), .foregroundColor: fg])
                 (TimelineView.formatTime(Double(clip.length) / rate, step: 0.1) as NSString)
                     .draw(at: CGPoint(x: r.minX + 5, y: r.minY + 31), withAttributes: [.font: Theme.mono(8.5), .foregroundColor: fg.withAlphaComponent(0.7)])
+                ctx.restoreGState()
             }
         }
         Theme.separator.setFill(); CGRect(x: bounds.width - 1, y: 0, width: 1, height: bounds.height).fill()
@@ -145,13 +219,24 @@ final class LauncherView: NSView, TrackScrollHost {
         }
         for (i, track) in session.tracks.enumerated() {
             let playing = dalnok_launcher_playing(h, track.id)
+            let queued = dalnok_launcher_queued(h, track.id, nil)
             for k in 0..<Int(session.scenes) {
-                guard let clip = session.slotClip(track.id, Int32(k)) else { continue }
                 let r = slotRect(row: i, slot: k).intersection(bounds)
                 guard !r.isEmpty else { continue }
+                guard let clip = session.slotClip(track.id, Int32(k)) else {
+                    guard track.armed else { continue }
+                    let recording = session.engine.isRecording && dalnok_record_slot(h) == Int32(k)
+                    out.append(AXItem.make(in: self, rect: r, role: .button,
+                                           label: recording ? "Stop recording into slot \(k + 1) on \(track.name)" : "Record into slot \(k + 1) on \(track.name)",
+                                           value: recording ? "recording" : "empty") { [weak self] in
+                        self?.onRecordInto?(k); self?.needsDisplay = true; return true
+                    })
+                    continue
+                }
                 let id = track.id, isPlaying = playing == Int32(k)
+                let state = queued == Int32(k) ? "starts on the next bar" : isPlaying && queued == -1 ? "playing, stops on the next bar" : isPlaying ? "playing" : "stopped"
                 out.append(AXItem.make(in: self, rect: r, role: .button,
-                                       label: "Slot \(k + 1) on \(track.name): \(clip.name)", value: isPlaying ? "playing" : "stopped") { [weak self] in
+                                       label: "Slot \(k + 1) on \(track.name): \(clip.name)", value: state) { [weak self] in
                     guard let self else { return false }
                     dalnok_launcher_launch(self.session.engine.handle, id, isPlaying ? -1 : Int32(k))
                     self.needsDisplay = true
@@ -248,6 +333,8 @@ final class LauncherView: NSView, TrackScrollHost {
                     // Launch (or stop) on mouse-up, unless the clip is dragged out onto the timeline.
                     dragFrom = (clip.id, p)
                     return
+                } else if track.armed && recordMarkRect(row: i, slot: k).insetBy(dx: -4, dy: -4).contains(p) {
+                    onRecordInto?(k)
                 } else if let sel = selectedClip(), session.clip(sel)?.track == track.id {
                     session.copyToSlot(sel, Int32(k))
                     onMessage?("Copied to slot \(k + 1): click it to launch")

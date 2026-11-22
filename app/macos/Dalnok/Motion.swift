@@ -70,6 +70,12 @@ enum Motion {
         layer.add(a, forKey: "bounce")
     }
 
+    /// A 0…1 breathing level for states drawn in `draw(_:)` that are waiting (a queued launch, a slot being recorded):
+    /// the view redraws on its tick and reads this. With Reduce Motion it is a steady 1 (the state shows by its shape).
+    static func breathe(period: Double = 0.9) -> Double {
+        reduced ? 1 : 0.5 + 0.5 * cos(2 * .pi * CACurrentMediaTime() / period)
+    }
+
     /// Cross-fades a layer's next content change (text, image, color).
     static func fadeNextChange(_ layer: CALayer?, duration: Double = quick) {
         guard let layer, !reduced else { return }

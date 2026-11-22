@@ -584,6 +584,7 @@ DalnokClipId dalnok_clip_place_copy(DalnokEngine *e, DalnokClipId c, DalnokTrack
     std::string err;
     return e ? e->impl.placeCopy(c, t, start, err) : 0;
 }
+int32_t dalnok_launcher_queued(const DalnokEngine *e, DalnokTrackId t, int64_t *at) { return e ? e->impl.queuedSlot(t, at) : -2; }
 int64_t dalnok_launcher_slot_start(const DalnokEngine *e, DalnokTrackId t) { return e ? e->impl.slotStart(t) : 0; }
 DalnokStatus dalnok_launcher_set_follow(DalnokEngine *e, DalnokClipId c, int32_t action, int32_t loops) {
     std::string err;
