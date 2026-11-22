@@ -162,9 +162,14 @@ final class DevicePanel: NSView {
                 ctx.drawLinearGradient(Prism.spectrumGradient, start: CGPoint(x: 0, y: y), end: CGPoint(x: bounds.width, y: y), options: [])
                 ctx.restoreGState()
             case .schematic:
-                Atelier.rule(ctx, CGPoint(x: 4, y: y), CGPoint(x: bounds.width - 10, y: y), weight: Atelier.fine, color: Theme.ink(0.6))
-                ctx.move(to: CGPoint(x: bounds.width - 4, y: y)); ctx.addLine(to: CGPoint(x: bounds.width - 11, y: y - 3.5)); ctx.addLine(to: CGPoint(x: bounds.width - 11, y: y + 3.5))
-                ctx.closePath(); ctx.setFillColor(Theme.ink(0.75).cgColor); ctx.fillPath()
+                // The signal's course through the plates: lettered IN and OUT, arrowed between the plates.
+                Atelier.rule(ctx, CGPoint(x: 2, y: y), CGPoint(x: bounds.width - 6, y: y), weight: Atelier.hair, color: Theme.ink(0.6))
+                Atelier.arrowhead(ctx, at: CGPoint(x: bounds.width - 2, y: y), angle: 0, color: Theme.ink(0.75), size: 6)
+                Atelier.note(ctx, "in", at: CGPoint(x: 2, y: y + 2), size: 9, color: Atelier.gold, flipped: false)
+                for (a, b) in zip(devices, devices.dropFirst()) {
+                    let gx = (a.frame.maxX + b.frame.minX) / 2
+                    if b.frame.minX - a.frame.maxX > 6 { Atelier.arrowhead(ctx, at: CGPoint(x: gx + 3, y: y), angle: 0, color: Theme.ink(0.75), size: 5) }
+                }
             case .rack, .pedalboard: break
             }
         }
@@ -227,6 +232,7 @@ final class DevicePanel: NSView {
             }
             for v in stack.arrangedSubviews { stack.removeArrangedSubview(v); v.removeFromSuperview() }
             arranged.forEach { stack.addArrangedSubview($0) }
+            for (i, d) in next.enumerated() { d.figureNumber = i + 1 }
             devices = next
             leaving = departed
             if let s = selectedSlot, !devices.contains(where: { $0.slot == s }) { selectedSlot = nil }
@@ -455,6 +461,14 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
     let inMeter = FaceplateMeter(caption: "IN"), outMeter = FaceplateMeter(caption: "OUT")
     /// Graphite: the unit's instrument panel (gain-reduction meter, response screen or oscilloscope).
     private(set) var displayKind: FaceplateDisplay.Kind = .scope
+    /// Atelier: the unit's place in the chain, shown as its plate number ("02 · EQ") and figure number.
+    var figureNumber = 1 {
+        didSet {
+            guard figureNumber != oldValue else { return }
+            (display as? FaceplateScreen)?.figureNumber = figureNumber
+            etchedTitle.prefix = String(format: "%02d · ", figureNumber)
+        }
+    }
     private(set) var display: NSView?
     private var displaySize: [NSLayoutConstraint] = []
     private var analyzer: SpectrumAnalyzer?
@@ -1059,7 +1073,12 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         case .analyzer: LedAnalyzer()
         case .scope: ScopeScreen()
         }
-        if let screen = d as? FaceplateScreen { screen.seed = Faceplate.seed(title.stringValue); screen.poweredOff = loaded && bypassed }
+        if let screen = d as? FaceplateScreen {
+            screen.seed = Faceplate.seed(title.stringValue); screen.poweredOff = loaded && bypassed
+            screen.codexKind = kind
+            screen.codexSubject = Codex.subject(kind: kind, name: title.stringValue, parameters: allParameters.map { fixedString($0.title) })
+            screen.figureNumber = figureNumber
+        }
         if let screen = d as? ResponseScreen {
             screen.tint = color.blended(withFraction: 0.35, of: .white) ?? color
             findBands()

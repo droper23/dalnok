@@ -21,7 +21,7 @@ enum Theme {
             case .graphite: "Modern digital workstation: efficient, clear, minimal"
             case .warmAnalog: "Physical recording studio: tactile hardware and warm light"
             case .prism: "Spatial glass canvas: light, depth and colour"
-            case .atelier: "Sketchbook: everything drawn by hand in pen, ink wash and hatching"
+            case .atelier: "Codex: the studio as an engraved plate from a natural-philosophy book"
             }
         }
         /// The light and dark versions a theme offers (Graphite and Warm Analog are dark studios only).
@@ -94,20 +94,21 @@ enum Theme {
                                         cycle: 0xC99212, selectedHeader: 0xD9E1F7, knobHover: 0xC9D2EE, launcher: 0xE7EBF7,
                                         ink: 0x141A33, shade: 0x2A3566, light: true, well: 0xD3D9EC, selection: 0x2F6BFF,
                                         muteOn: 0x2F6BFF, soloOn: 0xE0A81C, monitorOn: 0xE07B1C, recordOn: 0xE5364A, clipRed: 0xE5364A)
-        /// Atelier Dark: white gel pen in a black sketchbook. Warm off-white ink, the same vermilion, brighter pigments.
-        static let atelierDark = Palette(window: 0x1A1916, panel: 0x1F1E1A, panelRaised: 0x24231F, control: 0x34322C, controlHi: 0x45423A,
-                                         laneA: 0x1D1C19, laneB: 0x21201C, laneHighlight: 0x2C2A24, lcd: 0x171613,
-                                         text: 0xEDE6D6, textDim: 0xBDB4A1, textFaint: 0x9A917F, accent: 0xE8684A, playhead: 0xE8684A,
-                                         cycle: 0xD8A63E, selectedHeader: 0x34302A, knobHover: 0x47433B, launcher: 0x1B1A17,
-                                         ink: 0xEDE6D6, well: 0x121110, selection: 0xEDE6D6,
-                                         muteOn: 0x6FA8C6, soloOn: 0xD9AB4A, monitorOn: 0xD9873A, recordOn: 0xE8684A, clipRed: 0xE8684A)
-        /// Atelier: a sketchbook. Cream drawing paper, sepia-black pen, a red pen for the few things that must be seen.
-        static let atelier = Palette(window: 0xF0E8D7, panel: 0xF4EDDF, panelRaised: 0xF9F4E9, control: 0xE1D6C0, controlHi: 0xCDC0A5,
-                                     laneA: 0xFBF7EE, laneB: 0xF6F0E3, laneHighlight: 0xEFE4CC, lcd: 0xFBF8F1,
-                                     text: 0x231D16, textDim: 0x51483B, textFaint: 0x6B6253, accent: 0xC73E26, playhead: 0xC73E26,
-                                     cycle: 0xB9861F, selectedHeader: 0xE9DFC9, knobHover: 0xD6C9AE, launcher: 0xF1ECE1,
-                                     ink: 0x231D16, shade: 0x3B2F1E, light: true, well: 0xE3DACA, selection: 0x231D16,
-                                     muteOn: 0x2B5C8A, soloOn: 0xC9962E, monitorOn: 0xB86A1F, recordOn: 0xC4422A, clipRed: 0xC4422A)
+        /// Atelier Dark: the "Mathematics" plate. Cream engraving on dark umber, gold for rules and letters, terracotta for
+        /// what must be seen.
+        static let atelierDark = Palette(window: 0x231B10, panel: 0x2A2014, panelRaised: 0x322718, control: 0x46371F, controlHi: 0x5A4729,
+                                         laneA: 0x281F13, laneB: 0x2C2216, laneHighlight: 0x3A2D1A, lcd: 0x20180E,
+                                         text: 0xF0E3C4, textDim: 0xCDB98E, textFaint: 0xA8946B, accent: 0xE0754E, playhead: 0xE0754E,
+                                         cycle: 0xD4A747, selectedHeader: 0x3E301B, knobHover: 0x5A4729, launcher: 0x261D11,
+                                         ink: 0xF0E3C4, well: 0x1A130A, selection: 0xF0E3C4,
+                                         muteOn: 0x7FA6B8, soloOn: 0xD4A747, monitorOn: 0xD98A45, recordOn: 0xE0754E, clipRed: 0xE0754E)
+        /// Atelier: a plate on parchment. Sepia ink, red ochre for the few things that must be seen, ochre gold for rules.
+        static let atelier = Palette(window: 0xE9DEC6, panel: 0xEDE3CE, panelRaised: 0xF4ECDB, control: 0xDCCDAE, controlHi: 0xC9B78F,
+                                     laneA: 0xF5EEDE, laneB: 0xF0E7D3, laneHighlight: 0xE8D9B8, lcd: 0xF6F0E2,
+                                     text: 0x3A2916, textDim: 0x67523A, textFaint: 0x7F6A4E, accent: 0xA8361F, playhead: 0xA8361F,
+                                     cycle: 0x9C7424, selectedHeader: 0xE6D6B4, knobHover: 0xD8C7A2, launcher: 0xECE2CC,
+                                     ink: 0x3A2916, shade: 0x3B2F1E, light: true, well: 0xE0D2B4, selection: 0x3A2916,
+                                     muteOn: 0x33607E, soloOn: 0xB48728, monitorOn: 0xA9652A, recordOn: 0xA8361F, clipRed: 0xA8361F)
     }
 
     /// How a theme draws each part of the window, by area (presentation families). Views ask for the family they

@@ -865,7 +865,7 @@ final class TimelineView: NSView {
         drawCycle(ctx)
         drawPunch(ctx)
         var attrs: [NSAttributedString.Key: Any] = [.font: Theme.mono(10), .foregroundColor: Theme.textDim]
-        if family == .manuscript { attrs = [.font: Theme.mono(10, .medium), .foregroundColor: Theme.text] }
+        if family == .manuscript { attrs = [.font: Theme.title(10.5, .regular), .foregroundColor: Theme.text] }
         let px = 1 / scale
         let step = gridStepFrames()
         let f0 = frame(forX: 0), f1 = frame(forX: bounds.width)
@@ -902,11 +902,19 @@ final class TimelineView: NSView {
     private static var markerColor: NSColor { Theme.look.arrangement == .glass ? Theme.accent : Theme.hex(0xE0A43A) }
     private func markerRect(_ m: DalnokMarker, frame: Int64? = nil) -> CGRect {
         let x = xPos(forFrame: Double(frame ?? m.frame))
-        let w = (Self.markerLabel(m) as NSString).size(withAttributes: [.font: Self.markerFont]).width + 8
+        let w = (markerLabel(m) as NSString).size(withAttributes: [.font: Self.markerFont]).width + 8
         return CGRect(x: x, y: 1, width: min(140, w), height: 12)
     }
     static var markerFont: NSFont { Theme.look.arrangement == .manuscript ? Theme.note(10.5) : Theme.ui(9, .semibold) }
-    static func markerLabel(_ m: DalnokMarker) -> String { (Theme.look.arrangement == .manuscript ? "§ " : "") + fixedString(m.name) }
+    /// Atelier letters its sections in order, like the parts of a plate ("A  Verse", "B  Chorus").
+    func markerLabel(_ m: DalnokMarker) -> String {
+        guard Theme.look.arrangement == .manuscript else { return fixedString(m.name) }
+        return sectionLetter(m) + "  " + fixedString(m.name)
+    }
+    func sectionLetter(_ m: DalnokMarker) -> String {
+        let i = session.markers.sorted { $0.frame < $1.frame }.firstIndex { $0.id == m.id } ?? 0
+        return i < 26 ? String(UnicodeScalar(UInt8(65 + i))) : "\(i + 1)"
+    }
     fileprivate func markerDragPreview(_ id: Int32) -> Int64? { markerDrag?.id == id ? markerDrag!.preview : nil }
     func marker(atPoint p: CGPoint) -> DalnokMarker? {
         session.markers.reversed().first { markerRect($0).insetBy(dx: -2, dy: -1).contains(p) }
@@ -922,7 +930,7 @@ final class TimelineView: NSView {
             ctx.addPath(CGPath(roundedRect: r, cornerWidth: 2, cornerHeight: 2, transform: nil)); ctx.fillPath()
             ctx.fill(CGRect(x: r.minX, y: 1, width: 1.5, height: Theme.rulerHeight - 2))
             ctx.saveGState(); ctx.clip(to: r.insetBy(dx: 3, dy: 0))
-            (Self.markerLabel(m) as NSString).draw(at: CGPoint(x: r.minX + 4, y: r.minY), withAttributes: attrs)
+            (markerLabel(m) as NSString).draw(at: CGPoint(x: r.minX + 4, y: r.minY), withAttributes: attrs)
             ctx.restoreGState()
             ctx.setFillColor(Self.markerColor.withAlphaComponent(0.16).cgColor) // a guide through the lanes
             ctx.fill(CGRect(x: r.minX, y: Theme.rulerHeight, width: 1, height: bounds.height - Theme.rulerHeight))
@@ -1919,7 +1927,10 @@ extension TimelineView {
             Atelier.rule(ctx, CGPoint(x: r.minX + 0.5, y: 0), CGPoint(x: r.minX + 0.5, y: bounds.height), weight: Atelier.fine, color: Theme.ink(0.45))
             Atelier.rule(ctx, CGPoint(x: r.minX + 0.5, y: Theme.rulerHeight), CGPoint(x: r.minX + 0.5, y: bounds.height), weight: Atelier.hair, color: Theme.ink(0.18))
             ctx.saveGState(); ctx.clip(to: r)
-            (Self.markerLabel(m) as NSString).draw(at: CGPoint(x: r.minX + 4, y: r.minY - 1), withAttributes: [.font: Self.markerFont, .foregroundColor: Theme.text])
+            let letter = sectionLetter(m) + "  " as NSString
+            letter.draw(at: CGPoint(x: r.minX + 4, y: r.minY - 1), withAttributes: [.font: Self.markerFont, .foregroundColor: Atelier.gold])
+            let lw = letter.size(withAttributes: [.font: Self.markerFont]).width
+            (fixedString(m.name) as NSString).draw(at: CGPoint(x: r.minX + 4 + lw, y: r.minY - 1), withAttributes: [.font: Theme.title(10.5, .regular), .foregroundColor: Theme.text])
             ctx.restoreGState()
         }
     }

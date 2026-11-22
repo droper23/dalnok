@@ -1,66 +1,64 @@
 ---
 created: 2026-11-21
 updated: 2026-11-22
-status: implemented (light and dark); redrawn as a sketchbook 2026-11-22
+status: implemented (light and dark); redrawn as the Codex 2026-11-22 (replaces the sketchbook of the same day)
 related: "[[Theme System]]", "[[Prism]]"
 ---
-# Atelier: the sketchbook
+# Atelier: the Codex
 
-Owner brief (2026-11-22): redo Atelier so it looks **hand-drawn everywhere, especially the plug-ins**, with a visual
-style of its own. Chosen direction: *sketchbook ink*: everything drawn in pen on drawing paper (or white gel pen in a
-black sketchbook), shaded with cross-hatching, filled with ink washes. **The fonts stay as they were** (owner's
-choice): IBM Plex Sans Condensed, IBM Plex Mono and Source Serif 4. Before the redo, Atelier was a precise drafting
-table (ruled lines, crop marks, graph paper); the structure is kept, the hand is new.
+Owner brief (2026-11-22, second pass, with a mock-up and references): not sloppy notebook sketches but **detailed,
+mathematically constructed drawings**, like Da Vinci's notebooks or the engraved plates of an old natural-philosophy book
+(the reference: "Mathematics & Astronomy" plates of scientific instruments, parts lettered A, B, f). Plug-ins must have a
+style of their own, not Graphite in white; use "Fig. 1" captions and architectural-drawing ideas so the theme stands
+apart. Fonts are unchanged (Source Serif 4, IBM Plex): the serif carries titles, numerals and the italic annotations.
 
-## The hand (`app/macos/Dalnok/AtelierKit.swift`)
-Every mark goes through a small set of primitives, so the whole theme shares one hand:
-- **Pen lines** (`rule`, `pen`, `handPoints`): a slow drift plus a faint tremor across the line, growing with length;
-  heavier pens are drawn as a filled outline whose width follows the pressure (thinner where the pen lands and lifts).
-- **Boxes** (`box`): four strokes whose corners land a little off and overshoot, as a quick sketch does.
-- **Circles** (`loop`): one stroke that runs a little past where it started and drifts outward as it closes.
-- **Ink wash** (`wash`): dilute ink inside an uneven edge, darker where it pooled.
-- **Hatching** (`hatch`, `cross:`): uneven 45° strokes; cross-hatching for shade and for "not in use".
-- **Paper** (`grain`, `PaperGrainView`): tooth and fibres from a tile made once per version, laid over the main window
-  as one pattern layer (no per-redraw cost).
-- **Deterministic**: every wobble comes from a seed (the geometry, or a stable id: a clip's id, a track's id, a bar
-  number), so nothing shimmers between redraws and a clip keeps its own hand while it scrolls.
-- Layer-backed controls use the same hand through paths (`boxPath`, `loopPath`, `SketchBorderLayer`).
+## Principles
+- **Ruled and measured.** Every line is straight or drawn with the compass; nothing wobbles. Shade is engraved: fine
+  parallel lines, never gradients or glow.
+- **Plates and figures.** A plug-in is a plate (heavy and fine rule, lozenges in the corners); its display is a numbered
+  figure in a neatline frame with a caption ("Fig. 2 · Indicator of Reduction").
+- **Lettered.** Parts are called out with small italic letters on fine leaders (A, B, C); sections of the song are
+  lettered A, B, C in gold; plates are numbered "01 ·", "02 ·" in gold italic before their name.
+- **Construction shows.** Light dashed construction circles and guides are left in, as on a working drawing.
+- **Two plates.** Light: sepia ink on parchment (mottled, with fibres and a little foxing), red ochre for what must be
+  seen, ochre gold for numbers and letters. Dark: the "Mathematics" plate: cream engraving on dark umber with gold and
+  terracotta.
 
-## Palette
-- Light: cream drawing paper (window F0E8D7, lanes FBF7EE / F6F0E3), sepia-black pen 231D16, a red pen C73E26
-  (playhead, record, selected), blue ink 2B5C8A for mute, ochre for solo and the cycle.
-- Dark: a black sketchbook (1A1916–24231F) with white gel pen EDE6D6 and a brighter red E8684A.
-- Track colours are inks: they wash clips, outline them, and draw waveforms and notes.
+## The kit (`app/macos/Dalnok/AtelierKit.swift`)
+`rule`, `box` (with optional construction overshoot), `loop` (compass circle), `hatch` (engraved shade at any angle,
+crossed or not), `scribble` (engraved level fill), `meter`, `knob` (graduated dial, globe shaded by an engraved crescent,
+hatched value sector, lozenge needle), `hardware` (the plate), `ornament`, `screen` (neatline with a graduated border),
+`checkbox` (a saltire when on), `cartouche`, `ornamentRule`, `arrowhead`, `note` (italic annotation), `callout`
+(lettered leader), `construction` (dashed circle), `diapason` (Fig. 1: tuning fork and sine), the parchment
+(`PaperGrainView`, one pattern layer). `SketchBorderLayer` gives layer-backed views a ruled frame.
 
-## Components
-- **Arrangement**: lanes separated by hand-ruled lines; bar lines ruled by hand (heavier every four bars), beats as
-  quick pen ticks at the top and bottom of each lane. Clips are **ink washes** in the track's ink inside a pen box that
-  overshoots its corners, with a broad pen stroke down the start; the name is lettered above a short underline.
-  **Waveforms are drawn with a pen**: the envelope traced above and below, shaded with vertical strokes. Muted clips are
-  cross-hatched. Selection goes over the box again in black ink with sketched corner ticks.
-- **Playhead**: a red-pen line with a quick, slightly lopsided arrowhead.
-- **Track headers**: letters in boxes drawn by hand (record is a looped circle, a record mark); a chip that is on is
-  filled in with its colour inside a rough edge. Knobs are looped circles with hatched value sweeps.
-- **Mixer**: each channel's ink as a broad pen stroke at the top; faders are a pen stroke in the channel's ink with a
-  sketched, hatched cap; scales are ticked by hand; meters are shaded in with hatching, cross-hatched red above
-  −3 dB; the selected channel is underlined in red pen; inserts are sketched boxes.
-- **Plug-ins (the centrepiece)**: every unit is a **pen sketch of a piece of hardware**: the front panel as a box with its
-  top and right side receding in oblique projection, the side hatched in shade, rack ears with screws (a looped circle
-  and a slot each), and the track's ink as a broad stroke along the foot. Screens sit in recessed windows with hatched
-  bezels; toggles are sketched check boxes with a tick that runs out of the box; keys are sketched boxes, hatched when
-  pressed; knobs and meters as above. Bypassed units are cross-hatched through.
-- **Piano roll**: note heads are ink blots; each duration is one pen stroke whose pressure (weight) is the velocity;
-  velocity stems end in looped heads; grid lines are ruled by hand.
-- **Clip launcher**: slots are sketched boxes; filled slots are washed cards (darker and gone over again when playing).
-- **Composition Overview**: coverage as hatched bars in sketched boxes; the chosen section washed in ochre and
-  underlined in red pen.
-- **Transport**: the clock in a sketched frame; the start page's cards and panels are sketched boxes on the paper.
+## Plug-ins: figures from live data (`FaceplateDisplays.swift`, "Codex figures")
+Each display kind keeps its live data and becomes a figure:
+- **EQ, filters: Frequency Atlas.** Log-frequency and dB axes lettered in the serif, dotted graticule, the spectrum as a
+  dotted measured profile, the response in red ochre with the area to 0 dB engraved in vertical lines; band rings are
+  numbered and the moved bands annotated ("92 Hz +4.5 dB") on leaders. Handles still drag (the plot geometry is shared).
+- **Dynamics, VU: Indicator.** A surveying-instrument dial: graduated arc, serif numerals, engraved red zone, a long
+  lozenge needle from a pivot below the scale, over a construction circle.
+- **Reverb: Acoustic Chamber.** A vaulted hall in one-point perspective (elliptical front and back arches, coffer ribs,
+  transverse arches, arcades of columns, a jointed floor) with sound rays from the source (A) by the vault (B) and walls
+  to the listener (C); the rays darken with the output level. Reverbs are recognised by name and parameters.
+- **Delay: Chronograph of Echoes; other time effects: Envelope in Time.** Output engraved under its line, the input
+  dotted, axes in dB, "A(t) = A₀ e^(−t/τ)".
+- **Distortion: Transfer Curve** inside a construction circle, unity diagonal dashed.
+- **Modulation, stereo: The Stereo Field.** A compass disc with L, R, M, the trace, and a correlation scale with an
+  arrow pointer.
+- **Analysis: Spectral Census** (hatched columns with red peak rules). **Instruments: Form of the Wave.**
+- Controls on plates: graduated dials, ruled check boxes with a saltire, ruled keys; the plate number in gold italic
+  before the name; IN and OUT lettered on the signal's course, with arrows between plates.
+
+## The rest of the window
+- Arrangement: ruled lanes and bar lines (heavier every four bars), beat ticks, clips with a pale wash and a ruled frame
+  in the track's ink, waveforms engraved (envelope traced, vertical strokes), sections lettered "A  Verse" in gold,
+  bar numbers in the serif. Playhead: a red-ochre line.
+- Headers, mixer, launcher, piano roll, Composition Overview: ruled boxes, graduated scales lettered in the serif,
+  engraved meters, dials with lozenge needles.
+- Start page: the frontispiece figure (Fig. 1, the diapason: a tuning fork with its sine and f = 1/T).
 
 ## Accessibility
-States stay shape plus colour: filled versus outlined chips, a looped record mark, cross-hatching for muted and
-bypassed, a tick in a check box, a second, heavier outline for selection. Text contrast is unchanged (body text well
-above 7:1 on both papers). Keyboard focus keeps the system focus colour (sketched in the overview).
-
-## Performance
-Pure vector drawing. Pen lines cost a few more segments than straight ones (at most 80 per line); the paper grain is a
-single pattern layer. Everything is deterministic, so a redraw draws the same picture.
+States stay shape plus colour (filled versus ruled chips, a saltire in a check box, engraving over bypassed plates).
+Body text contrast stays above 7:1 on both plates. Figures are decorative or already exposed by their displays.

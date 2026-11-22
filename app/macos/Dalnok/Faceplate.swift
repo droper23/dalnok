@@ -818,6 +818,8 @@ extension Faceplate {
 final class EtchedLabel: NSView {
     var text: String { didSet { guard text != oldValue else { return }; invalidateIntrinsicContentSize(); needsDisplay = true; setAccessibilityLabel(text) } }
     var dimmed = false { didSet { if dimmed != oldValue { needsDisplay = true } } }
+    /// Atelier: the plate number before the name ("02 · "), lettered in gold italic.
+    var prefix = "01 · " { didSet { if prefix != oldValue { invalidateIntrinsicContentSize(); needsDisplay = true } } }
     let font = NSFont.systemFont(ofSize: 12.5, weight: .bold)
     init(_ text: String) {
         self.text = text
@@ -828,12 +830,27 @@ final class EtchedLabel: NSView {
         setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
     }
     required init?(coder: NSCoder) { fatalError() }
-    override var intrinsicContentSize: NSSize { NSSize(width: ceil(Faceplate.glyphs(text, font: font, kern: 0.3).width) + 2, height: 17) }
+    override var intrinsicContentSize: NSSize {
+        if Theme.look.devices == .schematic {
+            let w = (prefix as NSString).size(withAttributes: [.font: Theme.note(12)]).width + (text as NSString).size(withAttributes: [.font: Theme.title(12.5, .semibold)]).width
+            return NSSize(width: ceil(w) + 4, height: 17)
+        }
+        return NSSize(width: ceil(Faceplate.glyphs(text, font: font, kern: 0.3).width) + 2, height: 17)
+    }
     override func draw(_ dirtyRect: NSRect) {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
         ctx.clip(to: bounds)
-        if Theme.look.devices == .cards || Theme.look.devices == .schematic { // printed: the theme's title face, ink or light
-            let f = Theme.look.devices == .schematic ? Theme.title(12.5, .semibold) : Theme.ui(12.5, .semibold)
+        if Theme.look.devices == .schematic { // the plate's number in gold italic, then its name in the serif
+            let num = Theme.note(12), f = Theme.title(12.5, .semibold)
+            let w = (prefix as NSString).size(withAttributes: [.font: num]).width
+            (prefix as NSString).draw(at: CGPoint(x: 1, y: (bounds.height - num.ascender + num.descender) / 2 - 1),
+                                      withAttributes: [.font: num, .foregroundColor: dimmed ? Theme.textFaint : Atelier.gold])
+            (text as NSString).draw(at: CGPoint(x: 1 + w, y: (bounds.height - f.ascender + f.descender) / 2 - 1),
+                                    withAttributes: [.font: f, .foregroundColor: dimmed ? Theme.textFaint : Theme.text])
+            return
+        }
+        if Theme.look.devices == .cards { // printed: the theme's title face, light
+            let f = Theme.ui(12.5, .semibold)
             (text as NSString).draw(at: CGPoint(x: 1, y: (bounds.height - f.ascender + f.descender) / 2 - 1),
                                     withAttributes: [.font: f, .foregroundColor: dimmed ? Theme.textFaint : Theme.text])
             return

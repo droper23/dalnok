@@ -5,7 +5,18 @@ milestone: 0.3.0, Phase 4 complete; recording I/O (separate devices, Input Monit
 ---
 # Current State
 
-## Latest (2026-11-22, evening): launcher, accessibility, per-stream latency, Atelier sketchbook
+## Latest (2026-11-22, night): Atelier redrawn as the Codex
+Branch `feat/atelier-codex` (from `main` 6227550, PR #9 merged). The owner rejected the sketchbook Atelier; it is now a
+codex of engraved plates (`06 - Design/Atelier.md`): ruled and measured drawing, sepia on parchment or cream and gold
+on umber, plug-ins as numbered plates whose displays are captioned figures from live data (reverbs as a vaulted acoustic
+chamber). Evidence: gallery review in both versions (including AUReverb2, AUDistortion, AUPeakLimiter via
+`DALNOK_GALLERY_CHAIN`), self-test matrix below. README Atelier stills retaken; its tours and plug-in clips predate both
+redesigns and are retaken at the next release.
+- Self-test (Codex build), all PASS: Atelier Light and Dark 967 at 48 kHz and 948 at 44.1 kHz; Graphite, Prism Dark and
+  Light 967 / 948; Warm Analog 952 / 933. The EQ-handle check now asks the screen where the handle is (each theme lays
+  out its plot differently; the first Codex run failed it). `swift test` 287 pass.
+
+## Earlier (2026-11-22, evening): launcher, accessibility, per-stream latency, Atelier sketchbook
 Branch `feat/launcher-recording-and-drag` (from `main` 076706d, which has PR #8: Prism plug-ins drawn as glass, with
 README media retaken). C API 45. Not merged yet.
 - **Clip launcher (Phase 5):** record into a slot from its record mark (click again to stop; whole bars, one undo

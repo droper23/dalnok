@@ -53,7 +53,7 @@ the project, undo history and zoom stay where they were.
 |:---:|:---:|
 | <img src="assets/screenshots/graphite.png" alt="Graphite: a flat, dark digital workstation" width="100%"><br>**Graphite**: a modern digital workstation, built for clarity | <img src="assets/screenshots/warm-analog.png" alt="Warm Analog: tape transport, console mixer and plug-ins as pedals patched with cables" width="100%"><br>**Warm Analog**: a tape deck, a console and a pedalboard |
 | <img src="assets/screenshots/prism-dark.png" alt="Prism Dark: panes of glass floating over a field of coloured light" width="100%"><br>**Prism Dark**: panes of glass over a field of light | <img src="assets/screenshots/prism-light.png" alt="Prism Light: milky glass panes over a pale field of light" width="100%"><br>**Prism Light** |
-| <img src="assets/screenshots/atelier-light.png" alt="Atelier Light: a sketchbook, everything drawn by hand in pen and ink wash" width="100%"><br>**Atelier Light**: a sketchbook, drawn by hand in pen | <img src="assets/screenshots/atelier-dark.png" alt="Atelier Dark: white gel pen in a black sketchbook" width="100%"><br>**Atelier Dark**: white gel pen in a black sketchbook |
+| <img src="assets/screenshots/atelier-light.png" alt="Atelier Light: a codex of engraved plates, sepia on parchment" width="100%"><br>**Atelier Light**: an engraved codex, sepia on parchment | <img src="assets/screenshots/atelier-dark.png" alt="Atelier Dark: cream and gold engraving on dark umber" width="100%"><br>**Atelier Dark**: cream and gold engraving on umber |
 
 ### See them move
 Each tour plays the same generated project: the mixer opens and closes, a plug-in is switched off and on, and the
@@ -64,8 +64,8 @@ device chain follows the selected track.
 <td align="center"><img src="assets/screenshots/tour-warm-analog.gif" alt="Warm Analog tour" width="100%"><br><sub>Warm Analog · <a href="assets/videos/tour-warm-analog.mp4">video</a></sub></td></tr>
 <tr><td align="center"><img src="assets/screenshots/tour-prism-dark.gif" alt="Prism Dark tour" width="100%"><br><sub>Prism Dark · <a href="assets/videos/tour-prism-dark.mp4">video</a></sub></td>
 <td align="center"><img src="assets/screenshots/tour-prism-light.gif" alt="Prism Light tour" width="100%"><br><sub>Prism Light · <a href="assets/videos/tour-prism-light.mp4">video</a></sub></td></tr>
-<tr><td align="center"><img src="assets/screenshots/tour-atelier-light.gif" alt="Atelier Light tour" width="100%"><br><sub>Atelier Light (before the sketchbook redo) · <a href="assets/videos/tour-atelier-light.mp4">video</a></sub></td>
-<td align="center"><img src="assets/screenshots/tour-atelier-dark.gif" alt="Atelier Dark tour" width="100%"><br><sub>Atelier Dark (before the sketchbook redo) · <a href="assets/videos/tour-atelier-dark.mp4">video</a></sub></td></tr>
+<tr><td align="center"><img src="assets/screenshots/tour-atelier-light.gif" alt="Atelier Light tour" width="100%"><br><sub>Atelier Light (before the Codex redesign) · <a href="assets/videos/tour-atelier-light.mp4">video</a></sub></td>
+<td align="center"><img src="assets/screenshots/tour-atelier-dark.gif" alt="Atelier Dark tour" width="100%"><br><sub>Atelier Dark (before the Codex redesign) · <a href="assets/videos/tour-atelier-dark.mp4">video</a></sub></td></tr>
 </table>
 
 ### What makes each theme
@@ -77,7 +77,7 @@ device chain follows the selected track.
   - Selected items rise.
   - Meters are pipes of light.
   - The playhead's small prism casts a spectrum over the ruler.
-- **Atelier**: a sketchbook: everything drawn by hand in pen, ink wash and hatching (plug-ins are pen sketches of the hardware), set in Source Serif 4 and IBM Plex.
+- **Atelier**: a codex: the studio as engraved plates from an old book of natural philosophy; plug-in displays are numbered, captioned figures (a Frequency Atlas, an instrument dial, a vaulted Acoustic Chamber), set in Source Serif 4 and IBM Plex.
   - Bars are ruled, heavier every four.
   - Markers become "§ Verse" headings.
   - Selection is a pair of crop marks.
@@ -102,8 +102,8 @@ theme, while a 4-bar loop plays:
 <tr><td align="center"><img src="assets/screenshots/plugins-warm-analog.gif" alt="Warm Analog: the same steps with pedals and patch cables" width="100%"><br><sub>Warm Analog: pedals and patch cables · <a href="assets/videos/plugins-warm-analog.mp4">video</a></sub></td></tr>
 <tr><td align="center"><img src="assets/screenshots/plugins-prism-dark.gif" alt="Prism Dark: glass cards on a beam of light" width="100%"><br><sub>Prism Dark: glass cards on a beam of light · <a href="assets/videos/plugins-prism-dark.mp4">video</a></sub></td></tr>
 <tr><td align="center"><img src="assets/screenshots/plugins-prism-light.gif" alt="Prism Light: the same steps on milky glass" width="100%"><br><sub>Prism Light · <a href="assets/videos/plugins-prism-light.mp4">video</a></sub></td></tr>
-<tr><td align="center"><img src="assets/screenshots/plugins-atelier-light.gif" alt="Atelier Light plug-ins, before the sketchbook redo" width="100%"><br><sub>Atelier Light (recorded before the sketchbook redo; retaken at the next release) · <a href="assets/videos/plugins-atelier-light.mp4">video</a></sub></td></tr>
-<tr><td align="center"><img src="assets/screenshots/plugins-atelier-dark.gif" alt="Atelier Dark plug-ins, before the sketchbook redo" width="100%"><br><sub>Atelier Dark (before the sketchbook redo) · <a href="assets/videos/plugins-atelier-dark.mp4">video</a></sub></td></tr>
+<tr><td align="center"><img src="assets/screenshots/plugins-atelier-light.gif" alt="Atelier Light plug-ins, before the Codex redesign" width="100%"><br><sub>Atelier Light (recorded before the Codex redesign; retaken at the next release) · <a href="assets/videos/plugins-atelier-light.mp4">video</a></sub></td></tr>
+<tr><td align="center"><img src="assets/screenshots/plugins-atelier-dark.gif" alt="Atelier Dark plug-ins, before the Codex redesign" width="100%"><br><sub>Atelier Dark (before the Codex redesign) · <a href="assets/videos/plugins-atelier-dark.mp4">video</a></sub></td></tr>
 </table>
 
 Third-party plug-ins get the same treatment. The display is chosen from what a plug-in declares, its name and its
