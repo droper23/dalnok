@@ -237,6 +237,14 @@ enum Screenshots {
         w.window?.center()
         if MainWindowController.showMixer { w.toggleMixer(nil) }
         if !MainWindowController.showDevicePanel { w.toggleDevicePanel(nil) }
+        // A generated project has no plug-ins: give the first two tracks a chain of built-in and Apple plug-ins
+        // (never the owner's), as the gallery does, so the device panel has something to show.
+        if ProcessInfo.processInfo.environment["DALNOK_TOUR_MODE"] != "plugin-ops", s.tracks.allSatisfy({ $0.plugins.isEmpty }), s.tracks.count > 1 {
+            let a = s.tracks[0].id, b = s.tracks[1].id
+            for path in ["dalnok:channel-eq", "dalnok:compressor", "au:aufx:dely:appl"] { _ = try? s.addPlugin(a, path: path) }
+            if let comp = s.track(a)?.plugins.dropFirst().first?.id { dalnok_plugin_set_sidechain(s.engine.handle, a, comp, b) }
+            for path in ["dalnok:compressor", "dalnok:channel-eq"] { _ = try? s.addPlugin(b, path: path) }
+        }
         let withPlugins = s.tracks.filter { !$0.plugins.isEmpty }
         let first = withPlugins.first ?? s.tracks.first
         if let first { w.headers.select(first.id) }
@@ -283,6 +291,51 @@ enum Screenshots {
             }
             return
         }
+        // DALNOK_TOUR_MODE=plugin-ops: the device panel while plug-ins are added to an empty track, turned, keyed from
+        // another track, bypassed, folded and removed, over a looping 4-bar cycle. Prints the panel's screen rect.
+        if ProcessInfo.processInfo.environment["DALNOK_TOUR_MODE"] == "plugin-ops",
+           let target = s.tracks.first(where: { $0.name == "Pad" && $0.plugins.isEmpty }) ?? s.tracks.first(where: { $0.plugins.isEmpty && !$0.isInstrument && !$0.muted }) ?? s.tracks.first {
+            let bar = s.framesPerBeat * 4
+            _ = s.setCycle(true, 0, bar * 4)
+            app.engine.seek(0)
+            w.headers.select(target.id)
+            let key = s.tracks.first(where: { $0.id != target.id && $0.name == "Kick" }) ?? s.tracks.first { $0.id != target.id }
+            if let win = w.window, let screen = win.screen {
+                let p = w.devicePanel.convert(w.devicePanel.bounds, to: nil), f = win.convertToScreen(p)
+                print(String(format: "tour panel: %.0f %.0f %.0f %.0f", f.minX, screen.frame.height - f.maxY, f.width, f.height))
+                fflush(stdout)
+            }
+            var eq: Int32 = 0, comp: Int32 = 0, delay: Int32 = 0
+            let h = s.engine.handle
+            /// Sweeps one parameter from a to b (normalized) over `secs`, as a hand turning the control would.
+            func sweep(_ slot: @escaping () -> Int32, _ id: UInt32, _ a: Double, _ b: Double, at t0: Double, for secs: Double) -> [(Double, () -> Void)] {
+                let n = Int(secs * 30)
+                return (0...n).map { i in (t0 + Double(i) / 30, { _ = dalnok_plugin_set_parameter(h, slot(), id, a + (b - a) * Double(i) / Double(n)) }) }
+            }
+            var steps: [(Double, () -> Void)] = [
+                (0.8, { eq = (try? s.addPlugin(target.id, path: "dalnok:channel-eq")) ?? 0 }),
+                (1.6, { _ = dalnok_plugin_set_parameter(h, eq, 8, 1) }), // first peak band on
+                (4.6, { comp = (try? s.addPlugin(target.id, path: "dalnok:compressor")) ?? 0 }),
+                (7.8, { if let key { _ = dalnok_plugin_set_sidechain(h, target.id, comp, key.id); s.refresh() } }),
+                (9.4, { s.setPluginBypassed(target.id, comp, true) }),
+                (10.6, { s.setPluginBypassed(target.id, comp, false) }),
+                (11.6, { s.setPluginFolded(target.id, eq, true) }),
+                (12.8, { s.setPluginFolded(target.id, eq, false) }),
+                (13.8, { delay = (try? s.addPlugin(target.id, path: "au:aufx:dely:appl")) ?? 0 }),
+                (15.4, { s.movePlugin(target.id, delay, to: 0) }),
+                (16.8, { s.removePlugin(target.id, delay) }),
+                (17.8, { s.removePlugin(target.id, comp) }),
+                (18.8, { s.removePlugin(target.id, eq) }),
+                (23.0, { timer.invalidate(); print("tour: \(frame) frames"); fflush(stdout); exit(0) }), // after the recording ends
+            ]
+            steps += sweep({ eq }, 10, 0.5, 0.8, at: 1.8, for: 1.2) // peak gain up
+            steps += sweep({ eq }, 9, 0.45, 0.7, at: 3.1, for: 1.2) // and its frequency
+            steps += sweep({ comp }, 0, 1.0, 0.45, at: 5.4, for: 1.6) // threshold down: the meter starts moving
+            steps += sweep({ comp }, 1, 0.1, 0.5, at: 7.0, for: 0.7) // ratio up
+            let settle = Double(ProcessInfo.processInfo.environment["DALNOK_TOUR_DELAY"] ?? "") ?? 0
+            for (t, step) in steps { DispatchQueue.main.asyncAfter(deadline: .now() + settle + t) { MainActor.assumeIsolated { step() } } }
+            return
+        }
         // The script: (seconds from the start, step).
         let bypassTarget = first?.plugins.first?.id
         let steps: [(Double, () -> Void)] = [
@@ -292,7 +345,9 @@ enum Screenshots {
             (5.6, { if let other = withPlugins.dropFirst().first ?? s.tracks.first(where: { $0.isInstrument }) { w.headers.select(other.id) } }),
             (7.0, { if let first { w.headers.select(first.id) } }),
             (8.0, { w.toggleMixer(nil) }),
-            (9.6, { timer.invalidate(); print("tour: \(frame) frames in \(String(format: "%.1f", Date().timeIntervalSince(start))) s"); fflush(stdout); exit(0) }),
+            // When screen-recorded (no frames written) stay up a little longer, so the recording never outlasts the window.
+            (ProcessInfo.processInfo.environment["DALNOK_TOUR_FRAMES"] == "0" ? 13.0 : 9.6,
+             { timer.invalidate(); print("tour: \(frame) frames in \(String(format: "%.1f", Date().timeIntervalSince(start))) s"); fflush(stdout); exit(0) }),
         ]
         let settle = Double(ProcessInfo.processInfo.environment["DALNOK_TOUR_DELAY"] ?? "") ?? 0
         for (t, step) in steps { DispatchQueue.main.asyncAfter(deadline: .now() + settle + t) { MainActor.assumeIsolated { step() } } }
