@@ -308,7 +308,9 @@ void renderBlock(const RenderState &state, int64_t pos, int frames, float *left,
             // A mono source keeps its pan law through inserts, so a passthrough insert is transparent;
             // plugin instruments and buses are stereo sources (balance).
             panGains(rt, t.monoSource && !t.instrumentPlugin, anySolo && !st.linkedSolo, st.gl, st.gr);
-            // Sidechain inputs for this block (their sources were rendered earlier in this block).
+            // Sidechain inputs for this block (their sources were rendered earlier in this block). Every insert is
+            // reset first: a disconnected sidechain must hear silence, not a buffer of an earlier (freed) snapshot.
+            for (PluginProcessor *p : t.inserts) p->setSidechain(nullptr, nullptr);
             for (const auto &[plugin, idx] : t.sidechainFeeds)
                 plugin->setSidechain(state.scL.data() + static_cast<size_t>(idx) * kMaxBlock, state.scR.data() + static_cast<size_t>(idx) * kMaxBlock);
             // Plug-in parameter automation for this block (before the plug-ins run).

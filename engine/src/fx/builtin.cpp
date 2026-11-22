@@ -3,6 +3,7 @@
 #include "fx/builtin.hpp"
 
 #include "fx/channel_eq.hpp"
+#include "fx/compressor.hpp"
 #include "json.hpp"
 
 #include <algorithm>
@@ -15,6 +16,7 @@ namespace dalnok {
 const std::vector<BuiltinInfo> &builtinPlugins() {
     static const std::vector<BuiltinInfo> list = {
         {"channel-eq", "Dalnok Channel EQ", "EQ"},
+        {"compressor", "Dalnok Compressor", "Dynamics"},
     };
     return list;
 }
@@ -22,6 +24,7 @@ const std::vector<BuiltinInfo> &builtinPlugins() {
 std::unique_ptr<PluginProcessor> loadBuiltin(const std::string &id, double sampleRate, int maxBlock, std::string &err) {
     (void)maxBlock;
     if (id == "channel-eq") return std::make_unique<fx::ChannelEq>(sampleRate);
+    if (id == "compressor") return std::make_unique<fx::Compressor>(sampleRate);
     err = "unknown built-in plug-in " + id;
     return nullptr;
 }
@@ -73,14 +76,15 @@ void BuiltinProcessor::setPlain(uint32_t id, double plain) {
 bool BuiltinProcessor::parameter(int32_t index, PluginParameter &out) {
     if (index < 0 || index >= static_cast<int32_t>(params_.size())) return false;
     const Param &p = params_[static_cast<size_t>(index)];
-    const double v = values_[p.id];
+    const double v = p.readOnly ? meter(p.id) : values_[p.id];
     out.id = p.id;
     out.title = p.title;
     out.units = p.units;
     out.value = toNormalized(p, v);
     out.defaultValue = toNormalized(p, p.def);
     out.stepCount = p.scale == Param::Toggle ? 1 : p.scale == Param::Choice ? static_cast<int32_t>(p.max - p.min) : 0;
-    out.automatable = true;
+    out.automatable = !p.readOnly;
+    out.readOnly = p.readOnly;
     out.display = format(p, v);
     return true;
 }
@@ -104,7 +108,7 @@ bool BuiltinProcessor::parameterText(uint32_t id, double normalized, std::string
 
 bool BuiltinProcessor::setParameter(uint32_t id, double normalized) {
     const Param *p = find(id);
-    if (!p || !(normalized >= 0 && normalized <= 1)) return false;
+    if (!p || p->readOnly || !(normalized >= 0 && normalized <= 1)) return false;
     setPlain(id, toPlain(*p, normalized));
     auto it = std::find_if(touched_.begin(), touched_.end(), [&](const auto &t) { return t.first == id; });
     if (it == touched_.end()) touched_.emplace_back(id, normalized);
@@ -116,7 +120,8 @@ void BuiltinProcessor::touchedParameters(std::vector<std::pair<uint32_t, double>
 
 bool BuiltinProcessor::automationRange(uint32_t id, double &lo, double &hi) {
     // Automation delivers normalized values; `applyPending` maps them through the parameter's scale.
-    if (!find(id)) return false;
+    const Param *p = find(id);
+    if (!p || p->readOnly) return false;
     lo = 0; hi = 1;
     return true;
 }
@@ -150,7 +155,7 @@ bool BuiltinProcessor::getState(std::string &bytes) {
     json::Value doc = json::Value::makeObject(), values = json::Value::makeObject();
     doc.set("plugin", id_);
     doc.set("version", 1);
-    for (const auto &p : params_) values.set(std::to_string(p.id), values_[p.id]);
+    for (const auto &p : params_) if (!p.readOnly) values.set(std::to_string(p.id), values_[p.id]);
     for (const auto &[k, v] : extra_) values.set(k, v);
     doc.set("values", std::move(values));
     bytes = json::serialize(doc);
@@ -174,6 +179,7 @@ bool BuiltinProcessor::setState(const std::string &bytes) {
         const unsigned long id = std::strtoul(key.c_str(), &end, 10);
         const Param *p = end && *end == 0 ? find(static_cast<uint32_t>(id)) : nullptr;
         if (!p) { extra_.emplace_back(key, v.number); continue; }
+        if (p->readOnly) continue;
         setPlain(p->id, std::clamp(v.number, std::min(p->min, p->max), std::max(p->min, p->max)));
     }
     touched_.clear();

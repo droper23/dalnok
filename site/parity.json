@@ -1299,11 +1299,15 @@
       "why": "A complete mix without buying plugins.",
       "steps": [
         [
-          "Channel EQ",
-          "todo"
+          "Channel EQ (Dalnok Channel EQ, compatible with Logic settings)",
+          "verified"
         ],
         [
-          "Compressor",
+          "Compressor with sidechain key, filter and listen (Dalnok Compressor)",
+          "verified"
+        ],
+        [
+          "Compressor sound measured against Logic's Compressor",
           "todo"
         ],
         [
@@ -1315,7 +1319,7 @@
           "todo"
         ]
       ],
-      "evidence": "Planned."
+      "evidence": "BuiltinPluginTests: Dalnok Channel EQ renders match the Logic-derived reference designs (peak, shelf, cut) within 2e-6 to 1e-5. CompressorTests: Dalnok Compressor offline renders match an independent reference within 2e-6 (peak/RMS, hard/soft knee, auto gain, mix), the static curve and meter within 0.01 dB, attack and release reach 1-1/e in one time constant (0.01 dB), and a muted track keys it sample-accurately through the sidechain (filter and listen included); self-test drives the sidechain menu."
     },
     {
       "id": "sampler",
