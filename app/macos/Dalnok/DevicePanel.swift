@@ -739,6 +739,13 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         super.draw(dirtyRect)
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
         guard Theme.look.pedalboard else {
+            if Theme.look.devices == .cards {
+                // Prism: each unit is its own pane of liquid glass (the light field, lensed and frosted), faintly
+                // tinted by the track; a bypassed unit is clear glass with no tint.
+                let off = !loaded || bypassed
+                Prism.liquidPane(self, bounds.insetBy(dx: 2, dy: 2), radius: 12, tint: off ? nil : color, prominence: off ? 0 : 0.25)
+                return
+            }
             Faceplate.plate(ctx, bounds, accent: color, dimmed: !loaded || bypassed, seed: Faceplate.seed(title.stringValue), wear: Faceplate.wear)
             return
         }

@@ -153,12 +153,13 @@ enum Prism {
 
     /// A light pipe meter: a dark glass tube; the level is light inside it, cool to warm to red near 0 dBFS,
     /// with a small bright bead holding the peak. `level`, `peak`: 0…1 positions. Vertical when taller than wide.
-    static func lightPipe(_ ctx: CGContext, _ rect: CGRect, level: CGFloat, peak: CGFloat, clipped: Bool) {
+    /// `well: false` draws only the light, straight onto the glass beneath (plug-in meters), with no tube behind it.
+    static func lightPipe(_ ctx: CGContext, _ rect: CGRect, level: CGFloat, peak: CGFloat, clipped: Bool, well: Bool = true) {
         let vertical = rect.height > rect.width
         let r = min(rect.width, rect.height) / 2
         let tube = CGPath(roundedRect: rect, cornerWidth: r, cornerHeight: r, transform: nil)
         ctx.saveGState()
-        ctx.addPath(tube); ctx.setFillColor(Theme.well.cgColor); ctx.fillPath()
+        if well { ctx.addPath(tube); ctx.setFillColor(Theme.well.cgColor); ctx.fillPath() }
         ctx.addPath(tube); ctx.clip()
         let lit = vertical ? CGRect(x: rect.minX, y: rect.minY, width: rect.width, height: rect.height * level)
                            : CGRect(x: rect.minX, y: rect.minY, width: rect.width * level, height: rect.height)
@@ -169,7 +170,7 @@ enum Prism {
         ctx.drawLinearGradient(g, start: rect.origin, end: vertical ? CGPoint(x: rect.minX, y: rect.maxY) : CGPoint(x: rect.maxX, y: rect.minY), options: [])
         ctx.restoreGState()
         // Glass: rim and a highlight running along the tube.
-        ctx.addPath(tube); ctx.setStrokeColor(NSColor.white.withAlphaComponent(0.10).cgColor); ctx.setLineWidth(0.75); ctx.strokePath()
+        if well { ctx.addPath(tube); ctx.setStrokeColor(NSColor.white.withAlphaComponent(0.10).cgColor); ctx.setLineWidth(0.75); ctx.strokePath() }
         if peak > 0.01 {
             let bead = vertical ? CGRect(x: rect.minX, y: rect.minY + rect.height * peak - 1, width: rect.width, height: 2)
                                 : CGRect(x: rect.minX + rect.width * peak - 1, y: rect.minY, width: 2, height: rect.height)
@@ -191,10 +192,12 @@ enum Prism {
         let (lo, hi) = (min(start, value), max(start, value))
         if hi - lo > 0.002 { ctx.addArc(center: c, radius: r, startAngle: angle(lo), endAngle: angle(hi), clockwise: true); ctx.strokePath() }
         ctx.restoreGState()
-        let disc = CGRect(x: c.x - r + 4, y: c.y - r + 4, width: 2 * r - 8, height: 2 * r - 8)
-        slab(ctx, disc, radius: disc.width / 2, tint: Theme.hex(0xA8B8FF), body: active ? 0.16 : 0.10, flipped: false)
-        let p = CGPoint(x: c.x + cos(angle(value)) * (r - 7), y: c.y + sin(angle(value)) * (r - 7))
-        ctx.setFillColor(NSColor.white.withAlphaComponent(0.95).cgColor)
-        ctx.fillEllipse(in: CGRect(x: p.x - 1.6, y: p.y - 1.6, width: 3.2, height: 3.2))
+        // No body of its own: the knob is the glass it sits on. Only the arc and the pointer dot show the value.
+        let p = CGPoint(x: c.x + cos(angle(value)) * (r - 5.5), y: c.y + sin(angle(value)) * (r - 5.5))
+        ctx.saveGState()
+        ctx.setShadow(offset: .zero, blur: active ? 5 : 3, color: (Theme.isLight ? color : NSColor.white).withAlphaComponent(0.7).cgColor)
+        ctx.setFillColor((Theme.isLight ? Theme.text : NSColor.white).withAlphaComponent(0.95).cgColor)
+        ctx.fillEllipse(in: CGRect(x: p.x - 1.9, y: p.y - 1.9, width: 3.8, height: 3.8))
+        ctx.restoreGState()
     }
 }

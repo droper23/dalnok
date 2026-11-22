@@ -373,11 +373,13 @@ enum Faceplate {
         if Theme.look.devices == .cards || Theme.look.devices == .schematic {
             let para = NSMutableParagraphStyle(); para.alignment = .center; para.lineBreakMode = .byTruncatingTail
             if Theme.look.devices == .cards {
-                ctx.addPath(CGPath(roundedRect: rect, cornerWidth: rect.height / 2, cornerHeight: rect.height / 2, transform: nil))
-                ctx.setFillColor(Theme.well.withAlphaComponent(0.7).cgColor); ctx.fillPath()
-            } else {
-                Atelier.rule(ctx, CGPoint(x: rect.minX + 4, y: rect.maxY - 0.5), CGPoint(x: rect.maxX - 4, y: rect.maxY - 0.5), weight: Atelier.hair, color: Theme.ink(0.35))
+                // Prism: the value written straight on the glass, no window around it.
+                let base: NSColor = Theme.isLight ? Theme.text.withAlphaComponent(0.72) : NSColor.white.withAlphaComponent(0.66)
+                let attrs: [NSAttributedString.Key: Any] = [.font: Theme.ui(9, .medium), .foregroundColor: base.withAlphaComponent(base.alphaComponent * max(0.45, min(1, glow))), .paragraphStyle: para]
+                (text as NSString).draw(with: rect.offsetBy(dx: 0, dy: 1.5), options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine], attributes: attrs)
+                return
             }
+            Atelier.rule(ctx, CGPoint(x: rect.minX + 4, y: rect.maxY - 0.5), CGPoint(x: rect.maxX - 4, y: rect.maxY - 0.5), weight: Atelier.hair, color: Theme.ink(0.35))
             let attrs: [NSAttributedString.Key: Any] = [.font: Theme.mono(8.5, .medium), .foregroundColor: Theme.text.withAlphaComponent(max(0.35, min(1, glow))), .paragraphStyle: para]
             (text as NSString).draw(with: rect.offsetBy(dx: 0, dy: 1.5), options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine], attributes: attrs)
             return
@@ -685,10 +687,14 @@ final class FaceplateMeter: NSView {
                 let r = CGRect(x: slot.minX + 1 + CGFloat(ch) * 5.5, y: slot.minY, width: 4.5, height: slot.height)
                 let f = { (d: Float) in CGFloat(max(0, min(1, (d - Self.floorDb) / -Self.floorDb))) }
                 let lv = poweredOff ? 0 : f(db) * light, pk = poweredOff ? 0 : f(held)
-                if Theme.look.devices == .cards { Prism.lightPipe(ctx, r, level: lv, peak: pk, clipped: held >= -0.1) }
+                if Theme.look.devices == .cards { Prism.lightPipe(ctx, r, level: lv, peak: pk, clipped: held >= -0.1, well: false) }
                 else { Atelier.meter(ctx, r, level: lv, peak: pk, clipped: held >= -0.1) }
             }
             ctx.restoreGState()
+            if Theme.look.devices == .cards { // the top of the scale: a short hairline across both channels
+                let top = CGRect(x: slot.minX, y: slot.minY, width: 11, height: 1)
+                ctx.setFillColor((Theme.isLight ? Theme.text.withAlphaComponent(0.45) : NSColor.white.withAlphaComponent(0.55)).cgColor); ctx.fill(top)
+            }
             drawScale(ctx, slot: slot, scaleOnRight: scaleOnRight)
             return
         }
