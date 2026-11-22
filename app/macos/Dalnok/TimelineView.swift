@@ -266,7 +266,7 @@ final class TimelineView: NSView {
         super.init(frame: .zero)
         wantsLayer = true
         clipsToBounds = true // macOS 14+ defaults to false; clips scrolled left of the view would cover the headers
-        layer?.backgroundColor = Theme.laneA.cgColor
+        layer?.backgroundColor = Theme.look.arrangement == .glass ? nil : Theme.laneA.cgColor
         playheadLayer.backgroundColor = Theme.playhead.withAlphaComponent(0.9).cgColor
         playheadLayer.zPosition = 10
         layer?.addSublayer(playheadLayer)
@@ -573,6 +573,8 @@ final class TimelineView: NSView {
         lanesDrawn = 0
         let scale = window?.backingScaleFactor ?? 2
         drawLanes(ctx)
+        let glassClip = Theme.look.arrangement == .glass
+        if glassClip { ctx.saveGState(); ctx.addPath(CGPath(roundedRect: glassLanesRect, cornerWidth: 14, cornerHeight: 14, transform: nil)); ctx.clip() }
         drawGrid(ctx, scale: scale)
         for (i, track) in session.tracks.enumerated() {
             let y = laneY(i)
@@ -606,6 +608,7 @@ final class TimelineView: NSView {
             ctx.restoreGState()
         }
         drawAutomation(ctx)
+        if glassClip { ctx.restoreGState() }
         drawRuler(ctx, scale: scale)
         updateSelectionGlow()
 
@@ -792,8 +795,7 @@ final class TimelineView: NSView {
 
     private func drawLanes(_ ctx: CGContext) {
         let family = Theme.look.arrangement
-        ctx.setFillColor(Theme.laneA.cgColor)
-        ctx.fill(bounds)
+        if family != .glass { ctx.setFillColor(Theme.laneA.cgColor); ctx.fill(bounds) }
         if family != .flat { drawSkinnedLanes(ctx, family); return }
         for (i, t) in session.tracks.enumerated() {
             let y = laneY(i)
@@ -844,19 +846,16 @@ final class TimelineView: NSView {
 
     private func drawRuler(_ ctx: CGContext, scale: CGFloat) {
         let family = Theme.look.arrangement
-        ctx.setFillColor(Theme.panel.cgColor)
-        ctx.fill(CGRect(x: 0, y: 0, width: bounds.width, height: Theme.rulerHeight))
+        if family != .glass { ctx.setFillColor(Theme.panel.cgColor); ctx.fill(CGRect(x: 0, y: 0, width: bounds.width, height: Theme.rulerHeight)) }
         switch family {
         case .flat:
             ctx.setFillColor(Theme.separator.cgColor)
             ctx.fill(CGRect(x: 0, y: Theme.rulerHeight - 1, width: bounds.width, height: 1))
         case .glass:
-            // A strip of frosted glass: lighter at the top, an accent light line along its lower edge.
-            Prism.pane(ctx, CGRect(x: -4, y: -4, width: bounds.width + 8, height: Theme.rulerHeight + 3), radius: 0, flipped: true)
-            let g = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: [Theme.accent.withAlphaComponent(0).cgColor, Theme.accent.withAlphaComponent(0.35).cgColor,
-                                                                                   Theme.accent.withAlphaComponent(0).cgColor] as CFArray, locations: [0, 0.5, 1])!
-            ctx.saveGState(); ctx.clip(to: CGRect(x: 0, y: Theme.rulerHeight - 1, width: bounds.width, height: 1))
-            ctx.drawLinearGradient(g, start: .zero, end: CGPoint(x: bounds.width, y: 0), options: []); ctx.restoreGState()
+            // The ruler is its own floating strip of glass above the canvas pane.
+            ctx.setFillColor(NSColor.clear.cgColor)
+            Prism.drawField(in: self, frosted: false, clip: CGRect(x: 0, y: 0, width: bounds.width, height: Theme.rulerHeight))
+            Prism.liquidPane(self, CGRect(x: 4, y: 3, width: bounds.width - 8, height: Theme.rulerHeight - 4), radius: (Theme.rulerHeight - 4) / 2)
         case .manuscript:
             // A drafting scale: a double rule closes the ruler (heavy below, hairline above).
             Atelier.rule(ctx, CGPoint(x: 0, y: Theme.rulerHeight - 0.75), CGPoint(x: bounds.width, y: Theme.rulerHeight - 0.75), weight: Atelier.medium)
@@ -1306,7 +1305,7 @@ final class TimelineView: NSView {
             ctx.setFillColor((Theme.isLight ? Theme.laneA.withAlphaComponent(0.72) : NSColor.black.withAlphaComponent(0.38)).cgColor)
             ctx.fillPath()
             ctx.addLines(between: pts)
-            ctx.setStrokeColor((Theme.isLight ? Theme.text.withAlphaComponent(0.8) : NSColor.white.withAlphaComponent(0.75)).cgColor)
+            ctx.setStrokeColor((Theme.isLight ? Theme.text.withAlphaComponent(0.8) : Theme.ink(0.75)).cgColor)
             ctx.setLineWidth(1.25)
             ctx.strokePath()
         }
@@ -1727,13 +1726,22 @@ extension TimelineView {
         }
     }
 
+    /// Prism: the canvas is one large pane of glass, floating with a gutter where the light field shows.
+    var glassLanesRect: CGRect { CGRect(x: 4, y: Theme.rulerHeight + 4, width: max(0, bounds.width - 8), height: max(0, bounds.height - Theme.rulerHeight - 8)) }
+
     func drawSkinnedLanes(_ ctx: CGContext, _ family: Theme.Look.Arrangement) {
-        let scale = window?.backingScaleFactor ?? 2
-        if family == .glass, let image = Prism.backdrop(bounds.size, scale: scale) {
-            ctx.saveGState(); ctx.translateBy(x: 0, y: bounds.height); ctx.scaleBy(x: 1, y: -1)
-            ctx.draw(image, in: CGRect(x: 0, y: 0, width: CGFloat(image.width) / scale, height: CGFloat(image.height) / scale))
-            ctx.restoreGState()
+        if family == .glass {
+            Prism.drawField(in: self, frosted: false)
+            Prism.liquidPane(self, glassLanesRect, radius: 14)
+            ctx.saveGState(); ctx.addPath(CGPath(roundedRect: glassLanesRect, cornerWidth: 14, cornerHeight: 14, transform: nil)); ctx.clip()
+            defer { ctx.restoreGState() }
+            drawLaneMarks(ctx, family)
+            return
         }
+        drawLaneMarks(ctx, family)
+    }
+
+    private func drawLaneMarks(_ ctx: CGContext, _ family: Theme.Look.Arrangement) {
         for (i, t) in session.tracks.enumerated() {
             let y = laneY(i), lh = session.laneHeight(i)
             guard y + lh > 0, y < bounds.height else { continue }
@@ -1755,7 +1763,7 @@ extension TimelineView {
                 ctx.fill(lane)
             }
             if family == .glass {
-                ctx.setFillColor(Theme.ink(0.05).cgColor); ctx.fill(CGRect(x: 0, y: y + lh - 1, width: bounds.width, height: 1))
+                ctx.setFillColor(Theme.ink(0.07).cgColor); ctx.fill(CGRect(x: 0, y: y + lh - 0.5, width: bounds.width, height: 0.5))
             } else {
                 Atelier.rule(ctx, CGPoint(x: 0, y: y + lh - 0.25), CGPoint(x: bounds.width, y: y + lh - 0.25), weight: Atelier.hair, color: Theme.ink(0.3))
             }
@@ -1844,12 +1852,12 @@ extension TimelineView {
         if clip.gainDb != 0 { tags.append(clip.gainDb.isFinite ? String(format: "%+.1f dB", clip.gainDb) : "−∞ dB") }
         let name = clip.isMidi && clip.name == "MIDI" ? track.name : clip.name
         if glass {
-            drawTitle(ctx, name, tags: tags.isEmpty ? "" : "   " + tags.joined(separator: "   "), fg: OKLCH.adjust(tint.base, dl: 0.2, chromaScale: 0.5),
+            drawTitle(ctx, name, tags: tags.isEmpty ? "" : "   " + tags.joined(separator: "   "), fg: OKLCH.adjust(tint.base, dl: Theme.isLight ? -0.32 : 0.2, chromaScale: Theme.isLight ? 0.9 : 0.5),
                       at: CGPoint(x: max(rect.minX, 0) + 7, y: rect.minY + 2))
         } else {
             // A typeset label on the paper: the name in the track's ink, a fine rule under it, notes in italic.
             let x0 = max(rect.minX, 0) + 6
-            let nameAttrs: [NSAttributedString.Key: Any] = [.font: Theme.title(10.5, .semibold), .foregroundColor: OKLCH.adjust(tint.base, dl: -0.16, chromaScale: 1)]
+            let nameAttrs: [NSAttributedString.Key: Any] = [.font: Theme.title(10.5, .semibold), .foregroundColor: OKLCH.adjust(tint.base, dl: Theme.isLight ? -0.16 : 0.12, chromaScale: 1)]
             let tagAttrs: [NSAttributedString.Key: Any] = [.font: Theme.note(10), .foregroundColor: Theme.textDim]
             let n = name as NSString, size = n.size(withAttributes: nameAttrs)
             n.draw(at: CGPoint(x: x0, y: rect.minY + 1), withAttributes: nameAttrs)

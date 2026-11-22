@@ -164,7 +164,7 @@ final class FaderControl: NSControl {
         ctx.setFillColor(capColor.cgColor)
         ctx.addPath(CGPath(roundedRect: cap, cornerWidth: 2, cornerHeight: 2, transform: nil)); ctx.fillPath()
         ctx.setShadow(offset: .zero, blur: 0, color: nil)
-        ctx.setFillColor(NSColor.white.withAlphaComponent(0.35).cgColor) // top bevel
+        ctx.setFillColor(Theme.ink(0.35).cgColor) // top bevel
         ctx.fill(CGRect(x: cap.minX + 1, y: cap.minY + 1, width: cap.width - 2, height: 1))
         ctx.setFillColor(NSColor.black.withAlphaComponent(0.75).cgColor)
         ctx.fill(CGRect(x: cap.minX + 2, y: capY - 0.75, width: cap.width - 4, height: 1.5))
@@ -196,7 +196,7 @@ final class FaderControl: NSControl {
         }
         let cap = CGRect(x: track.midX - 10, y: capY - 6, width: 20, height: 12)
         Prism.slab(ctx, cap, radius: 6, tint: colorCap ? tint : Theme.hex(0xC8D2FF), body: tracking ? 0.5 : 0.32, lift: tracking ? 1 : 0.5)
-        ctx.setFillColor(NSColor.white.withAlphaComponent(0.9).cgColor); ctx.fill(CGRect(x: cap.minX + 4, y: capY - 0.5, width: cap.width - 8, height: 1))
+        ctx.setFillColor(Theme.ink(0.9).cgColor); ctx.fill(CGRect(x: cap.minX + 4, y: capY - 0.5, width: cap.width - 8, height: 1))
         focusRing(ctx, cap)
     }
 
@@ -332,7 +332,7 @@ class RotaryKnob: NSControl {
             l.lineCap = .round
             layer?.addSublayer(l)
         }
-        haloTrack.strokeColor = Theme.hex(0xFFFFFF, 0.08).cgColor
+        haloTrack.strokeColor = Theme.ink(0.08).cgColor
         haloValue.strokeColor = tint.cgColor
         haloValue.shadowColor = tint.cgColor
         haloValue.shadowRadius = 4
@@ -349,7 +349,7 @@ class RotaryKnob: NSControl {
         if Theme.look.hardwareControls {
             // Discrete LED dots instead of a continuous ring (dash of zero length + round caps).
             for l in [haloTrack, haloValue] { l.lineWidth = 2.6; l.lineDashPattern = [0, 4.6] }
-            haloTrack.strokeColor = Theme.hex(0xFFFFFF, 0.10).cgColor
+            haloTrack.strokeColor = Theme.ink(0.10).cgColor
             pointer.strokeColor = NSColor(white: 0.08, alpha: 1).cgColor
             face.fillColor = nil
             face.strokeColor = nil
@@ -360,10 +360,10 @@ class RotaryKnob: NSControl {
         case .glass:
             // Prism: a clear glass bead inside a ring of light; the lit arc is always visible (no hidden state).
             haloTrack.lineWidth = 2.5; haloValue.lineWidth = 2.5
-            haloTrack.strokeColor = Theme.hex(0xFFFFFF, 0.08).cgColor
+            haloTrack.strokeColor = Theme.ink(0.08).cgColor
             haloValue.shadowRadius = 5
             face.fillColor = Theme.hex(0xB7C4FF, 0.10).cgColor
-            face.strokeColor = Theme.hex(0xFFFFFF, 0.22).cgColor
+            face.strokeColor = Theme.ink(0.22).cgColor
             face.lineWidth = 0.75
             pointer.strokeColor = NSColor.white.cgColor
             pointer.lineWidth = 2.2
@@ -850,7 +850,7 @@ final class ToggleChip: NSControl {
             let body = { [self] in
                 if glass {
                     face.backgroundColor = (isOn ? onColor.withAlphaComponent(0.88) : (pressed ? Theme.ink(0.14) : hovering ? Theme.ink(0.09) : Theme.ink(0.035))).cgColor
-                    face.borderColor = (isOn ? NSColor.white.withAlphaComponent(0.45) : Theme.ink(hovering ? 0.22 : 0.12)).cgColor
+                    face.borderColor = (isOn ? Theme.ink(0.45) : Theme.ink(hovering ? 0.22 : 0.12)).cgColor
                     glow.shadowOpacity = isOn ? (pulsing ? 1 : 0.7) : 0
                     face.transform = pressed ? CATransform3DMakeScale(0.94, 0.94, 1) : CATransform3DIdentity
                 } else {
@@ -925,7 +925,7 @@ final class IconButton: NSButton {
     private var hovering = false
     private func restyle() {
         layer?.backgroundColor = (isActive ? Theme.accent.withAlphaComponent(hovering ? 0.24 : 0.16)
-                                           : hovering ? Theme.hex(0xFFFFFF, 0.07) : .clear).cgColor
+                                           : hovering ? Theme.ink(0.07) : .clear).cgColor
     }
     override func mouseEntered(with event: NSEvent) { hovering = true; Motion.layers(Motion.quick) { restyle() } }
     override func mouseExited(with event: NSEvent) { hovering = false; Motion.layers(Motion.standard) { restyle() } }

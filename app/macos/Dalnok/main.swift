@@ -15,6 +15,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let args0 = CommandLine.arguments
+        // Match System: Prism and Atelier follow macOS between light and dark.
+        DistributedNotificationCenter.default().addObserver(forName: Notification.Name("AppleInterfaceThemeChangedNotification"), object: nil, queue: .main) { _ in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                guard Theme.variantPreference == "system", let app = NSApp.delegate as? AppDelegate else { return }
+                app.switchTheme(to: Theme.activeStyle)
+            }
+        }
         // Captures and tests need settled frames; the self-test turns motion back on for its own checks.
         if args0.contains("--snapshot") || args0.contains("--screenshots") || args0.contains("--gallery") || args0.contains("--selftest") { Motion.override = false }
         main = MainWindowController(session: session)
@@ -153,8 +160,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Switches the appearance live: rebuilds the main window (and closes secondary windows) around the same
     /// session, keeping the window frame, the open project, undo history and MIDI inputs. Refused while recording.
-    @discardableResult func switchTheme(to style: Theme.Style) -> Bool {
-        guard style != Theme.activeStyle else { return true }
+    @discardableResult func switchTheme(to style: Theme.Style, variant: Theme.Variant? = nil) -> Bool {
+        let variant = variant ?? Theme.resolvedVariant(for: style)
+        guard style != Theme.activeStyle || variant != Theme.activeVariant else { return true }
         guard !engine.isRecording else { return false }
         let old = main!
         let frame = old.window?.frame
@@ -170,6 +178,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let settings = old.settings
         old.tearDown(keeping: [settings.window].compactMap { $0 })
         Theme.activeStyle = style
+        Theme.activeVariant = variant
         session.forceRefresh() // track colours come from the style's palette
         let next = MainWindowController(session: session)
         // The arrangement keeps its zoom and scroll position: the same view, drawn in the other style.
@@ -366,6 +375,23 @@ func buildMenu(target: MainWindowController) -> NSMenu {
         item("Recolor Tracks as Gradient", #selector(W.recolorTracksAsGradient(_:)), ""),
     ])
     let curve = NSMenuItem(title: "Fade Curve", action: nil, keyEquivalent: "")
+    // View ▸ Theme: every theme by name (the checked one is on); ⌥⌘A steps to the next.
+    let themeMenu = NSMenuItem(title: "Theme", action: nil, keyEquivalent: "")
+    themeMenu.submenu = NSMenu(title: "Theme")
+    for (i, style) in Theme.Style.allCases.enumerated() {
+        let it = NSMenuItem(title: style.title, action: #selector(W.chooseTheme(_:)), keyEquivalent: "")
+        it.tag = i + 1
+        it.target = target
+        it.toolTip = style.summary
+        themeMenu.submenu?.addItem(it)
+    }
+    themeMenu.submenu?.addItem(.separator())
+    for (i, title) in ["Match System", "Light", "Dark"].enumerated() {
+        let it = NSMenuItem(title: title, action: #selector(W.chooseThemeVariant(_:)), keyEquivalent: "")
+        it.tag = 101 + i
+        it.target = target
+        themeMenu.submenu?.addItem(it)
+    }
     curve.submenu = NSMenu(title: "Fade Curve")
     for (title, sel) in [("Linear", #selector(W.setFadeCurveLinear(_:))), ("Equal Power", #selector(W.setFadeCurveEqualPower(_:)))] {
         let it = NSMenuItem(title: title, action: sel, keyEquivalent: "")
@@ -456,7 +482,8 @@ func buildMenu(target: MainWindowController) -> NSMenu {
         item("Automate Volume", #selector(W.automateVolume(_:)), ""),
         item("Automate Pan", #selector(W.automatePan(_:)), ""),
         .separator(),
-        item("Warm Analog Style", #selector(W.toggleAnalogStyle(_:)), "a", [.command, .option]),
+        themeMenu,
+        item("Next Theme", #selector(W.toggleAnalogStyle(_:)), "a", [.command, .option]),
         item("Tape Machine", #selector(W.showTapeDeck(_:)), "t", [.command, .shift]),
         fullScreen,
     ])

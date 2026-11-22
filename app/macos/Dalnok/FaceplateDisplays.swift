@@ -209,9 +209,16 @@ class FaceplateScreen: NSView {
     static func inkOnPaper(_ ctx: CGContext, _ r: CGRect, invert: Bool) {
         ctx.saveGState()
         ctx.clip(to: r)
-        if invert { ctx.setBlendMode(.difference); ctx.setFillColor(NSColor.white.cgColor); ctx.fill(r) }
-        ctx.setBlendMode(.saturation); ctx.setFillColor(NSColor(white: 0.5, alpha: 1).cgColor); ctx.fill(r)
-        ctx.setBlendMode(.multiply); ctx.setFillColor(Theme.lcd.cgColor); ctx.fill(r)
+        if Theme.isLight {
+            if invert { ctx.setBlendMode(.difference); ctx.setFillColor(NSColor.white.cgColor); ctx.fill(r) }
+            ctx.setBlendMode(.saturation); ctx.setFillColor(NSColor(white: 0.5, alpha: 1).cgColor); ctx.fill(r)
+            ctx.setBlendMode(.multiply); ctx.setFillColor(Theme.lcd.cgColor); ctx.fill(r)
+        } else {
+            // Atelier Dark: chalk on the board. Traces keep their brightness (greyed, tinted chalk); black lifts to the board.
+            ctx.setBlendMode(.saturation); ctx.setFillColor(NSColor(white: 0.5, alpha: 1).cgColor); ctx.fill(r)
+            ctx.setBlendMode(.multiply); ctx.setFillColor(Theme.text.cgColor); ctx.fill(r)
+            ctx.setBlendMode(.screen); ctx.setFillColor(Theme.lcd.cgColor); ctx.fill(r)
+        }
         ctx.setBlendMode(.normal)
         // Graph paper: 8 pt squares, heavier every 4.
         var x = r.minX, i = 0

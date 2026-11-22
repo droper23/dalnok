@@ -111,7 +111,7 @@ final class LauncherView: NSView, TrackScrollHost {
                     let start = Double(dalnok_launcher_slot_start(session.engine.handle, track.id))
                     let rel = (Double(pos) - start).truncatingRemainder(dividingBy: len)
                     let f = CGFloat((rel < 0 ? rel + len : rel) / len)
-                    ctx.setFillColor(NSColor.white.withAlphaComponent(0.8).cgColor)
+                    ctx.setFillColor(Theme.ink(0.8).cgColor)
                     ctx.fill(CGRect(x: r.minX + 3, y: r.maxY - 4, width: (r.width - 6) * f, height: 2))
                 }
                 let fg = TrackTint.textColor(on: tint.base)

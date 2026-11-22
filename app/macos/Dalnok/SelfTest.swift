@@ -251,7 +251,10 @@ final class SelfTest {
             let mid = (loud.meterDb, quiet.meterDb)
             let midScale = loud.faceScale, expected = RotaryKnob.revealScale + (1 - RotaryKnob.revealScale) * 0.5
             loud.updateMeter(-22, now: t0 + 2 * half + 0.0001); quiet.updateMeter(-120, now: q0 + 2 * half + 0.0001)
-            if !(Theme.activeStyle == .warmAnalog) {
+            if Theme.look.controls == .glass || Theme.look.controls == .drafted {
+                // Glass and drafted dials never cover their ring: the face stays put while the ring falls.
+                check(abs(midScale - 0.7) < 0.001 && abs(loud.faceScale - 0.7) < 0.001, String(format: "dial face stays clear of the ring (%.3f, end %.3f)", midScale, loud.faceScale))
+            } else if !(Theme.activeStyle == .warmAnalog) {
                 check(abs(midScale - expected) < 0.001 && abs(loud.faceScale - 1) < 1e-9 && abs(quiet.faceScale - 1) < 1e-9,
                       String(format: "dial face grows back in step with the falling ring (half-way %.3f, expected %.3f; end %.3f)", midScale, expected, loud.faceScale))
             }
@@ -541,6 +544,7 @@ final class SelfTest {
         await migrationSteps()
         // Settings: exercise the menu, appearance selection, and project preference.
         let oldTheme = UserDefaults.standard.object(forKey: "appearanceStyle")
+        let oldVariant = UserDefaults.standard.object(forKey: "appearanceVariant")
         let oldCopy = MainWindowController.copyAudioOnSave
         check(perform("Settings…"), "Dalnok > Settings opens")
         check(w.settings.window?.isVisible == true, "settings window is visible")
@@ -595,7 +599,55 @@ final class SelfTest {
         check((w.transport.reels.superview != nil) == (Theme.activeStyle == .warmAnalog), "the rebuilt window uses the new style's parts (tape reels \((Theme.activeStyle == .warmAnalog) ? "shown" : "hidden"))")
         check(w.settings.window?.isVisible == true && w.settings.relaunch.isHidden, "settings stays open, with no relaunch needed")
         try? w.snapshot(to: workdir.appendingPathComponent("theme-switched.png"))
-        w.settings.themePicker.selectItem(at: other == 1 ? 0 : 1)
+        // Every theme by name from View ▸ Theme, then ⌥⌘A (Next Theme) steps on: each rebuild uses that theme's
+        // families, fonts and system appearance, and keeps the project and zoom.
+        for (i, style) in Theme.Style.allCases.enumerated() {
+            guard let item = menuItem("Theme", submenuOnly: true, exact: true)?.submenu?.items.first(where: { $0.title == style.title }) else { check(false, "View ▸ Theme lists \(style.title)"); continue }
+            item.menu?.update()
+            check(item.tag == i + 1 && item.isEnabled, "View ▸ Theme ▸ \(style.title) is available")
+            _ = NSApp.sendAction(item.action!, to: item.target, from: item)
+            await wait(0.2)
+            w.window?.layoutIfNeeded()
+            let fontFace = Theme.ui(12).fontName, figures = Theme.mono(12).fontName + "/" + Theme.mono(12, .medium).fontName
+            if style == .atelier {
+                let faces = [Theme.title(12).fontName, Theme.title(12, .regular).fontName, Theme.display(20).fontName, Theme.note(10).fontName]
+                check(faces.allSatisfy { $0.hasPrefix("SourceSerif4") }, "Atelier sets titles, the clock and notes in Source Serif 4 (\(faces))")
+            }
+            let wantFace = [Theme.Style.prism: "Sora", .atelier: "IBMPlexSansCond"][style], wantFigures = [Theme.Style.prism: "GeistMono", .atelier: "IBMPlexMono"][style]
+            check(Theme.activeStyle == style && Theme.preferredStyle == style && w.window?.isVisible == true
+                  && s.tracks.map(\.id) == tracksBefore && w.timeline.framesPerPoint == zoomBefore
+                  && (wantFace.map { fontFace.hasPrefix($0) } ?? true) && (wantFigures.map { w in figures.split(separator: "/").allSatisfy { $0.hasPrefix(w) } } ?? true)
+                  && (w.window?.appearance?.name == (style.palette.light ? .aqua : .darkAqua)),
+                  "\(style.title): rebuilt with its fonts (\(fontFace), \(figures)), appearance and the same project and zoom")
+            if style.variants.count > 1 {
+                // Light and Dark from View ▸ Theme: the window rebuilds with that version's palette and appearance.
+                let savedVariant = Theme.variantPreference
+                for (tag, want) in [(102, Theme.Variant.light), (103, .dark)] {
+                    guard let v = menuItem("Theme", submenuOnly: true, exact: true)?.submenu?.items.first(where: { $0.tag == tag }) else { check(false, "View ▸ Theme offers \(want.title)"); continue }
+                    v.menu?.update()
+                    _ = NSApp.sendAction(v.action!, to: v.target, from: v)
+                    await wait(0.2)
+                    check(Theme.activeVariant == want && Theme.isLight == (want == .light) && w.window?.appearance?.name == (want == .light ? .aqua : .darkAqua)
+                          && s.tracks.map(\.id) == tracksBefore && v.isEnabled,
+                          "\(style.title) \(want.title): palette, appearance and project after View ▸ Theme ▸ \(want.title)")
+                }
+                Theme.variantPreference = savedVariant
+                _ = (NSApp.delegate as? AppDelegate)?.switchTheme(to: style)
+                await wait(0.2)
+            } else {
+                let only = menuItem("Theme", submenuOnly: true, exact: true)?.submenu?.items.first { $0.tag == 102 }
+                only?.menu?.update()
+                check(only?.isEnabled == false, "\(style.title) has no light version to choose")
+            }
+            menuItem("Theme", submenuOnly: true, exact: true)?.submenu?.update()
+            check(menuItem("Theme", submenuOnly: true, exact: true)?.submenu?.items.filter { $0.state == .on && $0.tag < 100 }.map(\.title) == [style.title], "only \(style.title) is checked in View ▸ Theme")
+        }
+        let beforeNext = Theme.activeStyle
+        _ = perform("Next Theme")
+        await wait(0.2)
+        let all = Theme.Style.allCases
+        check(Theme.activeStyle == all[((all.firstIndex(of: beforeNext) ?? 0) + 1) % all.count], "Next Theme steps from \(beforeNext.title) to \(Theme.activeStyle.title)")
+        w.settings.themePicker.selectItem(at: Theme.Style.allCases.firstIndex(of: startStyle) ?? 0)
         _ = NSApp.sendAction(#selector(SettingsController.themeChanged(_:)), to: w.settings, from: w.settings.themePicker)
         await wait(0.2)
         check(Theme.activeStyle == startStyle, "switching back restores \(startStyle.title)")
@@ -604,6 +656,7 @@ final class SelfTest {
         w.settings.copyAudio.state = .off
         _ = NSApp.sendAction(#selector(SettingsController.copyChanged(_:)), to: w.settings, from: w.settings.copyAudio)
         check(!MainWindowController.copyAudioOnSave, "settings updates copy-audio preference")
+        if let oldVariant { UserDefaults.standard.set(oldVariant, forKey: "appearanceVariant") } else { UserDefaults.standard.removeObject(forKey: "appearanceVariant") }
         if let oldTheme { UserDefaults.standard.set(oldTheme, forKey: "appearanceStyle") }
         else { UserDefaults.standard.removeObject(forKey: "appearanceStyle") }
         MainWindowController.copyAudioOnSave = oldCopy

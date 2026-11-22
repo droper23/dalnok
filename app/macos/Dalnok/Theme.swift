@@ -24,11 +24,39 @@ enum Theme {
             case .atelier: "Composer's workspace: typography, drafting and ink on ivory"
             }
         }
-        var palette: Palette { switch self { case .graphite: .graphite; case .warmAnalog: .warmAnalog; case .prism: .prism; case .atelier: .atelier } }
+        /// The light and dark versions a theme offers (Graphite and Warm Analog are dark studios only).
+        var variants: [Variant] { switch self { case .graphite, .warmAnalog: [.dark]; case .prism, .atelier: [.dark, .light] } }
+        /// The version used when the system's appearance isn't followed and none was chosen.
+        var defaultVariant: Variant { self == .atelier ? .light : .dark }
+        func palette(_ v: Variant) -> Palette {
+            switch self {
+            case .graphite: .graphite
+            case .warmAnalog: .warmAnalog
+            case .prism: v == .light ? .prismLight : .prism
+            case .atelier: v == .light ? .atelier : .atelierDark
+            }
+        }
+        var palette: Palette { palette(Theme.activeStyle == self ? Theme.activeVariant : defaultVariant) }
         var look: Look { switch self { case .graphite: .graphite; case .warmAnalog: .warmAnalog; case .prism: .prism; case .atelier: .atelier } }
         var typography: Typography {
             switch self { case .graphite, .warmAnalog: .system; case .prism: .prism; case .atelier: .atelier }
         }
+    }
+
+    /// Light or dark version of a theme.
+    enum Variant: String, CaseIterable { case dark, light; var title: String { self == .light ? "Light" : "Dark" } }
+    /// Settings ▸ Appearance ▸ Light/Dark: "system" follows macOS, else "light" or "dark".
+    static var variantPreference: String {
+        get { UserDefaults.standard.string(forKey: "appearanceVariant") ?? "system" }
+        set { UserDefaults.standard.set(newValue, forKey: "appearanceVariant") }
+    }
+    /// The version a style shows under the current preference and system appearance.
+    static func resolvedVariant(for style: Style, preference: String = variantPreference) -> Variant {
+        if let override = ProcessInfo.processInfo.environment["DALNOK_VARIANT"].flatMap(Variant.init(rawValue:)), style.variants.contains(override) { return override }
+        guard style.variants.count > 1 else { return style.variants[0] }
+        if let v = Variant(rawValue: preference) { return v }
+        let dark = NSApp?.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        return dark ? .dark : .light
     }
 
     /// The colour tokens of a theme.
@@ -59,6 +87,20 @@ enum Theme {
                                    text: 0xEEF1FF, textDim: 0xA9B0CF, textFaint: 0x8A92B6, accent: 0x8CD3FF, playhead: 0xF4F8FF,
                                    cycle: 0xF0CF6E, selectedHeader: 0x1F2643, knobHover: 0x3B4468, launcher: 0x0B0E18,
                                    well: 0x05070E, muteOn: 0x6EA8FF, soloOn: 0xF6D36A, monitorOn: 0xF0A050, recordOn: 0xFF5C6C, clipRed: 0xFF6A72)
+        /// Prism Light: daylight glass. Pale frosted panes over a soft pastel light field, ink-blue type.
+        static let prismLight = Palette(window: 0xE9EDF8, panel: 0xEEF1FA, panelRaised: 0xF4F6FC, control: 0xD6DCEE, controlHi: 0xC3CBE4,
+                                        laneA: 0xEDF0F9, laneB: 0xE9ECF7, laneHighlight: 0xDCE3F6, lcd: 0xF7F9FE,
+                                        text: 0x141A33, textDim: 0x434B6B, textFaint: 0x5F6788, accent: 0x2F6BFF, playhead: 0x1A2A6C,
+                                        cycle: 0xC99212, selectedHeader: 0xD9E1F7, knobHover: 0xC9D2EE, launcher: 0xE7EBF7,
+                                        ink: 0x141A33, shade: 0x2A3566, light: true, well: 0xD3D9EC, selection: 0x2F6BFF,
+                                        muteOn: 0x2F6BFF, soloOn: 0xE0A81C, monitorOn: 0xE07B1C, recordOn: 0xE5364A, clipRed: 0xE5364A)
+        /// Atelier Dark: chalk on a charcoal drafting board. Warm off-white ink, the same vermilion, brighter pigments.
+        static let atelierDark = Palette(window: 0x1A1916, panel: 0x1F1E1A, panelRaised: 0x24231F, control: 0x34322C, controlHi: 0x45423A,
+                                         laneA: 0x1D1C19, laneB: 0x21201C, laneHighlight: 0x2C2A24, lcd: 0x171613,
+                                         text: 0xEDE6D6, textDim: 0xBDB4A1, textFaint: 0x9A917F, accent: 0xE8684A, playhead: 0xE8684A,
+                                         cycle: 0xD8A63E, selectedHeader: 0x34302A, knobHover: 0x47433B, launcher: 0x1B1A17,
+                                         ink: 0xEDE6D6, well: 0x121110, selection: 0xEDE6D6,
+                                         muteOn: 0x6FA8C6, soloOn: 0xD9AB4A, monitorOn: 0xD9873A, recordOn: 0xE8684A, clipRed: 0xE8684A)
         /// Atelier: ink on ivory. Warm paper, ink-black type, vermilion for the few things that must be seen.
         static let atelier = Palette(window: 0xEFE9DC, panel: 0xF3EEE3, panelRaised: 0xF8F4EB, control: 0xE1D8C5, controlHi: 0xCFC3AA,
                                      laneA: 0xFAF7F0, laneB: 0xF6F2E8, laneHighlight: 0xEEE5D1, lcd: 0xFBF9F4,
@@ -121,7 +163,7 @@ enum Theme {
         static let atelier = Typography(face: .plexCondensed, figures: .plexMono, titles: .serif, capsLabels: true, labelScale: 1.04)
     }
 
-    static var palette: Palette { activeStyle.palette }
+    static var palette: Palette { activeStyle.palette(activeVariant) }
     static var look: Look { activeStyle.look }
     static var typography: Typography { activeStyle.typography }
     static var isLight: Bool { palette.light }
@@ -136,6 +178,7 @@ enum Theme {
         if let override = ProcessInfo.processInfo.environment["DALNOK_THEME"], let style = Style(rawValue: override) { return style }
         return preferredStyle
     }()
+    nonisolated(unsafe) static var activeVariant: Variant = resolvedVariant(for: activeStyle) // main thread only
     /// The system appearance under the theme (menus, sheets, scroll bars, text fields): Aqua for light themes.
     static var appearance: NSAppearance? { NSAppearance(named: palette.light ? .aqua : .darkAqua) }
     private static func tone(_ token: KeyPath<Palette, UInt32>) -> NSColor { hex(palette[keyPath: token]) }
@@ -210,7 +253,7 @@ enum Theme {
         case .geistMono:
             if let f = BundledFonts.font(weight >= .medium ? "GeistMono-Medium" : weight <= .light ? "GeistMono-Light" : "GeistMono-Regular", size) { return f }
         case .plexMono:
-            if let f = BundledFonts.font(weight >= .medium ? "IBMPlexMono-Medium" : "IBMPlexMono", size) { return f }
+            if let f = BundledFonts.font(weight >= .medium ? "IBMPlexMono-Medium" : "IBMPlexMono-Regular", size) { return f }
         }
         return .monospacedDigitSystemFont(ofSize: size, weight: weight)
     }
@@ -276,12 +319,12 @@ enum Theme {
             // Prism: light through a prism. Bright, clear spectral hues that hold up as tinted glass on the dark canvas;
             // neighbours alternate a little in lightness.
             let hue = 200.0 + 360.0 / Double(n) * Double(i)
-            return OKLCH.color(l: 0.76 + (i % 2 == 1 ? 0.05 : 0), c: 0.15, h: hue)
+            return OKLCH.color(l: (isLight ? 0.64 : 0.76) + (i % 2 == 1 ? 0.05 : 0), c: 0.15, h: hue)
         case .inks:
             // Atelier: drawing inks on ivory. Deep, slightly muted pigments (vermilion, ochre, teal, indigo, ...) at a
             // lightness that keeps dark waveforms and white-on-ink labels readable; warm and cool alternate.
             let hues: [Double] = [35, 230, 85, 165, 330, 255, 60, 195, 10, 140, 290, 110]
-            return OKLCH.color(l: 0.56 + (i % 2 == 1 ? 0.05 : 0), c: 0.115, h: hues[i])
+            return OKLCH.color(l: (isLight ? 0.56 : 0.72) + (i % 2 == 1 ? 0.05 : 0), c: 0.115, h: hues[i])
         case .rainbow, .console: break
         }
         if look.consoleTrackColors {
@@ -317,8 +360,8 @@ struct TrackTint {
     var titleSelected: NSColor { base.withAlphaComponent(family == .glass ? 0.62 : 1) }
     var waveform: NSColor {
         switch family {
-        case .manuscript: OKLCH.adjust(base, dl: -0.22, chromaScale: 0.9)   // ink drawn on the paper
-        case .glass: OKLCH.adjust(base, dl: 0.14, chromaScale: 0.8)         // light suspended in the glass
+        case .manuscript: OKLCH.adjust(base, dl: Theme.isLight ? -0.22 : 0.1, chromaScale: 0.9)   // ink drawn on the paper
+        case .glass: OKLCH.adjust(base, dl: Theme.isLight ? -0.2 : 0.14, chromaScale: 0.85)     // light suspended in the glass
         case .flat: OKLCH.adjust(base, dl: 0.12, chromaScale: 0.85)
         }
     }

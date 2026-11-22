@@ -100,7 +100,7 @@ final class CompView: NSView {
                 let s = CGRect(x: x(Double(seg.from)), y: r.minY, width: CGFloat(Double(seg.to - seg.from) / framesPerPoint), height: r.height)
                 ctx.setFillColor(tint.base.withAlphaComponent(0.85).cgColor); ctx.fill(s)
             }
-            drawPeaks(ctx, take, in: r, color: Theme.hex(0xFFFFFF, 0.75))
+            drawPeaks(ctx, take, in: r, color: Theme.ink(0.75))
             ctx.setStrokeColor(tint.border.cgColor); ctx.setLineWidth(1); ctx.stroke(r)
             if let sw = swipe, sw.take == i {
                 let a = min(sw.from, sw.to), b = max(sw.from, sw.to)

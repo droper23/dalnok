@@ -162,6 +162,7 @@ enum Screenshots {
                 for path in ["dalnok:channel-eq", "dalnok:compressor", "au:aufx:dely:appl"] { _ = try? s.addPlugin(t, path: path) }
                 if let comp = s.track(t)?.plugins.dropFirst().first?.id, tracks.count > 1 { dalnok_plugin_set_sidechain(s.engine.handle, t, comp, tracks[1].id) }
             }
+            let devicesWereShown = MainWindowController.showDevicePanel
             if w.devicePanel.isHidden { w.toggleDevicePanel(nil) }
             app.engine.play()
             try? await Task.sleep(for: .seconds(1.2))
@@ -210,6 +211,7 @@ enum Screenshots {
             shot("11-compact")
             if let savedHeight { UserDefaults.standard.set(savedHeight, forKey: "trackHeight") } else { UserDefaults.standard.removeObject(forKey: "trackHeight") }
             MainWindowController.showMixer = mixerWasShown
+            MainWindowController.showDevicePanel = devicesWereShown
             exit(0)
         }
     }

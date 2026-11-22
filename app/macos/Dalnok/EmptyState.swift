@@ -76,8 +76,8 @@ final class StartCard: NSButton {
 
     private func restyle(animated: Bool) {
         let body = {
-            self.layer?.backgroundColor = (self.hovering ? Theme.hex(0xFFFFFF, 0.075) : Theme.hex(0xFFFFFF, 0.04)).cgColor
-            self.layer?.borderColor = (self.hovering ? Theme.accent.withAlphaComponent(0.55) : Theme.hex(0xFFFFFF, 0.08)).cgColor
+            self.layer?.backgroundColor = (self.hovering ? Theme.ink(0.075) : Theme.ink(0.04)).cgColor
+            self.layer?.borderColor = (self.hovering ? Theme.accent.withAlphaComponent(0.55) : Theme.ink(0.08)).cgColor
             self.layer?.shadowOpacity = self.hovering ? 0.35 : 0
             self.layer?.shadowRadius = self.hovering ? 12 : 4
             self.layer?.sublayerTransform = CATransform3DMakeTranslation(0, self.hovering ? 2 : 0, 0)
@@ -122,7 +122,7 @@ final class EmptyStateView: NSView, NSTextFieldDelegate {
         super.init(frame: frame)
         wantsLayer = true
         let title = NSTextField(labelWithString: "New Project")
-        title.font = Theme.ui(24, .semibold)
+        title.font = Theme.title(24, .semibold)
         title.textColor = Theme.text
         let sub = NSTextField(labelWithString: "Set the basics, then add your first track. You can drop audio files anywhere in this window.")
         sub.font = Theme.ui(12.5)
@@ -240,8 +240,8 @@ final class EmptyStateView: NSView, NSTextFieldDelegate {
         let box = NSView()
         box.wantsLayer = true
         box.layer?.cornerRadius = 12
-        box.layer?.backgroundColor = Theme.hex(0xFFFFFF, 0.04).cgColor
-        box.layer?.borderColor = Theme.hex(0xFFFFFF, 0.08).cgColor
+        box.layer?.backgroundColor = Theme.ink(0.04).cgColor
+        box.layer?.borderColor = Theme.ink(0.08).cgColor
         box.layer?.borderWidth = 1
         content.translatesAutoresizingMaskIntoConstraints = false
         box.addSubview(content)
@@ -347,10 +347,11 @@ final class EmptyStateView: NSView, NSTextFieldDelegate {
     override func draw(_ dirtyRect: NSRect) {
         // Dashed drop zone.
         let r = bounds.insetBy(dx: 28, dy: 28)
+        if Theme.look.arrangement == .glass { Prism.drawField(in: self, frosted: false); Prism.liquidPane(self, r, radius: 18) }
         let path = NSBezierPath(roundedRect: r, xRadius: 12, yRadius: 12)
         path.lineWidth = 1.5
         path.setLineDash([6, 5], count: 2, phase: 0)
-        Theme.hex(0xFFFFFF, 0.08).setStroke()
+        Theme.ink(0.08).setStroke()
         path.stroke()
     }
 

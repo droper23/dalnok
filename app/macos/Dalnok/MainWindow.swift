@@ -1754,9 +1754,25 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         flash(bypass ? "\(t.name): plug-ins bypassed" : "\(t.name): plug-ins on")
     }
 
-    /// View ▸ Warm Analog Style: switches the appearance live (same as Settings ▸ Appearance).
+    /// View ▸ Next Theme (⌥⌘A): steps through the themes live (same as Settings ▸ Appearance). The selector keeps its
+    /// old name so custom key bindings for it carry over.
     @objc func toggleAnalogStyle(_ sender: Any?) {
-        let next: Theme.Style = Theme.activeStyle == .warmAnalog ? .graphite : .warmAnalog
+        let all = Theme.Style.allCases
+        switchTheme(all[((all.firstIndex(of: Theme.activeStyle) ?? 0) + 1) % all.count])
+    }
+    /// View ▸ Theme ▸ <name>.
+    @objc func chooseTheme(_ sender: Any?) {
+        guard let tag = (sender as? NSMenuItem)?.tag, Theme.Style.allCases.indices.contains(tag - 1) else { return }
+        switchTheme(Theme.Style.allCases[tag - 1])
+    }
+    /// View ▸ Theme ▸ Match System / Light / Dark (themes with both versions).
+    @objc func chooseThemeVariant(_ sender: Any?) {
+        guard let tag = (sender as? NSMenuItem)?.tag, (101...103).contains(tag) else { return }
+        Theme.variantPreference = SettingsController.variantChoices[tag - 101]
+        switchTheme(Theme.activeStyle)
+        settings.refresh()
+    }
+    func switchTheme(_ next: Theme.Style) {
         guard let app = NSApp.delegate as? AppDelegate else { return }
         let old = Theme.preferredStyle
         Theme.preferredStyle = next
@@ -2094,7 +2110,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         case #selector(tallerTracks(_:)): return Theme.trackHeight < 400
         case #selector(shorterTracks(_:)): return Theme.trackHeight > 48
         case #selector(toggleAnalogStyle(_:)):
-            item.state = Theme.activeStyle == .warmAnalog ? .on : .off
+            return !session.engine.isRecording
+        case #selector(chooseThemeVariant(_:)):
+            item.state = SettingsController.variantChoices.firstIndex(of: Theme.variantPreference) == item.tag - 101 ? .on : .off
+            return !session.engine.isRecording && Theme.activeStyle.variants.count > 1
+        case #selector(chooseTheme(_:)):
+            item.state = Theme.Style.allCases.firstIndex(of: Theme.activeStyle) == item.tag - 1 ? .on : .off
             return !session.engine.isRecording
         case #selector(selectPreviousTrack(_:)), #selector(selectNextTrack(_:)):
             return !session.tracks.isEmpty && !pianoRollIsKey
@@ -2162,6 +2183,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         guard let view = window?.contentView, let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else {
             throw EngineError(description: "no content view")
         }
+        if ProcessInfo.processInfo.environment["DALNOK_DEBUG_VIEWS"] != nil {
+            for v in view.subviews { print("view \(type(of: v)) hidden=\(v.isHidden) frame=\(v.frame) alpha=\(v.alphaValue) layer=\(String(describing: v.layer?.opacity))") }
+        }
         view.cacheDisplay(in: view.bounds, to: rep)
         guard let png = rep.representation(using: .png, properties: [:]) else {
             throw EngineError(description: "PNG encode failed")
@@ -2179,8 +2203,15 @@ final class DropView: NSView {
         super.init(frame: frame)
         wantsLayer = true
         layer?.backgroundColor = Theme.window.cgColor
+        if Theme.look.arrangement == .glass { layer?.backgroundColor = nil; layerContentsRedrawPolicy = .onSetNeedsDisplay }
         registerForDraggedTypes([.fileURL])
     }
+    /// Prism: the light field all the glass panes float over (static; redrawn only when the window resizes).
+    override func draw(_ dirtyRect: NSRect) {
+        guard Theme.look.arrangement == .glass else { return }
+        Prism.drawField(in: self, frosted: false)
+    }
+    override func setFrameSize(_ newSize: NSSize) { super.setFrameSize(newSize); if Theme.look.arrangement == .glass { needsDisplay = true } }
 
     required init?(coder: NSCoder) { fatalError() }
 

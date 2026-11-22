@@ -63,6 +63,11 @@ final class MixerPanel: NSView {
     required init?(coder: NSCoder) { fatalError() }
 
     override func draw(_ dirtyRect: NSRect) {
+        if Theme.look.mixer == .glass {
+            Prism.drawField(in: self, frosted: false)
+            Prism.liquidPane(self, bounds.insetBy(dx: 4, dy: 4), radius: 16)
+            return
+        }
         if Theme.look.mixer == .glass || Theme.look.mixer == .instrument {
             Theme.panel.setFill(); bounds.fill()
             if Theme.look.mixer == .instrument, let ctx = NSGraphicsContext.current?.cgContext {
@@ -317,7 +322,7 @@ final class ChannelStrip: NSView {
             for p in [CGPoint(x: 7, y: 9), CGPoint(x: bounds.width - 8, y: 9), CGPoint(x: 7, y: bounds.height - 8), CGPoint(x: bounds.width - 8, y: bounds.height - 8)] {
                 Analog.screw(ctx, at: p, radius: 2.5)
             }
-            NSColor.white.withAlphaComponent(0.05).setFill(); NSRect(x: 0, y: 3, width: 1, height: bounds.height - 3).fill() // left bevel
+            Theme.ink(0.05).setFill(); NSRect(x: 0, y: 3, width: 1, height: bounds.height - 3).fill() // left bevel
         }
     }
     override var isFlipped: Bool { true }
@@ -461,7 +466,7 @@ final class ChannelStrip: NSView {
             b.layer?.cornerRadius = 0
             b.layer?.borderWidth = dim ? 0 : 0.75
             b.layer?.borderColor = Theme.ink(0.55).cgColor
-            if dim { b.font = Theme.note(10); b.title = "+ insert" }
+            if dim { b.font = Theme.note(10.5) }
         case .flat, .console: break
         }
         b.font = Theme.ui(9.5, .medium)

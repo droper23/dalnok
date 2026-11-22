@@ -146,7 +146,7 @@ final class TransportBar: NSView {
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
-        layer?.backgroundColor = Theme.panel.cgColor
+        layer?.backgroundColor = Theme.look.transport == .glassCapsule ? nil : Theme.panel.cgColor
 
         titleLabel.font = Theme.ui(13, .semibold)
         titleLabel.textColor = Theme.text
@@ -248,6 +248,7 @@ final class TransportBar: NSView {
         transport.spacing = 6
         transportCluster = transport
         styleDisplayForFamily(lcd)
+        titleGroup = titles
 
         masterMeter.toolTip = "Output level (click to reset the clip indicator)"
         masterMeter.setAccessibilityLabel("Master level meter")
@@ -259,6 +260,7 @@ final class TransportBar: NSView {
         views.spacing = 2
         let tools = NSStackView(views: [views, masterMeter, paletteButton, importButton])
         tools.spacing = 8
+        toolsGroup = tools
         tools.setCustomSpacing(16, after: views)
 
         for v in [titles, transport, tools] as [NSView] {
@@ -291,16 +293,16 @@ final class TransportBar: NSView {
     required init?(coder: NSCoder) { fatalError() }
 
     /// The transport buttons, display and tempo (Prism floats them on a glass capsule).
-    private weak var transportCluster: NSView?
+    private weak var transportCluster: NSView?, titleGroup: NSView?, toolsGroup: NSView?
 
     /// Prism: a glass-encased display with light-weight figures; Atelier: a ruled frame with the position typeset large.
     private func styleDisplayForFamily(_ lcd: NSView) {
         switch Theme.look.transport {
         case .glassCapsule:
-            lcd.layer?.backgroundColor = Theme.hex(0x05070F, 0.72).cgColor
-            lcd.layer?.cornerRadius = 10
-            lcd.layer?.borderColor = Theme.hex(0xFFFFFF, 0.14).cgColor
-            timeLabel.textColor = Theme.hex(0xF2F6FF)
+            lcd.layer?.backgroundColor = (Theme.isLight ? Theme.hex(0xFFFFFF, 0.55) : Theme.hex(0x05070F, 0.55)).cgColor
+            lcd.layer?.cornerRadius = 13
+            lcd.layer?.borderColor = Theme.hex(0xFFFFFF, Theme.isLight ? 0.9 : 0.18).cgColor
+            timeLabel.textColor = displayColor
             let glow = NSShadow()
             glow.shadowColor = Theme.accent.withAlphaComponent(0.65)
             glow.shadowBlurRadius = 8
@@ -322,7 +324,7 @@ final class TransportBar: NSView {
     private var displayColor: NSColor {
         switch Theme.look.transport {
         case .tapeDeck: Theme.hex(0x7DF0D8)
-        case .glassCapsule: Theme.hex(0xF2F6FF)
+        case .glassCapsule: Theme.isLight ? Theme.text : Theme.hex(0xF2F6FF)
         case .typeset: Theme.text
         case .lcd: Theme.accent
         }
@@ -331,14 +333,12 @@ final class TransportBar: NSView {
     override func draw(_ dirtyRect: NSRect) {
         switch Theme.look.transport {
         case .glassCapsule:
-            Theme.panel.setFill(); bounds.fill()
-            if let ctx = NSGraphicsContext.current?.cgContext {
-                Theme.ink(0.06).setFill(); NSRect(x: 0, y: 0, width: bounds.width, height: 1).fill()
-                // The transport floats on a capsule of glass, centred, its own light falling on the bar.
-                if let c = transportCluster?.frame {
-                    let capsule = c.insetBy(dx: -14, dy: -6)
-                    Prism.slab(ctx, capsule, radius: capsule.height / 2, tint: Theme.hex(0x9FB2FF), body: 0.07, lift: 0.35, flipped: isFlipped)
-                }
+            // No bar at all: the title, the transport and the tools float as three capsules of glass over the light.
+            Prism.drawField(in: self, frosted: false)
+            for (group, dx, prominence) in [(titleGroup, CGFloat(14), CGFloat(0)), (transportCluster, 14, 0.6), (toolsGroup, 10, 0)] {
+                guard let f = group?.frame else { continue }
+                let capsule = CGRect(x: f.minX - dx, y: bounds.midY - 19, width: f.width + 2 * dx, height: 38)
+                Prism.liquidPane(self, capsule, radius: 19, prominence: prominence)
             }
             return
         case .typeset:
@@ -463,10 +463,10 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
         switch Theme.look.headers {
         case .glass:
             // Prism: the selected header is a raised pane of glass; the colour edge is a light pipe that glows.
-            selectionLayer.backgroundColor = Theme.hex(0x9FB2FF, 0.09).cgColor
-            selectionLayer.cornerRadius = 7
+            selectionLayer.backgroundColor = (Theme.isLight ? Theme.hex(0xFFFFFF, 0.55) : Theme.hex(0x9FB2FF, 0.12)).cgColor
+            selectionLayer.cornerRadius = 10
             selectionLayer.borderWidth = 1
-            selectionLayer.borderColor = Theme.hex(0xFFFFFF, 0.16).cgColor
+            selectionLayer.borderColor = Theme.hex(0xFFFFFF, Theme.isLight ? 0.9 : 0.22).cgColor
             selectionLayer.shadowColor = NSColor.black.cgColor
             selectionLayer.shadowOpacity = 0.5
             selectionLayer.shadowRadius = 8
@@ -665,12 +665,12 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
         super.layout()
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        selectionLayer.frame = Theme.look.headers == .glass ? CGRect(x: 4, y: 3, width: bounds.width - 7, height: bounds.height - 6)
+        selectionLayer.frame = Theme.look.headers == .glass ? CGRect(x: 8, y: 3, width: bounds.width - 12, height: bounds.height - 6)
                                                             : CGRect(x: 0, y: 1, width: bounds.width, height: bounds.height - 2)
         // Short tracks show their name and buttons only; the knobs and input return when there is room.
         let compact = bounds.height < 76
         for v in [gain, pan, gainLabel, panLabel, inputButton] as [NSView] where v.isHidden != compact { v.isHidden = compact }
-        strip.frame = Theme.look.headers == .glass ? CGRect(x: 1, y: 8, width: isSelected ? 4 : 3, height: bounds.height - 16)
+        strip.frame = Theme.look.headers == .glass ? CGRect(x: 5, y: 10, width: isSelected ? 3.5 : 2.5, height: bounds.height - 20)
                                                   : CGRect(x: 0, y: 0, width: isSelected ? 5 : 3, height: bounds.height - 1)
         CATransaction.commit()
         if Theme.look.channelStripHeaders {
@@ -682,11 +682,14 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
     override func draw(_ dirtyRect: NSRect) {
         switch Theme.look.headers {
         case .glass:
-            Theme.panel.setFill(); bounds.fill()
+            // Rows sit on the column's glass: a breath of the track's colour from the left and a hairline between rows.
             if let ctx = NSGraphicsContext.current?.cgContext {
-                // Each track is a pane of frosted glass with a breath of its own colour.
-                let card = CGRect(x: 4, y: 3, width: bounds.width - 7, height: bounds.height - 6)
-                Prism.slab(ctx, card, radius: 7, tint: muted ? Theme.textFaint : color, body: 0.035, flipped: isFlipped)
+                ctx.saveGState(); ctx.clip(to: CGRect(x: 4, y: 0, width: bounds.width - 4, height: bounds.height))
+                let g = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: [(muted ? Theme.textFaint : color).withAlphaComponent(0.09).cgColor,
+                                                                                       color.withAlphaComponent(0).cgColor] as CFArray, locations: [0, 1])!
+                ctx.drawLinearGradient(g, start: CGPoint(x: 4, y: 0), end: CGPoint(x: bounds.width * 0.5, y: 0), options: [])
+                ctx.restoreGState()
+                Theme.ink(0.07).setFill(); NSRect(x: 14, y: bounds.height - 0.5, width: bounds.width - 22, height: 0.5).fill()
             }
             return
         case .scoreLabels:
@@ -844,7 +847,7 @@ final class TrackHeaderColumn: NSView, TrackScrollHost {
         self.session = session
         super.init(frame: .zero)
         wantsLayer = true
-        layer?.backgroundColor = Theme.panel.cgColor
+        layer?.backgroundColor = Theme.look.headers == .glass ? nil : Theme.panel.cgColor
         rowClip.wantsLayer = true
         rowClip.layer?.masksToBounds = true
         addSubview(rowClip)
@@ -944,6 +947,16 @@ final class TrackHeaderColumn: NSView, TrackScrollHost {
     }
 
     override func draw(_ dirtyRect: NSRect) {
+        if Theme.look.headers == .glass {
+            // Prism: the track list is one pane of glass (the title on a small capsule above it).
+            Prism.drawField(in: self, frosted: false)
+            Prism.liquidPane(self, CGRect(x: 4, y: 3, width: bounds.width - 4, height: Theme.rulerHeight - 4), radius: (Theme.rulerHeight - 4) / 2)
+            Prism.liquidPane(self, CGRect(x: 4, y: Theme.rulerHeight + 4, width: bounds.width - 4, height: bounds.height - Theme.rulerHeight - 8), radius: 14)
+            let hiddenCount = session.hiddenCount
+            let title = (hiddenCount > 0 ? "TRACKS · \(hiddenCount) HIDDEN" : "TRACKS") as NSString
+            title.draw(at: NSPoint(x: 16, y: 7), withAttributes: [.font: Theme.ui(10, .semibold), .foregroundColor: Theme.textDim, .kern: 0.8])
+            return
+        }
         Theme.panel.setFill()
         bounds.fill()
         let hiddenCount = session.hiddenCount
@@ -993,7 +1006,7 @@ final class ScribbleStrip: NSView {
         Theme.hex(0x0D0A08).setFill(); well.fill()
         NSGraphicsContext.saveGraphicsState()
         well.addClip()
-        NSGradient(starting: Theme.hex(0xFFFFFF, 0.07), ending: Theme.hex(0xFFFFFF, 0))?
+        NSGradient(starting: Theme.ink(0.07), ending: Theme.ink(0))?
             .draw(in: NSRect(x: r.minX, y: r.minY, width: r.width, height: r.height / 2), angle: -90)
         if lit {
             NSGradient(starting: color.withAlphaComponent(0), ending: color.withAlphaComponent(0.14))?

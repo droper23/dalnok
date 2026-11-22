@@ -493,7 +493,7 @@ extension SelfTest {
         let savedPreset = ShortcutRegistry.shared.presetId
         w.shortcutChooser.show()
         await wait(0.1)
-        check(centered(w.shortcutChooser.window) && w.shortcutChooser.cards.count == 6, "first launch asks which shortcuts you know (6 apps)")
+        check(centered(w.shortcutChooser.window) && w.shortcutChooser.cards.count == 6, "first launch asks which shortcuts you know (6 apps; \(w.shortcutChooser.cards.count) cards, frame \(w.shortcutChooser.window.frame))")
         w.shortcutChooser.choose("protools")
         check(ShortcutRegistry.shared.presetId == "protools" && !w.shortcutChooser.window.isVisible && WelcomeController.hasCompleted,
               "choosing Pro Tools applies its shortcuts and closes the window (preset \(ShortcutRegistry.shared.presetId))")

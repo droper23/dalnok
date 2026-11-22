@@ -374,7 +374,7 @@ enum Faceplate {
             let para = NSMutableParagraphStyle(); para.alignment = .center; para.lineBreakMode = .byTruncatingTail
             if Theme.look.devices == .cards {
                 ctx.addPath(CGPath(roundedRect: rect, cornerWidth: rect.height / 2, cornerHeight: rect.height / 2, transform: nil))
-                ctx.setFillColor(Theme.hex(0x05070F, 0.55).cgColor); ctx.fillPath()
+                ctx.setFillColor(Theme.well.withAlphaComponent(0.7).cgColor); ctx.fillPath()
             } else {
                 Atelier.rule(ctx, CGPoint(x: rect.minX + 4, y: rect.maxY - 0.5), CGPoint(x: rect.maxX - 4, y: rect.maxY - 0.5), weight: Atelier.hair, color: Theme.ink(0.35))
             }

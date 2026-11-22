@@ -95,7 +95,7 @@ final class DevicePanel: NSView {
             MainActor.assumeIsolated { self?.devices.forEach { $0.applyWear() } }
         }
         wantsLayer = true
-        layer?.backgroundColor = Theme.panel.cgColor
+        layer?.backgroundColor = Theme.look.devices == .cards ? nil : Theme.panel.cgColor
         registerForDraggedTypes([.dalnokPlugin, .dalnokSlot])
         stack.orientation = .horizontal
         stack.alignment = .top
@@ -149,6 +149,7 @@ final class DevicePanel: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         if Theme.look.pedalboard, let ctx = NSGraphicsContext.current?.cgContext { PedalDraw.board(ctx, bounds) } // a pedalboard
+        else if Theme.look.devices == .cards { Prism.drawField(in: self, frosted: false); Prism.liquidPane(self, bounds.insetBy(dx: 4, dy: 4), radius: 16) }
         else { Theme.panel.setFill(); bounds.fill() }
         if let ctx = NSGraphicsContext.current?.cgContext, !devices.isEmpty {
             // The signal path behind the units, left to right: a beam of light (Prism) or a schematic line (Atelier).
@@ -635,7 +636,7 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         guard let layer else { return }
         let shown = isSelected && Faceplate.selectionGlow
         layer.masksToBounds = false
-        layer.borderColor = NSColor.white.withAlphaComponent(0.92).cgColor
+        layer.borderColor = Theme.ink(0.92).cgColor
         layer.borderWidth = shown ? 1.5 : 0
         layer.shadowColor = NSColor.white.cgColor
         layer.shadowOffset = .zero
