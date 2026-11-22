@@ -63,6 +63,13 @@ final class MixerPanel: NSView {
     required init?(coder: NSCoder) { fatalError() }
 
     override func draw(_ dirtyRect: NSRect) {
+        if Theme.look.mixer == .glass || Theme.look.mixer == .instrument {
+            Theme.panel.setFill(); bounds.fill()
+            if Theme.look.mixer == .instrument, let ctx = NSGraphicsContext.current?.cgContext {
+                Atelier.rule(ctx, CGPoint(x: 0, y: bounds.height - 0.75), CGPoint(x: bounds.width, y: bounds.height - 0.75), weight: Atelier.medium)
+            } else { Theme.ink(0.06).setFill(); NSRect(x: 0, y: bounds.height - 1, width: bounds.width, height: 1).fill() }
+            return
+        }
         (Theme.look.consoleMixer ? Analog.faceplate : Theme.panelRaised).setFill(); bounds.fill()
         (Theme.look.consoleMixer ? NSColor.black.withAlphaComponent(0.22) : Theme.panel.withAlphaComponent(0.55)).setFill(); bounds.fill()
         Theme.hairline.setFill(); NSRect(x: 0, y: bounds.height - 2, width: bounds.width, height: 1).fill()
@@ -153,9 +160,9 @@ final class ChannelStrip: NSView {
     let fader = FaderControl()
     let meter = MeterView()
     let dbLabel = NSTextField(labelWithString: "")
-    let mute = ToggleChip("M", on: Theme.muteOn, onText: .white, help: "Mute")
-    let solo = ToggleChip("S", on: Theme.soloOn, onText: Theme.hex(0x1A1400), help: "Solo")
-    let arm = ToggleChip("R", on: Theme.recordOn, onText: .white, help: "Record Enable")
+    let mute = ToggleChip("M", on: Theme.muteOn, onText: Theme.onState(Theme.muteOn), help: "Mute")
+    let solo = ToggleChip("S", on: Theme.soloOn, onText: Theme.onState(Theme.soloOn), help: "Solo")
+    let arm = ToggleChip("R", on: Theme.recordOn, onText: Theme.onState(Theme.recordOn), help: "Record Enable")
     let name = NSTextField(labelWithString: "")
     private let scribble = ScribbleStrip()
     private var color = NSColor.gray
@@ -201,7 +208,7 @@ final class ChannelStrip: NSView {
         dbLabel.font = Theme.mono(10)
         dbLabel.textColor = Theme.textDim
         dbLabel.alignment = .center
-        name.font = Theme.look.consoleMixer ? NSFont.systemFont(ofSize: 11.5, weight: .semibold, width: .condensed) : Theme.ui(11.5, .semibold)
+        name.font = Theme.look.consoleMixer ? NSFont.systemFont(ofSize: 11.5, weight: .semibold, width: .condensed) : Theme.title(11.5, .semibold)
         name.alignment = .center
         name.lineBreakMode = .byTruncatingTail
 
@@ -279,6 +286,28 @@ final class ChannelStrip: NSView {
     required init?(coder: NSCoder) { fatalError() }
 
     override func draw(_ dirtyRect: NSRect) {
+        switch Theme.look.mixer {
+        case .glass:
+            // A floating module of glass with a light bar in the channel's colour; the selected one is raised.
+            guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+            let card = bounds.insetBy(dx: 3, dy: 3)
+            Prism.slab(ctx, card, radius: 10, tint: isSelected ? color : Theme.hex(0x9FB2FF), body: isSelected ? 0.09 : 0.045, lift: isSelected ? 0.8 : 0)
+            let bar = CGRect(x: card.minX + 12, y: card.minY + 1.5, width: card.width - 24, height: 2.5)
+            ctx.saveGState(); ctx.setShadow(offset: .zero, blur: 6, color: color.withAlphaComponent(0.9).cgColor)
+            ctx.addPath(CGPath(roundedRect: bar, cornerWidth: 1.25, cornerHeight: 1.25, transform: nil)); ctx.setFillColor(color.cgColor); ctx.fillPath()
+            ctx.restoreGState()
+            return
+        case .instrument:
+            // A column of the drawing: hairline rules between channels, the channel's ink as a heavy rule at the top,
+            // and the selected channel underlined in vermilion beneath its name.
+            guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+            if isSelected { Theme.laneHighlight.setFill(); bounds.fill() }
+            ctx.setFillColor(color.cgColor); ctx.fill(CGRect(x: 6, y: 0, width: bounds.width - 12, height: 2.5))
+            Atelier.rule(ctx, CGPoint(x: bounds.width - 0.25, y: 8), CGPoint(x: bounds.width - 0.25, y: bounds.height - 8), weight: Atelier.hair, color: Theme.ink(0.35))
+            if isSelected { ctx.setFillColor(Atelier.vermilion.cgColor); ctx.fill(CGRect(x: 14, y: bounds.height - 5, width: bounds.width - 28, height: 1.5)) }
+            return
+        case .flat, .console: break
+        }
         (Theme.look.consoleMixer ? Analog.faceplate : Theme.panelRaised).setFill()
         bounds.fill()
         if isSelected { Theme.selectedHeader.setFill(); bounds.fill() }
@@ -421,6 +450,20 @@ final class ChannelStrip: NSView {
         b.wantsLayer = true
         b.layer?.backgroundColor = (dim ? Theme.hex(0x000000, 0.25) : Theme.hex(0x000000, 0.45)).cgColor
         b.layer?.cornerRadius = 3
+        switch Theme.look.mixer {
+        case .glass: // capsules of glass
+            b.layer?.backgroundColor = Theme.ink(dim ? 0.03 : 0.08).cgColor
+            b.layer?.cornerRadius = 8
+            b.layer?.borderWidth = 0.75
+            b.layer?.borderColor = Theme.ink(dim ? 0.08 : 0.18).cgColor
+        case .instrument: // slots in the drawing: a ruled box, a dashed one when empty
+            b.layer?.backgroundColor = dim ? nil : Theme.panelRaised.cgColor
+            b.layer?.cornerRadius = 0
+            b.layer?.borderWidth = dim ? 0 : 0.75
+            b.layer?.borderColor = Theme.ink(0.55).cgColor
+            if dim { b.font = Theme.note(10); b.title = "+ insert" }
+        case .flat, .console: break
+        }
         b.font = Theme.ui(9.5, .medium)
         b.contentTintColor = dim ? Theme.textDim : Theme.text
         b.lineBreakMode = .byTruncatingTail
@@ -471,7 +514,7 @@ final class MasterStrip: NSView {
         fader.setAccessibilityLabel("Master volume")
         meter.vertical = true
         dbLabel.font = Theme.mono(10); dbLabel.textColor = Theme.textDim; dbLabel.alignment = .center
-        name.font = Theme.ui(11.5, .semibold); name.textColor = Theme.accent; name.alignment = .center
+        name.font = Theme.title(11.5, .semibold); name.textColor = Theme.accent; name.alignment = .center
         let row = NSStackView(views: [fader, meter])
         row.spacing = 4
         for v in [needle, row, dbLabel, name] as [NSView] { v.translatesAutoresizingMaskIntoConstraints = false; addSubview(v) }
@@ -491,6 +534,16 @@ final class MasterStrip: NSView {
     required init?(coder: NSCoder) { fatalError() }
     override var isFlipped: Bool { true }
     override func draw(_ dirtyRect: NSRect) {
+        if Theme.look.mixer == .glass, let ctx = NSGraphicsContext.current?.cgContext {
+            Prism.slab(ctx, bounds.insetBy(dx: 3, dy: 3), radius: 12, tint: Theme.accent, body: 0.08, lift: 0.6)
+            return
+        }
+        if Theme.look.mixer == .instrument, let ctx = NSGraphicsContext.current?.cgContext {
+            Atelier.rule(ctx, CGPoint(x: 1, y: 8), CGPoint(x: 1, y: bounds.height - 8), weight: Atelier.medium) // the master stands apart: a double rule
+            Atelier.rule(ctx, CGPoint(x: 4, y: 8), CGPoint(x: 4, y: bounds.height - 8), weight: Atelier.hair)
+            ctx.setFillColor(Atelier.vermilion.cgColor); ctx.fill(CGRect(x: 10, y: 0, width: bounds.width - 20, height: 2.5))
+            return
+        }
         (Theme.look.consoleMixer ? Analog.faceplate : Theme.panelRaised).setFill(); bounds.fill()
         Theme.accent.setFill(); NSRect(x: 0, y: 0, width: bounds.width, height: 3).fill()
         Theme.separator.setFill(); NSRect(x: 0, y: 0, width: 1, height: bounds.height).fill()

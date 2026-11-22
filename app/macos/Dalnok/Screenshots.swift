@@ -105,6 +105,115 @@ enum Screenshots {
         }
     }
 
+    /// --gallery <dir> <project>: every screen a theme has to get right, from the real app with a generated project
+    /// (the theme comes from DALNOK_THEME). Used to review and compare themes ("06 - Design/Theme System.md") and for
+    /// the README. States are made through the same calls the UI makes; the recording frame shows the recording
+    /// display state (no take is recorded).
+    static func gallery(app: AppDelegate, project: URL?, dir: URL) {
+        SelfTest.running = true
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let w = app.main!, s = app.session
+        w.window?.setContentSize(NSSize(width: 1440, height: 900))
+        func shot(_ name: String) {
+            guard let v = w.window?.contentView else { return }
+            v.layoutSubtreeIfNeeded() // nothing displays while the window is off screen or the screen is locked
+            png(v, dir.appendingPathComponent("\(name).png"))
+        }
+        Task {
+            try? await Task.sleep(for: .seconds(0.4))
+            shot("01-start")
+            if let project { _ = await withCheckedContinuation { cont in w.openProject(project) { cont.resume(returning: $0) } } }
+            try? await Task.sleep(for: .seconds(0.6))
+            let tracks = s.tracks
+            // States: one muted, one soloed, two armed, one monitoring; a selected track and clip; two sections.
+            if tracks.count > 6 {
+                s.setMute(tracks[2].id, true)
+                s.setSolo(tracks[1].id, true)
+                s.setArmed(tracks[6].id, true)
+                dalnok_track_set_input_monitor(s.engine.handle, tracks[6].id, true)
+            }
+            let bar = s.framesPerBeat * 4
+            s.addMarker(at: 0, name: "Intro")
+            s.addMarker(at: bar * 8, name: "Verse")
+            s.addMarker(at: bar * 16, name: "Chorus")
+            s.refresh()
+            if tracks.count > 3 { w.headers.selectedTrack = tracks[3].id; w.timeline.selectedClip = tracks[3].clips.first?.id }
+            try? await Task.sleep(for: .seconds(0.4))
+            shot("02-arrangement")
+            app.engine.seek(bar * 2)
+            app.engine.play()
+            try? await Task.sleep(for: .seconds(1.2))
+            shot("03-playing")
+            w.transport.setRecording(true)
+            w.timeline.setTransportState(playing: true, recording: true)
+            try? await Task.sleep(for: .seconds(0.5))
+            shot("04-recording-display")
+            w.transport.setRecording(false)
+            w.timeline.setTransportState(playing: true, recording: false)
+            let mixerWasShown = MainWindowController.showMixer
+            if !MainWindowController.showMixer { w.toggleMixer(nil) }
+            try? await Task.sleep(for: .seconds(1.0))
+            shot("05-mixer")
+            if MainWindowController.showMixer { w.toggleMixer(nil) }
+            app.engine.pause()
+            // A device chain of built-in plug-ins and one of Apple's Audio Units (never the owner's).
+            if let t = tracks.first?.id {
+                w.headers.selectedTrack = t
+                for path in ["dalnok:channel-eq", "dalnok:compressor", "au:aufx:dely:appl"] { _ = try? s.addPlugin(t, path: path) }
+                if let comp = s.track(t)?.plugins.dropFirst().first?.id, tracks.count > 1 { dalnok_plugin_set_sidechain(s.engine.handle, t, comp, tracks[1].id) }
+            }
+            if w.devicePanel.isHidden { w.toggleDevicePanel(nil) }
+            app.engine.play()
+            try? await Task.sleep(for: .seconds(1.2))
+            shot("06-devices")
+            app.engine.pause()
+            w.pluginManager.show()
+            w.pluginManager.filter("Dalnok")
+            try? await Task.sleep(for: .seconds(0.4))
+            if let v = w.pluginManager.window?.contentView { png(v, dir.appendingPathComponent("07-plugin-browser.png")) }
+            w.pluginManager.window?.orderOut(nil)
+            // Piano roll: chords under a running melody with varied velocities.
+            let keys = s.addInstrumentTrack("Keys")
+            let beat = s.framesPerBeat
+            let clip = s.addMidiClip(keys, start: 0, length: beat * 16)
+            var notes: [DalnokNote] = []
+            for (i, chord) in [[48, 60, 64, 67, 71], [45, 57, 60, 64, 67], [41, 53, 57, 60, 64], [43, 55, 59, 62, 65]].enumerated() {
+                for p in chord { notes.append(DalnokNote(start: Int64(i) * beat * 4, length: beat * 4 - beat / 8, pitch: UInt8(p), velocity: UInt8(64 + i * 14))) }
+            }
+            let melody = [72, 74, 76, 79, 77, 76, 74, 72, 71, 72, 74, 76, 74, 72, 71, 67]
+            for (i, p) in melody.enumerated() {
+                let len = i % 4 == 3 ? beat : beat / 2
+                notes.append(DalnokNote(start: Int64(i) * beat, length: len, pitch: UInt8(p + 12), velocity: UInt8(50 + (i * 29) % 77)))
+                if i % 2 == 1 { notes.append(DalnokNote(start: Int64(i) * beat + beat / 2, length: beat / 4, pitch: UInt8(p + 14), velocity: UInt8(40 + (i * 17) % 60))) }
+            }
+            s.setNotes(clip, notes)
+            w.pianoRoll.show(clip: clip)
+            w.pianoRoll.roll.selection = [PianoRollView.NoteKey(start: 5 * beat, pitch: 88)]
+            try? await Task.sleep(for: .seconds(0.5))
+            if let v = w.pianoRoll.window?.contentView { png(v, dir.appendingPathComponent("08-piano-roll.png")) }
+            w.pianoRoll.window?.orderOut(nil)
+            w.settings.show(.general)
+            try? await Task.sleep(for: .seconds(0.4))
+            if let v = w.settings.window?.contentView { png(v, dir.appendingPathComponent("09-settings.png")) }
+            w.settings.window?.orderOut(nil)
+            w.showCommandPalette(nil)
+            w.palette.filter("mix")
+            try? await Task.sleep(for: .seconds(0.3))
+            if let panel = NSApp.windows.first(where: { $0 is KeyPanel }), let v = panel.contentView { png(v, dir.appendingPathComponent("10-palette.png")) }
+            w.palette.close()
+            // Dense at a small size: short lanes, a compact window.
+            let savedHeight = UserDefaults.standard.object(forKey: "trackHeight")
+            Theme.trackHeight = 48
+            w.window?.setContentSize(NSSize(width: 1024, height: 640))
+            s.forceRefresh()
+            try? await Task.sleep(for: .seconds(0.6))
+            shot("11-compact")
+            if let savedHeight { UserDefaults.standard.set(savedHeight, forKey: "trackHeight") } else { UserDefaults.standard.removeObject(forKey: "trackHeight") }
+            MainWindowController.showMixer = mixerWasShown
+            exit(0)
+        }
+    }
+
     /// --tour <dir>: a scripted walk through the open project for the README's animations. Plays it, shows and hides
     /// the mixer, switches between tracks' plug-ins, bypasses a unit and turns it back on, while writing the window's
     /// frames (1x, as fast as it can, with their times in times.txt) as frame-0000.tiff… Then quits.

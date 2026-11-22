@@ -80,7 +80,7 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 860, height: 620),
                               styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)
         window.title = "Settings"
-        window.appearance = NSAppearance(named: .darkAqua)
+        window.appearance = Theme.appearance
         window.isReleasedWhenClosed = false
         super.init(window: window)
         window.delegate = self

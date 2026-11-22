@@ -5,7 +5,7 @@
 #
 # Presets: demo (default), band, midi, states (every visual state, including an offline clip),
 # large (64 tracks × 30 s; set TRACKS/SECONDS to change). Each preset goes to <folder>/<preset>/.
-# --screenshots renders each project in Graphite and Warm Analog to <folder>/<preset>-<theme>.png.
+# --screenshots renders each project in every theme (Graphite, Warm Analog, Prism, Atelier) to <folder>/<preset>-<theme>.png.
 # --open opens the first project in the debug app.
 # Environment: RATE (48000), BPM (120), TRACKS (64), SECONDS (30).
 # SPDX-License-Identifier: GPL-3.0-or-later
@@ -36,7 +36,7 @@ for p in "${presets[@]}"; do
   echo "$project"
   first=${first:-$project}
   if [[ $shots == 1 ]]; then
-    for theme in graphite warmAnalog; do
+    for theme in graphite warmAnalog prism atelier; do
       DALNOK_THEME=$theme .build/debug/Dalnok "$project" --no-welcome --snapshot "$out/$p-$theme.png" >/dev/null
       echo "  $out/$p-$theme.png"
     done

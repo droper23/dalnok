@@ -106,7 +106,7 @@ final class EmptyStateView: NSView, NSTextFieldDelegate {
     /// owner's and must not land in a picture.
     static let showsRecents: Bool = {
         let a = CommandLine.arguments
-        return !["--snapshot", "--screenshots", "--selftest", "--uiwalk", "--tour", "--perf"].contains(where: a.contains)
+        return !["--snapshot", "--screenshots", "--gallery", "--selftest", "--uiwalk", "--tour", "--perf"].contains(where: a.contains)
     }()
     static let meters = ["2/4", "3/4", "4/4", "5/4", "6/8", "7/8", "12/8"]
 

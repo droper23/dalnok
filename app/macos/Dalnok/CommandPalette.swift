@@ -131,7 +131,7 @@ final class CommandPalette: NSObject, NSTableViewDataSource, NSTableViewDelegate
         panel.level = .floating
         panel.backgroundColor = .clear
         panel.hasShadow = true
-        panel.appearance = NSAppearance(named: .darkAqua)
+        panel.appearance = Theme.appearance
         panel.onResignKey = { [weak self] in self?.close() }
 
         let bg = NSView()

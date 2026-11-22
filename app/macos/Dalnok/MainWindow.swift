@@ -213,7 +213,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
                               backing: .buffered, defer: false)
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden // the control bar shows the title
-        window.appearance = NSAppearance(named: .darkAqua)
+        window.appearance = Theme.appearance
         window.backgroundColor = Theme.window
         window.minSize = NSSize(width: 720, height: 400)
         window.setFrameAutosaveName("DalnokMain")
@@ -333,7 +333,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         }
         emptyState.basics = { [weak self] in
             guard let self else { return (120, (4, 4), "", "") }
-            let capturing = ["--snapshot", "--screenshots", "--tour"].contains { CommandLine.arguments.contains($0) }
+            let capturing = ["--snapshot", "--screenshots", "--gallery", "--tour"].contains { CommandLine.arguments.contains($0) }
             let input = capturing ? "Audio input" : self.recordingDevice?.name ?? "None (choose one in Audio Settings)"
             return (self.session.bpm, self.session.meter, self.outputDeviceDescription(), input)
         }
@@ -721,7 +721,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         let devices = Engine.outputDevices()
         let dev = uid.isEmpty ? devices.first(where: \.isDefault) : devices.first(where: { $0.uid == uid })
         // Captures (snapshots, documentation screenshots) never show the machine's device names, which can be personal.
-        let capturing = ["--snapshot", "--screenshots", "--tour"].contains { CommandLine.arguments.contains($0) }
+        let capturing = ["--snapshot", "--screenshots", "--gallery", "--tour"].contains { CommandLine.arguments.contains($0) }
         var s = capturing ? "Audio output" : dev?.name ?? "No output"
         let hw = e.hardwareSampleRate
         if hw > 0 && abs(hw - e.sampleRate) > 0.5 {

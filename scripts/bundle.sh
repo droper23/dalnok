@@ -12,6 +12,9 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp .build/release/Dalnok "$APP/Contents/MacOS/Dalnok"
 cp .build/release/dalnok-scan "$APP/Contents/MacOS/dalnok-scan" # plugin scanner (ADR-0009)
 cp .build/release/dalnok-plughost "$APP/Contents/MacOS/dalnok-plughost" # out-of-process plug-in host (ADR-0014)
+# Theme typefaces (SIL OFL), from the SwiftPM resource bundle; Fonts.swift registers them at launch.
+FONTS=$(find .build/release/Dalnok_Dalnok.bundle -type d -name Fonts | head -1)
+cp -R "$FONTS" "$APP/Contents/Resources/Fonts"
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

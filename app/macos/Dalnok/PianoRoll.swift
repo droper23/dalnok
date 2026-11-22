@@ -20,7 +20,7 @@ final class PianoRollController: NSWindowController, NSWindowDelegate {
         roll = PianoRollView(session: session)
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 960, height: 560),
                               styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
-        window.appearance = NSAppearance(named: .darkAqua)
+        window.appearance = Theme.appearance
         window.backgroundColor = Theme.window
         window.minSize = NSSize(width: 480, height: 300)
         window.isReleasedWhenClosed = false
@@ -188,12 +188,31 @@ final class PianoRollView: NSView {
                 ctx.fill(CGRect(x: g.minX, y: ry + rowHeight - 1, width: g.width, height: 1))
                 continue
             }
+            switch Theme.look.editors {
+            case .glass: // the canvas shows through; black-key rows are a breath darker, each C a thin line of light
+                ctx.setFillColor((black ? Theme.shade(0.22) : Theme.ink(0.012)).cgColor)
+                ctx.fill(CGRect(x: g.minX, y: ry, width: g.width, height: rowHeight))
+                if p % 12 == 0 { ctx.setFillColor(Theme.accent.withAlphaComponent(0.22).cgColor); ctx.fill(CGRect(x: g.minX, y: ry + rowHeight - 1, width: g.width, height: 1)) }
+                continue
+            case .engraved: // paper rows; black-key rows a faint tint; a fine ink rule under every C, a hairline at E|F
+                if black { ctx.setFillColor(Theme.ink(0.022).cgColor); ctx.fill(CGRect(x: g.minX, y: ry, width: g.width, height: rowHeight)) }
+                if p % 12 == 0 { Atelier.rule(ctx, CGPoint(x: g.minX, y: ry + rowHeight - 0.25), CGPoint(x: g.maxX, y: ry + rowHeight - 0.25), weight: Atelier.fine, color: Theme.ink(0.45)) }
+                else if p % 12 == 5 { Atelier.rule(ctx, CGPoint(x: g.minX, y: ry + rowHeight - 0.25), CGPoint(x: g.maxX, y: ry + rowHeight - 0.25), weight: Atelier.hair, color: Theme.ink(0.18)) }
+                continue
+            case .grid, .tape: break
+            }
             ctx.setFillColor((black ? Theme.laneB.blended(withFraction: 0.35, of: .black) ?? Theme.laneB : Theme.laneB).cgColor)
             ctx.fill(CGRect(x: g.minX, y: ry, width: g.width, height: rowHeight))
             if p % 12 == 0 { ctx.setFillColor(Theme.gridMajor.cgColor); ctx.fill(CGRect(x: g.minX, y: ry + rowHeight - 1, width: g.width, height: 1)) }
         }
+        if Theme.look.editors == .engraved {
+            // Outside the clip: washed back and hatched, as an unused area of the sheet.
+            let outside = [CGRect(x: g.minX, y: g.minY, width: max(0, x(Double(c.start)) - g.minX), height: g.height),
+                           CGRect(x: x(Double(c.end)), y: g.minY, width: max(0, g.maxX - x(Double(c.end))), height: g.height)]
+            for r in outside where r.width > 0 { ctx.setFillColor(Theme.panel.withAlphaComponent(0.7).cgColor); ctx.fill(r); Atelier.hatch(ctx, r, spacing: 7, color: Theme.ink(0.08)) }
+        }
         // Outside the clip window is dimmed.
-        ctx.setFillColor(Theme.hex(0x000000, 0.35).cgColor)
+        ctx.setFillColor(Theme.hex(0x000000, Theme.look.editors == .engraved ? 0 : 0.35).cgColor)
         ctx.fill(CGRect(x: g.minX, y: g.minY, width: max(0, x(Double(c.start)) - g.minX), height: g.height))
         ctx.fill(CGRect(x: x(Double(c.end)), y: g.minY, width: max(0, g.maxX - x(Double(c.end))), height: g.height))
         // Beat and bar lines.
@@ -205,6 +224,32 @@ final class PianoRollView: NSView {
             let sel = selection.contains(NoteKey(start: n.start, pitch: n.pitch))
             let v = CGFloat(n.velocity) / 127
             if Theme.look.tapeEditors { drawPin(ctx, r, velocity: v, tint: tint, selected: sel); continue }
+            if Theme.look.editors == .glass {
+                // Glass: a capsule whose body thickens with velocity; selected notes rise and brighten.
+                Prism.slab(ctx, r, radius: min(r.height / 2, 4), tint: tint.base, body: 0.18 + 0.32 * v, lift: sel ? 1 : 0)
+                ctx.setFillColor(tint.waveform.withAlphaComponent(0.95).cgColor)
+                ctx.fill(CGRect(x: r.minX + 1, y: r.minY + 2, width: min(2, r.width), height: max(1, r.height - 4)))
+                continue
+            }
+            if Theme.look.editors == .engraved {
+                // Engraved: a round head where the note starts and a duration line whose weight is its velocity; a fine
+                // end tick marks where it stops (and where to grab it). Selected notes are boxed in ink.
+                let ink = OKLCH.adjust(tint.base, dl: -0.12, chromaScale: 1)
+                let weight = 1 + 4 * v, mid = r.midY
+                ctx.setFillColor(ink.cgColor)
+                ctx.fill(CGRect(x: r.minX, y: mid - weight / 2, width: r.width, height: weight))
+                Atelier.rule(ctx, CGPoint(x: r.maxX - 0.5, y: r.minY + 1), CGPoint(x: r.maxX - 0.5, y: r.maxY - 1), weight: Atelier.fine, color: ink)
+                let d = min(rowHeight - 1, 10)
+                let head = CGRect(x: r.minX - 0.5, y: mid - d / 2, width: d * 1.25, height: d)
+                ctx.saveGState(); ctx.translateBy(x: head.midX, y: head.midY); ctx.rotate(by: -0.35)
+                ctx.fillEllipse(in: CGRect(x: -head.width / 2, y: -head.height / 2, width: head.width, height: head.height))
+                ctx.restoreGState()
+                if sel {
+                    ctx.setStrokeColor(Theme.text.cgColor); ctx.setLineWidth(Atelier.fine); ctx.stroke(r.insetBy(dx: -2, dy: -1))
+                    Atelier.cropMarks(ctx, r.insetBy(dx: -2, dy: -1), length: 4, gap: 1.5, weight: Atelier.hair)
+                }
+                continue
+            }
             let path = CGPath(roundedRect: r, cornerWidth: 2.5, cornerHeight: 2.5, transform: nil)
             ctx.addPath(path)
             ctx.setFillColor(tint.base.withAlphaComponent(0.35 + 0.65 * v).cgColor)
@@ -278,7 +323,15 @@ final class PianoRollView: NSView {
             while q < end - 1e-9 {
                 let rel = q - start
                 let isBar = rel < 1e-9, isBeat = abs((rel / meterBeat).rounded() * meterBeat - rel) < 1e-9
-                ctx.setFillColor((isBar ? Theme.hex(0xFFFFFF, 0.14) : isBeat ? Theme.gridMajor : Theme.gridMinor).cgColor)
+                if Theme.look.editors == .engraved {
+                    // Bar lines are rules, heavier every fourth bar; beats fine, sixteenths dotted.
+                    let lx = x(session.beatToFrame(q)).rounded() + 0.5
+                    if isBar { Atelier.rule(ctx, CGPoint(x: lx, y: top), CGPoint(x: lx, y: top + height), weight: bar % 4 == 0 ? Atelier.medium : Atelier.fine, color: Theme.ink(0.5)) }
+                    else if isBeat { Atelier.rule(ctx, CGPoint(x: lx, y: top), CGPoint(x: lx, y: top + height), weight: Atelier.hair, color: Theme.ink(0.2)) }
+                    else { Atelier.rule(ctx, CGPoint(x: lx, y: top), CGPoint(x: lx, y: top + height), weight: Atelier.hair, color: Theme.ink(0.12), dash: [1, 3]) }
+                    q += step; continue
+                }
+                ctx.setFillColor((isBar ? Theme.ink(0.14) : isBeat ? Theme.gridMajor : Theme.gridMinor).cgColor)
                 ctx.fill(CGRect(x: x(session.beatToFrame(q)).rounded(), y: top, width: 1, height: height))
                 q += step
             }
@@ -292,13 +345,34 @@ final class PianoRollView: NSView {
         ctx.clip(to: column)
         // Ivory keys with hairlines where white keys meet (between E–F and B–C, and around black keys),
         // then black keys inset from the left like a real keyboard seen from above.
-        ctx.setFillColor(Theme.hex(0xE9E4DA).cgColor)
+        let family = Theme.look.editors
+        ctx.setFillColor((family == .glass ? Theme.panelRaised : family == .engraved ? Theme.panelRaised : Theme.hex(0xE9E4DA)).cgColor)
         ctx.fill(column)
         let names = ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B"]
+        // Pitch classes this clip uses (from its notes): marked in the keyboard's margin, to see the material at a glance.
+        let used = Set((clip?.notes ?? []).map { Int($0.pitch) % 12 })
         for p in 0...127 {
             let ry = y(p)
             guard ry + rowHeight >= g.minY, ry <= g.maxY else { continue }
             let black = [1, 3, 6, 8, 10].contains(p % 12)
+            if family == .glass || family == .engraved {
+                if black {
+                    let r = CGRect(x: 0, y: ry + 1, width: Self.keyWidth * 0.55, height: rowHeight - 2)
+                    if family == .glass { Prism.slab(ctx, r, radius: 2, tint: Theme.hex(0x05070F), body: 0.7, flipped: true) }
+                    else { ctx.setFillColor(Theme.text.cgColor); ctx.fill(r) }
+                } else if p % 12 == 0 || p % 12 == 5 {
+                    ctx.setFillColor(Theme.ink(0.25).cgColor); ctx.fill(CGRect(x: 0, y: ry + rowHeight - 0.5, width: Self.keyWidth, height: 0.5))
+                }
+                if used.contains(p % 12) {
+                    let dot = CGRect(x: Self.keyWidth - 6, y: ry + rowHeight / 2 - 1.5, width: 3, height: 3)
+                    ctx.setFillColor((family == .glass ? Theme.accent : Atelier.vermilion).cgColor); ctx.fillEllipse(in: dot)
+                }
+                if p % 12 == 0 {
+                    let font = family == .engraved ? Theme.title(9, .regular) : Theme.mono(8.5, .medium)
+                    ("\(names[p % 12])\(p / 12 - 1)" as NSString).draw(at: CGPoint(x: Self.keyWidth - 28, y: ry + (rowHeight - 11) / 2), withAttributes: [.font: font, .foregroundColor: Theme.textDim])
+                }
+                continue
+            }
             if black {
                 ctx.setFillColor(Theme.hex(0x121315).cgColor)
                 let r = CGRect(x: 0, y: ry + 0.5, width: Self.keyWidth * 0.6, height: rowHeight - 1)
@@ -320,7 +394,10 @@ final class PianoRollView: NSView {
     private func drawRuler(_ ctx: CGContext, _ g: CGRect) {
         Theme.panel.setFill(); CGRect(x: 0, y: 0, width: bounds.width, height: Self.rulerHeight).fill()
         Theme.separator.setFill(); CGRect(x: 0, y: Self.rulerHeight - 1, width: bounds.width, height: 1).fill()
-        let attrs: [NSAttributedString.Key: Any] = [.font: Theme.mono(10), .foregroundColor: Theme.textDim]
+        if Theme.look.editors == .engraved {
+            Atelier.rule(ctx, CGPoint(x: 0, y: Self.rulerHeight - 0.75), CGPoint(x: bounds.width, y: Self.rulerHeight - 0.75), weight: Atelier.medium)
+        }
+        let attrs: [NSAttributedString.Key: Any] = [.font: Theme.mono(10, Theme.look.editors == .engraved ? .medium : .regular), .foregroundColor: Theme.look.editors == .engraved ? Theme.text : Theme.textDim]
         let center = session.frameToBeat(frame(atX: g.midX))
         let c = session.bar(atBeat: center)
         let barFrames = session.beatToFrame(session.barToBeat(c.bar + 1)) - session.beatToFrame(session.barToBeat(c.bar))
@@ -351,9 +428,25 @@ final class PianoRollView: NSView {
             guard sx >= lane.minX - 4, sx <= lane.maxX + 4 else { continue }
             let h = (lane.height - 12) * CGFloat(n.velocity) / 127
             let sel = selection.contains(NoteKey(start: n.start, pitch: n.pitch))
-            ctx.setFillColor((sel ? Theme.selection : tint.waveform).cgColor)
-            ctx.fill(CGRect(x: sx, y: lane.maxY - 4 - h, width: 2, height: h))
-            ctx.fillEllipse(in: CGRect(x: sx - 2, y: lane.maxY - 4 - h - 2.5, width: 6, height: 6))
+            switch Theme.look.editors {
+            case .glass: // pillars of light with a bright bead on top
+                let bar = CGRect(x: sx - 1, y: lane.maxY - 4 - h, width: 4, height: h)
+                let gr = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: [tint.waveform.withAlphaComponent(0.9).cgColor, tint.base.withAlphaComponent(0.1).cgColor] as CFArray, locations: [0, 1])!
+                ctx.saveGState(); ctx.clip(to: bar); ctx.drawLinearGradient(gr, start: CGPoint(x: 0, y: bar.minY), end: CGPoint(x: 0, y: bar.maxY), options: []); ctx.restoreGState()
+                ctx.setFillColor((sel ? NSColor.white : tint.waveform).cgColor)
+                ctx.fillEllipse(in: CGRect(x: sx - 2, y: bar.minY - 2.5, width: 6, height: 6))
+            case .engraved: // a stem with an open head (a filled one when selected), like a printed plot
+                let ink = OKLCH.adjust(tint.base, dl: -0.12, chromaScale: 1)
+                Atelier.rule(ctx, CGPoint(x: sx + 1, y: lane.maxY - 4), CGPoint(x: sx + 1, y: lane.maxY - 4 - h), weight: Atelier.fine, color: sel ? Theme.text : ink)
+                let head = CGRect(x: sx - 2, y: lane.maxY - 4 - h - 3, width: 6, height: 6)
+                ctx.setFillColor(Theme.panel.cgColor); ctx.fillEllipse(in: head)
+                ctx.setStrokeColor((sel ? Theme.text : ink).cgColor); ctx.setLineWidth(Atelier.fine); ctx.strokeEllipse(in: head)
+                if sel { ctx.setFillColor(Theme.text.cgColor); ctx.fillEllipse(in: head.insetBy(dx: 1.5, dy: 1.5)) }
+            case .grid, .tape:
+                ctx.setFillColor((sel ? Theme.selection : tint.waveform).cgColor)
+                ctx.fill(CGRect(x: sx, y: lane.maxY - 4 - h, width: 2, height: h))
+                ctx.fillEllipse(in: CGRect(x: sx - 2, y: lane.maxY - 4 - h - 2.5, width: 6, height: 6))
+            }
         }
         ctx.restoreGState()
     }

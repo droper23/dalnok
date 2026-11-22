@@ -21,7 +21,7 @@ private func backed(_ content: NSView) -> NSView {
     let bg = NSView()
     bg.wantsLayer = true
     bg.layer?.backgroundColor = Theme.panel.cgColor
-    bg.appearance = NSAppearance(named: .darkAqua)
+    bg.appearance = Theme.appearance
     content.translatesAutoresizingMaskIntoConstraints = false
     bg.addSubview(content)
     NSLayoutConstraint.activate([
@@ -54,7 +54,7 @@ private func panelWindow(_ title: String, size: NSSize) -> NSWindow {
     let w = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.titled, .closable, .resizable],
                      backing: .buffered, defer: false)
     w.title = title
-    w.appearance = NSAppearance(named: .darkAqua)
+    w.appearance = Theme.appearance
     w.backgroundColor = Theme.panel
     w.isReleasedWhenClosed = false
     return w

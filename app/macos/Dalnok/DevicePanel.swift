@@ -110,7 +110,8 @@ final class DevicePanel: NSView {
         scroll.drawsBackground = false
         scroll.autohidesScrollers = true
         emptyCard.wantsLayer = true
-        emptyCard.layer?.backgroundColor = (Theme.look.pedalboard ? Theme.hex(0x211914) : Theme.hex(0x202228)).cgColor
+        emptyCard.layer?.backgroundColor = (Theme.look.pedalboard ? Theme.hex(0x211914) : Theme.look.devices == .rack ? Theme.hex(0x202228) : Theme.panelRaised).cgColor
+        if Theme.look.devices == .schematic { emptyCard.layer?.cornerRadius = 0; emptyCard.layer?.borderColor = Theme.ink(0.35).cgColor }
         emptyCard.layer?.borderColor = Theme.hairline.cgColor
         emptyCard.layer?.borderWidth = 1
         emptyCard.layer?.cornerRadius = 6
@@ -149,6 +150,22 @@ final class DevicePanel: NSView {
     override func draw(_ dirtyRect: NSRect) {
         if Theme.look.pedalboard, let ctx = NSGraphicsContext.current?.cgContext { PedalDraw.board(ctx, bounds) } // a pedalboard
         else { Theme.panel.setFill(); bounds.fill() }
+        if let ctx = NSGraphicsContext.current?.cgContext, !devices.isEmpty {
+            // The signal path behind the units, left to right: a beam of light (Prism) or a schematic line (Atelier).
+            let y = bounds.midY.rounded() + 0.5
+            switch Theme.look.devices {
+            case .cards:
+                ctx.saveGState(); ctx.clip(to: CGRect(x: 0, y: y - 0.75, width: bounds.width, height: 1.5))
+                ctx.setAlpha(0.55)
+                ctx.drawLinearGradient(Prism.spectrumGradient, start: CGPoint(x: 0, y: y), end: CGPoint(x: bounds.width, y: y), options: [])
+                ctx.restoreGState()
+            case .schematic:
+                Atelier.rule(ctx, CGPoint(x: 4, y: y), CGPoint(x: bounds.width - 10, y: y), weight: Atelier.fine, color: Theme.ink(0.6))
+                ctx.move(to: CGPoint(x: bounds.width - 4, y: y)); ctx.addLine(to: CGPoint(x: bounds.width - 11, y: y - 3.5)); ctx.addLine(to: CGPoint(x: bounds.width - 11, y: y + 3.5))
+                ctx.closePath(); ctx.setFillColor(Theme.ink(0.75).cgColor); ctx.fillPath()
+            case .rack, .pedalboard: break
+            }
+        }
         Theme.separator.setFill(); NSRect(x: 0, y: bounds.height - 1, width: bounds.width, height: 1).fill()
     }
 
@@ -1690,7 +1707,7 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         let pop = NSPopover()
         pop.contentViewController = vc
         pop.behavior = .transient
-        pop.appearance = NSAppearance(named: .darkAqua)
+        pop.appearance = Theme.appearance
         picker = pop
         if let sender, sender.window != nil { pop.show(relativeTo: sender.bounds, of: sender, preferredEdge: .maxY) }
     }

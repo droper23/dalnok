@@ -16,7 +16,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         let args0 = CommandLine.arguments
         // Captures and tests need settled frames; the self-test turns motion back on for its own checks.
-        if args0.contains("--snapshot") || args0.contains("--screenshots") || args0.contains("--selftest") { Motion.override = false }
+        if args0.contains("--snapshot") || args0.contains("--screenshots") || args0.contains("--gallery") || args0.contains("--selftest") { Motion.override = false }
         main = MainWindowController(session: session)
         NSApp.mainMenu = buildMenu(target: main)
         ShortcutRegistry.shared.attach(NSApp.mainMenu)
@@ -24,7 +24,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         main.window?.center()
         // Open filling the screen's usable area (like double-clicking the title bar), not in full-screen mode.
         // Captures and tests keep the fixed default size so their images stay comparable.
-        if !args0.contains("--snapshot") && !args0.contains("--screenshots") && !args0.contains("--selftest") && !args0.contains("--tour"),
+        if !args0.contains("--snapshot") && !args0.contains("--screenshots") && !args0.contains("--gallery") && !args0.contains("--selftest") && !args0.contains("--tour"),
            let screen = main.window?.screen ?? NSScreen.main {
             main.window?.setFrame(screen.visibleFrame, display: true)
         }
@@ -42,7 +42,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let args = Array(CommandLine.arguments.dropFirst())
         func value(_ flag: String) -> String? { args.firstIndex(of: flag).flatMap { $0 + 1 < args.count ? args[$0 + 1] : nil } }
-        let flagValues = Set(["--perf", "--snapshot", "--selftest", "--screenshots", "--plugin-snapshot", "--uiwalk", "--plugin-report", "--tour"].compactMap(value))
+        let flagValues = Set(["--perf", "--snapshot", "--selftest", "--screenshots", "--gallery", "--plugin-snapshot", "--uiwalk", "--plugin-report", "--tour"].compactMap(value))
         let files = args.filter { !$0.hasPrefix("-") && !flagValues.contains($0) }.map { URL(fileURLWithPath: $0) }
         let snapshot = value("--snapshot").map { URL(fileURLWithPath: $0) }
 
@@ -75,6 +75,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 print("plug-in failed: \(error)")
                 NSApp.terminate(nil)
             }
+            return
+        }
+        if let dir = value("--gallery") {
+            Screenshots.gallery(app: self, project: files.first, dir: URL(fileURLWithPath: dir))
             return
         }
         if let dir = value("--screenshots") {
@@ -137,7 +141,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard engine.hasUnsavedChanges, main.window?.attachedSheet == nil, !SelfTest.running,
-              !CommandLine.arguments.contains("--snapshot"), !CommandLine.arguments.contains("--screenshots") else {
+              !CommandLine.arguments.contains("--snapshot"), !CommandLine.arguments.contains("--screenshots"), !CommandLine.arguments.contains("--gallery") else {
             return .terminateNow
         }
         main.confirmDiscard({ NSApp.reply(toApplicationShouldTerminate: true) }, cancelled: { [weak self] in
@@ -198,7 +202,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// A normal launch (not a snapshot, screenshot, self-test or UI walk run).
     var interactiveLaunch: Bool {
         let a = CommandLine.arguments
-        return !["--snapshot", "--screenshots", "--selftest", "--uiwalk", "--plugin-snapshot", "--tour", "--perf"].contains { a.contains($0) }
+        return !["--snapshot", "--screenshots", "--gallery", "--selftest", "--uiwalk", "--plugin-snapshot", "--tour", "--perf"].contains { a.contains($0) }
     }
     /// Set by Settings ▸ "Relaunch Now": start a fresh instance (with the saved project) once this one quits.
     var relaunchOnQuit = false
@@ -470,6 +474,7 @@ func buildMenu(target: MainWindowController) -> NSMenu {
 
 let app = NSApplication.shared
 app.setActivationPolicy(.regular)
+BundledFonts.registerAll() // theme typefaces, before any view asks for a font
 let delegate = AppDelegate()
 app.delegate = delegate
 app.run()

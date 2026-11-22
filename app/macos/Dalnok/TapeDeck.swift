@@ -528,7 +528,7 @@ final class TapeDeckController: NSWindowController, NSWindowDelegate {
         w.minSize = NSSize(width: 860, height: 560)
         w.contentAspectRatio = NSSize(width: 980, height: 620)
         w.isReleasedWhenClosed = false
-        w.appearance = NSAppearance(named: .darkAqua)
+        w.appearance = Theme.appearance
         super.init(window: w)
         w.delegate = self
         deck.main = main
