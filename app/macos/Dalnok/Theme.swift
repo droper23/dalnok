@@ -21,7 +21,7 @@ enum Theme {
             case .graphite: "Modern digital workstation: efficient, clear, minimal"
             case .warmAnalog: "Physical recording studio: tactile hardware and warm light"
             case .prism: "Spatial glass canvas: light, depth and colour"
-            case .atelier: "Composer's workspace: typography, drafting and ink on ivory"
+            case .atelier: "Sketchbook: everything drawn by hand in pen, ink wash and hatching"
             }
         }
         /// The light and dark versions a theme offers (Graphite and Warm Analog are dark studios only).
@@ -94,20 +94,20 @@ enum Theme {
                                         cycle: 0xC99212, selectedHeader: 0xD9E1F7, knobHover: 0xC9D2EE, launcher: 0xE7EBF7,
                                         ink: 0x141A33, shade: 0x2A3566, light: true, well: 0xD3D9EC, selection: 0x2F6BFF,
                                         muteOn: 0x2F6BFF, soloOn: 0xE0A81C, monitorOn: 0xE07B1C, recordOn: 0xE5364A, clipRed: 0xE5364A)
-        /// Atelier Dark: chalk on a charcoal drafting board. Warm off-white ink, the same vermilion, brighter pigments.
+        /// Atelier Dark: white gel pen in a black sketchbook. Warm off-white ink, the same vermilion, brighter pigments.
         static let atelierDark = Palette(window: 0x1A1916, panel: 0x1F1E1A, panelRaised: 0x24231F, control: 0x34322C, controlHi: 0x45423A,
                                          laneA: 0x1D1C19, laneB: 0x21201C, laneHighlight: 0x2C2A24, lcd: 0x171613,
                                          text: 0xEDE6D6, textDim: 0xBDB4A1, textFaint: 0x9A917F, accent: 0xE8684A, playhead: 0xE8684A,
                                          cycle: 0xD8A63E, selectedHeader: 0x34302A, knobHover: 0x47433B, launcher: 0x1B1A17,
                                          ink: 0xEDE6D6, well: 0x121110, selection: 0xEDE6D6,
                                          muteOn: 0x6FA8C6, soloOn: 0xD9AB4A, monitorOn: 0xD9873A, recordOn: 0xE8684A, clipRed: 0xE8684A)
-        /// Atelier: ink on ivory. Warm paper, ink-black type, vermilion for the few things that must be seen.
-        static let atelier = Palette(window: 0xEFE9DC, panel: 0xF3EEE3, panelRaised: 0xF8F4EB, control: 0xE1D8C5, controlHi: 0xCFC3AA,
-                                     laneA: 0xFAF7F0, laneB: 0xF6F2E8, laneHighlight: 0xEEE5D1, lcd: 0xFBF9F4,
-                                     text: 0x1D1B18, textDim: 0x4F493F, textFaint: 0x6B6457, accent: 0xC4422A, playhead: 0xC4422A,
+        /// Atelier: a sketchbook. Cream drawing paper, sepia-black pen, a red pen for the few things that must be seen.
+        static let atelier = Palette(window: 0xF0E8D7, panel: 0xF4EDDF, panelRaised: 0xF9F4E9, control: 0xE1D6C0, controlHi: 0xCDC0A5,
+                                     laneA: 0xFBF7EE, laneB: 0xF6F0E3, laneHighlight: 0xEFE4CC, lcd: 0xFBF8F1,
+                                     text: 0x231D16, textDim: 0x51483B, textFaint: 0x6B6253, accent: 0xC73E26, playhead: 0xC73E26,
                                      cycle: 0xB9861F, selectedHeader: 0xE9DFC9, knobHover: 0xD6C9AE, launcher: 0xF1ECE1,
-                                     ink: 0x1D1B18, shade: 0x3B2F1E, light: true, well: 0xE3DACA, selection: 0x1D1B18,
-                                     muteOn: 0x2E6E8E, soloOn: 0xC9962E, monitorOn: 0xB86A1F, recordOn: 0xC4422A, clipRed: 0xC4422A)
+                                     ink: 0x231D16, shade: 0x3B2F1E, light: true, well: 0xE3DACA, selection: 0x231D16,
+                                     muteOn: 0x2B5C8A, soloOn: 0xC9962E, monitorOn: 0xB86A1F, recordOn: 0xC4422A, clipRed: 0xC4422A)
     }
 
     /// How a theme draws each part of the window, by area (presentation families). Views ask for the family they

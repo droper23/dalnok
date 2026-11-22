@@ -7,7 +7,15 @@ import DalnokEngine
 @MainActor
 enum Screenshots {
     static func png(_ view: NSView, _ url: URL) {
-        guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
+        guard var rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
+        // DALNOK_SNAPSHOT_SCALE=2: a Retina-resolution capture whatever screen (or none) the window is on.
+        if let s = ProcessInfo.processInfo.environment["DALNOK_SNAPSHOT_SCALE"].flatMap(Double.init), s > 1,
+           let big = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(view.bounds.width * s), pixelsHigh: Int(view.bounds.height * s),
+                                      bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
+                                      bytesPerRow: 0, bitsPerPixel: 0) {
+            big.size = view.bounds.size
+            rep = big
+        }
         view.cacheDisplay(in: view.bounds, to: rep)
         try? rep.representation(using: .png, properties: [:])?.write(to: url)
         print("wrote \(url.lastPathComponent) \(rep.pixelsWide)x\(rep.pixelsHigh)")

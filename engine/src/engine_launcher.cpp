@@ -227,6 +227,15 @@ void Engine::setLauncherRecording(bool on) {
     });
 }
 
+int32_t Engine::queuedSlot(DalnokTrackId track, int64_t *at) const {
+    const TrackState *t = model_.track(track);
+    if (!t) return -2;
+    const int64_t la = t->runtime->launchAt.load(std::memory_order_acquire);
+    if (la < 0) return -2;
+    if (at) *at = la;
+    return t->runtime->launchTarget.load(std::memory_order_relaxed);
+}
+
 int32_t Engine::playingSlot(DalnokTrackId track) const {
     const TrackState *t = model_.track(track);
     return t ? t->runtime->playingSlot.load(std::memory_order_relaxed) : -1;

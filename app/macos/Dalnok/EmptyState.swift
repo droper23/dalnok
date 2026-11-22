@@ -21,6 +21,10 @@ final class StartCard: NSButton {
         layer?.cornerRadius = 12
         layer?.borderWidth = 1
         layer?.masksToBounds = false
+        if Theme.activeStyle == .atelier, let l = layer { // a card sketched on the page
+            l.cornerRadius = 0
+            SketchBorderLayer.attach(to: l, color: Theme.ink(0.7), width: 1, seed: Atelier.seed(CGPoint(x: CGFloat(title.count), y: 3)), overshoot: 4)
+        }
         layer?.shadowColor = NSColor.black.cgColor
         layer?.shadowOffset = CGSize(width: 0, height: -3)
         setAccessibilityLabel(t)
@@ -243,6 +247,10 @@ final class EmptyStateView: NSView, NSTextFieldDelegate {
         box.layer?.backgroundColor = Theme.ink(0.04).cgColor
         box.layer?.borderColor = Theme.ink(0.08).cgColor
         box.layer?.borderWidth = 1
+        if Theme.activeStyle == .atelier, let l = box.layer {
+            l.cornerRadius = 0; l.backgroundColor = Theme.ink(0.025).cgColor
+            SketchBorderLayer.attach(to: l, color: Theme.ink(0.55), width: 0.9, seed: 21, overshoot: 4)
+        }
         content.translatesAutoresizingMaskIntoConstraints = false
         box.addSubview(content)
         NSLayoutConstraint.activate([

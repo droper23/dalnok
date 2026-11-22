@@ -99,6 +99,7 @@ final class PluginManagerController: NSWindowController, NSTableViewDataSource, 
     init() {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1000, height: 640),
                               styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
+        window.autorecalculatesKeyViewLoop = true // Tab follows the layout (keyboard-only use)
         window.title = "Plug-ins"
         window.appearance = Theme.appearance
         window.isReleasedWhenClosed = false
@@ -151,6 +152,8 @@ final class PluginManagerController: NSWindowController, NSTableViewDataSource, 
         vendorPopup.setAccessibilityLabel("Vendor")
         sortPopup.addItems(withTitles: ["Sort by Name", "Sort by Category", "Sort by Vendor", "Sort by Most Used"])
         sortPopup.target = self; sortPopup.action = #selector(filtersChanged)
+        sortPopup.setAccessibilityLabel("Sort")
+        collectionPopup.setAccessibilityLabel("Collections")
         scanButton.target = self; scanButton.action = #selector(scan(_:))
         scanButton.toolTip = "Loads each plug-in in a separate process to read what it is. A plug-in that crashes or hangs is listed, not fatal."
         spinner.style = .spinning; spinner.controlSize = .small; spinner.isDisplayedWhenStopped = false

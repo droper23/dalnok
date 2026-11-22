@@ -12,6 +12,17 @@ extension UTType {
 /// A click outside the text field being edited (a track name, the tempo) ends the edit and keeps the text, as
 /// Return does; the click then goes where it landed.
 final class CommittingWindow: NSWindow {
+    /// True while Tab / ⇧Tab move keyboard focus. Views that only take focus from the keyboard (the tempo field, the
+    /// launcher grid) accept it then, never when AppKit picks a first responder on its own or a click lands on them.
+    @MainActor static var navigating = false
+    override func selectNextKeyView(_ sender: Any?) {
+        Self.navigating = true; defer { Self.navigating = false }
+        super.selectNextKeyView(sender)
+    }
+    override func selectPreviousKeyView(_ sender: Any?) {
+        Self.navigating = true; defer { Self.navigating = false }
+        super.selectPreviousKeyView(sender)
+    }
     override func sendEvent(_ event: NSEvent) {
         if event.type == .leftMouseDown || event.type == .rightMouseDown || event.type == .otherMouseDown,
            let editor = firstResponder as? NSTextView, editor.isFieldEditor,
@@ -201,9 +212,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     static var simulatedInput = false
     static var inputMonitoring = false
     var latencyInput: String?
+    var latencyChannel = 0
     var lastLatencyResult: DalnokLatencyResult?
     var openedMidiSources = Set<Int32>()
     var lastRecordingProblem: String?
+    /// The record slot to go back to after a take started from a slot's record mark (nil: none pending).
+    var restoreRecordSlot: Int32?
     var lastRecoveredTakes: [URL] = []
     var fitOnNextChange = true
 
@@ -218,6 +232,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         let window = CommittingWindow(contentRect: NSRect(x: 0, y: 0, width: 1280, height: 760),
                               styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                               backing: .buffered, defer: false)
+        window.autorecalculatesKeyViewLoop = true // Tab follows the layout (keyboard-only use)
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden // the control bar shows the title
         window.appearance = Theme.appearance
@@ -240,6 +255,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         for v in [transport, headers, launcher, timeline, mixer, devicePanel, emptyState, overview, countInOverlay, toast] as [NSView] {
             v.translatesAutoresizingMaskIntoConstraints = false
             root.addSubview(v)
+        }
+        if Theme.activeStyle == .atelier { // the sketchbook's paper: grain over the whole page (never takes clicks)
+            let paper = PaperGrainView(frame: root.bounds)
+            paper.autoresizingMask = [.width, .height]
+            root.addSubview(paper, positioned: .above, relativeTo: toast)
         }
         NSLayoutConstraint.activate([
             transport.topAnchor.constraint(equalTo: root.topAnchor),
@@ -286,6 +306,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         launcher.isHidden = !Self.showLauncher
         launcher.selectedClip = { [weak self] in self?.timeline.selectedClip }
         launcher.onMessage = { [weak self] m in self?.flash(m) }
+        launcher.onRecordInto = { [weak self] k in self?.recordIntoSlot(k) }
         launcher.onDropToTimeline = { [weak self] clip, windowPoint in
             guard let self else { return false }
             let p = self.timeline.convert(windowPoint, from: nil)
@@ -302,8 +323,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             guard let self, !self.launcher.isHidden, let (row, k) = self.launcher.slot(atWindow: windowPoint) else { return false }
             let track = self.session.tracks[row]
             guard self.session.clip(clip)?.track == track.id else { self.flash("Drop it on a slot in its own track's row"); return true }
-            if self.session.slotClip(track.id, Int32(k)) != nil { self.flash("Slot \(k + 1) is taken: remove its clip first"); return true }
-            if self.session.copyToSlot(clip, Int32(k)) { self.flash("Copied to slot \(k + 1): click it to launch") } else { self.flash("That clip can't go in a slot") }
+            let replaced = self.session.slotClip(track.id, Int32(k)) != nil
+            if self.session.copyToSlot(clip, Int32(k)) {
+                self.flash(replaced ? "Replaced slot \(k + 1) (⌘Z brings the old clip back)" : "Copied to slot \(k + 1): click it to launch")
+            } else { self.flash("That clip can't go in a slot") }
+            self.launcher.animateChanges()
             self.launcher.needsDisplay = true
             return true
         }
@@ -1746,6 +1770,33 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     /// Track ▸ Select Previous/Next Track (↑ / ↓ in the arrangement).
     @objc func selectPreviousTrack(_ sender: Any?) { selectAdjacentTrack(-1) }
     @objc func selectNextTrack(_ sender: Any?) { selectAdjacentTrack(1) }
+    /// Edit ▸ Select Previous/Next Clip (⌥← / ⌥→): steps through the selected track's clips in time order, so clips can
+    /// be chosen without a mouse. With nothing selected it starts from the playhead.
+    @objc func selectPreviousClip(_ sender: Any?) { selectAdjacentClip(-1) }
+    @objc func selectNextClip(_ sender: Any?) { selectAdjacentClip(1) }
+    private func selectAdjacentClip(_ d: Int) {
+        let current = timeline.selectedClip.flatMap { session.clip($0) }
+        guard let trackId = current?.track ?? selectedTrack ?? session.tracks.first?.id,
+              let i = session.tracks.firstIndex(where: { $0.id == trackId }) else { return }
+        let clips = session.tracks[i].clips.sorted { ($0.start, $0.id) < ($1.start, $1.id) }
+        guard !clips.isEmpty else { return flash("\(session.tracks[i].name) has no clips") }
+        let next: ClipView?
+        if let current, let k = clips.firstIndex(where: { $0.id == current.id }) {
+            next = clips.indices.contains(k + d) ? clips[k + d] : nil
+        } else {
+            let at = session.engine.position
+            next = d > 0 ? clips.first { $0.start + $0.length > at } ?? clips.last : clips.last { $0.start < at } ?? clips.first
+        }
+        guard let next else { return NSSound.beep() }
+        if selectedTrack != trackId { headers.select(trackId) }
+        timeline.selectedClip = next.id
+        timeline.revealTrack(at: i)
+        let visible = Double(timeline.bounds.width) * timeline.framesPerPoint
+        if Double(next.start) < timeline.scrollFrame || Double(next.start) > timeline.scrollFrame + visible * 0.9 {
+            timeline.scrollFrame = max(0, Double(next.start) - visible * 0.1)
+        }
+        NSAccessibility.post(element: timeline, notification: .selectedChildrenChanged)
+    }
     private func selectAdjacentTrack(_ d: Int) {
         let ids = session.tracks.map(\.id)
         guard !ids.isEmpty else { return }
@@ -2150,6 +2201,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         case #selector(chooseTheme(_:)):
             item.state = Theme.Style.allCases.firstIndex(of: Theme.activeStyle) == item.tag - 1 ? .on : .off
             return !session.engine.isRecording
+        case #selector(selectPreviousClip(_:)), #selector(selectNextClip(_:)):
+            return session.tracks.contains { !$0.clips.isEmpty } && !pianoRollIsKey
         case #selector(selectPreviousTrack(_:)), #selector(selectNextTrack(_:)):
             return !session.tracks.isEmpty && !pianoRollIsKey
         case #selector(toggleTrackBypass(_:)):
@@ -2213,8 +2266,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
     /// Renders the window contents to a PNG (used for automated UI checks).
     func snapshot(to url: URL) throws {
-        guard let view = window?.contentView, let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else {
+        guard let view = window?.contentView, var rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else {
             throw EngineError(description: "no content view")
+        }
+        // DALNOK_SNAPSHOT_SCALE=2: a Retina-resolution capture whatever screen (or none) the window is on.
+        if let s = ProcessInfo.processInfo.environment["DALNOK_SNAPSHOT_SCALE"].flatMap(Double.init), s > 1,
+           let big = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(view.bounds.width * s), pixelsHigh: Int(view.bounds.height * s),
+                                      bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
+                                      bytesPerRow: 0, bitsPerPixel: 0) {
+            big.size = view.bounds.size
+            rep = big
         }
         if ProcessInfo.processInfo.environment["DALNOK_DEBUG_VIEWS"] != nil {
             for v in view.subviews { print("view \(type(of: v)) hidden=\(v.isHidden) frame=\(v.frame) alpha=\(v.alphaValue) layer=\(String(describing: v.layer?.opacity))") }

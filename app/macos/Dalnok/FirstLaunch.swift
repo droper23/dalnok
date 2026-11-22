@@ -15,6 +15,7 @@ final class ShortcutChooserController: NSObject {
     override init() {
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 660, height: 420), styleMask: [.titled, .closable],
                           backing: .buffered, defer: false)
+        window.autorecalculatesKeyViewLoop = true // Tab follows the layout (keyboard-only use)
         super.init()
         window.title = "Welcome to Dalnok"
         window.appearance = Theme.appearance

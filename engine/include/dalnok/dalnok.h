@@ -28,7 +28,7 @@
 extern "C" {
 #endif
 
-#define DALNOK_API_VERSION 44
+#define DALNOK_API_VERSION 45
 
 typedef enum {
     DALNOK_OK = 0,
@@ -193,6 +193,18 @@ DalnokStatus dalnok_latency_measure_start(DalnokEngine *engine, const char *inpu
                                           char *err, size_t err_len);
 /* False while measuring; true once finished (the input returns to monitoring, or closes). */
 bool dalnok_latency_measure_poll(DalnokEngine *engine, DalnokLatencyResult *result);
+/* Automatic check (API 45). A device's round trip can differ from one start of its stream to the next (a Scarlett
+ * Solo reads 1136 or 1142 frames). With a loopback input set here, every duplex stream the engine opens on that device
+ * (recording, Input Monitoring, a device restart) measures its own round trip in its first 0.75 s: a -80 dBFS burst
+ * train is added to the output and what the engine played is cross-correlated with what the loopback returns, so it
+ * is inaudible and works while the project plays. Takes on that stream use the measured round trip instead of
+ * dalnok_record_latency's reported + offset (a take shorter than the check keeps reported + offset). The output must
+ * be on the same interface as the loopback. Empty uid or channel < 0 turns it off. Control thread only. */
+DalnokStatus dalnok_latency_auto_set(DalnokEngine *engine, const char *loopback_uid, int32_t channel, char *err, size_t err_len);
+/* The current (or last) stream's check: returns the stream's number (it increases with every stream start; 0 = none
+ * yet) and fills `result`: ok with measured_frames once heard; otherwise `error` is "listening", "off", or why it
+ * failed. `spread_frames` carries the correlation x 1000. */
+uint64_t dalnok_latency_auto_result(DalnokEngine *engine, DalnokLatencyResult *result);
 int32_t dalnok_record_live_peaks(DalnokEngine *engine, DalnokTrackId track, float *out, int32_t capacity);
 
 /* ---- Input monitoring --------------------------------------------------
@@ -405,6 +417,9 @@ DalnokStatus dalnok_launcher_launch_scene(DalnokEngine *engine, int32_t slot);
 void dalnok_launcher_stop_all(DalnokEngine *engine);
 int32_t dalnok_launcher_playing(const DalnokEngine *engine, DalnokTrackId track);              /* slot or -1 */
 int64_t dalnok_launcher_slot_start(const DalnokEngine *engine, DalnokTrackId track); /* where the playing slot's first loop began */
+/* A launch waiting for its bar (API 45): returns the slot it will switch to (-1 = back to the arrangement) and, if
+ * `at` is given, the timeline frame where it lands; returns -2 when nothing is queued on that track. */
+int32_t dalnok_launcher_queued(const DalnokEngine *engine, DalnokTrackId track, int64_t *at);
 /* Follow action for a slot clip: after `loops` loops, 1 = play the next filled slot, 2 = stop (0 = none). Undoable. */
 DalnokStatus dalnok_launcher_set_follow(DalnokEngine *engine, DalnokClipId clip, int32_t action, int32_t loops);
 /* Performance recording: while on, every launch and follow is logged; turning it off writes the

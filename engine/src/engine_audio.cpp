@@ -52,6 +52,26 @@ void Engine::duplexCallback(void *ctx, float *left, float *right, const float *c
         }
     }
 
+    // Stream check: the quiet burst train goes out with the mix; the mix as written and the loopback come back.
+    if (self->checkActive_.load(std::memory_order_acquire)) {
+        const int ch = self->checkChannel_;
+        const float *in = inputs && ch < inputCount ? inputs[ch] : nullptr;
+        const auto size = static_cast<int64_t>(self->checkIn_.size());
+        for (int i = 0; i < frames; ++i) {
+            const int64_t f = self->checkFrame_ + i;
+            if (f >= size) break;
+            const float b = self->checkAdd_[static_cast<size_t>(f)];
+            left[i] += b; right[i] += b;
+            self->checkRef_[static_cast<size_t>(f)] = 0.5f * (left[i] + right[i]);
+            self->checkIn_[static_cast<size_t>(f)] = in ? in[i] : 0.0f;
+        }
+        self->checkFrame_ += frames;
+        if (self->checkFrame_ >= size) {
+            self->checkActive_.store(false, std::memory_order_relaxed);
+            self->checkDone_.store(true, std::memory_order_release);
+        }
+    }
+
     CaptureWriter *writer = self->rec_.captureRT.load(std::memory_order_acquire);
     if (!writer) return; // monitoring only
     const int n = self->rec_.captureChannels;

@@ -1,9 +1,37 @@
 ---
-updated: 2026-11-21
+updated: 2026-11-22
 phase: Phases 1, 3 and 4 complete; 2 (power-loss test) and 5 in progress
 milestone: 0.3.0, Phase 4 complete; recording I/O (separate devices, Input Monitoring, measured latency) verified on a Scarlett
 ---
 # Current State
+
+## Latest (2026-11-22, evening): launcher, accessibility, per-stream latency, Atelier sketchbook
+Branch `feat/launcher-recording-and-drag` (from `main` 076706d, which has PR #8: Prism plug-ins drawn as glass, with
+README media retaken). C API 45. Not merged yet.
+- **Clip launcher (Phase 5):** record into a slot from its record mark (click again to stop; whole bars, one undo
+  step); drops on a filled slot replace it; drags each way are one undo step; queued launches (`dalnok_launcher_queued`),
+  launch sweeps and arrivals animate through Motion and respect Reduce Motion; the grid works from the keyboard.
+  Evidence: `LauncherSlots` (4 engine tests); self-test (drags, record mark, motion on and reduced, keyboard).
+- **VoiceOver and keyboard pass, every window, all six looks:** `SelfTest+Accessibility.swift` audits 13 windows
+  (accessible names; Tab reaches every control; the loop closes). Tab had reached 0–2 controls in most windows; fixed
+  (key-view loops, 5 pop-ups named, Tab-only focus for the tempo field and launcher grid, Edit ▸ Select Previous/Next
+  Clip, Tab yields to focus even in the Ableton preset). Tab checks need Full Keyboard Access (SKIP otherwise); verified
+  locally with it on. **Not done:** listening with VoiceOver itself.
+- **Latency re-measured on every device stream** (`dalnok_latency_auto_set`): inaudible burst train correlated with the
+  output. Evidence: `LatencyAuto` (3 engine tests), self-test, and the Scarlett Solo loopback: six streams measured
+  1136, 1142, 1136, 1142, 1136, 1142, every take on the sample (`HardwareLoopback/everyStreamIsChecked…`).
+- **Atelier redrawn as a sketchbook** (owner brief; fonts unchanged): `06 - Design/Atelier.md`. Plug-ins are pen sketches
+  of hardware. README Atelier stills retaken; its tours and plug-in clips are pre-redo until the next release.
+- **Theme performance:** `08 - Testing and Benchmarks/Theme Performance 2026-11-22.md` (Prism +0.55 ms main-thread p50
+  over Graphite, Atelier +0.4 ms; no overloads, no missed blocks).
+- **Verification:** `swift test --disable-sandbox` 287 pass; gen-api up to date. Self-test matrix (Full Keyboard Access
+  off, so 9 Tab checks SKIP with the reason, plus 3 that need the test VST3), all PASS: 967 checks at 48 kHz and 948 at
+  44.1 kHz in Graphite, Prism Dark and Light, Atelier Light and Dark; Warm Analog 952 / 933. With Full Keyboard Access
+  on, the Graphite run passes 971 with no Tab SKIPs, and the audit-only pass is clean in all six looks.
+- Cleanup: `docs/readme-media` deleted on GitHub.
+- **Next:** open the PR, merge after green CI; a listening pass with VoiceOver; retake all README media at the next
+  release (Atelier tours and plug-in clips especially).
+
 
 ## Latest (2026-11-21, night): Prism and Atelier themes, Dalnok Compressor, Composition Overview
 Merged to `main` (2026-11-22): PR #4 (compressor, 484b9bf), then PR #5 (themes, 1a4cb73); CI green on both. Not released yet.

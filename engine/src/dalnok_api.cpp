@@ -214,6 +214,24 @@ bool dalnok_latency_measure_poll(DalnokEngine *e, DalnokLatencyResult *out) {
     }
     return true;
 }
+DalnokStatus dalnok_latency_auto_set(DalnokEngine *e, const char *uid, int32_t channel, char *err, size_t err_len) {
+    if (!e) return DALNOK_ERR_INVALID_ARG;
+    std::string msg;
+    if (!e->impl.setStreamCheck(uid ? uid : "", channel, msg)) { copyOut(err, err_len, msg); return DALNOK_ERR_DEVICE; }
+    return DALNOK_OK;
+}
+uint64_t dalnok_latency_auto_result(DalnokEngine *e, DalnokLatencyResult *out) {
+    if (!e) return 0;
+    dalnok::Engine::LatencyResult r;
+    const uint64_t gen = e->impl.pollStreamCheck(r);
+    if (out) {
+        *out = DalnokLatencyResult{};
+        out->ok = r.ok; out->measured_frames = r.measured; out->reported_frames = r.reported;
+        out->clicks = r.clicks; out->spread_frames = r.spread; out->level = r.level;
+        copyOut(out->error, sizeof out->error, r.error);
+    }
+    return gen;
+}
 DalnokStatus dalnok_input_set_device(DalnokEngine *e, const char *uid, char *err, size_t err_len) {
     if (!e) return DALNOK_ERR_INVALID_ARG;
     std::string msg;
@@ -584,6 +602,7 @@ DalnokClipId dalnok_clip_place_copy(DalnokEngine *e, DalnokClipId c, DalnokTrack
     std::string err;
     return e ? e->impl.placeCopy(c, t, start, err) : 0;
 }
+int32_t dalnok_launcher_queued(const DalnokEngine *e, DalnokTrackId t, int64_t *at) { return e ? e->impl.queuedSlot(t, at) : -2; }
 int64_t dalnok_launcher_slot_start(const DalnokEngine *e, DalnokTrackId t) { return e ? e->impl.slotStart(t) : 0; }
 DalnokStatus dalnok_launcher_set_follow(DalnokEngine *e, DalnokClipId c, int32_t action, int32_t loops) {
     std::string err;

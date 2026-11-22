@@ -1338,10 +1338,30 @@ final class TimelineView: NSView {
         let laneH = waveH / CGFloat(chans)
         ctx.setStrokeColor(color.withAlphaComponent(dim ? 0.35 : 0.95).cgColor)
         ctx.setLineWidth(1 / scale)
+        let pen = Theme.look.arrangement == .manuscript // Atelier: drawn with a pen, not filled pixel by pixel
         for ch in 0..<chans {
             dalnok_media_peaks(media, Int32(ch), sourceStart, fpc, &mins, &maxs, Int64(columns))
             let mid = top + laneH * (CGFloat(ch) + 0.5)
             let half = laneH * 0.48
+            if pen {
+                // Shading strokes every 1.8 pt, and the envelope traced above and below in one quick line each.
+                let step = max(1, Int((1.8 * scale).rounded()))
+                ctx.setLineWidth(0.7)
+                ctx.setStrokeColor(color.withAlphaComponent(dim ? 0.3 : 0.7).cgColor)
+                for i in stride(from: 0, to: columns, by: step) {
+                    let px = visX0 + (CGFloat(i) + 0.5) / scale
+                    ctx.move(to: CGPoint(x: px, y: mid - CGFloat(maxs[i]) * half)); ctx.addLine(to: CGPoint(x: px, y: mid - CGFloat(mins[i]) * half))
+                }
+                ctx.strokePath()
+                ctx.setStrokeColor(color.withAlphaComponent(dim ? 0.4 : 0.95).cgColor); ctx.setLineWidth(0.9); ctx.setLineJoin(.round)
+                for edge in [maxs, mins] {
+                    var pts: [CGPoint] = []
+                    pts.reserveCapacity(columns / step + 1)
+                    for i in stride(from: 0, to: columns, by: step) { pts.append(CGPoint(x: visX0 + (CGFloat(i) + 0.5) / scale, y: mid - CGFloat(edge[i]) * half)) }
+                    ctx.addLines(between: pts); ctx.strokePath()
+                }
+                continue
+            }
             for i in 0..<columns {
                 let px = visX0 + (CGFloat(i) + 0.5) / scale
                 var t = mid - CGFloat(maxs[i]) * half, b = mid - CGFloat(mins[i]) * half
@@ -1399,6 +1419,7 @@ final class TimelineView: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
+        if window?.firstResponder is KeyOwner { window?.makeFirstResponder(nil) } // the arrangement keys come back
         onActivate?()
         let p = convert(event.locationInWindow, from: nil)
         if p.y < Theme.rulerHeight, let m = marker(atPoint: p) {
@@ -1716,8 +1737,10 @@ extension TimelineView {
             layer?.addSublayer(spectrumFan)
             selectionGlow.shadowRadius = 10
         case .manuscript:
-            let caret = CGMutablePath() // a sharp drafting caret
-            caret.move(to: CGPoint(x: -5, y: 2)); caret.addLine(to: CGPoint(x: 5, y: 2)); caret.addLine(to: CGPoint(x: 0, y: 11)); caret.closeSubpath()
+            let caret = CGMutablePath() // a red-pen arrowhead, drawn quickly (a little lopsided)
+            caret.move(to: CGPoint(x: -5.5, y: 1.5)); caret.addQuadCurve(to: CGPoint(x: 0.3, y: 11), control: CGPoint(x: -2.2, y: 5.5))
+            caret.addQuadCurve(to: CGPoint(x: 4.6, y: 2.4), control: CGPoint(x: 2.6, y: 6.2))
+            caret.addQuadCurve(to: CGPoint(x: -5.5, y: 1.5), control: CGPoint(x: -0.4, y: 3.2))
             playheadCap.path = caret
             playheadCap.shadowOpacity = 0
             selectionGlow.lineWidth = 1.25
@@ -1765,7 +1788,8 @@ extension TimelineView {
             if family == .glass {
                 ctx.setFillColor(Theme.ink(0.07).cgColor); ctx.fill(CGRect(x: 0, y: y + lh - 0.5, width: bounds.width, height: 0.5))
             } else {
-                Atelier.rule(ctx, CGPoint(x: 0, y: y + lh - 0.25), CGPoint(x: bounds.width, y: y + lh - 0.25), weight: Atelier.hair, color: Theme.ink(0.3))
+                Atelier.rule(ctx, CGPoint(x: 0, y: y + lh - 0.25), CGPoint(x: bounds.width, y: y + lh - 0.25), weight: Atelier.hair, color: Theme.ink(0.3),
+                             seed: Int(truncatingIfNeeded: t.id) &* 131)
             }
         }
     }
@@ -1780,16 +1804,17 @@ extension TimelineView {
         let lanes = session.tracks.indices.map { (laneY($0), session.laneHeight($0)) }.filter { $0.0 + $0.1 > top && $0.0 < bounds.height }
         for (i, line) in lines.enumerated() {
             let x = (xPos(forFrame: line.frame) * scale).rounded() / scale
-            if line.isBar {
+            if line.isBar { // ruled by hand: each bar line keeps its own wobble (seeded by its bar) as the view scrolls
                 let phrase = (line.bar - 1) % 4 == 0
-                ctx.setFillColor(Theme.ink(phrase ? 0.16 : 0.08).cgColor)
-                ctx.fill(CGRect(x: x, y: top, width: phrase ? max(px, 0.75) : px, height: bounds.height))
+                Atelier.rule(ctx, CGPoint(x: x, y: top), CGPoint(x: x, y: bounds.height), weight: phrase ? 0.9 : 0.5,
+                             color: Theme.ink(phrase ? 0.22 : 0.11), seed: line.bar &* 7_919)
             } else {
                 let spacing = i + 1 < lines.count ? xPos(forFrame: lines[i + 1].frame) - x : 100
-                ctx.setFillColor(Theme.ink(0.28).cgColor)
-                for (y, h) in lanes {
-                    ctx.fill(CGRect(x: x, y: y, width: px, height: 3.5))
-                    ctx.fill(CGRect(x: x, y: y + h - 3.5, width: px, height: 3.5))
+                for (k, (y, h)) in lanes.enumerated() { // quick pen ticks, slightly uneven
+                    let s = Int(line.frame / 97) &+ k
+                    let lean = CGFloat(Atelier.hash(s) - 0.5) * 1.2
+                    Atelier.rule(ctx, CGPoint(x: x, y: y), CGPoint(x: x + lean, y: y + 4), weight: 0.6, color: Theme.ink(0.32), seed: s)
+                    Atelier.rule(ctx, CGPoint(x: x - lean, y: y + h - 4), CGPoint(x: x, y: y + h), weight: 0.6, color: Theme.ink(0.32), seed: s &+ 1)
                 }
                 if spacing > 28 {
                     Atelier.rule(ctx, CGPoint(x: x + px / 2, y: top), CGPoint(x: x + px / 2, y: bounds.height), weight: px, color: Theme.ink(0.07), dash: [1, 3])
@@ -1819,8 +1844,9 @@ extension TimelineView {
             ctx.drawLinearGradient(g, start: CGPoint(x: 0, y: band.minY), end: CGPoint(x: 0, y: band.maxY + 4), options: [])
             ctx.restoreGState()
         } else {
-            ctx.setFillColor((selected ? tint.bodySelected : tint.body).cgColor)
-            ctx.fill(rect)
+            // Atelier: an ink wash in the track's ink, brushed by hand (its edge keeps the clip's own hand).
+            ctx.setFillColor(Theme.laneA.withAlphaComponent(0.55).cgColor); ctx.fill(rect)
+            Atelier.wash(ctx, rect.insetBy(dx: 0.5, dy: 0.5), color: tint.base, alpha: selected ? 0.3 : dim ? 0.1 : 0.19, seed: Int(truncatingIfNeeded: clip.id))
         }
         ctx.addPath(CGPath(roundedRect: rect, cornerWidth: radius, cornerHeight: radius, transform: nil))
         ctx.clip()
@@ -1830,7 +1856,8 @@ extension TimelineView {
                 var yy = rect.minY + titleH + 2
                 while yy < rect.maxY { var xx = rect.minX + (Int(yy) % 6 == 0 ? 0 : 3); while xx < rect.maxX { ctx.fill(CGRect(x: xx, y: yy, width: 1, height: 1)); xx += 6 }; yy += 3 }
             } else {
-                Atelier.hatch(ctx, CGRect(x: rect.minX, y: rect.minY + titleH, width: rect.width, height: rect.height - titleH))
+                Atelier.hatch(ctx, CGRect(x: rect.minX, y: rect.minY + titleH, width: rect.width, height: rect.height - titleH),
+                              spacing: 6, color: Theme.ink(0.2), weight: 0.6, cross: true, seed: Int(truncatingIfNeeded: clip.id))
             }
         }
         if clip.isMidi {
@@ -1862,18 +1889,23 @@ extension TimelineView {
             let n = name as NSString, size = n.size(withAttributes: nameAttrs)
             n.draw(at: CGPoint(x: x0, y: rect.minY + 1), withAttributes: nameAttrs)
             if !tags.isEmpty { (tags.joined(separator: " · ") as NSString).draw(at: CGPoint(x: x0 + size.width + 8, y: rect.minY + 1.5), withAttributes: tagAttrs) }
-            Atelier.rule(ctx, CGPoint(x: rect.minX, y: rect.minY + titleH), CGPoint(x: rect.maxX, y: rect.minY + titleH), weight: Atelier.hair, color: tint.base.withAlphaComponent(0.7))
+            Atelier.rule(ctx, CGPoint(x: rect.minX + 3, y: rect.minY + titleH), CGPoint(x: min(rect.maxX - 3, rect.minX + 6 + size.width + 40), y: rect.minY + titleH),
+                         weight: Atelier.hair, color: tint.base.withAlphaComponent(0.7), seed: Int(truncatingIfNeeded: clip.id) &+ 3)
         }
         ctx.restoreGState()
         if selected || hovered { drawFadeHandles(ctx, clip, rect: rect) }
         if !glass {
-            // The plate's outline: a fine line in the track's ink; selected plates take a heavier ink line and crop marks.
-            ctx.setStrokeColor((selected ? Theme.text : tint.base).cgColor)
-            ctx.setLineWidth(selected ? Atelier.medium : Atelier.fine)
-            ctx.stroke(rect.insetBy(dx: 0.4, dy: 0.4))
-            if selected { Atelier.cropMarks(ctx, rect, weight: Atelier.fine) }
-            // A left margin bar in the track's ink: the clip's start reads at any zoom.
-            ctx.setFillColor(tint.base.cgColor); ctx.fill(CGRect(x: rect.minX, y: rect.minY, width: 2, height: rect.height))
+            // The outline: four pen strokes in the track's ink that overshoot the corners; a selected clip is gone over
+            // again in black ink, with corner ticks.
+            let s = Int(truncatingIfNeeded: clip.id)
+            Atelier.box(ctx, rect.insetBy(dx: 0.5, dy: 0.5), weight: Atelier.fine, color: tint.base.withAlphaComponent(dim ? 0.5 : 0.95), seed: s, overshoot: 3)
+            if selected {
+                Atelier.box(ctx, rect.insetBy(dx: 1, dy: 1), weight: Atelier.medium, color: Theme.text, seed: s &+ 1, overshoot: 4)
+                Atelier.cropMarks(ctx, rect, weight: Atelier.fine, seed: s)
+            }
+            // A broad pen stroke down the start: the clip's start reads at any zoom.
+            Atelier.pen(ctx, Atelier.handPoints(CGPoint(x: rect.minX + 1.2, y: rect.minY + 1), CGPoint(x: rect.minX + 1.2, y: rect.maxY - 1), seed: s &+ 2, wobble: 0.3),
+                        weight: 2.6, color: tint.base, seed: s &+ 2)
         }
     }
 

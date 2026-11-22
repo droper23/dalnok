@@ -277,7 +277,7 @@ class FaceplateScreen: NSView {
         var y = r.minY; i = 0
         while y <= r.maxY { ctx.setFillColor(Theme.ink(i % 4 == 0 ? 0.07 : 0.035).cgColor); ctx.fill(CGRect(x: r.minX, y: y, width: r.width, height: 0.5)); y += 8; i += 1 }
         ctx.restoreGState()
-        ctx.setStrokeColor(Theme.ink(0.75).cgColor); ctx.setLineWidth(Atelier.fine); ctx.stroke(r.insetBy(dx: 0.4, dy: 0.4))
+        Atelier.screen(ctx, r.insetBy(dx: 0.5, dy: 0.5), seed: Atelier.seed(r.origin, CGPoint(x: r.width, y: r.height)))
     }
     func drawScreen(_ dirtyRect: NSRect) {}
 }

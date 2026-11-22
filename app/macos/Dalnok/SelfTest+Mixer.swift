@@ -5,6 +5,131 @@ import AVFoundation
 import DalnokEngine
 
 extension SelfTest {
+    /// Phase 5: drags between the arrangement and slots (one undo step each way), recording into a slot from its record
+    /// mark on the simulated input, and the launch, queued and arrival motion with motion on and with Reduce Motion.
+    func launcherDragsAndRecording(row: Int, track: DalnokTrackId, clip: DalnokClipId) async {
+        let e = s.engine, h = e.handle, lv = w.launcher
+        e.pause()
+        let savedMotion = Motion.override
+        // The simulated input and manual pumping replace the device here; it comes back afterwards if it was running.
+        let hadDevice = dalnok_engine_device_running(h)
+        dalnok_engine_stop_device(h)
+        defer { Motion.override = savedMotion; if hadDevice { try? e.startDevice() } }
+        w.window?.contentView?.layoutSubtreeIfNeeded()
+        // Arrangement → slot 3: drag the clip's body out of the timeline onto the slot.
+        let before = s.track(track)?.clips.count ?? 0, startBefore = s.clip(clip)?.start
+        guard let p = w.timeline.windowPoint(ofClip: clip, zone: "body") else { return check(false, "launcher drag: the clip is on screen") }
+        func center(_ r: CGRect) -> CGPoint { lv.convert(CGPoint(x: r.midX, y: r.midY), to: nil) }
+        let dst = center(lv.slotRect(row: row, slot: 2))
+        Motion.override = true
+        lv.animateChanges() // what's there now is known; only new arrivals animate
+        w.timeline.mouseDown(with: mouse(.leftMouseDown, p))
+        for k in 1...10 {
+            let t = CGFloat(k) / 10
+            w.timeline.mouseDragged(with: mouse(.leftMouseDragged, CGPoint(x: p.x + (dst.x - p.x) * t, y: p.y + (dst.y - p.y) * t)))
+        }
+        w.timeline.mouseUp(with: mouse(.leftMouseUp, dst))
+        let copied = s.slotClip(track, 2)
+        check(copied != nil && s.track(track)?.clips.count == before && s.clip(clip)?.start == startBefore,
+              "dragging a clip from the arrangement onto slot 3 copies it there and the clip stays put")
+        check(e.undoName == "Copy to Launcher", "the drag into the launcher is one undo step (\(e.undoName))")
+        check(copied.map { lv.arrival[$0.id] != nil } == true, "the copy settles into its slot (Motion)")
+        check(perform("Undo") && s.slotClip(track, 2) == nil && s.track(track)?.clips.count == before && s.clip(clip)?.start == startBefore,
+              "one Undo takes the copy out of the slot and leaves the arrangement as it was")
+        check(perform("Redo") && s.slotClip(track, 2) != nil, "Redo puts it back")
+        // Slot 3 → arrangement, 4 bars after the clip's end, on the same lane.
+        guard let slotClip = s.slotClip(track, 2), let orig = s.clip(clip) else { return check(false, "a slot clip to drag out") }
+        let barFrames = s.beatToFrame(s.frameToBeat(Double(orig.start)) + 4) - Double(orig.start) // one 4/4 bar here
+        let tx = w.timeline.bounds.width * 0.8
+        let target = w.timeline.frame(forX: tx)
+        let tl = w.timeline.convert(CGPoint(x: tx, y: w.timeline.laneY(row) + s.laneHeight(row) / 2), to: nil)
+        let from = center(lv.slotRect(row: row, slot: 2))
+        let clipsBefore = s.track(track)?.clips.count ?? 0
+        lv.mouseDown(with: mouse(.leftMouseDown, from))
+        lv.mouseDragged(with: mouse(.leftMouseDragged, CGPoint(x: from.x + 30, y: from.y)))
+        lv.mouseUp(with: mouse(.leftMouseUp, tl))
+        let placed = s.track(track)?.clips.first { $0.id != clip && abs(Double($0.start) - target) < barFrames }
+        check(s.track(track)?.clips.count == clipsBefore + 1 && placed != nil && placed?.length == slotClip.length,
+              "dragging slot 3 onto the lane places a copy at the drop point (\(placed?.start ?? -1) vs \(Int64(target)))")
+        check(e.undoName == "Place Copy" && s.slotClip(track, 2) != nil, "the drag out is one undo step and the slot keeps its clip (\(e.undoName))")
+        check(perform("Undo") && s.track(track)?.clips.count == clipsBefore && s.slotClip(track, 2) != nil,
+              "one Undo removes the placed copy only")
+        // Record into slot 5 from its record mark (simulated audio input, or a played note on an instrument track).
+        // The take keeps the whole bars it covers.
+        let arow = row, atrack = track
+        let midi = s.track(atrack)?.isInstrument == true
+        // Only the launcher's track records (arming is undoable, so change only what has to change).
+        let others = s.tracks.filter { $0.armed && $0.id != atrack }.map(\.id)
+        let wasArmed = s.track(atrack)?.armed == true
+        for t in others { s.setArmed(t, false) }
+        if !wasArmed { s.setArmed(atrack, true) }
+        let armingChanged = !others.isEmpty || !wasArmed
+        lv.needsDisplay = true
+        e.seek(0)
+        let mark = center(lv.recordMarkRect(row: arow, slot: 4))
+        lv.mouseDown(with: mouse(.leftMouseDown, mark)); lv.mouseUp(with: mouse(.leftMouseUp, mark))
+        check(e.isRecording && dalnok_record_slot(h) == 4, "clicking an empty slot's record mark records into that slot")
+        var l = [Float](repeating: 0, count: 512), r = l
+        let input = [Float](repeating: 0.2, count: 512)
+        let blocks = Int((s.beatToFrame(10) / 512).rounded(.up)) + 2 // 2.5 bars
+        var pumped = 0
+        for k in 0..<blocks {
+            if midi && k == blocks / 2 { dalnok_midi_inject(h, 0x90, 64, 100) } // in the middle of bar 2
+            if midi && k == blocks / 2 + 20 { dalnok_midi_inject(h, 0x80, 64, 0) }
+            let ok = midi ? dalnok_engine_pump(h, &l, &r, 512) : dalnok_engine_pump_input(h, input, &l, &r, 512)
+            if ok == DALNOK_OK { pumped += 1 }
+        }
+        let ax = (lv.accessibilityChildren() as? [NSAccessibilityElement])?.compactMap { $0.accessibilityLabel() } ?? []
+        check(ax.contains { $0.hasPrefix("Stop recording into slot 5") }, "VoiceOver: the recording slot is a Stop Recording button")
+        lv.mouseDown(with: mouse(.leftMouseDown, mark)); lv.mouseUp(with: mouse(.leftMouseUp, mark))
+        check(!e.isRecording, "clicking the record mark again stops the take")
+        let take = s.slotClip(atrack, 4)
+        // Recorded from the project start, so whole bars means the clip's length ends on a bar line.
+        check(take != nil && (take?.length ?? 0) > 0 && s.bar(atBeat: s.frameToBeat(Double(take?.length ?? 0))).beatInBar < 1e-6,
+              "the take is in slot 5, cut to whole bars (\(take?.length ?? 0) frames; \(pumped) of \(blocks) blocks; \(w.lastFlashText))")
+        if midi, let take {
+            var ci = DalnokClipInfo()
+            _ = dalnok_clip_info(h, take.id, &ci)
+            check(ci.note_count == 1, "the played note is in the slot clip (\(ci.note_count))")
+        }
+        check(dalnok_record_slot(h) == -1, "takes go to the arrangement again afterwards")
+        check(take.map { lv.arrival[$0.id] != nil } == true, "the recorded clip settles into its slot (Motion)")
+        check(e.undoName == "Record" && perform("Undo") && s.slotClip(atrack, 4) == nil && perform("Redo") && s.slotClip(atrack, 4) != nil,
+              "recording into a slot is one undo step")
+        // Launch motion: a queued launch is reported and drawn until its bar, then light sweeps across the slot.
+        if let take {
+            e.seek(0); e.play()
+            for _ in 0..<4 { dalnok_engine_pump(h, &l, &r, 512) }
+            dalnok_launcher_launch(h, atrack, 4)
+            var at: Int64 = 0
+            check(dalnok_launcher_queued(h, atrack, &at) == 4 && at > e.position, "the launch waits for the next bar (queued at \(at))")
+            let queuedAX = (lv.accessibilityChildren() as? [NSAccessibilityElement])?.first { $0.accessibilityLabel()?.hasPrefix("Slot 5 on") == true }
+            check((queuedAX?.accessibilityValue() as? String) == "starts on the next bar", "VoiceOver: a queued slot says it starts on the next bar")
+            lv.animateChanges()
+            while dalnok_launcher_playing(h, atrack) != 4 && e.position < at + 4096 { dalnok_engine_pump(h, &l, &r, 512) }
+            lv.animateChanges()
+            check(lv.launchSweep[LauncherView.SlotKey(track: atrack, slot: 4)] != nil, "launching sweeps light across the slot (Motion)")
+            try? w.snapshot(to: workdir.appendingPathComponent("launcher-motion.png"))
+            dalnok_launcher_stop_all(h)
+            for _ in 0..<2_000 where dalnok_launcher_playing(h, atrack) != -1 { dalnok_engine_pump(h, &l, &r, 512) }
+            await wait(Motion.gentle * 2) // the motion above has landed
+            // Reduce Motion: nothing animates; states change at once.
+            Motion.override = false
+            lv.animateChanges()
+            dalnok_launcher_launch(h, atrack, 4)
+            for _ in 0..<2_000 where dalnok_launcher_playing(h, atrack) != 4 { dalnok_engine_pump(h, &l, &r, 512) }
+            lv.animateChanges()
+            check(dalnok_launcher_playing(h, atrack) == 4 && lv.launchSweep.isEmpty && lv.arrival.isEmpty && Motion.breathe() == 1,
+                  "with Reduce Motion a launch shows at once and waiting states are steady")
+            dalnok_launcher_stop_all(h)
+            e.pause()
+        }
+        // Leave the undo history as the next steps expect it: the recorded take, any arming and the copy in slot 3 go.
+        for _ in 0..<(armingChanged ? 2 + others.count + (wasArmed ? 0 : 1) : 2) { _ = perform("Undo") }
+        check(s.slotClip(atrack, 4) == nil && s.slotClip(track, 2) == nil && s.tracks.filter(\.armed).map(\.id).sorted() == (others + (wasArmed ? [atrack] : [])).sorted(),
+              "Undo takes the recorded and dragged slot clips out again and restores the arming")
+    }
+
     /// Clip launcher: View ▸ Clip Launcher, copy a selected clip into a slot, launch it on the bar, stop it.
     func launcherSteps() async {
         guard let (row, track) = s.tracks.enumerated().first(where: { !$0.element.isBus && !$0.element.clips.isEmpty }),
@@ -36,6 +161,7 @@ extension SelfTest {
         await wait(2.3) // the stop lands on the next bar (2 s at 120 BPM)
         check(dalnok_launcher_playing(e.handle, track.id) == -1, "clicking it again goes back to the arrangement on the bar")
         e.pause()
+        await launcherDragsAndRecording(row: row, track: track.id, clip: clip.id)
         if (Theme.activeStyle == .warmAnalog) { // tape reels: the take-up pack follows the playhead
             e.seek(0); await wait(0.15)
             let start = w.transport.reels.tapeFraction

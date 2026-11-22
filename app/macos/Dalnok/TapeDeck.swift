@@ -524,6 +524,7 @@ final class TapeDeckController: NSWindowController, NSWindowDelegate {
     init(main: MainWindowController) {
         let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 980, height: 620), styleMask: [.titled, .closable, .resizable, .miniaturizable],
                          backing: .buffered, defer: false)
+        w.autorecalculatesKeyViewLoop = true // Tab follows the layout (keyboard-only use)
         w.title = "Tape Machine"
         w.minSize = NSSize(width: 860, height: 560)
         w.contentAspectRatio = NSSize(width: 980, height: 620)

@@ -59,6 +59,7 @@ func showCentered(_ w: NSWindow) {
 private func panelWindow(_ title: String, size: NSSize) -> NSWindow {
     let w = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.titled, .closable, .resizable],
                      backing: .buffered, defer: false)
+    w.autorecalculatesKeyViewLoop = true // Tab follows the layout (keyboard-only use)
     w.title = title
     w.appearance = Theme.appearance
     w.backgroundColor = Theme.panel
@@ -315,6 +316,8 @@ final class WelcomeController: NSObject, NSTableViewDataSource, NSTableViewDeleg
     private func reset(_ views: [NSView]) {
         content.arrangedSubviews.forEach { $0.removeFromSuperview() }
         views.forEach { content.addArrangedSubview($0) }
+        content.layoutSubtreeIfNeeded()
+        window.recalculateKeyViewLoop() // each step's buttons get a fresh Tab order
     }
 
     // Step 1: where are you coming from?

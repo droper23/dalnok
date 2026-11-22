@@ -50,6 +50,41 @@ extension SelfTest {
             check(finished && w.lastLatencyResult?.measured_frames == 700 && MainWindowController.latencyOffsets[key] == 700 - Int(w.lastLatencyResult?.reported_frames ?? 0),
                   "Measure Recording Latency finds the 700-sample round trip and keeps it (\(w.lastLatencyResult?.measured_frames ?? -1))")
             check(dalnok_engine_pump_input(e.handle, [Float](repeating: 0, count: 512), &l, &r, 512) != DALNOK_OK, "the input closes after measuring")
+            // Every new device stream re-measures on that input, inaudibly; here the device comes up echoing 706 late.
+            check(MainWindowController.latencyChecks[key] == 0, "the measurement turns on the per-stream check on its input")
+            let wasArmed = s.track(track)?.armed == true
+            if !wasArmed { s.setArmed(track, true) }
+            e.seek(Int64(e.sampleRate))
+            check(perform("Record", exact: true) && e.isRecording, "Record opens a new stream")
+            var played: [Float] = []
+            for _ in 0..<150 {
+                let n = played.count
+                let input = (0..<512).map { i -> Float in let k = n + i - 706; return k >= 0 ? played[k] : 0 }
+                dalnok_engine_pump_input(e.handle, input, &l, &r, 512)
+                played += zip(l, r).map { 0.5 * ($0 + $1) }
+            }
+            check(perform("Stop Recording", exact: true) && !e.isRecording, "stop the take")
+            var stream = DalnokLatencyResult()
+            _ = dalnok_latency_auto_result(e.handle, &stream)
+            check(stream.ok && stream.measured_frames == 706, "the new stream measured its own round trip (\(stream.measured_frames))")
+            check(w.lastFlashText.contains("measured round trip (706 samples)"), "the take was placed with it (\(w.lastFlashText))")
+            _ = perform("Undo")
+            if !wasArmed { s.setArmed(track, false) }
+            func checkItem() -> (NSMenu, NSMenuItem?) { // the Recording Input menu is built when it opens
+                let m = NSMenu(); w.buildRecordingInputMenu(m)
+                return (m, m.items.first { $0.title == "Re-measure on Every Device Start" })
+            }
+            let (menu, item) = checkItem()
+            check(item?.state == .on && item?.isEnabled == true, "Audio > Recording Input shows Re-measure on Every Device Start, on")
+            if let item { menu.performActionForItem(at: menu.index(of: item)) }
+            check(MainWindowController.latencyChecks[key] == -1 && checkItem().1?.state == .off, "choosing it turns the check off")
+            let (menu2, item2) = checkItem()
+            if let item2 { menu2.performActionForItem(at: menu2.index(of: item2)) }
+            check(MainWindowController.latencyChecks[key] == 0, "and on again")
+            MainWindowController.latencyChecks = [:]
+            w.syncLatencyCheck(input: DALNOK_SIMULATED_INPUT)
+            e.seek(0) // back where the next step expects the playhead (the seek lands on the next cycle)
+            for _ in 0..<2 { dalnok_engine_pump(e.handle, &l, &r, 512) }
             MainWindowController.latencyOffsets = [:]
         }
         check(perform("Record Enable Track") && s.track(track)?.armed == true, "menu Track > Record Enable Track arms the track")

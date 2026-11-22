@@ -126,6 +126,7 @@ final class CommandPalette: NSObject, NSTableViewDataSource, NSTableViewDelegate
     override init() {
         panel = KeyPanel(contentRect: NSRect(x: 0, y: 0, width: 560, height: 360),
                          styleMask: [.borderless, .fullSizeContentView], backing: .buffered, defer: true)
+        panel.autorecalculatesKeyViewLoop = true // Tab follows the layout (keyboard-only use)
         super.init()
         panel.isFloatingPanel = true
         panel.level = .floating

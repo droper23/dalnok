@@ -122,8 +122,9 @@ final class CompositionOverview: NSView {
             if i == selected {
                 switch family {
                 case .glass: Prism.slab(ctx, CGRect(x: r.minX + 2, y: r.minY, width: r.width - 4, height: r.height), radius: 10, tint: Theme.accent, body: 0.1, lift: 0.6)
-                case .manuscript: Theme.laneHighlight.setFill(); CGRect(x: r.minX, y: r.minY, width: r.width, height: r.height).fill()
-                                  Atelier.vermilion.setFill(); CGRect(x: r.minX, y: r.minY + headerH - 2, width: r.width, height: 2).fill()
+                case .manuscript: Atelier.wash(ctx, r.insetBy(dx: 2, dy: 2), color: Theme.cycle, alpha: 0.12, seed: i &* 13)
+                                  Atelier.pen(ctx, Atelier.handPoints(CGPoint(x: r.minX + 4, y: r.minY + headerH - 1), CGPoint(x: r.maxX - 4, y: r.minY + headerH - 1), seed: i),
+                                              weight: 1.8, color: Atelier.vermilion, seed: i)
                 case .flat: Theme.selectedHeader.setFill(); CGRect(x: r.minX, y: r.minY, width: r.width, height: r.height).fill()
                 }
             }
@@ -141,7 +142,9 @@ final class CompositionOverview: NSView {
         for (k, t) in tracks.enumerated() {
             let y = pad + titleH + headerH + 8 + CGFloat(k) * rowH
             guard y + rowH <= bounds.height - pad else { break }
-            ctx.setFillColor(t.color.cgColor); ctx.fill(CGRect(x: pad + 2, y: y + 6, width: 3, height: rowH - 12))
+            if family == .manuscript {
+                Atelier.pen(ctx, Atelier.handPoints(CGPoint(x: pad + 3.5, y: y + 6), CGPoint(x: pad + 3.5, y: y + rowH - 6), seed: Int(truncatingIfNeeded: t.id)), weight: 3, color: t.color, seed: 1)
+            } else { ctx.setFillColor(t.color.cgColor); ctx.fill(CGRect(x: pad + 2, y: y + 6, width: 3, height: rowH - 12)) }
             (t.name as NSString).draw(at: CGPoint(x: pad + 12, y: y + 7), withAttributes: [.font: Theme.title(11.5, .semibold), .foregroundColor: t.muted ? Theme.textFaint : Theme.text])
             ctx.setFillColor(Theme.ink(0.06).cgColor); ctx.fill(CGRect(x: pad, y: y + rowH - 0.5, width: bounds.width - 2 * pad, height: 0.5))
             for (sec, r) in zip(sections, cols) {
@@ -150,8 +153,9 @@ final class CompositionOverview: NSView {
                 if cov > 0 {
                     switch family {
                     case .glass: Prism.slab(ctx, bar, radius: bar.height / 2, tint: t.color, body: 0.25)
-                    case .manuscript: ctx.setFillColor(t.color.withAlphaComponent(0.22).cgColor); ctx.fill(bar)
-                                      ctx.setStrokeColor(t.color.cgColor); ctx.setLineWidth(Atelier.fine); ctx.stroke(bar.insetBy(dx: 0.4, dy: 0.4))
+                    case .manuscript: let bs = Int(truncatingIfNeeded: t.id) &* 17 &+ Int(bar.minX)
+                                      Atelier.hatch(ctx, bar, spacing: 3, color: t.color.withAlphaComponent(0.6), weight: 0.7, seed: bs)
+                                      Atelier.box(ctx, bar.insetBy(dx: 0.5, dy: 0.5), weight: Atelier.fine, color: t.color, seed: bs, overshoot: 2.5)
                     case .flat: ctx.setFillColor(t.color.withAlphaComponent(0.55).cgColor); ctx.fill(bar)
                     }
                 }
@@ -159,8 +163,11 @@ final class CompositionOverview: NSView {
             }
         }
         if window?.firstResponder === self, cols.indices.contains(selected) {
-            ctx.setStrokeColor(NSColor.keyboardFocusIndicatorColor.cgColor); ctx.setLineWidth(2)
-            ctx.stroke(cols[selected].insetBy(dx: 2, dy: 2))
+            if family == .manuscript { Atelier.box(ctx, cols[selected].insetBy(dx: 2, dy: 2), weight: 2, color: NSColor.keyboardFocusIndicatorColor, seed: selected, overshoot: 4) }
+            else {
+                ctx.setStrokeColor(NSColor.keyboardFocusIndicatorColor.cgColor); ctx.setLineWidth(2)
+                ctx.stroke(cols[selected].insetBy(dx: 2, dy: 2))
+            }
         }
     }
 
