@@ -820,8 +820,7 @@ extension SelfTest {
                 if let i = screen.markers.firstIndex(where: { $0.label == "5" }) {
                     screen.display()
                     let m = screen.markers[i]
-                    let plot = screen.bounds.insetBy(dx: 6, dy: 7)
-                    let at = CGPoint(x: plot.minX + plot.width * CGFloat(log10(m.hz / 20) / 3), y: plot.midY - plot.height / 2 * CGFloat((m.db ?? 0) / ResponseScreen.range))
+                    let at = screen.center(of: m) // where the handle is drawn (each theme lays its plot out its own way)
                     let to = CGPoint(x: at.x + 30, y: at.y - 20)
                     screen.mouseDown(with: mouse(.leftMouseDown, screen.convert(at, to: nil)))
                     screen.mouseDragged(with: mouse(.leftMouseDragged, screen.convert(to, to: nil)))

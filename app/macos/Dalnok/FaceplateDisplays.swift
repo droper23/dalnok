@@ -100,6 +100,11 @@ enum FaceplateDisplay {
 
     /// Display size for a unit whose controls take `rows` rows.
     static func size(_ kind: Kind, rows: Int) -> NSSize {
+        let s = baseSize(kind, rows: rows)
+        // Atelier: room for the figure's caption, and a wider plate for the hall.
+        return Theme.look.devices == .schematic ? NSSize(width: s.width, height: s.height + Codex.captionHeight) : s
+    }
+    private static func baseSize(_ kind: Kind, rows: Int) -> NSSize {
         switch kind {
         case .gainReduction, .vu: NSSize(width: rows > 1 ? 172 : 150, height: rows > 1 ? 120 : 104)
         case .response, .history, .analyzer: NSSize(width: rows > 1 ? 236 : 200, height: rows > 1 ? 140 : 104)
@@ -170,6 +175,10 @@ class FaceplateScreen: NSView {
     var light: CGFloat = 1 { didSet { if light != oldValue { needsDisplay = true } } }
     /// Stable per unit (its name), so each unit's dust stays where it is.
     var seed: UInt64 = 1 { didSet { needsDisplay = true } }
+    /// Atelier: the figure's number in the chain ("Fig. 2"), its display kind and what it depicts (Codex figures).
+    var figureNumber = 1 { didSet { if figureNumber != oldValue { needsDisplay = true } } }
+    var codexKind: FaceplateDisplay.Kind = .scope
+    var codexSubject: Codex.Subject = .plain
     /// Displays that render their own unlit state (the moving-coil meter keeps its face, just without lamps).
     var drawsOwnOffState: Bool { false }
     /// A light face behind the glass (the VU meter's paper): dirt shows dark on it rather than pale.
@@ -180,6 +189,7 @@ class FaceplateScreen: NSView {
     final override func draw(_ dirtyRect: NSRect) {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
         if Theme.look.devices == .cards && !drawsOnGlass { drawOnGlass(ctx, dirtyRect); return }
+        if Theme.look.devices == .schematic && drawCodex(ctx) { return }
         // The screen's contents fade with its backlight into dark glass (fully dark: only the glass is drawn).
         let off = drawsOwnOffState ? 0 : 1 - light
         if off < 0.99 { drawScreen(dirtyRect) }
@@ -821,7 +831,14 @@ final class ResponseScreen: FaceplateScreen {
     /// Index of the band being dragged (its handle is drawn lit).
     private(set) var dragging: Int?
     /// The plotting area inside the bezel (as drawn).
-    private var plotRect: CGRect { bounds.insetBy(dx: 4, dy: 4).insetBy(dx: 2, dy: 3) }
+    private var plotRect: CGRect {
+        Theme.look.devices == .schematic ? Self.codexPlot(bounds) : bounds.insetBy(dx: 4, dy: 4).insetBy(dx: 2, dy: 3)
+    }
+    /// Atelier: the plot inside the figure (axes lettered on the left and below).
+    static func codexPlot(_ bounds: CGRect) -> CGRect {
+        let f = CGRect(x: bounds.minX + 5, y: bounds.minY + 5, width: bounds.width - 10, height: bounds.height - 10 - Codex.captionHeight).insetBy(dx: 1, dy: 1)
+        return CGRect(x: f.minX + 16, y: f.minY + 5, width: f.width - 20, height: f.height - 16)
+    }
     /// Where a band's handle sits: on its gain when it has one, else on the curve (cuts, shelves without gain), else 0 dB.
     func center(of m: Marker) -> CGPoint {
         let plot = plotRect
@@ -1353,5 +1370,378 @@ final class LedAnalyzer: FaceplateScreen {
                                   font: Theme.mono(5.5), color: NSColor(white: 0.55, alpha: 1))
         }
         Screen.finish(ctx, w)
+    }
+}
+
+// MARK: - Codex figures (Atelier)
+
+/// Atelier draws every display as a numbered figure of an engraved plate: the same live data, set out like a diagram in
+/// a natural-philosophy book: a neatline frame, axes lettered in the serif, construction lines, red-ochre ink for the
+/// reading, engraved shading instead of glow, and a caption ("Fig. 2 · Frequency Atlas") beneath.
+@MainActor
+enum Codex {
+    /// What a figure shows beyond its display kind (reverbs are drawn as an acoustic chamber).
+    enum Subject { case plain, chamber, echo }
+    static let captionHeight: CGFloat = 12
+
+    /// What a history display depicts: a hall for reverbs, echoes for delays (from the name, then the parameters).
+    static func subject(kind: FaceplateDisplay.Kind, name: String, parameters: [String]) -> Subject {
+        guard kind == .history else { return .plain }
+        let n = name.lowercased(), t = parameters.map { $0.lowercased() }
+        let verb = ["reverb", "verb", "hall", "room", "plate", "chamber", "space"].contains(where: n.contains)
+            || t.filter { p in ["decay", "room", "size", "pre-delay", "predelay", "diffusion", "damping", "reverb", "early", "late"].contains(where: p.contains) }.count >= 2
+        if verb { return .chamber }
+        return ["delay", "echo", "tape"].contains(where: n.contains) || t.contains { $0.contains("feedback") } ? .echo : .plain
+    }
+
+    static func title(_ kind: FaceplateDisplay.Kind, subject: Subject) -> String {
+        switch (kind, subject) {
+        case (_, .chamber): "Acoustic Chamber"
+        case (_, .echo): "Chronograph of Echoes"
+        case (.response, _): "Frequency Atlas"
+        case (.gainReduction, _): "Indicator of Reduction"
+        case (.vu, _): "Indicator of Level"
+        case (.transfer, _): "Transfer Curve"
+        case (.history, _): "Envelope in Time"
+        case (.goniometer, _): "The Stereo Field"
+        case (.analyzer, _): "Spectral Census"
+        case (.scope, _): "Form of the Wave"
+        }
+    }
+
+    /// The figure's field (above the caption) and the caption itself.
+    static func frame(_ ctx: CGContext, _ bounds: CGRect, figure: Int, title: String) -> CGRect {
+        let field = CGRect(x: bounds.minX + 5, y: bounds.minY + 5, width: bounds.width - 10, height: bounds.height - 10 - captionHeight)
+        ctx.setFillColor(Theme.lcd.cgColor); ctx.fill(field)
+        Atelier.screen(ctx, field)
+        Atelier.note(ctx, "Fig. \(figure) · \(title)", at: CGPoint(x: bounds.midX, y: field.maxY + 3.5), size: 8.5, color: Theme.textDim, align: .center)
+        return field.insetBy(dx: 1, dy: 1)
+    }
+
+    static func label(_ ctx: CGContext, _ s: String, _ p: CGPoint, align: NSTextAlignment = .left, size: CGFloat = 6.5, color: NSColor = Theme.textDim) {
+        Atelier.note(ctx, s, at: p, size: size, color: color, align: align, roman: true)
+    }
+    static func dotted(_ ctx: CGContext, _ a: CGPoint, _ b: CGPoint, alpha: CGFloat = 0.25) {
+        Atelier.rule(ctx, a, b, weight: 0.4, color: Theme.ink(alpha), dash: [1, 2])
+    }
+    /// Engraved fill: vertical rules between `top` and the baseline `y0`, clipped to `area`.
+    static func engrave(_ ctx: CGContext, _ area: CGPath, in r: CGRect, color: NSColor, spacing: CGFloat = 1.8) {
+        ctx.saveGState(); ctx.addPath(area); ctx.clip()
+        Atelier.hatch(ctx, r, spacing: spacing, color: color, weight: 0.45, angle: .pi / 2)
+        ctx.restoreGState()
+    }
+    static func path(_ pts: [CGPoint]) -> CGMutablePath {
+        let p = CGMutablePath()
+        if let f = pts.first { p.move(to: f); for q in pts.dropFirst() { p.addLine(to: q) } }
+        return p
+    }
+}
+
+extension FaceplateScreen {
+    /// Atelier: draws this display as a Codex figure. Returns false where it keeps the plain ink rendering.
+    func drawCodex(_ ctx: CGContext) -> Bool {
+        let f = Codex.frame(ctx, bounds, figure: figureNumber, title: Codex.title(codexKind, subject: codexSubject))
+        ctx.saveGState(); ctx.clip(to: f.insetBy(dx: -0.5, dy: -0.5))
+        defer { ctx.restoreGState() }
+        if poweredOff { ctx.setAlpha(0.45) }
+        switch self {
+        case let s as ResponseScreen: s.codex(ctx, f)
+        case let s as MovingCoilMeter: s.codex(ctx, f)
+        case let s as TransferScreen: s.codex(ctx, f)
+        case let s as HistoryScreen: codexSubject == .chamber ? s.chamber(ctx, f) : s.codex(ctx, f)
+        case let s as GoniometerScreen: s.codex(ctx, f)
+        case let s as LedAnalyzer: s.codex(ctx, f)
+        case let s as ScopeScreen: s.codex(ctx, f)
+        default: return false
+        }
+        return true
+    }
+}
+
+extension ResponseScreen {
+    func codex(_ ctx: CGContext, _ f: CGRect) {
+        let plot = Self.codexPlot(bounds)
+        func x(_ hz: Double) -> CGFloat { plot.minX + plot.width * CGFloat(log10(hz / 20) / 3) }
+        func y(_ db: Double) -> CGFloat { plot.midY - plot.height / 2 * CGFloat(max(-1.05, min(1.05, db / Self.range))) }
+        for hz in [50.0, 200, 500, 2000, 5000] { Codex.dotted(ctx, CGPoint(x: x(hz), y: plot.minY), CGPoint(x: x(hz), y: plot.maxY), alpha: 0.13) }
+        for hz in [100.0, 1000, 10000] { Codex.dotted(ctx, CGPoint(x: x(hz), y: plot.minY), CGPoint(x: x(hz), y: plot.maxY), alpha: 0.3) }
+        for db in [-12.0, -6, 6, 12] { Codex.dotted(ctx, CGPoint(x: plot.minX, y: y(db)), CGPoint(x: plot.maxX, y: y(db)), alpha: 0.22) }
+        Atelier.rule(ctx, CGPoint(x: plot.minX, y: y(0)), CGPoint(x: plot.maxX, y: y(0)), weight: 0.5, color: Theme.ink(0.55))
+        Atelier.rule(ctx, CGPoint(x: plot.minX, y: plot.minY), CGPoint(x: plot.minX, y: plot.maxY), weight: 0.6, color: Theme.ink(0.7))
+        for db in [12.0, 6, 0, -6, -12] {
+            Codex.label(ctx, db == 0 ? "0" : String(format: "%+.0f", db), CGPoint(x: plot.minX - 2, y: y(db) - 4.5), align: .right)
+        }
+        for (hz, t) in [(20.0, "20"), (100, "100"), (1000, "1k"), (10000, "10k"), (20000, "20k")] {
+            Codex.label(ctx, t, CGPoint(x: min(plot.maxX - 4, max(plot.minX + 4, x(hz))), y: plot.maxY + 1), align: .center)
+        }
+        // The spectrum: a fine dotted outline, like a measured profile.
+        if let raw = spectrum, raw.count == Self.frequencies.count, let top = raw.max(), top > -150 {
+            let pts = Self.frequencies.enumerated().map { i, hz -> CGPoint in
+                let lo = max(0, i - 3), hi = min(raw.count - 1, i + 3)
+                let v = raw[lo...hi].reduce(0, +) / Float(hi - lo + 1)
+                return CGPoint(x: x(hz), y: plot.maxY - plot.height * 0.85 * CGFloat(max(0, min(1, (v - top + 60) / 60))))
+            }
+            ctx.saveGState(); ctx.addPath(Codex.path(pts)); ctx.setStrokeColor(Theme.ink(0.35).cgColor); ctx.setLineWidth(0.5)
+            ctx.setLineDash(phase: 0, lengths: [0.8, 1.6]); ctx.strokePath(); ctx.restoreGState()
+        }
+        let red = Atelier.vermilion
+        if let c = curve, c.count == Self.frequencies.count {
+            let pts = Self.frequencies.enumerated().map { CGPoint(x: x($0.element), y: y(c[$0.offset])) }
+            let area = Codex.path(pts); area.addLine(to: CGPoint(x: plot.maxX, y: y(0))); area.addLine(to: CGPoint(x: plot.minX, y: y(0))); area.closeSubpath()
+            Codex.engrave(ctx, area, in: plot, color: red.withAlphaComponent(0.45))
+            ctx.saveGState(); ctx.addPath(Codex.path(pts)); ctx.setStrokeColor(red.cgColor); ctx.setLineWidth(1.2); ctx.setLineJoin(.round)
+            if measured { ctx.setLineDash(phase: 0, lengths: [3, 1.5]) }
+            ctx.strokePath(); ctx.restoreGState()
+        }
+        // Bands: small turned rings, numbered; the moved ones annotated with frequency and gain on a leader.
+        var annotated = 0
+        for (i, m) in markers.enumerated() where m.hz >= 20 && m.hz <= 20_000 {
+            let p = center(of: m), lit = dragging == i
+            let d = CGRect(x: p.x - 4, y: p.y - 4, width: 8, height: 8)
+            ctx.setFillColor((lit ? red : Theme.lcd).cgColor); ctx.fillEllipse(in: d)
+            Atelier.loop(ctx, d, weight: 0.7, color: m.on ? Theme.text : Theme.textFaint)
+            if !m.on { Atelier.rule(ctx, CGPoint(x: d.minX, y: d.maxY), CGPoint(x: d.maxX, y: d.minY), weight: 0.5, color: Theme.textFaint) }
+            Codex.label(ctx, m.label, CGPoint(x: p.x, y: p.y - 3.8), align: .center, size: 5.5, color: lit ? Theme.lcd : Theme.text)
+            if let db = m.db, m.on, abs(db) >= 0.5 || lit, annotated < 3, plot.width > 150 {
+                annotated += 1
+                let up = db >= 0, ty = up ? p.y - 15 : p.y + 9
+                Atelier.rule(ctx, CGPoint(x: p.x, y: up ? d.minY : d.maxY), CGPoint(x: p.x, y: up ? ty + 8 : ty), weight: 0.4, color: Theme.ink(0.4))
+                let hz = m.hz >= 1000 ? String(format: "%.1f kHz", m.hz / 1000) : String(format: "%.0f Hz", m.hz)
+                Atelier.note(ctx, "\(hz)  \(String(format: "%+.1f dB", db))", at: CGPoint(x: p.x, y: ty - (up ? 2 : 0)), size: 6.5, color: Theme.textDim, align: .center)
+            }
+        }
+        if measured { Atelier.note(ctx, "measured", at: CGPoint(x: plot.maxX - 2, y: plot.minY), size: 7, align: .right) }
+    }
+}
+
+extension MovingCoilMeter {
+    /// An engraved indicator, like a dial on a surveying instrument: graduated arc, numerals in the serif, a red-ochre
+    /// zone, and a long lozenge needle swinging from a pivot below the scale.
+    func codex(_ ctx: CGContext, _ f: CGRect) {
+        let pivot = CGPoint(x: f.midX, y: f.maxY + f.height * 0.25)
+        let radius = min(f.width * 0.55, (pivot.y - f.minY) - 10)
+        let span = 0.78
+        func ang(_ pos: Double) -> CGFloat { CGFloat(-.pi / 2 - span + 2 * span * pos) }
+        func pt(_ a: CGFloat, _ r: CGFloat) -> CGPoint { CGPoint(x: pivot.x + r * cos(a), y: pivot.y + r * sin(a)) }
+        Atelier.construction(ctx, circle: CGRect(x: pivot.x - radius * 0.55, y: pivot.y - radius * 0.55, width: radius * 1.1, height: radius * 1.1))
+        ctx.setStrokeColor(Theme.ink(0.75).cgColor); ctx.setLineWidth(0.6)
+        ctx.addArc(center: pivot, radius: radius, startAngle: ang(0), endAngle: ang(1), clockwise: false); ctx.strokePath()
+        ctx.setLineWidth(0.4)
+        ctx.addArc(center: pivot, radius: radius - 6, startAngle: ang(0), endAngle: ang(1), clockwise: false); ctx.strokePath()
+        let marks: [(Double, String)] = mode == .gainReduction
+            ? [0, 1, 2, 3, 5, 7, 10, 20].map { (Self.reductionPosition(Double($0)), $0 == 0 ? "0" : "\($0)") }
+            : [(-20.0, "20"), (-10, "10"), (-7, "7"), (-5, "5"), (-3, "3"), (-1, "1"), (0, "0"), (1, "1"), (3, "3")].map { (Self.position($0.0), $0.1) }
+        // The hot zone (reduction past 10 dB, or level past 0 VU): engraved red between the two arcs.
+        let hot = mode == .gainReduction ? (Self.reductionPosition(20), Self.reductionPosition(10)) : (Self.position(0), Self.position(3))
+        let zone = CGMutablePath()
+        zone.addArc(center: pivot, radius: radius, startAngle: ang(min(hot.0, hot.1)), endAngle: ang(max(hot.0, hot.1)), clockwise: false)
+        zone.addArc(center: pivot, radius: radius - 6, startAngle: ang(max(hot.0, hot.1)), endAngle: ang(min(hot.0, hot.1)), clockwise: true)
+        zone.closeSubpath()
+        Codex.engrave(ctx, zone, in: f, color: Atelier.vermilion.withAlphaComponent(0.7), spacing: 1.4)
+        for i in 0...40 {
+            let pos = Double(i) / 40, a = ang(pos)
+            Atelier.rule(ctx, pt(a, radius - 6), pt(a, radius - (i % 5 == 0 ? 0 : 3)), weight: 0.35, color: Theme.ink(0.55))
+        }
+        for (pos, t) in marks {
+            let a = ang(pos)
+            Atelier.rule(ctx, pt(a, radius - 6), pt(a, radius + 2), weight: 0.6, color: Theme.ink(0.85))
+            let q = pt(a, radius + 7)
+            Codex.label(ctx, t, CGPoint(x: q.x, y: q.y - 4.5), align: .center, size: 7, color: Theme.text)
+        }
+        Atelier.note(ctx, mode == .gainReduction ? "dB of reduction" : "VU", at: CGPoint(x: pivot.x, y: pivot.y - radius * 0.45 - 2), size: 7.5, align: .center)
+        Atelier.needle(ctx, center: pivot, angle: ang(max(-0.01, min(1.06, needle))), length: radius + 1)
+    }
+}
+
+extension TransferScreen {
+    func codex(_ ctx: CGContext, _ f: CGRect) {
+        let side = min(f.width - 16, f.height - 14)
+        let plot = CGRect(x: f.midX - side / 2 + 4, y: f.minY + 4, width: side, height: side)
+        Atelier.construction(ctx, circle: plot)
+        Codex.dotted(ctx, CGPoint(x: plot.midX, y: plot.minY), CGPoint(x: plot.midX, y: plot.maxY), alpha: 0.35)
+        Codex.dotted(ctx, CGPoint(x: plot.minX, y: plot.midY), CGPoint(x: plot.maxX, y: plot.midY), alpha: 0.35)
+        Atelier.rule(ctx, CGPoint(x: plot.minX, y: plot.maxY), CGPoint(x: plot.maxX, y: plot.minY), weight: 0.4, color: Theme.ink(0.35), dash: [3, 2])
+        Atelier.box(ctx, plot, weight: 0.5, color: Theme.ink(0.6))
+        for (k, pts) in frames.enumerated() {
+            ctx.setFillColor((k == frames.count - 1 ? Atelier.vermilion : Theme.ink(0.3)).cgColor)
+            for p in pts { ctx.fill(CGRect(x: plot.midX + p.x * plot.width / 2 - 0.5, y: plot.midY - p.y * plot.height / 2 - 0.5, width: 1, height: 1)) }
+        }
+        Codex.label(ctx, "in", CGPoint(x: plot.maxX + 2, y: plot.midY - 4.5), size: 7)
+        Codex.label(ctx, "out", CGPoint(x: plot.midX + 2, y: plot.minY), size: 7)
+    }
+}
+
+extension HistoryScreen {
+    func codex(_ ctx: CGContext, _ f: CGRect) {
+        let plot = CGRect(x: f.minX + 16, y: f.minY + 6, width: f.width - 20, height: f.height - 12)
+        func y(_ db: Float) -> CGFloat { plot.minY + plot.height * CGFloat(max(0, min(1, -db / 60))) }
+        func x(_ i: Int) -> CGFloat { plot.minX + plot.width * CGFloat(i) / CGFloat(Self.columns - 1) }
+        for db: Float in [-20, -40] { Codex.dotted(ctx, CGPoint(x: plot.minX, y: y(db)), CGPoint(x: plot.maxX, y: y(db))) }
+        for db: Float in [0, -20, -40, -60] { Codex.label(ctx, db == 0 ? "0" : String(format: "%.0f", db), CGPoint(x: plot.minX - 2, y: y(db) - 4.5), align: .right) }
+        Atelier.rule(ctx, CGPoint(x: plot.minX, y: plot.minY), CGPoint(x: plot.minX, y: plot.maxY), weight: 0.6, color: Theme.ink(0.7))
+        Atelier.rule(ctx, CGPoint(x: plot.minX, y: plot.maxY), CGPoint(x: plot.maxX, y: plot.maxY), weight: 0.6, color: Theme.ink(0.7))
+        Atelier.arrowhead(ctx, at: CGPoint(x: plot.maxX + 1, y: plot.maxY), angle: 0, color: Theme.ink(0.7), size: 5)
+        let out = output.enumerated().map { CGPoint(x: x($0.offset), y: y($0.element)) }
+        let area = Codex.path(out); area.addLine(to: CGPoint(x: plot.maxX, y: plot.maxY)); area.addLine(to: CGPoint(x: plot.minX, y: plot.maxY)); area.closeSubpath()
+        Codex.engrave(ctx, area, in: plot, color: Atelier.vermilion.withAlphaComponent(0.4))
+        ctx.saveGState(); ctx.addPath(Codex.path(out)); ctx.setStrokeColor(Atelier.vermilion.cgColor); ctx.setLineWidth(1); ctx.strokePath()
+        ctx.addPath(Codex.path(input.enumerated().map { CGPoint(x: x($0.offset), y: y($0.element)) }))
+        ctx.setStrokeColor(Theme.ink(0.6).cgColor); ctx.setLineWidth(0.5); ctx.setLineDash(phase: 0, lengths: [2, 1.5]); ctx.strokePath(); ctx.restoreGState()
+        Atelier.note(ctx, "A(t) = A₀ e^(−t/τ)", at: CGPoint(x: plot.maxX - 2, y: plot.minY), size: 7.5, align: .right)
+        Codex.label(ctx, "t", CGPoint(x: plot.maxX - 4, y: plot.maxY - 10), size: 7)
+    }
+
+    /// Reverbs: a vaulted hall in one-point perspective (an arcade of columns down each side, a coffered floor), with
+    /// sound rays from the source reflecting to the listener; the rays darken with the output level.
+    func chamber(_ ctx: CGContext, _ f: CGRect) {
+        let lvl = CGFloat(max(0, min(1, (latest.output + 60) / 60)))
+        let ink = Theme.ink(0.7), faint = Theme.ink(0.3)
+        let outer = CGRect(x: f.minX + 6, y: f.minY + 10, width: f.width - 12, height: f.height - 14)
+        let back = CGRect(x: outer.midX - outer.width * 0.17, y: outer.minY + outer.height * 0.32, width: outer.width * 0.34, height: outer.height * 0.42)
+        let vp = CGPoint(x: back.midX, y: back.midY)
+        // Vault: the front arch and the back arch, joined by ribs.
+        let front = CGRect(x: outer.minX, y: outer.minY, width: outer.width, height: outer.height)
+        // A flattened (elliptical) arch springing at `spring` below the top of `r`.
+        func arch(_ r: CGRect, rise: CGFloat) -> CGPath {
+            let p = CGMutablePath()
+            p.move(to: CGPoint(x: r.minX, y: r.maxY)); p.addLine(to: CGPoint(x: r.minX, y: r.minY + rise))
+            let t = CGAffineTransform(translationX: r.midX, y: r.minY + rise).scaledBy(x: r.width / 2, y: rise)
+            p.addArc(center: .zero, radius: 1, startAngle: .pi, endAngle: 2 * .pi, clockwise: false, transform: t)
+            p.addLine(to: CGPoint(x: r.maxX, y: r.maxY)); return p
+        }
+        func archPoint(_ r: CGRect, rise: CGFloat, _ a: CGFloat) -> CGPoint { CGPoint(x: r.midX + cos(a) * r.width / 2, y: r.minY + rise + sin(a) * rise) }
+        let frontArch = front.insetBy(dx: 1, dy: 1), frontRise = frontArch.height * 0.38
+        let backArch = CGRect(x: back.minX, y: back.minY - back.height * 0.45, width: back.width, height: back.height * 1.45), backRise = backArch.height * 0.32
+        ctx.saveGState(); ctx.addPath(arch(frontArch, rise: frontRise)); ctx.setStrokeColor(ink.cgColor); ctx.setLineWidth(0.8); ctx.strokePath()
+        ctx.addPath(arch(backArch, rise: backRise)); ctx.setLineWidth(0.6); ctx.strokePath(); ctx.restoreGState()
+        for k in 0...8 { // vault ribs (coffers) from the front arch to the back arch
+            let a = CGFloat.pi + .pi * CGFloat(k) / 8
+            Atelier.rule(ctx, archPoint(frontArch, rise: frontRise, a), archPoint(backArch, rise: backRise, a), weight: 0.35, color: faint)
+        }
+        for k in 1...3 { // transverse arches of the vault, receding
+            let t = pow(CGFloat(k) / 4, 1.3)
+            let r = CGRect(x: frontArch.minX + (backArch.minX - frontArch.minX) * t, y: frontArch.minY + (backArch.minY - frontArch.minY) * t,
+                           width: frontArch.width + (backArch.width - frontArch.width) * t, height: 0)
+            let rise = frontRise + (backRise - frontRise) * t
+            let half = CGMutablePath()
+            half.addArc(center: .zero, radius: 1, startAngle: .pi, endAngle: 2 * .pi, clockwise: false,
+                        transform: CGAffineTransform(translationX: r.midX, y: r.minY + rise).scaledBy(x: r.width / 2, y: rise))
+            ctx.saveGState(); ctx.addPath(half); ctx.setStrokeColor(faint.cgColor); ctx.setLineWidth(0.45); ctx.strokePath(); ctx.restoreGState()
+        }
+        // Floor: lines to the vanishing point and transverse joints closing up with distance.
+        for k in 0...8 {
+            let x0 = front.minX + front.width * CGFloat(k) / 8
+            let t = (back.maxY - vp.y) / (front.maxY - vp.y)
+            Atelier.rule(ctx, CGPoint(x: x0, y: front.maxY), CGPoint(x: vp.x + (x0 - vp.x) * t, y: back.maxY), weight: 0.35, color: faint)
+        }
+        for k in 1...5 {
+            let t = pow(CGFloat(k) / 6, 1.6), yy = front.maxY + (back.maxY - front.maxY) * t
+            let half = front.width / 2 + (back.width / 2 - front.width / 2) * t
+            Atelier.rule(ctx, CGPoint(x: vp.x - half, y: yy), CGPoint(x: vp.x + half, y: yy), weight: 0.35, color: faint)
+        }
+        // Arcades: columns down each side, receding.
+        for side in [-1.0, 1.0] as [CGFloat] {
+            for k in 0..<4 {
+                let t = CGFloat(k) / 4 + 0.08
+                let xx = vp.x + side * (front.width / 2 + (back.width / 2 - front.width / 2) * t)
+                let top = frontArch.minY + frontRise + (backArch.minY + backRise - frontArch.minY - frontRise) * t
+                let bottom = front.maxY + (back.maxY - front.maxY) * t
+                let w = 3.5 * (1 - t * 0.7)
+                ctx.setFillColor(Theme.lcd.cgColor); ctx.fill(CGRect(x: xx - w / 2, y: top, width: w, height: bottom - top))
+                Atelier.box(ctx, CGRect(x: xx - w / 2, y: top, width: w, height: bottom - top), weight: 0.4, color: ink)
+                Atelier.hatch(ctx, CGRect(x: xx, y: top, width: w / 2, height: bottom - top), spacing: 1.2, color: faint, weight: 0.3, angle: .pi / 2)
+            }
+        }
+        Atelier.box(ctx, back, weight: 0.5, color: ink)
+        Atelier.hatch(ctx, back.insetBy(dx: 1, dy: 1), spacing: 2.5, color: Theme.ink(0.14), weight: 0.35, angle: .pi / 2)
+        // Source and listener, and the rays between them by way of the walls.
+        let src = CGPoint(x: front.minX + front.width * 0.28, y: front.maxY - front.height * 0.18)
+        let lis = CGPoint(x: front.minX + front.width * 0.74, y: front.maxY - front.height * 0.14)
+        let hits = [CGPoint(x: back.minX + 4, y: back.midY), CGPoint(x: back.maxX - 3, y: back.minY + 6), archPoint(backArch, rise: backRise, 1.5 * .pi),
+                    CGPoint(x: front.maxX - front.width * 0.12, y: front.minY + front.height * 0.45)]
+        let ray = Atelier.vermilion.withAlphaComponent(0.25 + 0.65 * lvl)
+        for h in hits {
+            Atelier.rule(ctx, src, h, weight: 0.6, color: ray, dash: [2.5, 1.5])
+            Atelier.rule(ctx, h, lis, weight: 0.6, color: ray, dash: [2.5, 1.5])
+            Atelier.arrowhead(ctx, at: CGPoint(x: (h.x + lis.x) / 2, y: (h.y + lis.y) / 2), angle: atan2(lis.y - h.y, lis.x - h.x), color: ray, size: 4)
+        }
+        ctx.setFillColor(Theme.text.cgColor)
+        ctx.fillEllipse(in: CGRect(x: src.x - 2, y: src.y - 2, width: 4, height: 4))
+        Atelier.rule(ctx, CGPoint(x: src.x, y: src.y + 2), CGPoint(x: src.x, y: src.y + 8), weight: 0.7, color: Theme.text)
+        Atelier.loop(ctx, CGRect(x: lis.x - 2.5, y: lis.y - 2.5, width: 5, height: 5), weight: 0.7, color: Theme.text)
+        Atelier.callout(ctx, "A", from: src, to: CGPoint(x: src.x - 10, y: src.y - 6))
+        let crown = archPoint(frontArch, rise: frontRise, 1.5 * .pi)
+        Atelier.callout(ctx, "B", from: CGPoint(x: crown.x + 30, y: crown.y + 6), to: CGPoint(x: crown.x + 44, y: crown.y + 2))
+        Atelier.callout(ctx, "C", from: lis, to: CGPoint(x: lis.x + 10, y: lis.y - 6))
+    }
+}
+
+extension GoniometerScreen {
+    func codex(_ ctx: CGContext, _ f: CGRect) {
+        let bar: CGFloat = 12
+        let r = min(f.width, f.height - bar) / 2 - 4
+        let c = CGPoint(x: f.midX, y: f.minY + 4 + r)
+        let disc = CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r)
+        Atelier.loop(ctx, disc, weight: 0.6, color: Theme.ink(0.7))
+        Atelier.construction(ctx, circle: disc.insetBy(dx: r * 0.5, dy: r * 0.5))
+        for a in [0.0, .pi / 4, .pi / 2, 3 * .pi / 4] {
+            Codex.dotted(ctx, CGPoint(x: c.x - r * CGFloat(cos(a)), y: c.y - r * CGFloat(sin(a))), CGPoint(x: c.x + r * CGFloat(cos(a)), y: c.y + r * CGFloat(sin(a))), alpha: 0.3)
+        }
+        Codex.label(ctx, "L", CGPoint(x: c.x - r * 0.72 - 6, y: c.y - r * 0.72 - 9), size: 7)
+        Codex.label(ctx, "R", CGPoint(x: c.x + r * 0.72 + 1, y: c.y - r * 0.72 - 9), size: 7)
+        Codex.label(ctx, "M", CGPoint(x: c.x + 2, y: disc.minY - 1), size: 7)
+        ctx.saveGState(); ctx.addEllipse(in: disc); ctx.clip()
+        for (k, pts) in frames.enumerated() {
+            ctx.setFillColor((k == frames.count - 1 ? Atelier.vermilion : Theme.ink(0.25)).cgColor)
+            for q in pts { ctx.fill(CGRect(x: c.x + q.x * gain * r - 0.5, y: c.y - q.y * gain * r - 0.5, width: 1, height: 1)) }
+        }
+        ctx.restoreGState()
+        let line = CGRect(x: f.minX + 14, y: f.maxY - 6, width: f.width - 28, height: 0)
+        Atelier.rule(ctx, CGPoint(x: line.minX, y: line.minY), CGPoint(x: line.maxX, y: line.minY), weight: 0.5, color: Theme.ink(0.7))
+        for k in 0...4 { let x = line.minX + line.width * CGFloat(k) / 4; Atelier.rule(ctx, CGPoint(x: x, y: line.minY - 2), CGPoint(x: x, y: line.minY + 2), weight: 0.5, color: Theme.ink(0.7)) }
+        Codex.label(ctx, "−1", CGPoint(x: line.minX - 2, y: line.minY - 4.5), align: .right)
+        Codex.label(ctx, "+1", CGPoint(x: line.maxX + 2, y: line.minY - 4.5))
+        let mx = line.minX + line.width * CGFloat((correlation + 1) / 2)
+        Atelier.arrowhead(ctx, at: CGPoint(x: mx, y: line.minY), angle: .pi / 2, color: Atelier.vermilion, size: 5)
+    }
+}
+
+extension LedAnalyzer {
+    func codex(_ ctx: CGContext, _ f: CGRect) {
+        let plot = CGRect(x: f.minX + 6, y: f.minY + 4, width: f.width - 12, height: f.height - 14)
+        let n = Self.bands.count, w = plot.width / CGFloat(n)
+        Atelier.rule(ctx, CGPoint(x: plot.minX, y: plot.maxY), CGPoint(x: plot.maxX, y: plot.maxY), weight: 0.6, color: Theme.ink(0.7))
+        for i in 0..<n {
+            let v = CGFloat(max(0, min(1, (levels[i] - top + 48) / 48)))
+            let col = CGRect(x: plot.minX + CGFloat(i) * w + 1, y: plot.maxY - plot.height * v, width: w - 2, height: plot.height * v)
+            if col.height > 0.5 {
+                Atelier.hatch(ctx, col, spacing: 1.5, color: Theme.ink(0.65), weight: 0.45)
+                Atelier.box(ctx, col, weight: 0.4, color: Theme.ink(0.75))
+            }
+            let pk = CGFloat(max(0, min(1, (peaks[i] - top + 48) / 48)))
+            if pk > 0.02 { Atelier.rule(ctx, CGPoint(x: col.minX, y: plot.maxY - plot.height * pk), CGPoint(x: col.maxX, y: plot.maxY - plot.height * pk), weight: 0.8, color: Atelier.vermilion) }
+        }
+        for (i, t) in [(2, "63"), (9, "250"), (15, "1k"), (21, "4k")] where i < n {
+            Codex.label(ctx, t, CGPoint(x: plot.minX + (CGFloat(i) + 0.5) * w, y: plot.maxY + 0.5), align: .center, size: 6)
+        }
+    }
+}
+
+extension ScopeScreen {
+    func codex(_ ctx: CGContext, _ f: CGRect) {
+        let plot = f.insetBy(dx: 6, dy: 6)
+        for i in 1..<8 { let x = plot.minX + plot.width * CGFloat(i) / 8; Codex.dotted(ctx, CGPoint(x: x, y: plot.minY), CGPoint(x: x, y: plot.maxY), alpha: 0.15) }
+        Atelier.rule(ctx, CGPoint(x: plot.minX, y: plot.midY), CGPoint(x: plot.maxX, y: plot.midY), weight: 0.5, color: Theme.ink(0.5))
+        Atelier.arrowhead(ctx, at: CGPoint(x: plot.maxX + 2, y: plot.midY), angle: 0, color: Theme.ink(0.5), size: 4)
+        Atelier.construction(ctx, circle: CGRect(x: plot.midX - plot.height / 2, y: plot.minY, width: plot.height, height: plot.height))
+        for (k, t) in traces.enumerated() {
+            let pts = t.enumerated().map { CGPoint(x: plot.minX + plot.width * CGFloat($0.offset) / CGFloat(max(1, t.count - 1)),
+                                                   y: plot.midY - plot.height * 0.45 * CGFloat(max(-1, min(1, $0.element * gain)))) }
+            ctx.saveGState(); ctx.addPath(Codex.path(pts))
+            ctx.setStrokeColor((k == traces.count - 1 ? Atelier.vermilion : Theme.ink(0.18)).cgColor); ctx.setLineWidth(k == traces.count - 1 ? 0.9 : 0.5)
+            ctx.strokePath(); ctx.restoreGState()
+        }
+        Codex.label(ctx, "t", CGPoint(x: plot.maxX - 6, y: plot.midY + 1), size: 7)
+        Codex.label(ctx, "A", CGPoint(x: plot.minX + 2, y: plot.minY), size: 7)
     }
 }

@@ -223,6 +223,13 @@ final class EmptyStateView: NSView, NSTextFieldDelegate {
             stack.centerYAnchor.constraint(equalTo: centerYAnchor, constant: -20),
         ])
         entrance = [head, left, right]
+        if Theme.activeStyle == .atelier { // the frontispiece's figure, bottom right
+            let fig = DiapasonView()
+            fig.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(fig)
+            NSLayoutConstraint.activate([fig.widthAnchor.constraint(equalToConstant: 230), fig.heightAnchor.constraint(equalToConstant: 120),
+                                         fig.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -48), fig.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -40)])
+        }
     }
     required init?(coder: NSCoder) { fatalError() }
 
@@ -376,4 +383,17 @@ final class EmptyStateView: NSView, NSTextFieldDelegate {
     @objc private func audioTapped() { onAudioSettings?() }
     @objc private func newInstrumentTapped() { onNewInstrument?() }
     @objc private func newAudioTapped() { onNewAudioTrack?() }
+}
+
+/// Atelier: Fig. 1 of the frontispiece (a tuning fork and its sine). Decoration only.
+@MainActor
+final class DiapasonView: NSView {
+    override var isFlipped: Bool { true }
+    override init(frame: NSRect) { super.init(frame: frame); setAccessibilityElement(false) }
+    required init?(coder: NSCoder) { fatalError() }
+    override func draw(_ dirtyRect: NSRect) {
+        guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+        Atelier.diapason(ctx, bounds)
+    }
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }

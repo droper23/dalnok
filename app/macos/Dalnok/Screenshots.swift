@@ -6,6 +6,12 @@ import DalnokEngine
 
 @MainActor
 enum Screenshots {
+    /// The plug-in chain galleries put on a track; DALNOK_GALLERY_CHAIN (comma-separated paths) replaces it for reviews.
+    static var chain: [String] {
+        ProcessInfo.processInfo.environment["DALNOK_GALLERY_CHAIN"].map { $0.split(separator: ",").map(String.init) }
+            ?? ["dalnok:channel-eq", "dalnok:compressor", "au:aufx:dely:appl"]
+    }
+
     static func png(_ view: NSView, _ url: URL) {
         guard var rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
         // DALNOK_SNAPSHOT_SCALE=2: a Retina-resolution capture whatever screen (or none) the window is on.
@@ -171,7 +177,7 @@ enum Screenshots {
             // A device chain of built-in plug-ins and one of Apple's Audio Units (never the owner's).
             if let t = tracks.first?.id {
                 w.headers.selectedTrack = t
-                for path in ["dalnok:channel-eq", "dalnok:compressor", "au:aufx:dely:appl"] { _ = try? s.addPlugin(t, path: path) }
+                for path in Screenshots.chain { _ = try? s.addPlugin(t, path: path) }
                 if let comp = s.track(t)?.plugins.dropFirst().first?.id, tracks.count > 1 { dalnok_plugin_set_sidechain(s.engine.handle, t, comp, tracks[1].id) }
             }
             let devicesWereShown = MainWindowController.showDevicePanel
