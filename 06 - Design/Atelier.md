@@ -1,6 +1,6 @@
 ---
 created: 2026-11-21
-status: implemented (light and dark); composition overview not built yet
+status: implemented (light and dark), including the composition overview
 related: "[[Theme System]]", "[[Prism]]"
 ---
 # Atelier: the composer's workspace
@@ -59,9 +59,10 @@ It is meant for beat-making, mixing and recording as much as for composing, and 
 4. **Velocity as line weight.** In the piano roll, loud notes are drawn heavier, the way a draughtsman weights lines.
 5. **Schematic devices.** Signal flow and every display read as a technical drawing.
 
-## Not built yet
-- **Composition overview** (a zoomed-out roadmap of sections, groups and automation from real project data). Planned;
-  not implemented in this pass.
+## Composition overview
+View ▸ Composition Overview (⌥⌘O, every theme): a zoomed-out roadmap of the session's sections (from markers, or
+eight-bar ranges when there are none), which tracks play in each, and a volume-automation line, all from project data.
+←/→ choose a section, Return jumps there, Esc closes; each section is a VoiceOver button.
 
 ## Accessibility
 Text is ink on paper (contrast well above 7:1 for body text). States are always a shape: solid versus outlined chips,
