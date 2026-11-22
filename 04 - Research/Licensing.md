@@ -15,6 +15,13 @@ Band are allowed only as optional, clearly isolated components after an ADR.
 | zlib (system `libz`) | zlib | Decompressing Ableton `.als` |
 | Signalsmith Stretch 1.4.0 + Signalsmith Linear 0.6.6 (vendored in `engine/third_party/signalsmith`) | MIT | Time-stretch and pitch shift |
 | Apple Accelerate | System | FFTs for Signalsmith; the engine's mix kernels (vDSP, A-13; platform/macos/vec_accelerate.cpp) |
+| Sora (Regular, SemiBold), Geist Mono (Light, Regular, Medium) | SIL OFL 1.1 | Prism's label and figure faces (`app/macos/Dalnok/Resources/Fonts`, static instances cut from the variable fonts; no Reserved Font Names) |
+| IBM Plex Sans Condensed (Regular, Medium, SemiBold), IBM Plex Mono (Regular, Medium) | SIL OFL 1.1 | Atelier's label and figure faces (unmodified files; "Plex" is a Reserved Font Name, so they are never altered or renamed) |
+| Source Serif 4 (16 pt Regular, SemiBold, Italic; 48 pt Regular) | SIL OFL 1.1 | Atelier's titles, notes and clock (static instances of the variable font; no Reserved Font Names) |
+
+SIL OFL fonts are bundled with their licence files (`OFL-*.txt` beside them). The OFL permits bundling with any
+software, GPL included, as long as the fonts aren't sold on their own; modified versions (our static instances) must not
+use a Reserved Font Name.
 
 ## Planned
 | Dependency | License | Use |

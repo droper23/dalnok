@@ -28,6 +28,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     let session: Session
     let palette = CommandPalette()
     let emptyState = EmptyStateView()
+    /// View ▸ Composition Overview: the project as a roadmap of its sections, over the tracks and arrangement.
+    private(set) lazy var overview: CompositionOverview = {
+        let o = CompositionOverview(session: session)
+        o.onChoose = { [weak self] sec in self?.showSection(sec) }
+        o.onClose = { [weak self] in self?.setOverview(false) }
+        return o
+    }()
     /// Names invisible actions as they happen (Undo Move Clip, Saved).
     let toast = ToastView()
     let countInOverlay = CountInOverlay()
@@ -230,7 +237,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             }
         }
         window.contentView = root
-        for v in [transport, headers, launcher, timeline, mixer, devicePanel, emptyState, countInOverlay, toast] as [NSView] {
+        for v in [transport, headers, launcher, timeline, mixer, devicePanel, emptyState, overview, countInOverlay, toast] as [NSView] {
             v.translatesAutoresizingMaskIntoConstraints = false
             root.addSubview(v)
         }
@@ -260,6 +267,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             emptyState.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             emptyState.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             emptyState.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            overview.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            overview.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            overview.topAnchor.constraint(equalTo: transport.bottomAnchor),
+            overview.bottomAnchor.constraint(equalTo: mixer.topAnchor),
             countInOverlay.leadingAnchor.constraint(equalTo: timeline.leadingAnchor),
             countInOverlay.trailingAnchor.constraint(equalTo: timeline.trailingAnchor),
             countInOverlay.topAnchor.constraint(equalTo: timeline.topAnchor),
@@ -398,6 +409,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             self.updateTitle()
         }
         session.onMessage = { [weak self] msg in self?.flash(msg) }
+        overview.isHidden = true
         emptyState.isHidden = true // modelChanged shows it if the project has no tracks (also for a rebuilt window)
         modelChanged()
         applyMetronome()
@@ -1782,6 +1794,24 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         }
     }
 
+    /// View ▸ Composition Overview (⌥⌘O): toggles the roadmap over the tracks and arrangement.
+    @objc func toggleCompositionOverview(_ sender: Any?) { setOverview(overview.isHidden) }
+    func setOverview(_ show: Bool) {
+        if show { overview.reload() }
+        Motion.fadeNextChange(overview.layer, duration: Motion.standard)
+        overview.isHidden = !show
+        if show { window?.makeFirstResponder(overview) } else { window?.makeFirstResponder(nil) }
+    }
+    /// Shows a section in the arrangement (fills the width with it) and returns from the overview.
+    func showSection(_ sec: CompositionOverview.Section) {
+        setOverview(false)
+        let width = max(200, timeline.bounds.width - 40)
+        let fpp = max(1, Double(sec.end - sec.start) / Double(width))
+        timeline.glide(framesPerPoint: fpp, scrollFrame: Double(sec.start) - 20 * fpp)
+        session.engine.seek(sec.start)
+        flash("\(sec.title): bars \(sec.firstBar)–\(sec.lastBar)")
+    }
+
     /// View ▸ Mixer (X): channel strips for every track and bus above the device panel.
     @objc func toggleMixer(_ sender: Any?) {
         Self.showMixer.toggle()
@@ -2109,6 +2139,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             return !timeline.selectedClips.isEmpty
         case #selector(tallerTracks(_:)): return Theme.trackHeight < 400
         case #selector(shorterTracks(_:)): return Theme.trackHeight > 48
+        case #selector(toggleCompositionOverview(_:)):
+            item.state = overview.isHidden ? .off : .on
+            return !session.tracks.isEmpty
         case #selector(toggleAnalogStyle(_:)):
             return !session.engine.isRecording
         case #selector(chooseThemeVariant(_:)):

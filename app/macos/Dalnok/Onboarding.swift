@@ -44,9 +44,15 @@ func showCentered(_ w: NSWindow) {
     }
     w.contentView?.layoutSubtreeIfNeeded()
     place()
+    // The window can still change size as it comes on screen or as text settles (fonts with other metrics): keep it
+    // centred while it does.
+    let token = NotificationCenter.default.addObserver(forName: NSWindow.didResizeNotification, object: w, queue: .main) { _ in
+        MainActor.assumeIsolated { place() }
+    }
     w.makeKeyAndOrderFront(nil)
-    let size = w.frame.size
-    DispatchQueue.main.async { if w.frame.size != size { place() } }
+    place()
+    DispatchQueue.main.async { place() }
+    DispatchQueue.main.asyncAfter(deadline: .now() + 1) { NotificationCenter.default.removeObserver(token) }
 }
 
 @MainActor

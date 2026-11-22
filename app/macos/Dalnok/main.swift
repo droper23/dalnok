@@ -482,6 +482,7 @@ func buildMenu(target: MainWindowController) -> NSMenu {
         item("Automate Volume", #selector(W.automateVolume(_:)), ""),
         item("Automate Pan", #selector(W.automatePan(_:)), ""),
         .separator(),
+        item("Composition Overview", #selector(W.toggleCompositionOverview(_:)), "o", [.command, .option]),
         themeMenu,
         item("Next Theme", #selector(W.toggleAnalogStyle(_:)), "a", [.command, .option]),
         item("Tape Machine", #selector(W.showTapeDeck(_:)), "t", [.command, .shift]),

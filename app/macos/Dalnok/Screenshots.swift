@@ -140,6 +140,10 @@ enum Screenshots {
             if tracks.count > 3 { w.headers.selectedTrack = tracks[3].id; w.timeline.selectedClip = tracks[3].clips.first?.id }
             try? await Task.sleep(for: .seconds(0.4))
             shot("02-arrangement")
+            w.setOverview(true)
+            try? await Task.sleep(for: .seconds(0.4))
+            shot("12-composition-overview")
+            w.setOverview(false)
             app.engine.seek(bar * 2)
             app.engine.play()
             try? await Task.sleep(for: .seconds(1.2))

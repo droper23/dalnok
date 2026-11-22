@@ -263,6 +263,7 @@ private let specs: [String: Spec] = [
     "showSettings:": Spec(id: "app.settings", category: "Views and Windows", detail: "Open Settings.", keywords: ["preferences"]),
     "showKeyboardShortcuts:": Spec(id: "app.keyboard_shortcuts", category: "Views and Windows", detail: "Edit keyboard shortcuts.", keywords: ["key commands", "keymap", "hotkeys"]),
     "toggleAnalogStyle:": Spec(id: "view.toggle_analog_mode", category: "Views and Windows", detail: "Switch to the next theme: Graphite, Warm Analog, Prism, Atelier.", keywords: ["theme", "appearance", "analog", "prism", "atelier", "style"]),
+    "toggleCompositionOverview:": Spec(id: "view.composition_overview", category: "Timeline and Navigation", detail: "The project as a roadmap of its sections; click one to go there.", keywords: ["overview", "sections", "structure", "roadmap", "arrangement map"]),
     "chooseThemeVariant:": Spec(id: "view.theme_variant", category: "Views and Windows", detail: "Use the theme's light or dark version, or follow the system.", keywords: ["dark mode", "light mode", "appearance"]),
     "chooseTheme:": Spec(id: "view.theme", category: "Views and Windows", detail: "Switch to this theme.", keywords: ["theme", "appearance", "style", "look"]),
     "showTapeDeck:": Spec(id: "view.tape_deck", category: "Views and Windows", detail: "Show the tape machine (Analog Mode transport).", keywords: ["analog", "reels", "tape"]),

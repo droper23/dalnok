@@ -52,7 +52,6 @@ enum Theme {
     }
     /// The version a style shows under the current preference and system appearance.
     static func resolvedVariant(for style: Style, preference: String = variantPreference) -> Variant {
-        if let override = ProcessInfo.processInfo.environment["DALNOK_VARIANT"].flatMap(Variant.init(rawValue:)), style.variants.contains(override) { return override }
         guard style.variants.count > 1 else { return style.variants[0] }
         if let v = Variant(rawValue: preference) { return v }
         let dark = NSApp?.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
@@ -178,7 +177,11 @@ enum Theme {
         if let override = ProcessInfo.processInfo.environment["DALNOK_THEME"], let style = Style(rawValue: override) { return style }
         return preferredStyle
     }()
-    nonisolated(unsafe) static var activeVariant: Variant = resolvedVariant(for: activeStyle) // main thread only
+    /// The version the windows are drawn with. DALNOK_VARIANT (captures, tests) sets it at launch only.
+    nonisolated(unsafe) static var activeVariant: Variant = { // main thread only
+        if let v = ProcessInfo.processInfo.environment["DALNOK_VARIANT"].flatMap(Variant.init(rawValue:)), activeStyle.variants.contains(v) { return v }
+        return resolvedVariant(for: activeStyle)
+    }()
     /// The system appearance under the theme (menus, sheets, scroll bars, text fields): Aqua for light themes.
     static var appearance: NSAppearance? { NSAppearance(named: palette.light ? .aqua : .darkAqua) }
     private static func tone(_ token: KeyPath<Palette, UInt32>) -> NSColor { hex(palette[keyPath: token]) }
