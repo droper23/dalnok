@@ -28,6 +28,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     let session: Session
     let palette = CommandPalette()
     let emptyState = EmptyStateView()
+    /// View ▸ Composition Overview: the project as a roadmap of its sections, over the tracks and arrangement.
+    private(set) lazy var overview: CompositionOverview = {
+        let o = CompositionOverview(session: session)
+        o.onChoose = { [weak self] sec in self?.showSection(sec) }
+        o.onClose = { [weak self] in self?.setOverview(false) }
+        return o
+    }()
     /// Names invisible actions as they happen (Undo Move Clip, Saved).
     let toast = ToastView()
     let countInOverlay = CountInOverlay()
@@ -213,7 +220,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
                               backing: .buffered, defer: false)
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden // the control bar shows the title
-        window.appearance = NSAppearance(named: .darkAqua)
+        window.appearance = Theme.appearance
         window.backgroundColor = Theme.window
         window.minSize = NSSize(width: 720, height: 400)
         window.setFrameAutosaveName("DalnokMain")
@@ -230,7 +237,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             }
         }
         window.contentView = root
-        for v in [transport, headers, launcher, timeline, mixer, devicePanel, emptyState, countInOverlay, toast] as [NSView] {
+        for v in [transport, headers, launcher, timeline, mixer, devicePanel, emptyState, overview, countInOverlay, toast] as [NSView] {
             v.translatesAutoresizingMaskIntoConstraints = false
             root.addSubview(v)
         }
@@ -260,6 +267,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             emptyState.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             emptyState.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             emptyState.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            overview.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            overview.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            overview.topAnchor.constraint(equalTo: transport.bottomAnchor),
+            overview.bottomAnchor.constraint(equalTo: mixer.topAnchor),
             countInOverlay.leadingAnchor.constraint(equalTo: timeline.leadingAnchor),
             countInOverlay.trailingAnchor.constraint(equalTo: timeline.trailingAnchor),
             countInOverlay.topAnchor.constraint(equalTo: timeline.topAnchor),
@@ -333,7 +344,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         }
         emptyState.basics = { [weak self] in
             guard let self else { return (120, (4, 4), "", "") }
-            let capturing = ["--snapshot", "--screenshots", "--tour"].contains { CommandLine.arguments.contains($0) }
+            let capturing = ["--snapshot", "--screenshots", "--gallery", "--tour"].contains { CommandLine.arguments.contains($0) }
             let input = capturing ? "Audio input" : self.recordingDevice?.name ?? "None (choose one in Audio Settings)"
             return (self.session.bpm, self.session.meter, self.outputDeviceDescription(), input)
         }
@@ -398,6 +409,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             self.updateTitle()
         }
         session.onMessage = { [weak self] msg in self?.flash(msg) }
+        overview.isHidden = true
         emptyState.isHidden = true // modelChanged shows it if the project has no tracks (also for a rebuilt window)
         modelChanged()
         applyMetronome()
@@ -721,7 +733,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         let devices = Engine.outputDevices()
         let dev = uid.isEmpty ? devices.first(where: \.isDefault) : devices.first(where: { $0.uid == uid })
         // Captures (snapshots, documentation screenshots) never show the machine's device names, which can be personal.
-        let capturing = ["--snapshot", "--screenshots", "--tour"].contains { CommandLine.arguments.contains($0) }
+        let capturing = ["--snapshot", "--screenshots", "--gallery", "--tour"].contains { CommandLine.arguments.contains($0) }
         var s = capturing ? "Audio output" : dev?.name ?? "No output"
         let hw = e.hardwareSampleRate
         if hw > 0 && abs(hw - e.sampleRate) > 0.5 {
@@ -1754,9 +1766,25 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         flash(bypass ? "\(t.name): plug-ins bypassed" : "\(t.name): plug-ins on")
     }
 
-    /// View ▸ Warm Analog Style: switches the appearance live (same as Settings ▸ Appearance).
+    /// View ▸ Next Theme (⌥⌘A): steps through the themes live (same as Settings ▸ Appearance). The selector keeps its
+    /// old name so custom key bindings for it carry over.
     @objc func toggleAnalogStyle(_ sender: Any?) {
-        let next: Theme.Style = Theme.activeStyle == .warmAnalog ? .graphite : .warmAnalog
+        let all = Theme.Style.allCases
+        switchTheme(all[((all.firstIndex(of: Theme.activeStyle) ?? 0) + 1) % all.count])
+    }
+    /// View ▸ Theme ▸ <name>.
+    @objc func chooseTheme(_ sender: Any?) {
+        guard let tag = (sender as? NSMenuItem)?.tag, Theme.Style.allCases.indices.contains(tag - 1) else { return }
+        switchTheme(Theme.Style.allCases[tag - 1])
+    }
+    /// View ▸ Theme ▸ Match System / Light / Dark (themes with both versions).
+    @objc func chooseThemeVariant(_ sender: Any?) {
+        guard let tag = (sender as? NSMenuItem)?.tag, (101...103).contains(tag) else { return }
+        Theme.variantPreference = SettingsController.variantChoices[tag - 101]
+        switchTheme(Theme.activeStyle)
+        settings.refresh()
+    }
+    func switchTheme(_ next: Theme.Style) {
         guard let app = NSApp.delegate as? AppDelegate else { return }
         let old = Theme.preferredStyle
         Theme.preferredStyle = next
@@ -1764,6 +1792,24 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             Theme.preferredStyle = old
             flash("Finish recording before changing the style")
         }
+    }
+
+    /// View ▸ Composition Overview (⌥⌘O): toggles the roadmap over the tracks and arrangement.
+    @objc func toggleCompositionOverview(_ sender: Any?) { setOverview(overview.isHidden) }
+    func setOverview(_ show: Bool) {
+        if show { overview.reload() }
+        Motion.fadeNextChange(overview.layer, duration: Motion.standard)
+        overview.isHidden = !show
+        if show { window?.makeFirstResponder(overview) } else { window?.makeFirstResponder(nil) }
+    }
+    /// Shows a section in the arrangement (fills the width with it) and returns from the overview.
+    func showSection(_ sec: CompositionOverview.Section) {
+        setOverview(false)
+        let width = max(200, timeline.bounds.width - 40)
+        let fpp = max(1, Double(sec.end - sec.start) / Double(width))
+        timeline.glide(framesPerPoint: fpp, scrollFrame: Double(sec.start) - 20 * fpp)
+        session.engine.seek(sec.start)
+        flash("\(sec.title): bars \(sec.firstBar)–\(sec.lastBar)")
     }
 
     /// View ▸ Mixer (X): channel strips for every track and bus above the device panel.
@@ -2093,8 +2139,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             return !timeline.selectedClips.isEmpty
         case #selector(tallerTracks(_:)): return Theme.trackHeight < 400
         case #selector(shorterTracks(_:)): return Theme.trackHeight > 48
+        case #selector(toggleCompositionOverview(_:)):
+            item.state = overview.isHidden ? .off : .on
+            return !session.tracks.isEmpty
         case #selector(toggleAnalogStyle(_:)):
-            item.state = Theme.activeStyle == .warmAnalog ? .on : .off
+            return !session.engine.isRecording
+        case #selector(chooseThemeVariant(_:)):
+            item.state = SettingsController.variantChoices.firstIndex(of: Theme.variantPreference) == item.tag - 101 ? .on : .off
+            return !session.engine.isRecording && Theme.activeStyle.variants.count > 1
+        case #selector(chooseTheme(_:)):
+            item.state = Theme.Style.allCases.firstIndex(of: Theme.activeStyle) == item.tag - 1 ? .on : .off
             return !session.engine.isRecording
         case #selector(selectPreviousTrack(_:)), #selector(selectNextTrack(_:)):
             return !session.tracks.isEmpty && !pianoRollIsKey
@@ -2162,6 +2216,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         guard let view = window?.contentView, let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else {
             throw EngineError(description: "no content view")
         }
+        if ProcessInfo.processInfo.environment["DALNOK_DEBUG_VIEWS"] != nil {
+            for v in view.subviews { print("view \(type(of: v)) hidden=\(v.isHidden) frame=\(v.frame) alpha=\(v.alphaValue) layer=\(String(describing: v.layer?.opacity))") }
+        }
         view.cacheDisplay(in: view.bounds, to: rep)
         guard let png = rep.representation(using: .png, properties: [:]) else {
             throw EngineError(description: "PNG encode failed")
@@ -2179,8 +2236,15 @@ final class DropView: NSView {
         super.init(frame: frame)
         wantsLayer = true
         layer?.backgroundColor = Theme.window.cgColor
+        if Theme.look.arrangement == .glass { layer?.backgroundColor = nil; layerContentsRedrawPolicy = .onSetNeedsDisplay }
         registerForDraggedTypes([.fileURL])
     }
+    /// Prism: the light field all the glass panes float over (static; redrawn only when the window resizes).
+    override func draw(_ dirtyRect: NSRect) {
+        guard Theme.look.arrangement == .glass else { return }
+        Prism.drawField(in: self, frosted: false)
+    }
+    override func setFrameSize(_ newSize: NSSize) { super.setFrameSize(newSize); if Theme.look.arrangement == .glass { needsDisplay = true } }
 
     required init?(coder: NSCoder) { fatalError() }
 

@@ -76,6 +76,22 @@ final class MeterView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
         if Theme.look.ledLadderMeters { return drawLadder(ctx) }
+        if Theme.look.meters == .lightPipe || Theme.look.meters == .graduated {
+            // Two pipes (Prism) or two drawn columns (Atelier), side by side or stacked.
+            let gap: CGFloat = vertical ? 2 : 1.5
+            for (i, (lv, hold)) in [(levelDb.0, holdDb.0), (levelDb.1, holdDb.1)].enumerated() {
+                let r = vertical ? CGRect(x: CGFloat(i) * ((bounds.width + gap) / 2), y: 0, width: (bounds.width - gap) / 2, height: bounds.height)
+                                 : CGRect(x: 0, y: CGFloat(i) * ((bounds.height + gap) / 2), width: bounds.width, height: (bounds.height - gap) / 2)
+                let peak = hold > -60 ? fraction(hold) : 0
+                if Theme.look.meters == .lightPipe { Prism.lightPipe(ctx, r, level: fraction(lv), peak: peak, clipped: clipped) }
+                else { Atelier.meter(ctx, r, level: fraction(lv), peak: peak, clipped: clipped) }
+            }
+            // 0 dBFS mark.
+            ctx.setFillColor(Theme.ink(0.5).cgColor)
+            if vertical { ctx.fill(CGRect(x: 0, y: bounds.height * fraction(0), width: bounds.width, height: 0.5)) }
+            else { ctx.fill(CGRect(x: bounds.width * fraction(0), y: 0, width: 0.5, height: bounds.height)) }
+            return
+        }
         ctx.setFillColor(Theme.window.cgColor)
         ctx.fill(bounds)
         let gap: CGFloat = 1

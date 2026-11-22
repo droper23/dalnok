@@ -112,6 +112,15 @@ enum FaceplateDisplay {
 
     /// A recessed bezel around a display window: dark machined frame, inner shadow, and the window's rect.
     static func bezel(_ ctx: CGContext, _ rect: CGRect, radius: CGFloat = 5) -> CGRect {
+        switch Theme.look.devices {
+        case .schematic: return rect.insetBy(dx: 4, dy: 4) // the plot's frame is drawn after the ink pass
+        case .cards: // a dark glass well in the card, with a light rim
+            let outer = CGPath(roundedRect: rect.insetBy(dx: 1, dy: 1), cornerWidth: 8, cornerHeight: 8, transform: nil)
+            ctx.addPath(outer); ctx.setFillColor(Theme.hex(0x05070F, 0.85).cgColor); ctx.fillPath()
+            ctx.addPath(outer); ctx.setStrokeColor(NSColor.white.withAlphaComponent(0.14).cgColor); ctx.setLineWidth(0.75); ctx.strokePath()
+            return rect.insetBy(dx: 4, dy: 4)
+        case .rack, .pedalboard: break
+        }
         let outer = CGPath(roundedRect: rect, cornerWidth: radius, cornerHeight: radius, transform: nil)
         ctx.saveGState()
         ctx.setShadow(offset: CGSize(width: 0, height: -1), blur: 2, color: NSColor.white.withAlphaComponent(0.10).cgColor)
@@ -130,6 +139,7 @@ enum FaceplateDisplay {
 
     /// Glass over a window: a soft diagonal glare and an inner shadow at the top edge.
     static func glass(_ ctx: CGContext, _ window: CGRect, radius: CGFloat) {
+        if Theme.look.devices == .schematic { return }
         let path = CGPath(roundedRect: window, cornerWidth: radius, cornerHeight: radius, transform: nil)
         ctx.saveGState()
         ctx.addPath(path); ctx.clip()
@@ -185,7 +195,38 @@ class FaceplateScreen: NSView {
             ctx.restoreGState()
             if off >= 0.99 { FaceplateDisplay.glass(ctx, w, radius: 3) }
         }
+        if Theme.look.devices == .schematic {
+            Self.inkOnPaper(ctx, bounds.insetBy(dx: 4, dy: 4), invert: !lightFace)
+            return
+        }
+        if Theme.look.devices == .cards { return } // glass doesn't gather dust
         FaceplateDisplay.wear(ctx, bounds.insetBy(dx: 4, dy: 4), radius: 3, seed: seed, amount: Faceplate.wear, lightFace: lightFace)
+    }
+
+    /// Atelier: turns a lit screen into a plot in an engineering notebook. Light traces on dark glass become ink lines
+    /// on the paper (inverted, then greyed and multiplied by the paper colour), with a fine graph-paper grid and an ink
+    /// frame. One pass for every display, so each keeps its own drawing code.
+    static func inkOnPaper(_ ctx: CGContext, _ r: CGRect, invert: Bool) {
+        ctx.saveGState()
+        ctx.clip(to: r)
+        if Theme.isLight {
+            if invert { ctx.setBlendMode(.difference); ctx.setFillColor(NSColor.white.cgColor); ctx.fill(r) }
+            ctx.setBlendMode(.saturation); ctx.setFillColor(NSColor(white: 0.5, alpha: 1).cgColor); ctx.fill(r)
+            ctx.setBlendMode(.multiply); ctx.setFillColor(Theme.lcd.cgColor); ctx.fill(r)
+        } else {
+            // Atelier Dark: chalk on the board. Traces keep their brightness (greyed, tinted chalk); black lifts to the board.
+            ctx.setBlendMode(.saturation); ctx.setFillColor(NSColor(white: 0.5, alpha: 1).cgColor); ctx.fill(r)
+            ctx.setBlendMode(.multiply); ctx.setFillColor(Theme.text.cgColor); ctx.fill(r)
+            ctx.setBlendMode(.screen); ctx.setFillColor(Theme.lcd.cgColor); ctx.fill(r)
+        }
+        ctx.setBlendMode(.normal)
+        // Graph paper: 8 pt squares, heavier every 4.
+        var x = r.minX, i = 0
+        while x <= r.maxX { ctx.setFillColor(Theme.ink(i % 4 == 0 ? 0.07 : 0.035).cgColor); ctx.fill(CGRect(x: x, y: r.minY, width: 0.5, height: r.height)); x += 8; i += 1 }
+        var y = r.minY; i = 0
+        while y <= r.maxY { ctx.setFillColor(Theme.ink(i % 4 == 0 ? 0.07 : 0.035).cgColor); ctx.fill(CGRect(x: r.minX, y: y, width: r.width, height: 0.5)); y += 8; i += 1 }
+        ctx.restoreGState()
+        ctx.setStrokeColor(Theme.ink(0.75).cgColor); ctx.setLineWidth(Atelier.fine); ctx.stroke(r.insetBy(dx: 0.4, dy: 0.4))
     }
     func drawScreen(_ dirtyRect: NSRect) {}
 }

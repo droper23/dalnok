@@ -18,7 +18,7 @@ final class ToastView: NSView {
         wantsLayer = true
         layer?.cornerRadius = 10
         layer?.backgroundColor = Theme.hex(0x101114, 0.92).cgColor
-        layer?.borderColor = Theme.hex(0xFFFFFF, 0.10).cgColor
+        layer?.borderColor = Theme.ink(0.10).cgColor
         layer?.borderWidth = 1
         layer?.shadowColor = NSColor.black.cgColor
         layer?.shadowOpacity = 0.45

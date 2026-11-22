@@ -837,7 +837,7 @@ extension SelfTest {
         if let other = s.tracks.first(where: { $0.id != track })?.id, let comp = try? s.addPlugin(track, path: "dalnok:compressor") {
             panel.rebuild(); panel.layoutSubtreeIfNeeded()
             if let unit = panel.devices.first(where: { $0.slot == comp }) {
-                check(unit.displayKind == .gainReduction, "Dalnok Compressor gets a gain-reduction display (\(unit.displayKind))")
+                check(unit.automaticKind() == .gainReduction, "Dalnok Compressor gets a gain-reduction display (\(unit.automaticKind()))")
                 check(!unit.sidechain.isHidden && unit.sidechain.itemTitles.first == "SC: None" && unit.sidechain.indexOfItem(withTag: Int(other)) > 0,
                       "the compressor shows a sidechain menu with None and the other tracks (\(unit.sidechain.itemTitles))")
                 unit.sidechain.selectItem(withTag: Int(other))

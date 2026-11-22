@@ -40,4 +40,4 @@ sidechains, automation, delay compensation, **comping and take folders**, track 
 (Signalsmith Stretch). Modulation system, racks, scripting API, macros, workspaces.
 
 ## Phase 6: Refinement ⬜
-Performance, accessibility, theme system (including analog), DAWproject interchange, Windows and Linux front ends, local AI assistance.
+Performance, accessibility, theme system (including analog; four themes with light/dark versions done 2026-11-22), DAWproject interchange, Windows and Linux front ends, local AI assistance.

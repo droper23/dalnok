@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+- **Two new themes, Prism and Atelier, each with a light and a dark version** (View ▸ Theme, Settings ▸ Appearance; Match System follows macOS). They change how everything is drawn, not what it does: every command, shortcut and control works the same in all four themes.
+  - **Prism** is made of glass. A field of soft coloured light fills the window and every surface floats over it as a pane of glass that bends and catches the light at its rim (in the spirit of Apple's Liquid Glass, drawn by Dalnok so it looks the same everywhere). The control bar is three floating capsules; clips, strips, cards and notes are tinted glass that rises when selected; meters are light pipes; the playhead's prism head casts a small spectrum over the ruler.
+  - **Atelier** is a composer's drafting table: ink on ivory (or chalk on a charcoal board), typeset in Source Serif 4 and IBM Plex. Bars are ruled, heavier every four; beats are margin ticks; clips are ink plates; markers become "§ Verse" section headings; selection is a pair of crop marks that glides between clips; the mixer has graduated scales and slide-rule faders; plug-in screens become plots on graph paper; in the piano roll a note's weight is its velocity.
+  - Fonts (Sora, Geist Mono, IBM Plex Sans Condensed, IBM Plex Mono, Source Serif 4) are bundled under the SIL Open Font License.
+- **View ▸ Composition Overview (⌥⌘O):** the project as a roadmap. Its sections come from your markers (or 8-bar ranges if there are none), with each track's part in every section and its volume automation; click a section, or use the arrow keys and Return, to show it in the arrangement. Esc returns. Works in every theme.
+- **Dalnok Compressor**, a built-in compressor with a sidechain: threshold, ratio, soft knee, attack, release, make-up and auto gain, peak or RMS detection, a side-chain filter with Listen, and Mix, with a gain-reduction meter. Choose another track in the unit's sidechain menu to key it (ducking). Its sound is Dalnok's own; it has not yet been matched to Logic's Compressor.
+- View ▸ Next Theme (⌥⌘A) steps through the themes; it was Warm Analog Style. Custom key bindings for it carry over.
+- Fixed: after a plug-in's sidechain was disconnected, the plug-in kept reading the old key signal from memory that had been freed (all formats).
+- Developer: `Dalnok <project> --gallery <dir>` captures every screen a theme has to get right (`DALNOK_THEME`, `DALNOK_VARIANT`).
+
 ## [0.3.0] - 2026-11-21
 
 Phase 4 (professional production) is complete, and recording got its input and output right. Release standard: `08 - Testing and Benchmarks/Release Checklist.md`.

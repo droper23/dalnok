@@ -103,7 +103,7 @@ final class TransportBar: NSView {
     func applyClockSetting() {
         let on = Self.showsSecondaryClock
         subTimeLabel.isHidden = !on
-        timeLabel.font = Theme.mono(on ? 17 : 20, .medium)
+        timeLabel.font = Theme.look.transport == .lcd || Theme.look.transport == .tapeDeck ? Theme.mono(on ? 17 : 20, .medium) : Theme.display(on ? 17 : 20)
         ghost.font = timeLabel.font
         timeCenter?.constant = on ? -5 : 0
         ghostCenter?.constant = on ? -5 : 0
@@ -146,7 +146,7 @@ final class TransportBar: NSView {
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
-        layer?.backgroundColor = Theme.panel.cgColor
+        layer?.backgroundColor = Theme.look.transport == .glassCapsule ? nil : Theme.panel.cgColor
 
         titleLabel.font = Theme.ui(13, .semibold)
         titleLabel.textColor = Theme.text
@@ -246,6 +246,9 @@ final class TransportBar: NSView {
         let transport = NSStackView(views: Theme.look.tapeDeck ? [tapeStrip, lcd, tempo]
                                                      : [rewind, playButton, recordButton, cycleButton, lcd, tempo])
         transport.spacing = 6
+        transportCluster = transport
+        styleDisplayForFamily(lcd)
+        titleGroup = titles
 
         masterMeter.toolTip = "Output level (click to reset the clip indicator)"
         masterMeter.setAccessibilityLabel("Master level meter")
@@ -257,6 +260,7 @@ final class TransportBar: NSView {
         views.spacing = 2
         let tools = NSStackView(views: [views, masterMeter, paletteButton, importButton])
         tools.spacing = 8
+        toolsGroup = tools
         tools.setCustomSpacing(16, after: views)
 
         for v in [titles, transport, tools] as [NSView] {
@@ -267,7 +271,9 @@ final class TransportBar: NSView {
             titles.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Theme.trafficLightInset + 8),
             titles.centerYAnchor.constraint(equalTo: centerYAnchor),
             titles.trailingAnchor.constraint(lessThanOrEqualTo: transport.leadingAnchor, constant: -16),
-            transport.centerXAnchor.constraint(equalTo: centerXAnchor),
+            // Centred while there is room; in a narrow window the transport moves left rather than under the tools.
+            transport.centerXAnchor.constraint(equalTo: centerXAnchor).withPriority(.defaultHigh),
+            tools.leadingAnchor.constraint(greaterThanOrEqualTo: transport.trailingAnchor, constant: 20),
             transport.centerYAnchor.constraint(equalTo: centerYAnchor),
             lcd.widthAnchor.constraint(equalToConstant: 150),
             lcd.heightAnchor.constraint(equalToConstant: 34),
@@ -288,7 +294,65 @@ final class TransportBar: NSView {
 
     required init?(coder: NSCoder) { fatalError() }
 
+    /// The transport buttons, display and tempo (Prism floats them on a glass capsule).
+    private weak var transportCluster: NSView?, titleGroup: NSView?, toolsGroup: NSView?
+
+    /// Prism: a glass-encased display with light-weight figures; Atelier: a ruled frame with the position typeset large.
+    private func styleDisplayForFamily(_ lcd: NSView) {
+        switch Theme.look.transport {
+        case .glassCapsule:
+            lcd.layer?.backgroundColor = (Theme.isLight ? Theme.hex(0xFFFFFF, 0.55) : Theme.hex(0x05070F, 0.55)).cgColor
+            lcd.layer?.cornerRadius = 13
+            lcd.layer?.borderColor = Theme.hex(0xFFFFFF, Theme.isLight ? 0.9 : 0.18).cgColor
+            timeLabel.textColor = displayColor
+            let glow = NSShadow()
+            glow.shadowColor = Theme.accent.withAlphaComponent(0.65)
+            glow.shadowBlurRadius = 8
+            timeLabel.shadow = glow
+            subTimeLabel.textColor = Theme.accent.withAlphaComponent(0.75)
+        case .typeset:
+            lcd.layer?.backgroundColor = Theme.lcd.cgColor
+            lcd.layer?.cornerRadius = 0
+            lcd.layer?.borderWidth = 0.75
+            lcd.layer?.borderColor = Theme.text.withAlphaComponent(0.6).cgColor
+            timeLabel.textColor = Theme.text
+            subTimeLabel.textColor = Theme.textDim
+            tempoField.font = Theme.display(15)
+        case .lcd, .tapeDeck: break
+        }
+        if Theme.look.transport != .lcd && Theme.look.transport != .tapeDeck { applyClockSetting() }
+    }
+    /// The position display's normal colour (recording turns it red).
+    private var displayColor: NSColor {
+        switch Theme.look.transport {
+        case .tapeDeck: Theme.hex(0x7DF0D8)
+        case .glassCapsule: Theme.isLight ? Theme.text : Theme.hex(0xF2F6FF)
+        case .typeset: Theme.text
+        case .lcd: Theme.accent
+        }
+    }
+
     override func draw(_ dirtyRect: NSRect) {
+        switch Theme.look.transport {
+        case .glassCapsule:
+            // No bar at all: the title, the transport and the tools float as three capsules of glass over the light.
+            Prism.drawField(in: self, frosted: false)
+            for (group, dx, prominence) in [(titleGroup, CGFloat(14), CGFloat(0)), (transportCluster, 14, 0.6), (toolsGroup, 10, 0)] {
+                guard let f = group?.frame else { continue }
+                let capsule = CGRect(x: f.minX - dx, y: bounds.midY - 19, width: f.width + 2 * dx, height: 38)
+                Prism.liquidPane(self, capsule, radius: 19, prominence: prominence)
+            }
+            return
+        case .typeset:
+            Theme.panel.setFill(); bounds.fill()
+            if let ctx = NSGraphicsContext.current?.cgContext {
+                // A title block's rules: heavy below, hairline above it.
+                Atelier.rule(ctx, CGPoint(x: 0, y: 0.75), CGPoint(x: bounds.width, y: 0.75), weight: Atelier.medium)
+                Atelier.rule(ctx, CGPoint(x: 0, y: 3.5), CGPoint(x: bounds.width, y: 3.5), weight: Atelier.hair, color: Theme.ink(0.4))
+            }
+            return
+        case .lcd, .tapeDeck: break
+        }
         (Theme.look.tapeDeck ? Analog.faceplate : Theme.panel).setFill(); bounds.fill()
         Theme.separator.setFill(); NSRect(x: 0, y: 0, width: bounds.width, height: 1).fill()
         if Theme.look.tapeDeck, let ctx = NSGraphicsContext.current?.cgContext {
@@ -324,7 +388,7 @@ final class TransportBar: NSView {
         recordButton.setAccessibilityValue(recording ? "recording" : "stopped")
         if recording { Motion.pulse(recordButton.layer, from: 1, to: 0.4, period: 1.0) } else { Motion.stopPulse(recordButton.layer) }
         Motion.fadeNextChange(timeLabel.layer, duration: Motion.standard)
-        timeLabel.textColor = recording ? Theme.recordOn : (Theme.look.tapeDeck ? Theme.hex(0x7DF0D8) : Theme.accent)
+        timeLabel.textColor = recording ? Theme.recordOn : displayColor
         if Theme.look.tapeDeck { timeLabel.shadow?.shadowColor = (recording ? Theme.recordOn : Theme.hex(0x7DF0D8)).withAlphaComponent(0.8) }
         // The position display's well glows red while recording.
         Motion.layers(Motion.gentle) {
@@ -376,10 +440,10 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
     private var isStackRow = false, stackCollapsed = false
     var onToggleStack: ((DalnokTrackId, Bool) -> Void)?
     let nameLabel = NSTextField(labelWithString: "")
-    private let mute = ToggleChip("M", on: Theme.muteOn, onText: .white, help: "Mute (⌃M)")
-    private let solo = ToggleChip("S", on: Theme.soloOn, onText: Theme.hex(0x1A1400), help: "Solo (⌃S)")
-    private let arm = ToggleChip("R", on: Theme.recordOn, onText: .white, help: "Record Enable (⌃R)")
-    private let monitor = ToggleChip("I", on: Theme.monitorOn, onText: .white, help: "Input Monitoring: hear this track's input now, recording or not (⌃I)")
+    private let mute = ToggleChip("M", on: Theme.muteOn, onText: Theme.onState(Theme.muteOn), help: "Mute (⌃M)")
+    private let solo = ToggleChip("S", on: Theme.soloOn, onText: Theme.onState(Theme.soloOn), help: "Solo (⌃S)")
+    private let arm = ToggleChip("R", on: Theme.recordOn, onText: Theme.onState(Theme.recordOn), help: "Record Enable (⌃R)")
+    private let monitor = ToggleChip("I", on: Theme.monitorOn, onText: Theme.onState(Theme.monitorOn), help: "Input Monitoring: hear this track's input now, recording or not (⌃I)")
     var onInputMonitor: ((DalnokTrackId) -> Void)?
     /// Input source: "IN 1" for audio tracks, "MIDI" for instrument tracks. Click to choose.
     let inputButton = NSButton(title: "IN 1", target: nil, action: nil)
@@ -398,6 +462,27 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
         wantsLayer = true
         selectionLayer.backgroundColor = Theme.selectedHeader.cgColor
         selectionLayer.opacity = 0
+        switch Theme.look.headers {
+        case .glass:
+            // Prism: the selected header is a raised pane of glass; the colour edge is a light pipe that glows.
+            selectionLayer.backgroundColor = (Theme.isLight ? Theme.hex(0xFFFFFF, 0.55) : Theme.hex(0x9FB2FF, 0.12)).cgColor
+            selectionLayer.cornerRadius = 10
+            selectionLayer.borderWidth = 1
+            selectionLayer.borderColor = Theme.hex(0xFFFFFF, Theme.isLight ? 0.9 : 0.22).cgColor
+            selectionLayer.shadowColor = NSColor.black.cgColor
+            selectionLayer.shadowOpacity = 0.5
+            selectionLayer.shadowRadius = 8
+            selectionLayer.shadowOffset = CGSize(width: 0, height: -2)
+            strip.cornerRadius = 1.5
+            strip.shadowRadius = 5
+            strip.shadowOpacity = 0.9
+            strip.shadowOffset = .zero
+        case .scoreLabels:
+            // Atelier: the selected header is marked in the margin (vermilion rule) on a faint ochre wash.
+            selectionLayer.backgroundColor = Theme.laneHighlight.cgColor
+            selectionLayer.borderWidth = 0
+        case .rows, .channelStrips: break
+        }
         layer?.addSublayer(selectionLayer)
         layer?.addSublayer(strip)
 
@@ -406,6 +491,11 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
         number.alignment = .right
         nameLabel.font = Theme.ui(13, .semibold)
         nameLabel.textColor = Theme.text
+        if Theme.look.headers == .scoreLabels {
+            // A typeset score label: the name in the text serif, the number as an old-style figure in the margin.
+            nameLabel.font = Theme.title(14, .semibold)
+            number.font = Theme.title(12, .regular)
+        }
         if Theme.look.channelStripHeaders {
             // A console scribble strip: a recessed display window (drawn by the row) with the name lit in the
             // track's color, like the backlit strips on modern analog-style consoles.
@@ -433,6 +523,7 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
         pan.onBegin = { [weak self] in guard let self else { return }; self.session.engine.beginGroup("Pan"); AutomationWriter.shared?.touch(self.trackId, 1, true) }
         pan.onPanChange = { [weak self] p in guard let self else { return }; self.session.setPan(self.trackId, p) }
         pan.onEnd = { [weak self] in guard let self else { return }; self.session.engine.endGroup(); AutomationWriter.shared?.touch(self.trackId, 1, false) }
+        if Theme.look.headers == .scoreLabels { inputButton.font = Theme.note(11) }
         for label in [gainLabel, panLabel] {
             label.font = Theme.mono(10, .medium)
             label.textColor = Theme.textDim
@@ -533,7 +624,10 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
             nameLabel.textColor = t.muted ? Theme.textDim : Theme.text
         }
         // Color strip: the track's identity, full height; desaturated (animated) when muted.
-        Motion.layers(Motion.gentle) { strip.backgroundColor = (t.muted ? TrackTint(base: t.color).muted : t.color).cgColor }
+        Motion.layers(Motion.gentle) {
+            strip.backgroundColor = (t.muted ? TrackTint(base: t.color).muted : t.color).cgColor
+            strip.shadowColor = t.muted ? nil : t.color.cgColor // Prism's light pipe goes out when muted
+        }
         mute.isOn = t.muted
         solo.isOn = t.solo
         arm.isOn = t.armed
@@ -573,11 +667,13 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
         super.layout()
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        selectionLayer.frame = CGRect(x: 0, y: 1, width: bounds.width, height: bounds.height - 2)
+        selectionLayer.frame = Theme.look.headers == .glass ? CGRect(x: 8, y: 3, width: bounds.width - 12, height: bounds.height - 6)
+                                                            : CGRect(x: 0, y: 1, width: bounds.width, height: bounds.height - 2)
         // Short tracks show their name and buttons only; the knobs and input return when there is room.
         let compact = bounds.height < 76
         for v in [gain, pan, gainLabel, panLabel, inputButton] as [NSView] where v.isHidden != compact { v.isHidden = compact }
-        strip.frame = CGRect(x: 0, y: 0, width: isSelected ? 5 : 3, height: bounds.height - 1)
+        strip.frame = Theme.look.headers == .glass ? CGRect(x: 5, y: 10, width: isSelected ? 3.5 : 2.5, height: bounds.height - 20)
+                                                  : CGRect(x: 0, y: 0, width: isSelected ? 5 : 3, height: bounds.height - 1)
         CATransaction.commit()
         if Theme.look.channelStripHeaders {
             let n = nameLabel.frame
@@ -586,6 +682,29 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
     }
 
     override func draw(_ dirtyRect: NSRect) {
+        switch Theme.look.headers {
+        case .glass:
+            // Rows sit on the column's glass: a breath of the track's colour from the left and a hairline between rows.
+            if let ctx = NSGraphicsContext.current?.cgContext {
+                ctx.saveGState(); ctx.clip(to: CGRect(x: 4, y: 0, width: bounds.width - 4, height: bounds.height))
+                let g = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: [(muted ? Theme.textFaint : color).withAlphaComponent(0.09).cgColor,
+                                                                                       color.withAlphaComponent(0).cgColor] as CFArray, locations: [0, 1])!
+                ctx.drawLinearGradient(g, start: CGPoint(x: 4, y: 0), end: CGPoint(x: bounds.width * 0.5, y: 0), options: [])
+                ctx.restoreGState()
+                Theme.ink(0.07).setFill(); NSRect(x: 14, y: bounds.height - 0.5, width: bounds.width - 22, height: 0.5).fill()
+            }
+            return
+        case .scoreLabels:
+            Theme.panelRaised.setFill(); bounds.fill()
+            if let ctx = NSGraphicsContext.current?.cgContext {
+                // Rules as in a score's system: a hairline between tracks, a fine margin rule after the number column.
+                Atelier.rule(ctx, CGPoint(x: 0, y: 0.25), CGPoint(x: bounds.width, y: 0.25), weight: Atelier.hair, color: Theme.ink(0.3))
+                Atelier.rule(ctx, CGPoint(x: 30.5, y: 6), CGPoint(x: 30.5, y: bounds.height - 6), weight: Atelier.hair, color: Theme.ink(0.22))
+                if isSelected { Atelier.vermilion.setFill(); NSRect(x: bounds.width - 3, y: 0, width: 3, height: bounds.height).fill() }
+            }
+            return
+        case .rows, .channelStrips: break
+        }
         (Theme.look.channelStripHeaders ? Analog.faceplate : Theme.panelRaised).setFill()
         bounds.fill()
         if !Theme.look.channelStripHeaders { // a wash of the track colour helps find a track in a long list
@@ -730,7 +849,7 @@ final class TrackHeaderColumn: NSView, TrackScrollHost {
         self.session = session
         super.init(frame: .zero)
         wantsLayer = true
-        layer?.backgroundColor = Theme.panel.cgColor
+        layer?.backgroundColor = Theme.look.headers == .glass ? nil : Theme.panel.cgColor
         rowClip.wantsLayer = true
         rowClip.layer?.masksToBounds = true
         addSubview(rowClip)
@@ -830,6 +949,16 @@ final class TrackHeaderColumn: NSView, TrackScrollHost {
     }
 
     override func draw(_ dirtyRect: NSRect) {
+        if Theme.look.headers == .glass {
+            // Prism: the track list is one pane of glass (the title on a small capsule above it).
+            Prism.drawField(in: self, frosted: false)
+            Prism.liquidPane(self, CGRect(x: 4, y: 3, width: bounds.width - 4, height: Theme.rulerHeight - 4), radius: (Theme.rulerHeight - 4) / 2)
+            Prism.liquidPane(self, CGRect(x: 4, y: Theme.rulerHeight + 4, width: bounds.width - 4, height: bounds.height - Theme.rulerHeight - 8), radius: 14)
+            let hiddenCount = session.hiddenCount
+            let title = (hiddenCount > 0 ? "TRACKS · \(hiddenCount) HIDDEN" : "TRACKS") as NSString
+            title.draw(at: NSPoint(x: 16, y: 7), withAttributes: [.font: Theme.ui(10, .semibold), .foregroundColor: Theme.textDim, .kern: 0.8])
+            return
+        }
         Theme.panel.setFill()
         bounds.fill()
         let hiddenCount = session.hiddenCount
@@ -879,7 +1008,7 @@ final class ScribbleStrip: NSView {
         Theme.hex(0x0D0A08).setFill(); well.fill()
         NSGraphicsContext.saveGraphicsState()
         well.addClip()
-        NSGradient(starting: Theme.hex(0xFFFFFF, 0.07), ending: Theme.hex(0xFFFFFF, 0))?
+        NSGradient(starting: Theme.ink(0.07), ending: Theme.ink(0))?
             .draw(in: NSRect(x: r.minX, y: r.minY, width: r.width, height: r.height / 2), angle: -90)
         if lit {
             NSGradient(starting: color.withAlphaComponent(0), ending: color.withAlphaComponent(0.14))?
@@ -893,4 +1022,12 @@ final class ScribbleStrip: NSView {
 
 extension Comparable {
     func clamped(to r: ClosedRange<Self>) -> Self { min(max(self, r.lowerBound), r.upperBound) }
+}
+
+extension NSLayoutConstraint {
+    /// The constraint with `priority` set (for inline use in `NSLayoutConstraint.activate`).
+    func withPriority(_ priority: NSLayoutConstraint.Priority) -> NSLayoutConstraint {
+        self.priority = priority
+        return self
+    }
 }

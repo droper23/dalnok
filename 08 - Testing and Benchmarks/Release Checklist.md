@@ -43,6 +43,20 @@ users' projects or audio.
    (`gh release create v<version> dist/Dalnok-<version>.zip --notes-file …`).
 6. The status site is published separately and only with the owner's go-ahead (`scripts/publish-site.sh`).
 
+## 4. Screenshots, videos and documentation (every release; owner rule, 2026-11-21)
+Every release retakes the README's screenshots and videos from the release build, to the same standard as the
+previous ones, and updates the README and all documentation that describes what changed. Rules:
+- Generated projects only (`scripts/make-test-project.sh`), built-in or Apple plug-ins only, the audio device name
+  hidden (captures do this), never the owner's material.
+- **Stills** per theme and version (Graphite; Warm Analog; Prism dark and light; Atelier light and dark):
+  `DALNOK_THEME=<theme> DALNOK_VARIANT=<dark|light> Dalnok <project> --gallery <dir>` writes the hero frame
+  (arrangement playing with the mixer and the device chain open, `00-hero.png`) and the eleven review frames. README
+  stills are the hero frame scaled to 1800 px wide (`sips -Z 1800`), plus the piano roll and Settings.
+- **Tours** (GIF + MP4 per theme): `Dalnok <project> --tour <dir>` writes TIFF frames and `times.txt`; encode them with
+  ffmpeg to `assets/videos/tour-<theme>.mp4` and a GIF in `assets/screenshots/`.
+- Update the README's feature list and theme section, `06 - Design/` notes that changed, and the site screenshots
+  (`--screenshots site/screenshots`; publishing the site still needs the owner's go-ahead).
+
 ## 0.3.0
 Scope: Phase 4 (professional production) complete: VST3, AU and CLAP hosting with sidechains (AU now verified),
 mixer, buses, sends, automation, delay compensation (cycle wrap fixed), comping, stacks and track groups. Plus the

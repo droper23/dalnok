@@ -1561,7 +1561,7 @@
         ],
         [
           "Light theme",
-          "todo"
+          "verified"
         ],
         [
           "Warm Analog as a hardware overhaul: LED lenses, metal knobs with LED rings, LED ladder meters, VFD, faceplates, scribble strips, patch-cabled rack units (same layout and controls)",
@@ -1584,11 +1584,19 @@
           "todo"
         ],
         [
+          "Prism (spatial glass, light and dark) and Atelier (drafting and typography, light and dark), with bundled OFL fonts",
+          "verified"
+        ],
+        [
+          "Composition Overview (sections, coverage and automation from project data)",
+          "verified"
+        ],
+        [
           "Custom accent color",
           "todo"
         ]
       ],
-      "evidence": "UI audit, reviewed screenshots, and app self-tests in both themes. Live switching: the self-test changes the theme in Settings both ways from each theme; the main window is rebuilt in the new style with the same project, track colours and undo history, settings stays open (a change during recording waits for a relaunch). Warm Analog extras: vintage track palette, tape reels (self-test checks they wind with the playhead), splice-bay Takes window, lit-pin piano roll, walnut mixer cheeks. VoiceOver and all auxiliary windows are not yet verified. Motion: the self-test checks knob glide, record pulse, palette fade, analog lamp warm-up and cool-down, patch-cable settling, and Reduce Motion. Animation timing has not been visually reviewed in motion. Warm Analog: the self-test passes all checks in that theme (including the patch-cable count for a two-plug-in chain); visual review from snapshots; see 06 - Design/Warm Analog. Warm Analog control-bar tape strip: GUI self-test checks play, pause, winding and return to zero; real input on a generated project also confirmed PLAY, FF and RTZ. The self-test verifies focused-key Space and wind press/release; real Space and Return toggled LOOP after accessibility focus was set. Tab-only navigation remains unverified.",
+      "evidence": "UI audit, reviewed screenshots, and app self-tests in both themes. Live switching: the self-test changes the theme in Settings both ways from each theme; the main window is rebuilt in the new style with the same project, track colours and undo history, settings stays open (a change during recording waits for a relaunch). Warm Analog extras: vintage track palette, tape reels (self-test checks they wind with the playhead), splice-bay Takes window, lit-pin piano roll, walnut mixer cheeks. VoiceOver and all auxiliary windows are not yet verified. Motion: the self-test checks knob glide, record pulse, palette fade, analog lamp warm-up and cool-down, patch-cable settling, and Reduce Motion. Animation timing has not been visually reviewed in motion. Warm Analog: the self-test passes all checks in that theme (including the patch-cable count for a two-plug-in chain); visual review from snapshots; see 06 - Design/Warm Analog. Warm Analog control-bar tape strip: GUI self-test checks play, pause, winding and return to zero; real input on a generated project also confirmed PLAY, FF and RTZ. The self-test verifies focused-key Space and wind press/release; real Space and Return toggled LOOP after accessibility focus was set. Tab-only navigation remains unverified. Prism and Atelier (2026-11-22): the full self-test passes in each theme and version (Prism Dark 908 and Light 889 checks, Atelier Dark 908 and Light 889, at 48 and 44.1 kHz), including switching every theme from View > Theme with the project, zoom and fonts kept, Light/Dark per theme, and Composition Overview keyboard navigation; reviewed from a 13-frame gallery per theme. VoiceOver in the new themes is not yet verified.",
       "screenshot": "screenshots/warm-analog.png"
     },
     {

@@ -39,7 +39,7 @@ final class PluginWindowController: NSWindowController, NSWindowDelegate, NSTabl
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 640, height: 480),
                               styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         window.title = title
-        window.appearance = NSAppearance(named: .darkAqua)
+        window.appearance = Theme.appearance
         window.isReleasedWhenClosed = false
         window.backgroundColor = Theme.panel
         super.init(window: window)

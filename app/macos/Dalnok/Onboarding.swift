@@ -21,7 +21,7 @@ private func backed(_ content: NSView) -> NSView {
     let bg = NSView()
     bg.wantsLayer = true
     bg.layer?.backgroundColor = Theme.panel.cgColor
-    bg.appearance = NSAppearance(named: .darkAqua)
+    bg.appearance = Theme.appearance
     content.translatesAutoresizingMaskIntoConstraints = false
     bg.addSubview(content)
     NSLayoutConstraint.activate([
@@ -44,9 +44,15 @@ func showCentered(_ w: NSWindow) {
     }
     w.contentView?.layoutSubtreeIfNeeded()
     place()
+    // The window can still change size as it comes on screen or as text settles (fonts with other metrics): keep it
+    // centred while it does.
+    let token = NotificationCenter.default.addObserver(forName: NSWindow.didResizeNotification, object: w, queue: .main) { _ in
+        MainActor.assumeIsolated { place() }
+    }
     w.makeKeyAndOrderFront(nil)
-    let size = w.frame.size
-    DispatchQueue.main.async { if w.frame.size != size { place() } }
+    place()
+    DispatchQueue.main.async { place() }
+    DispatchQueue.main.asyncAfter(deadline: .now() + 1) { NotificationCenter.default.removeObserver(token) }
 }
 
 @MainActor
@@ -54,7 +60,7 @@ private func panelWindow(_ title: String, size: NSSize) -> NSWindow {
     let w = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.titled, .closable, .resizable],
                      backing: .buffered, defer: false)
     w.title = title
-    w.appearance = NSAppearance(named: .darkAqua)
+    w.appearance = Theme.appearance
     w.backgroundColor = Theme.panel
     w.isReleasedWhenClosed = false
     return w

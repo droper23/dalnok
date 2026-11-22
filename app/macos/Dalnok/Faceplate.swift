@@ -81,8 +81,13 @@ enum Faceplate {
     // Palette: neutral graphite metal.
     static let plateTop = NSColor(srgbRed: 0.235, green: 0.243, blue: 0.259, alpha: 1)
     static let plateBottom = NSColor(srgbRed: 0.176, green: 0.184, blue: 0.196, alpha: 1)
-    static let engraving = NSColor(srgbRed: 0.80, green: 0.82, blue: 0.84, alpha: 1)
-    static let legend = NSColor(srgbRed: 0.56, green: 0.59, blue: 0.62, alpha: 1)
+    /// Lettering and legends: engraved metal (rack), light on glass (cards), ink on paper (schematic).
+    static var engraving: NSColor {
+        switch Theme.look.devices { case .cards: Theme.text; case .schematic: Theme.text; default: NSColor(srgbRed: 0.80, green: 0.82, blue: 0.84, alpha: 1) }
+    }
+    static var legend: NSColor {
+        switch Theme.look.devices { case .cards, .schematic: Theme.textDim; default: NSColor(srgbRed: 0.56, green: 0.59, blue: 0.62, alpha: 1) }
+    }
     static let readout = NSColor(srgbRed: 0.87, green: 0.89, blue: 0.91, alpha: 1)
 
     // MARK: Grouping
@@ -135,6 +140,22 @@ enum Faceplate {
 
     /// The unit's faceplate: brushed graphite with a bevel, an accent line in the track colour, and four screws.
     static func plate(_ ctx: CGContext, _ rect: CGRect, accent: NSColor, dimmed: Bool, seed: UInt64 = 1, wear: Double = 0) {
+        switch Theme.look.devices {
+        case .cards:
+            // Prism: a floating card of glass tinted by the track; bypassed cards turn to clear frosted glass.
+            Prism.slab(ctx, rect.insetBy(dx: 1, dy: 1), radius: 10, tint: dimmed ? Theme.textFaint : accent, body: dimmed ? 0.035 : 0.07, lift: dimmed ? 0 : 0.4)
+            return
+        case .schematic:
+            // Atelier: a sheet in the drawing. A fine ink border with a title block (rule under the name) and the
+            // track's ink as a margin rule; bypassed sheets are hatched like an unused section.
+            ctx.setFillColor(Theme.panelRaised.cgColor); ctx.fill(rect)
+            if dimmed { Atelier.hatch(ctx, rect.insetBy(dx: 1, dy: 1), spacing: 7, color: Theme.ink(0.08)) }
+            ctx.setStrokeColor(Theme.ink(0.75).cgColor); ctx.setLineWidth(Atelier.fine); ctx.stroke(rect.insetBy(dx: 0.5, dy: 0.5))
+            Atelier.rule(ctx, CGPoint(x: rect.minX + 6, y: rect.maxY - 22), CGPoint(x: rect.maxX - 6, y: rect.maxY - 22), weight: Atelier.hair, color: Theme.ink(0.35))
+            ctx.setFillColor(accent.cgColor); ctx.fill(CGRect(x: rect.minX, y: rect.minY, width: 2.5, height: rect.height))
+            return
+        case .rack, .pedalboard: break
+        }
         let path = CGPath(roundedRect: rect.insetBy(dx: 0.5, dy: 0.5), cornerWidth: 5, cornerHeight: 5, transform: nil)
         ctx.saveGState()
         ctx.addPath(path); ctx.clip()
@@ -240,6 +261,11 @@ enum Faceplate {
     /// Text cut into the plate: a dark shadow below light lettering.
     static func engrave(_ text: String, in rect: CGRect, font: NSFont, color: NSColor = engraving, align: NSTextAlignment = .center) {
         let para = NSMutableParagraphStyle(); para.alignment = align; para.lineBreakMode = .byTruncatingTail
+        if Theme.look.devices == .cards || Theme.look.devices == .schematic { // printed, not cut into metal
+            let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color, .paragraphStyle: para]
+            (text as NSString).draw(with: rect, options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine], attributes: attrs)
+            return
+        }
         let shadow: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.black.withAlphaComponent(0.6), .paragraphStyle: para]
         (text as NSString).draw(with: rect.offsetBy(dx: 0, dy: 0.8), options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine], attributes: shadow)
         let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color, .paragraphStyle: para]
@@ -306,6 +332,17 @@ enum Faceplate {
 
     /// A lit push switch: a raised key with an LED window.
     static func pushSwitch(_ ctx: CGContext, _ rect: CGRect, on: Bool, color: NSColor, lit: CGFloat = 1) {
+        switch Theme.look.devices {
+        case .cards: // a glass capsule that fills with the colour's light when on
+            Prism.slab(ctx, rect.insetBy(dx: 1, dy: 3), radius: (rect.height - 6) / 2, tint: on ? color : Theme.hex(0xA8B8FF), body: on ? 0.32 * max(0.3, lit) : 0.08, lift: on ? 0.6 * lit : 0)
+            return
+        case .schematic: // a drawn box: empty when off, a solid square of ink when on
+            let box = CGRect(x: rect.midX - 7, y: rect.midY - 7, width: 14, height: 14)
+            ctx.setStrokeColor(Theme.ink(0.75).cgColor); ctx.setLineWidth(Atelier.fine); ctx.stroke(box)
+            if on { ctx.setFillColor(Theme.text.cgColor); ctx.fill(box.insetBy(dx: 3, dy: 3)) }
+            return
+        case .rack, .pedalboard: break
+        }
         let key = CGPath(roundedRect: rect, cornerWidth: 3, cornerHeight: 3, transform: nil)
         ctx.saveGState()
         ctx.setShadow(offset: CGSize(width: 0, height: on ? -0.5 : -1.5), blur: on ? 1.5 : 3, color: NSColor.black.withAlphaComponent(0.7).cgColor)
@@ -333,6 +370,18 @@ enum Faceplate {
     /// A small display under each control: a recessed window holding a dot-matrix readout (5 × 7 dots per
     /// character, every dot visible faintly when unlit, the lit ones glowing like a vacuum-fluorescent display).
     static func readoutWindow(_ ctx: CGContext, _ rect: CGRect, text: String, glow: CGFloat = 1) {
+        if Theme.look.devices == .cards || Theme.look.devices == .schematic {
+            let para = NSMutableParagraphStyle(); para.alignment = .center; para.lineBreakMode = .byTruncatingTail
+            if Theme.look.devices == .cards {
+                ctx.addPath(CGPath(roundedRect: rect, cornerWidth: rect.height / 2, cornerHeight: rect.height / 2, transform: nil))
+                ctx.setFillColor(Theme.well.withAlphaComponent(0.7).cgColor); ctx.fillPath()
+            } else {
+                Atelier.rule(ctx, CGPoint(x: rect.minX + 4, y: rect.maxY - 0.5), CGPoint(x: rect.maxX - 4, y: rect.maxY - 0.5), weight: Atelier.hair, color: Theme.ink(0.35))
+            }
+            let attrs: [NSAttributedString.Key: Any] = [.font: Theme.mono(8.5, .medium), .foregroundColor: Theme.text.withAlphaComponent(max(0.35, min(1, glow))), .paragraphStyle: para]
+            (text as NSString).draw(with: rect.offsetBy(dx: 0, dy: 1.5), options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine], attributes: attrs)
+            return
+        }
         let frame = CGPath(roundedRect: rect, cornerWidth: 2.5, cornerHeight: 2.5, transform: nil)
         ctx.addPath(frame); ctx.setFillColor(NSColor(white: 0.03, alpha: 1).cgColor); ctx.fillPath()
         let screen = rect.insetBy(dx: 1.5, dy: 1.5)
@@ -483,6 +532,19 @@ final class FaceplateControl: NSControl, ParameterControl {
         switch kind {
         case .toggle:
             Faceplate.pushSwitch(ctx, CGRect(x: c.x - 13, y: c.y - 9, width: 26, height: 19), on: value >= 0.5, color: tint, lit: light)
+        case .knob, .selector where Theme.look.devices == .cards || Theme.look.devices == .schematic:
+            // Glass bead (Prism) or drawn dial (Atelier); the kits draw upright, so un-flip around the knob.
+            let r: CGFloat = kind == .knob ? 14 : 12
+            ctx.saveGState(); ctx.translateBy(x: 0, y: 2 * c.y); ctx.scaleBy(x: 1, y: -1)
+            let v = CGFloat(value), origin: CGFloat = bipolar ? 0.5 : 0
+            if Theme.look.devices == .cards { Prism.knob(ctx, center: c, radius: r, value: v, from: origin, color: dimmed ? Theme.textFaint : tint, active: tracking) }
+            else { Atelier.knob(ctx, center: c, radius: r, value: v, from: origin, color: dimmed ? Theme.textFaint : tint, active: tracking) }
+            ctx.restoreGState()
+            if legends.count >= 2 {
+                let y = c.y + 11, gap: CGFloat = 12
+                Faceplate.engrave(legends[0], in: CGRect(x: 0, y: y, width: c.x - gap, height: 10), font: legendFont, color: Faceplate.legend, align: .right)
+                Faceplate.engrave(legends[legends.count - 1], in: CGRect(x: c.x + gap, y: y, width: w - c.x - gap, height: 10), font: legendFont, color: Faceplate.legend, align: .left)
+            }
         case .knob, .selector:
             let r: CGFloat = kind == .knob ? 12.5 : 10.5
             Faceplate.scale(ctx, center: c, radius: r, ticks: kind == .selector ? Int(steps) + 1 : 11, value: value,
@@ -596,6 +658,19 @@ final class FaceplateMeter: NSView {
     }
     var level: (Float, Float) { levelDb }
 
+    /// The printed dB scale beside a light-pipe or drawn meter (same law as the meter: linear in dB).
+    private func drawScale(_ ctx: CGContext, slot: CGRect, scaleOnRight: Bool) {
+        let font = Theme.mono(5.8)
+        for db: Float in [0, -6, -12, -24, -48] {
+            let y = slot.minY + slot.height * CGFloat(db / Self.floorDb) - 3.5
+            let rect = scaleOnRight ? CGRect(x: slot.maxX + 1.5, y: y, width: bounds.width - slot.maxX - 1, height: 8)
+                                    : CGRect(x: 0, y: y, width: slot.minX - 1.5, height: 8)
+            Faceplate.engrave(String(format: "%.0f", abs(db)), in: rect, font: font, color: Faceplate.legend, align: scaleOnRight ? .left : .right)
+        }
+        Faceplate.engrave(caption, in: CGRect(x: slot.minX - 6, y: bounds.height - 10, width: slot.width + 12, height: 10),
+                          font: Theme.ui(6.5, .heavy), color: Faceplate.legend)
+    }
+
     private func segments(_ db: Float) -> Int { Int(((db - Self.floorDb) / -Self.floorDb * Float(Self.segments)).rounded(.down)) }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -603,6 +678,20 @@ final class FaceplateMeter: NSView {
         let scaleOnRight = caption == "IN" // the printed scale faces the controls
         let slotW: CGFloat = 12
         let slot = CGRect(x: scaleOnRight ? 0 : bounds.width - slotW, y: 0, width: slotW, height: bounds.height - 12)
+        if Theme.look.devices == .cards || Theme.look.devices == .schematic {
+            // Two light pipes (Prism) or drawn columns (Atelier); the kits fill upward, so un-flip around the slot.
+            ctx.saveGState(); ctx.translateBy(x: 0, y: slot.minY + slot.maxY); ctx.scaleBy(x: 1, y: -1)
+            for (ch, (db, held)) in [(levelDb.0, hold.0), (levelDb.1, hold.1)].enumerated() {
+                let r = CGRect(x: slot.minX + 1 + CGFloat(ch) * 5.5, y: slot.minY, width: 4.5, height: slot.height)
+                let f = { (d: Float) in CGFloat(max(0, min(1, (d - Self.floorDb) / -Self.floorDb))) }
+                let lv = poweredOff ? 0 : f(db) * light, pk = poweredOff ? 0 : f(held)
+                if Theme.look.devices == .cards { Prism.lightPipe(ctx, r, level: lv, peak: pk, clipped: held >= -0.1) }
+                else { Atelier.meter(ctx, r, level: lv, peak: pk, clipped: held >= -0.1) }
+            }
+            ctx.restoreGState()
+            drawScale(ctx, slot: slot, scaleOnRight: scaleOnRight)
+            return
+        }
         // Recessed slot: dark well, shadowed top, light lip at the bottom edge.
         let well = CGPath(roundedRect: slot, cornerWidth: 2, cornerHeight: 2, transform: nil)
         ctx.addPath(well); ctx.setFillColor(NSColor(white: 0.035, alpha: 1).cgColor); ctx.fillPath()
@@ -741,6 +830,12 @@ final class EtchedLabel: NSView {
     override func draw(_ dirtyRect: NSRect) {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
         ctx.clip(to: bounds)
+        if Theme.look.devices == .cards || Theme.look.devices == .schematic { // printed: the theme's title face, ink or light
+            let f = Theme.look.devices == .schematic ? Theme.title(12.5, .semibold) : Theme.ui(12.5, .semibold)
+            (text as NSString).draw(at: CGPoint(x: 1, y: (bounds.height - f.ascender + f.descender) / 2 - 1),
+                                    withAttributes: [.font: f, .foregroundColor: dimmed ? Theme.textFaint : Theme.text])
+            return
+        }
         Faceplate.etch(ctx, text, font: font, at: CGPoint(x: 1, y: 4), tone: dimmed ? 0.50 : 0.92, kern: 0.3)
     }
 }
@@ -792,6 +887,23 @@ final class PlateButton: NSButton {
         let pressed = isHighlighted
         let enabled = isEnabled
         if isFlipped { ctx.translateBy(x: 0, y: bounds.height); ctx.scaleBy(x: 1, y: -1) } // draw y-up
+        if style == .key && (Theme.look.devices == .cards || Theme.look.devices == .schematic) {
+            // A glass capsule (Prism) or a boxed label (Atelier).
+            let r = bounds.insetBy(dx: 1, dy: 2)
+            if Theme.look.devices == .cards {
+                Prism.slab(ctx, r, radius: r.height / 2, tint: Theme.hex(0xA8B8FF), body: pressed ? 0.2 : 0.09, flipped: false)
+            } else {
+                ctx.setFillColor((pressed ? Theme.ink(0.12) : Theme.panelRaised).cgColor); ctx.fill(r)
+                ctx.setStrokeColor(Theme.ink(enabled ? 0.7 : 0.3).cgColor); ctx.setLineWidth(Atelier.fine); ctx.stroke(r.insetBy(dx: 0.4, dy: 0.4))
+            }
+            let f = Theme.mono(8, .medium), text = label as NSString
+            let size = text.size(withAttributes: [.font: f])
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: false)
+            text.draw(at: CGPoint(x: r.midX - size.width / 2, y: r.midY - size.height / 2 + 0.5), withAttributes: [.font: f, .foregroundColor: enabled ? Theme.text : Theme.textFaint])
+            NSGraphicsContext.restoreGraphicsState()
+            return
+        }
         if style == .powerIcon {
             // Just the symbol: glowing in the unit's colour when on, a dim etched mark when bypassed.
             let c = CGPoint(x: bounds.midX, y: bounds.midY), on = state == .on && enabled

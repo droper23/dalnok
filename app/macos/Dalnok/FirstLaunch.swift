@@ -17,7 +17,7 @@ final class ShortcutChooserController: NSObject {
                           backing: .buffered, defer: false)
         super.init()
         window.title = "Welcome to Dalnok"
-        window.appearance = NSAppearance(named: .darkAqua)
+        window.appearance = Theme.appearance
         window.backgroundColor = Theme.panel
         window.isReleasedWhenClosed = false
         let title = NSTextField(labelWithString: "Which keyboard shortcuts do you know?")
@@ -54,7 +54,7 @@ final class ShortcutChooserController: NSObject {
         let bg = NSView()
         bg.wantsLayer = true
         bg.layer?.backgroundColor = Theme.panel.cgColor
-        bg.appearance = NSAppearance(named: .darkAqua)
+        bg.appearance = Theme.appearance
         stack.translatesAutoresizingMaskIntoConstraints = false
         bg.addSubview(stack)
         NSLayoutConstraint.activate([

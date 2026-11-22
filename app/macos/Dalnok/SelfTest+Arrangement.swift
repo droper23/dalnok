@@ -125,6 +125,32 @@ extension SelfTest {
         check(abs(e.position - m0.frame) < 2, "clicking a marker flag moves the playhead there")
         s.renameMarker(m0.id, "Verse")
         check(fixedString(s.markers[0].name) == "Verse", "markers can be renamed")
+        // View ▸ Composition Overview: sections from the markers (Start, Verse, the next marker), each track's coverage,
+        // arrows and Return go to a section, Esc returns.
+        func key(_ chars: String, _ code: UInt16) -> NSEvent {
+            NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: w.window?.windowNumber ?? 0,
+                             context: nil, characters: chars, charactersIgnoringModifiers: chars, isARepeat: false, keyCode: code)!
+        }
+        let positionBeforeOverview = e.position
+        check(perform("Composition Overview") && !w.overview.isHidden && w.window?.firstResponder === w.overview,
+              "View ▸ Composition Overview opens the roadmap with the keyboard in it")
+        let secs = w.overview.sections
+        check(secs.count == 3 && secs[0].title == "Start" && secs[1].title == "Verse" && secs[1].start == s.markers[0].frame,
+              "sections come from the markers (\(secs.map(\.title)))")
+        if let t = s.tracks.first, secs.count == 3 {
+            let expected = t.clips.map { c in max(0, min(c.end, secs[0].end) - max(c.start, secs[0].start)) }.reduce(0, +)
+            check(abs(CompositionOverview.coverage(t, secs[0]) - Double(expected) / Double(secs[0].end - secs[0].start)) < 1e-9,
+                  "a track's coverage of a section comes from its clips (\(CompositionOverview.coverage(t, secs[0])))")
+        }
+        w.overview.keyDown(with: key(String(UnicodeScalar(NSRightArrowFunctionKey)!), 124))
+        w.overview.keyDown(with: key("\r", 36))
+        await wait(0.4)
+        check(w.overview.isHidden && secs.count == 3 && abs(e.position - secs[1].start) < 2 && w.timeline.scrollFrame <= Double(secs[1].start),
+              "→ and Return show the Verse section in the arrangement (\(e.position), scroll \(Int(w.timeline.scrollFrame)))")
+        _ = perform("Composition Overview")
+        w.overview.keyDown(with: key("\u{1b}", 53))
+        check(w.overview.isHidden, "Esc returns from the overview")
+        e.seek(positionBeforeOverview); await wait(0.15)
         check(perform("Delete Marker", exact: true) && s.markers.count == 1, "Delete Marker removes the marker at the playhead")
         _ = perform("Undo"); _ = perform("Undo")
         s.markers.forEach { s.removeMarker($0.id) }
@@ -493,7 +519,7 @@ extension SelfTest {
         let savedPreset = ShortcutRegistry.shared.presetId
         w.shortcutChooser.show()
         await wait(0.1)
-        check(centered(w.shortcutChooser.window) && w.shortcutChooser.cards.count == 6, "first launch asks which shortcuts you know (6 apps)")
+        check(centered(w.shortcutChooser.window) && w.shortcutChooser.cards.count == 6, "first launch asks which shortcuts you know (6 apps; \(w.shortcutChooser.cards.count) cards, frame \(w.shortcutChooser.window.frame), screen \(String(describing: (w.window?.screen ?? NSScreen.main)?.visibleFrame)))")
         w.shortcutChooser.choose("protools")
         check(ShortcutRegistry.shared.presetId == "protools" && !w.shortcutChooser.window.isVisible && WelcomeController.hasCompleted,
               "choosing Pro Tools applies its shortcuts and closes the window (preset \(ShortcutRegistry.shared.presetId))")

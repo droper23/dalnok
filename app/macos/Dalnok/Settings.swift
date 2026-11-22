@@ -35,6 +35,9 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
     let automationMode = NSPopUpButton(frame: .zero, pullsDown: false)
     // Appearance
     let themePicker = NSPopUpButton(frame: .zero, pullsDown: false)
+    /// Light or dark version of themes that have both (Prism, Atelier): Match System, Light, Dark.
+    let variantPicker = NSPopUpButton(frame: .zero, pullsDown: false)
+    static let variantChoices = ["system", "light", "dark"]
     let appearanceNote = NSTextField(wrappingLabelWithString: "")
     let relaunch = NSButton(title: "Relaunch Now", target: nil, action: nil)
     let barsAndBeats = NSButton(checkboxWithTitle: "Bars and beats (otherwise minutes and seconds)", target: nil, action: nil)
@@ -80,7 +83,7 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 860, height: 620),
                               styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)
         window.title = "Settings"
-        window.appearance = NSAppearance(named: .darkAqua)
+        window.appearance = Theme.appearance
         window.isReleasedWhenClosed = false
         super.init(window: window)
         window.delegate = self
@@ -269,6 +272,9 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
         // Appearance
         for s in Theme.Style.allCases { themePicker.addItem(withTitle: s.title) }
         themePicker.target = self; themePicker.action = #selector(themeChanged(_:))
+        variantPicker.addItems(withTitles: ["Match System", "Light", "Dark"])
+        variantPicker.target = self; variantPicker.action = #selector(variantChanged(_:))
+        variantPicker.setAccessibilityLabel("Light or dark version")
         relaunch.bezelStyle = .rounded
         relaunch.controlSize = .small
         relaunch.target = self; relaunch.action = #selector(relaunchTapped(_:))
@@ -282,6 +288,7 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
         trackHeightValue.font = Theme.mono(11); trackHeightValue.textColor = Theme.textDim
         paneViews[.appearance] = pane("Appearance", "The look of Dalnok and how the arrangement is laid out.", [
             ("Theme", themePicker, nil),
+            ("Light or dark", variantPicker, "Prism and Atelier come in light and dark versions; Graphite and Warm Analog are dark."),
             ("", row([appearanceNote, relaunch]), nil),
             ("Ruler and clock", barsAndBeats, nil),
             ("", secondaryClock, "Real time when the main display shows bars, and bars when it shows real time."),
@@ -351,8 +358,10 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
         copyAudio.state = MainWindowController.copyAudioOnSave ? .on : .off
         automationMode.selectItem(at: AutomationWriter.mode.rawValue)
         themePicker.selectItem(at: Theme.Style.allCases.firstIndex(of: Theme.preferredStyle) ?? 0)
+        variantPicker.selectItem(at: Self.variantChoices.firstIndex(of: Theme.variantPreference) ?? 0)
+        variantPicker.isEnabled = Theme.preferredStyle.variants.count > 1
         appearanceNote.stringValue = Theme.preferredStyle == Theme.activeStyle
-            ? "Graphite is crisp and focused. Warm Analog brings a softer studio palette."
+            ? Theme.activeStyle.summary + "."
             : "The appearance changes when recording stops, or relaunch now."
         relaunch.isHidden = Theme.preferredStyle == Theme.activeStyle
         barsAndBeats.state = TimelineView.barsAndBeats ? .on : .off
@@ -432,6 +441,13 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
         Theme.preferredStyle = Theme.Style.allCases[i]
         // Live: the windows rebuild in the new style (while recording, the change waits for a relaunch).
         _ = (NSApp.delegate as? AppDelegate)?.switchTheme(to: Theme.preferredStyle)
+        refresh()
+    }
+    @objc func variantChanged(_ sender: Any?) {
+        let i = variantPicker.indexOfSelectedItem
+        guard Self.variantChoices.indices.contains(i) else { return }
+        Theme.variantPreference = Self.variantChoices[i]
+        _ = (NSApp.delegate as? AppDelegate)?.switchTheme(to: Theme.activeStyle)
         refresh()
     }
     @objc func barsChanged(_ sender: Any?) {
