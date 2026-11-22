@@ -24,7 +24,7 @@ Concept Guide. Grows with each phase: MIDI (P3), plugins, automation, and sends 
 Signalsmith-based stretch, pitch, and varispeed rendered in the background. ⌥-drag stretch and the Clip
 menu. Imported REAPER playrates and Ableton warp markers now play correctly.
 
-## Phase 2: Recording and editing 🔶 (recording, journals, crash recovery prompt, cycle, punch, count-in, multi-input, separate input/output devices, Input Monitoring, live waveform, disk streaming and loopback-measured latency verified, the last on a Scarlett; open: power-loss test)
+## Phase 2: Recording and editing 🔶 (recording, journals, crash recovery prompt, cycle, punch, count-in, multi-input, separate input/output devices, Input Monitoring, live waveform, disk streaming and loopback-measured latency verified, re-measured on every device stream (Scarlett: 6 of 6 takes sample-exact); open: power-loss test)
 Input and recording (with a Scarlett test rig), monitoring, split, fades, crossfades, autosave and crash
 recovery, basic routing, disk streaming.
 
@@ -35,9 +35,9 @@ MIDI tracks, recording and playback, piano roll, quantize, velocity, tempo and m
 **VST3 hosting (first format)** with generic parameter panels, then AU and CLAP. Mixer, buses, sends,
 sidechains, automation, delay compensation, **comping and take folders**, track stacks.
 
-## Phase 5: Creative workflows 🔶 (clip launcher with scenes on the same tracks started)
+## Phase 5: Creative workflows 🔶 (clip launcher on the same tracks: scenes, follow actions, performance recording, recording into slots, drags both ways, launch motion and keyboard use verified)
 **Unified clip launcher** on the same tracks as the timeline. Flex-style time and pitch editing
 (Signalsmith Stretch). Modulation system, racks, scripting API, macros, workspaces.
 
 ## Phase 6: Refinement ⬜
-Performance, accessibility, theme system (including analog; four themes with light/dark versions done 2026-11-22), DAWproject interchange, Windows and Linux front ends, local AI assistance.
+Performance, accessibility (automated VoiceOver-name and Tab audit of every window in every look, 2026-11-22; a listening pass with VoiceOver still to do), theme system (including analog; four themes with light/dark versions done 2026-11-22; Atelier redrawn as a hand-drawn sketchbook), DAWproject interchange, Windows and Linux front ends, local AI assistance.
