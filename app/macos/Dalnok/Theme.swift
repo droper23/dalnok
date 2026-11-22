@@ -54,7 +54,8 @@ enum Theme {
     static func resolvedVariant(for style: Style, preference: String = variantPreference) -> Variant {
         guard style.variants.count > 1 else { return style.variants[0] }
         if let v = Variant(rawValue: preference) { return v }
-        let dark = NSApp?.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        // The system setting itself (readable from any thread, unlike NSApp.effectiveAppearance).
+        let dark = UserDefaults.standard.string(forKey: "AppleInterfaceStyle") == "Dark"
         return dark ? .dark : .light
     }
 
