@@ -28,7 +28,7 @@
 extern "C" {
 #endif
 
-#define DALNOK_API_VERSION 45
+#define DALNOK_API_VERSION 46
 
 typedef enum {
     DALNOK_OK = 0,
@@ -371,6 +371,7 @@ typedef struct {
     float height;                  /* lane height in points, view only (0 = the default height) */
     bool hidden;                   /* hidden from the arrangement and mixer (still plays) */
     DalnokTrackId output;          /* the bus this track plays into (0 = master) */
+    bool phase_invert;             /* polarity inverted before the inserts (API 46) */
 } DalnokTrackInfo;
 /* END GENERATED DalnokTrackInfo */
 typedef enum { DALNOK_TRACK_AUDIO = 0, DALNOK_TRACK_INSTRUMENT = 1, DALNOK_TRACK_BUS = 2 } DalnokTrackKind;
@@ -437,6 +438,9 @@ DalnokStatus dalnok_track_set_height(DalnokEngine *engine, DalnokTrackId track, 
 /* Hide a track from the arrangement and mixer (API 26; it keeps playing). track 0 + hidden=false shows all. Undoable. */
 DalnokStatus dalnok_track_set_hidden(DalnokEngine *engine, DalnokTrackId track, bool hidden);
 bool dalnok_track_hidden(const DalnokEngine *engine, DalnokTrackId track);
+/* Phase (polarity) invert (API 46): the track's whole source flips before its inserts, so pre- and post-fader sends
+ * carry it too. Saved with the project (format 14); one undo step. Read it from DalnokTrackInfo.phase_invert. */
+DalnokStatus dalnok_track_set_phase_invert(DalnokEngine *engine, DalnokTrackId track, bool on);
 DalnokStatus dalnok_track_stack_ungroup(DalnokEngine *engine, DalnokTrackId stack);
 
 /* Sidechain: feeds `source`'s post-insert, pre-fader signal into the plug-in's sidechain input (0 = none).

@@ -30,7 +30,7 @@ namespace fs = std::filesystem;
 namespace dalnok {
 
 namespace {
-constexpr int kFormatVersion = 13;
+constexpr int kFormatVersion = 14;
 constexpr int kConstantTempoVersion = 3; // written when there are no tempo or meter changes, so older builds still open it
 
 // Format history (A-16), one step per version. Loading runs every step from the file's version up to
@@ -56,6 +56,7 @@ constexpr Migration kMigrations[] = {
     {11, "markers (and hidden tracks)", nullptr},
     {12, "clip mute", nullptr},
     {13, "built-in plug-ins", nullptr},
+    {14, "phase invert", nullptr},
 };
 constexpr bool migrationsCover() {
     int v = 1;
@@ -265,6 +266,7 @@ json::Value Engine::describe() const {
         if (t.armed) tv.set("armed", true);
         if (t.inputChannel != 0) tv.set("input", t.inputChannel);
         if (t.inputMonitor) tv.set("monitor", true);
+        if (t.phaseInvert) tv.set("phaseInvert", true);
         if (t.group) tv.set("group", t.group);
         if (!t.plugins.empty()) {
             Value list = Value::makeArray();
@@ -467,6 +469,7 @@ bool Engine::saveProject(const std::string &path, std::string &err, bool copyMed
         }
         doc.set("markers", std::move(ms));
     }
+    const bool phase = std::any_of(model_.tracks.begin(), model_.tracks.end(), [](const TrackState &t) { return t.phaseInvert; });
     const bool clipMute = std::any_of(model_.clips.begin(), model_.clips.end(), [](const ClipState &c) { return c.muted; });
     const bool builtin = std::any_of(model_.tracks.begin(), model_.tracks.end(), [](const TrackState &t) {
         return std::any_of(t.plugins.begin(), t.plugins.end(), [](const PluginSlot &p) { return p.format == "dalnok"; });
@@ -476,7 +479,7 @@ bool Engine::saveProject(const std::string &path, std::string &err, bool copyMed
     bool sidechain = false;
     for (const auto &t : model_.tracks) for (const auto &p : t.plugins) sidechain = sidechain || p.sidechain;
     const bool masterGain = model_.masterGainDb != 0;
-    doc.set("version", builtin ? 13 : clipMute ? 12 : !model_.markers.empty() ? 11 : bypass ? 10 : launcher || sidechain ? 9 : pluginAutomation ? 8 : !model_.folders.empty() || masterGain ? 7 : automation ? 6 : routing ? 5 : model_.tempo.size() > 1 || model_.meters.size() > 1 ? 4 : kConstantTempoVersion);
+    doc.set("version", phase ? 14 : builtin ? 13 : clipMute ? 12 : !model_.markers.empty() ? 11 : bypass ? 10 : launcher || sidechain ? 9 : pluginAutomation ? 8 : !model_.folders.empty() || masterGain ? 7 : automation ? 6 : routing ? 5 : model_.tempo.size() > 1 || model_.meters.size() > 1 ? 4 : kConstantTempoVersion);
     json::Value body = describe();
     for (auto &[key, value] : body.object) {
         if (key != "media") continue;
@@ -626,6 +629,7 @@ std::unique_ptr<Engine::PreparedProject> Engine::readDocument(const json::Value 
             t.armed = tv.getBool("armed", false);
             t.inputChannel = static_cast<int32_t>(std::clamp<int64_t>(toInt(tv, "input"), 0, 63));
             t.inputMonitor = t.kind == kTrackAudio && tv.getBool("monitor", false);
+            t.phaseInvert = tv.getBool("phaseInvert", false);
             t.group = static_cast<int32_t>(std::max<int64_t>(0, toInt(tv, "group")));
             if (const json::Value *pl = tv.get("plugins"); pl && pl->isArray()) {
                 std::set<int32_t> seen;

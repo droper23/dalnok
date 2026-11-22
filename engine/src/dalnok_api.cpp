@@ -638,6 +638,10 @@ DalnokStatus dalnok_track_set_hidden(DalnokEngine *e, DalnokTrackId t, bool hidd
     std::string err;
     return e ? statusFor(e->impl.setTrackHidden(t, hidden, err), err) : DALNOK_ERR_INVALID_ARG;
 }
+DalnokStatus dalnok_track_set_phase_invert(DalnokEngine *e, DalnokTrackId t, bool on) {
+    std::string err;
+    return e ? statusFor(e->impl.setPhaseInvert(t, on, err), err) : DALNOK_ERR_INVALID_ARG;
+}
 bool dalnok_track_hidden(const DalnokEngine *e, DalnokTrackId t) {
     const auto *tr = e ? e->impl.model().track(t) : nullptr;
     return tr && tr->hidden;

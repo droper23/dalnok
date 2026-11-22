@@ -401,6 +401,8 @@ void renderBlock(const RenderState &state, int64_t pos, int frames, float *left,
                 for (int k = 0; k < frames; ++k) { L[k] += s.tmp[k]; R[k] += s.tmp[k]; }
             }
             if (!t.inserts.empty() && !st.any) { clear(L, frames); clear(R, frames); st.any = true; }
+            // Phase invert: the whole source (clips, instrument, bus input, live input) flips before the inserts.
+            if (t.invert && st.any) { vec::scale(L, -1.0f, L, frames); vec::scale(R, -1.0f, R, frames); }
             st.stage = kStepInserts;
             st.insert = 0;
         }

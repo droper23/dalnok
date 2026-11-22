@@ -179,6 +179,7 @@ struct RenderTrack {
     int32_t inputChannel = -1;     // audio tracks: the device input they monitor (-1 = cannot monitor)
     bool inputMonitor = false, armed = false; // Input Monitoring on; record-enabled (monitors when armed monitoring is on)
     bool instrument = false;       // MIDI track (built-in synth unless instrumentPlugin is set)
+    bool invert = false;           // phase (polarity) inverted before the inserts
     PluginProcessor *instrumentPlugin = nullptr;
     std::vector<PluginProcessor *> inserts;               // processing order
     std::vector<std::shared_ptr<PluginProcessor>> keep;   // keeps instances alive while this snapshot exists

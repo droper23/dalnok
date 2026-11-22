@@ -1,6 +1,6 @@
 {
  "$comment": "Every key a Dalnok project file can hold (A-16): its JSON type(s), the format version that introduced it, and whether an older build may ignore it and still play the project the same (view or transport state). Arrays of objects are written name[]. ProjectFormat tests check saved files against this; update it with every format change.",
- "version": 13,
+ "version": 14,
  "keys": {
   "cycle": {
    "type": "array",
@@ -128,6 +128,11 @@
    "since": 13,
    "ignorable": true,
    "note": "Input Monitoring (live input only; never changes what plays back)"
+  },
+  "tracks[].phaseInvert": {
+   "type": "bool",
+   "since": 14,
+   "note": "polarity flipped before the inserts"
   },
   "tracks[].armed": {
    "type": "bool",

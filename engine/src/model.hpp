@@ -88,6 +88,7 @@ struct TrackState {
     bool armed = false;       // record-enabled
     int32_t inputChannel = 0; // zero-based input of the recording device (audio tracks)
     bool inputMonitor = false; // Input Monitoring: hear the input through this track's strip (audio tracks)
+    bool phaseInvert = false;  // polarity flipped at the head of the strip, before the inserts (API 46)
     int32_t group = 0;         // TrackGroup id (0 = none)
     std::vector<PluginSlot> plugins; // instrument first (if any), then inserts in processing order
     std::string name;

@@ -202,6 +202,8 @@ public:
     DalnokTrackId duplicateTrack(DalnokTrackId track, std::string &err);
     // Hide tracks from view (they keep playing). `track` 0 with hidden=false shows every track. Undoable.
     bool setTrackHidden(DalnokTrackId track, bool hidden, std::string &err);
+    // Phase (polarity) invert at the head of the strip. Undoable (API 46).
+    bool setPhaseInvert(DalnokTrackId track, bool on, std::string &err);
     // Markers (undoable): add returns the id; positions are timeline frames (>= 0).
     int32_t addMarker(int64_t frame, const std::string &name, std::string &err);
     bool removeMarker(int32_t id, std::string &err);

@@ -30,6 +30,7 @@ bool          collapsed     | collapsed    | t->collapsed                | stack
 float         height        | laneHeight   | t->height                   | lane height in points, view only (0 = the default height)
 bool          hidden        | hidden       | t->hidden                   | hidden from the arrangement and mixer (still plays)
 DalnokTrackId output        | output       | t->output                   | the bus this track plays into (0 = master)
+bool          phase_invert  | phaseInvert  | t->phaseInvert              | polarity inverted before the inserts (API 46)
 end
 
 struct DalnokClipInfo ClipFields : const ClipState *c (the clip), const PoolEntry *pe (its media, or null), const Engine &impl

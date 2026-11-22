@@ -21,3 +21,4 @@ out->collapsed = t->collapsed;
 out->height = t->height;
 out->hidden = t->hidden;
 out->output = t->output;
+out->phase_invert = t->phaseInvert;
