@@ -157,6 +157,7 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
     func show(_ pane: Pane? = nil) {
         if let pane { select(pane) }
         refresh()
+        Atelier.unifyFonts(in: window?.contentView)
         // Placed before it shows: showWindow made it visible first, so the old check never centered it and it opened at
         // its creation origin, the screen's bottom-left corner.
         guard let window else { return }

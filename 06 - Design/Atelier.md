@@ -85,3 +85,11 @@ States stay shape plus colour (filled versus ruled chips, a saltire in a check b
 Body text contrast stays above 7:1 on both plates: Light text 10.9:1 and dim text 7.1:1 on the parchment (dim was
 5.8:1 before the audit), ochre numerals 5.1:1 (was 3.3:1); Dark text 12.5:1, dim 8.3:1, gold 7.2:1, the band's title
 7.6:1. The playhead keeps its red but is cased in paper so it reads over red-ink clips. Figures are decorative or already exposed by their displays.
+
+## Plug-ins as one engraving (2026-11-22, night; owner's fourth round)
+The chain is one diagram (`DevicePanel`, `Faceplate.plate` for `.schematic`): stations on the signal line, crop marks,
+caption at the foot (power as a knife switch, fold, Open), mercury columns (`Atelier.mercury`), margin notes, a dashed
+shunt over a bypassed station. Figures are instruments (`AtelierFigures.swift`): parts found by role from parameter
+names (`FigureRole.match`), lettered with the key's letters, dragged along their own axis (`FigureHandle`); live data:
+gain reduction (governor), energy (chamber, pendulum), transfer points (clipped wave). Key rows choose an instrument
+from their unit (`FaceplateControl.rowInstrument`). Review sheet: gallery `15-figures.png`.

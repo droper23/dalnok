@@ -101,8 +101,17 @@ enum FaceplateDisplay {
     /// Display size for a unit whose controls take `rows` rows.
     static func size(_ kind: Kind, rows: Int) -> NSSize {
         let s = baseSize(kind, rows: rows)
-        // Atelier: room for the figure's caption, and a wider plate for the hall.
-        return Theme.look.devices == .schematic ? NSSize(width: s.width, height: s.height + Codex.captionHeight) : s
+        // Atelier: the figure is the plate's centre, as tall as the plate allows, with its caption.
+        guard Theme.look.devices == .schematic else { return s }
+        let w: CGFloat = switch kind {
+        case .response: 250
+        case .history: 236
+        case .gainReduction: 196
+        case .transfer: 210
+        case .goniometer: 216
+        default: max(s.width, 176)
+        }
+        return NSSize(width: w, height: 158 + Codex.captionHeight)
     }
     private static func baseSize(_ kind: Kind, rows: Int) -> NSSize {
         switch kind {
@@ -179,6 +188,18 @@ class FaceplateScreen: NSView {
     var figureNumber = 1 { didSet { if figureNumber != oldValue { needsDisplay = true } } }
     var codexKind: FaceplateDisplay.Kind = .scope
     var codexSubject: Codex.Subject = .plain
+    /// Atelier figures as instruments (AtelierFigures.swift): the parameter link, the parts drawn last, a drag in progress.
+    var figureLink: FigureLink? { didSet { needsDisplay = true } }
+    var figureHandles: [FigureHandle] = []
+    var figureDrag: (role: FigureRole, start: CGPoint, value: Double, handle: FigureHandle)?
+    var marginNotes: [String] = []
+    /// The latest input/output pairs (transfer figures), normalised to the input's peak.
+    var liveTransfer: [CGPoint] { [] }
+    var atelierFigure: AtelierFigure? { Theme.look.devices == .schematic ? AtelierFigure.of(kind: codexKind, subject: codexSubject) : nil }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    override func mouseDown(with event: NSEvent) { if !(atelierFigure != nil && figureMouseDown(event)) { super.mouseDown(with: event) } }
+    override func mouseDragged(with event: NSEvent) { if figureDrag != nil { figureMouseDragged(event) } else { super.mouseDragged(with: event) } }
+    override func mouseUp(with event: NSEvent) { if figureDrag != nil { figureMouseUp() } else { super.mouseUp(with: event) } }
     /// Displays that render their own unlit state (the moving-coil meter keeps its face, just without lamps).
     var drawsOwnOffState: Bool { false }
     /// A light face behind the glass (the VU meter's paper): dirt shows dark on it rather than pale.
@@ -1138,6 +1159,7 @@ final class TransferScreen: FaceplateScreen {
         needsDisplay = true
     }
     func clear() { if !frames.isEmpty { frames = []; needsDisplay = true } }
+    override var liveTransfer: [CGPoint] { frames.last ?? [] }
 
     override func drawScreen(_ dirtyRect: NSRect) {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
@@ -1381,13 +1403,19 @@ final class LedAnalyzer: FaceplateScreen {
 @MainActor
 enum Codex {
     /// What a figure shows beyond its display kind (reverbs are drawn as an acoustic chamber).
-    enum Subject { case plain, chamber, echo }
+    enum Subject { case plain, chamber, echo, modulation }
     static let captionHeight: CGFloat = 12
 
     /// What a history display depicts: a hall for reverbs, echoes for delays (from the name, then the parameters).
     static func subject(kind: FaceplateDisplay.Kind, name: String, parameters: [String]) -> Subject {
-        guard kind == .history else { return .plain }
         let n = name.lowercased(), t = parameters.map { $0.lowercased() }
+        if kind == .goniometer {
+            // Modulation (an LFO to draw) rather than stereo imaging.
+            let mod = ["chorus", "flang", "phase", "tremolo", "vibrato", "modulat", "rotary", "ensemble"].contains(where: n.contains)
+                || t.contains { $0.contains("rate") || $0.contains("speed") } && t.contains { $0.contains("depth") || $0.contains("intensity") }
+            return mod ? .modulation : .plain
+        }
+        guard kind == .history else { return .plain }
         let verb = ["reverb", "verb", "hall", "room", "plate", "chamber", "space"].contains(where: n.contains)
             || t.filter { p in ["decay", "room", "size", "pre-delay", "predelay", "diffusion", "damping", "reverb", "early", "late"].contains(where: p.contains) }.count >= 2
         if verb { return .chamber }
@@ -1398,6 +1426,7 @@ enum Codex {
         switch (kind, subject) {
         case (_, .chamber): "Acoustic Chamber"
         case (_, .echo): "Chronograph of Echoes"
+        case (_, .modulation): "Crank and Disc"
         case (.response, _): "Frequency Atlas"
         case (.gainReduction, _): "Indicator of Reduction"
         case (.vu, _): "Indicator of Level"
@@ -1412,8 +1441,8 @@ enum Codex {
     /// The figure's field (above the caption) and the caption itself.
     static func frame(_ ctx: CGContext, _ bounds: CGRect, figure: Int, title: String) -> CGRect {
         let field = CGRect(x: bounds.minX + 5, y: bounds.minY + 5, width: bounds.width - 10, height: bounds.height - 10 - captionHeight)
-        ctx.setFillColor(Theme.lcd.cgColor); ctx.fill(field)
-        Atelier.screen(ctx, field)
+        // On the plate itself (owner, fourth round: one continuous diagram, no screens): a single fine rule frames it.
+        Atelier.box(ctx, field, weight: Atelier.hair, color: Theme.ink(0.4))
         Atelier.note(ctx, "Fig. \(figure) · \(title)", at: CGPoint(x: bounds.midX, y: field.maxY + 3.5), size: 8.5, color: Theme.textDim, align: .center)
         return field.insetBy(dx: 1, dy: 1)
     }
@@ -1440,6 +1469,21 @@ enum Codex {
 extension FaceplateScreen {
     /// Atelier: draws this display as a Codex figure. Returns false where it keeps the plain ink rendering.
     func drawCodex(_ ctx: CGContext) -> Bool {
+        if let fig = atelierFigure {
+            // The figure is drawn straight on the plate (no screen): its caption below, its parts lettered as the key.
+            let field = CGRect(x: bounds.minX + 3, y: bounds.minY + 3, width: bounds.width - 6, height: bounds.height - 6 - Codex.captionHeight)
+            Atelier.note(ctx, "Fig. \(figureNumber) · \(fig.title)", at: CGPoint(x: bounds.midX, y: field.maxY + 2), size: 8.5, color: Theme.textDim, align: .center)
+            ctx.saveGState()
+            if poweredOff { ctx.setAlpha(0.45) }
+            let live: Double = switch self {
+            case let m as MovingCoilMeter: m.reductionDb
+            case let h as HistoryScreen: Double(h.latest.output)
+            default: -90
+            }
+            drawFigure(fig, ctx, field, live: live)
+            ctx.restoreGState()
+            return true
+        }
         let f = Codex.frame(ctx, bounds, figure: figureNumber, title: Codex.title(codexKind, subject: codexSubject))
         ctx.saveGState(); ctx.clip(to: f.insetBy(dx: -0.5, dy: -0.5))
         defer { ctx.restoreGState() }
@@ -1448,7 +1492,7 @@ extension FaceplateScreen {
         case let s as ResponseScreen: s.codex(ctx, f)
         case let s as MovingCoilMeter: s.codex(ctx, f)
         case let s as TransferScreen: s.codex(ctx, f)
-        case let s as HistoryScreen: codexSubject == .chamber ? s.chamber(ctx, f) : s.codex(ctx, f)
+        case let s as HistoryScreen: if codexSubject == .chamber { s.chamber(ctx, f) } else { s.codex(ctx, f) }
         case let s as GoniometerScreen: s.codex(ctx, f)
         case let s as LedAnalyzer: s.codex(ctx, f)
         case let s as ScopeScreen: s.codex(ctx, f)
@@ -1593,7 +1637,8 @@ extension HistoryScreen {
 
     /// Reverbs: a vaulted hall in one-point perspective (an arcade of columns down each side, a coffered floor), with
     /// sound rays from the source reflecting to the listener; the rays darken with the output level.
-    func chamber(_ ctx: CGContext, _ f: CGRect) {
+    @discardableResult
+    func chamber(_ ctx: CGContext, _ f: CGRect, letters: (source: String?, vault: String?, listener: String?) = ("A", "B", "C")) -> (vault: CGPoint, listener: CGPoint) {
         let lvl = CGFloat(max(0, min(1, (latest.output + 60) / 60)))
         let ink = Theme.ink(0.7), faint = Theme.ink(0.3)
         let outer = CGRect(x: f.minX + 6, y: f.minY + 10, width: f.width - 12, height: f.height - 14)
@@ -1669,10 +1714,12 @@ extension HistoryScreen {
         ctx.fillEllipse(in: CGRect(x: src.x - 2, y: src.y - 2, width: 4, height: 4))
         Atelier.rule(ctx, CGPoint(x: src.x, y: src.y + 2), CGPoint(x: src.x, y: src.y + 8), weight: 0.7, color: Theme.text)
         Atelier.loop(ctx, CGRect(x: lis.x - 2.5, y: lis.y - 2.5, width: 5, height: 5), weight: 0.7, color: Theme.text)
-        Atelier.callout(ctx, "A", from: src, to: CGPoint(x: src.x - 10, y: src.y - 6))
+        if let l = letters.source { Atelier.callout(ctx, l, from: src, to: CGPoint(x: src.x - 10, y: src.y - 6)) }
         let crown = archPoint(frontArch, rise: frontRise, 1.5 * .pi)
-        Atelier.callout(ctx, "B", from: CGPoint(x: crown.x + 30, y: crown.y + 6), to: CGPoint(x: crown.x + 44, y: crown.y + 2))
-        Atelier.callout(ctx, "C", from: lis, to: CGPoint(x: lis.x + 10, y: lis.y - 6))
+        let vault = CGPoint(x: crown.x + 30, y: crown.y + 6)
+        if let l = letters.vault { Atelier.callout(ctx, l, from: vault, to: CGPoint(x: crown.x + 44, y: crown.y + 2)) }
+        if let l = letters.listener { Atelier.callout(ctx, l, from: lis, to: CGPoint(x: lis.x + 10, y: lis.y - 6)) }
+        return (vault, lis)
     }
 }
 

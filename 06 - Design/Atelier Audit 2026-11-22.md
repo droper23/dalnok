@@ -104,3 +104,41 @@ Severity: **H** must fix, **M** should, **L** polish.
   scroll clipping (no change), C5 (a fade at the arrangement's lower edge), C6 (scroll bar gutter under the plates),
   C7 (insert rows aligned across strips, selected wash to the divider), C12, D3 (record still shares red with the
   playhead and accent), D5 (track inks separated by lightness).
+
+## Owner review, third round (2026-11-22, night)
+Owner's notes on the PR #11 build: the record chip's R off centre; plug-in power keys off-theme; keep the mixer's
+fader boxes but make every 3D element share their direction and depth; an illustration at the Inspector's foot; Library
+names missing until clicked and too close to their icons; text still cut off (Library search); a weak clock, cramped by
+the second clock; fonts not unified; and plug-ins redesigned so they don't read as a Graphite reskin, with more of the
+Mathematics plate's drawing everywhere.
+Answers to the plug-in questions: **mix by plug-in type** (figure as the main drawing, parameters in the form that
+suits the family); drawing **a mix: easy to navigate, still drawn**; third-party plug-ins get a **generic legend plate**;
+iconography **everywhere with room** (data areas stay clean).
+
+Done in `feat/atelier-polish`:
+- One oblique for every solid (`Atelier.depth`, `recede`, `obliqueSide`): dials, fader blocks, plug-in cursors, glyph blocks.
+- Plug-in plates: lettered legend rows with slide-rule scales (`FaceplateControl.legendRows`), Off | On cells for
+  switches, knife-switch power key (`Atelier.knifeSwitch`). The family figure stays the plate's centre (EQ bands drag).
+- A9 done: engraved glyphs (`AtelierGlyphs.swift`) for the control bar, tools and Library places.
+- D3 done: red is record only (playhead ink, accent gold / burnt ochre). D5 done: inks separated by lightness per hue family.
+- Type: Source Serif 4 throughout (`Typography.atelier`), `Atelier.unifyFonts` for system controls.
+- Clock: split housing, two drums side by side when the second clock is on. Inspector Fig. 3 (signal path, live), sized
+  to the spare room only.
+- Still open: B4 (needle master meter), C5, C6, C7 (insert rows aligned), C12.
+
+## Plug-ins, fourth round (owner, 2026-11-22, night)
+"Still not different enough from Graphite." Decisions:
+- **Core: both** — one large draggable figure per family (lettered parts are the controls) plus unit-specific
+  instruments in the key: log slide rule (Hz), chronograph dial (time), vernier (dB), protractor (ratio), balance beam
+  (mix/%), rotary selector (choices), knife switch (on/off).
+- **Shape: one continuous diagram** — the chain is a single engraving, each plate a station on the signal line.
+- **Rack parts replaced:** meters as needle/mercury columns; plate number and name as a caption, power/fold/open as
+  small engraved marks; live margin notes ("reduction now −4 dB", "latency 2 ms").
+- **Figures:** dynamics a **flyball governor** (collar = threshold, arm = ratio, balls swing with reduction); reverb the
+  **chamber** (drag walls = size, rays = decay); delay a **pendulum** (swing = time, repeat arcs = feedback);
+  distortion a sine through its **clipping curve** (drive); modulation a **crank and disc** tracing the LFO (rate,
+  depth); EQ the Frequency Atlas; others a category construction.
+- **Inspector with many inserts:** Fig. 3 becomes a **vertical signal path** (one lettered block per insert), and the
+  insert list shows the first 6, then "Show all N".
+- After merge: README stills, tours and plug-in clips for every theme, and the status-site screenshots (ask before
+  publishing the site).

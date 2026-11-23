@@ -95,7 +95,11 @@ final class LibraryPanel: SidePanelView, NSOutlineViewDataSource, NSOutlineViewD
         search.controlSize = .small
         search.sendsSearchStringImmediately = true
         search.setAccessibilityLabel("Search the library")
-        if Theme.look.mixer == .instrument { search.font = Theme.title(12.5) }
+        if Theme.look.mixer == .instrument {
+            // The serif's tall ascenders were clipped by the small field: a regular field with the text set to fit it.
+            search.controlSize = .regular
+            search.font = Theme.title(12, .regular)
+        }
 
         let col = NSTableColumn(identifier: .init("item"))
         outline.addTableColumn(col)
@@ -300,6 +304,13 @@ final class LibraryPanel: SidePanelView, NSOutlineViewDataSource, NSOutlineViewD
         var trailing: NSView = cell
         if let c = n.category {
             t.font = atelier ? Theme.title(13, .semibold) : Theme.ui(12, .semibold)
+            // Long names ("Restoration / Noise Reduction") step down in size to fit rather than lose their end.
+            let room = o.bounds.width - o.indentationPerLevel - 64
+            if room > 60, let f = t.font {
+                var size = f.pointSize
+                while size > 10, (n.title as NSString).size(withAttributes: [.font: NSFont(descriptor: f.fontDescriptor, size: size) ?? f]).width > room { size -= 0.5 }
+                t.font = NSFont(descriptor: f.fontDescriptor, size: size) ?? f
+            }
             t.textColor = Theme.text
             let count = NSTextField(labelWithString: "\(n.children.count)")
             count.font = atelier ? Theme.note(12) : Theme.mono(10.5)
@@ -419,7 +430,7 @@ final class LibraryPlaceButton: NSButton {
         isBordered = false
         alignment = .left
         imagePosition = .imageLeading
-        image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?.withSymbolConfiguration(.init(pointSize: 11, weight: .regular))
+        image = AtelierGlyphs.image(symbol, size: 15) ?? NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?.withSymbolConfiguration(.init(pointSize: 11, weight: .regular))
         imageHugsTitle = true
         target = self
         action = #selector(pressed)
@@ -437,13 +448,24 @@ final class LibraryPlaceButton: NSButton {
             s.append(NSAttributedString(string: "  \(count)", attributes: [.font: atelier ? Theme.note(12) : Theme.mono(10.5), .foregroundColor: atelier ? Atelier.gold : Theme.textDim]))
         }
         attributedTitle = s
+        invalidateIntrinsicContentSize()
         contentTintColor = isSelected && atelier ? Atelier.vermilion : Theme.textDim
     }
     @objc private func pressed() { onPress?() }
     override func menu(for event: NSEvent) -> NSMenu? { menuProvider?() }
+    /// Drawn here rather than by the button cell: the cell cached its title layout while the panel slid open from zero
+    /// width, and names stayed blank until clicked (the owner's report). The symbol sits in a fixed column, so every
+    /// name starts at the same x with the same gap.
+    static let iconColumn: CGFloat = 18, textInset: CGFloat = 28
+    override var intrinsicContentSize: NSSize {
+        let t = NSMutableAttributedString(attributedString: attributedTitle)
+        while t.string.hasPrefix(" ") { t.deleteCharacters(in: NSRange(location: 0, length: 1)) }
+        return NSSize(width: ceil(Self.textInset + t.size().width + 8), height: super.intrinsicContentSize.height)
+    }
     override func draw(_ dirtyRect: NSRect) {
+        let atelier = Theme.look.mixer == .instrument
         if isSelected {
-            if Theme.look.mixer == .instrument, let ctx = NSGraphicsContext.current?.cgContext {
+            if atelier, let ctx = NSGraphicsContext.current?.cgContext {
                 Theme.laneHighlight.setFill(); bounds.fill()
                 Atelier.rule(ctx, CGPoint(x: 0.5, y: 2), CGPoint(x: 0.5, y: bounds.height - 2), weight: Atelier.heavy, color: Atelier.vermilion)
             } else {
@@ -451,7 +473,23 @@ final class LibraryPlaceButton: NSButton {
                 NSBezierPath(roundedRect: bounds, xRadius: Theme.look.mixer == .glass ? 8 : 4, yRadius: Theme.look.mixer == .glass ? 8 : 4).fill()
             }
         }
-        super.draw(dirtyRect)
+        if let image {
+            let tint = contentTintColor ?? Theme.textDim
+            let s = image.size, r = NSRect(x: 4 + (Self.iconColumn - s.width) / 2, y: (bounds.height - s.height) / 2, width: s.width, height: s.height)
+            let tinted = NSImage(size: s, flipped: false) { rect in
+                image.draw(in: rect); tint.set(); rect.fill(using: .sourceAtop); return true
+            }
+            tinted.draw(in: r, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+        }
+        let t = NSMutableAttributedString(attributedString: attributedTitle)
+        let trimmed = t.string.prefix { $0 == " " }.count
+        if trimmed > 0 { t.deleteCharacters(in: NSRange(location: 0, length: trimmed)) }
+        let size = t.size()
+        t.draw(with: NSRect(x: Self.textInset, y: (bounds.height - size.height) / 2, width: max(0, bounds.width - Self.textInset - 4), height: size.height),
+               options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
+        if window?.firstResponder === self, let ctx = NSGraphicsContext.current?.cgContext {
+            ctx.setStrokeColor(NSColor.keyboardFocusIndicatorColor.cgColor); ctx.setLineWidth(1); ctx.stroke(bounds.insetBy(dx: 1, dy: 1))
+        }
     }
 }
 

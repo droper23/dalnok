@@ -129,6 +129,9 @@ final class PluginManagerController: NSWindowController, NSTableViewDataSource, 
                                    ("format", "Format", 60.0), ("status", "Status", 120.0)] {
             let c = NSTableColumn(identifier: .init(id))
             c.title = title
+            if Theme.activeStyle == .atelier { // the header in the plate's face (the system header ignores a cell font)
+                c.headerCell.attributedStringValue = NSAttributedString(string: title, attributes: [.font: Theme.ui(11, .semibold), .foregroundColor: Theme.textDim])
+            }
             c.width = width
             if id != "fav" { c.sortDescriptorPrototype = NSSortDescriptor(key: id, ascending: true) }
             table.addTableColumn(c)
@@ -213,6 +216,7 @@ final class PluginManagerController: NSWindowController, NSTableViewDataSource, 
     func show() {
         if all.isEmpty { loadMetadata() }
         if window?.isVisible != true { window?.center() }
+        Atelier.unifyFonts(in: window?.contentView)
         window?.makeKeyAndOrderFront(nil)
         window?.makeFirstResponder(search)
     }
@@ -474,7 +478,12 @@ final class PluginManagerController: NSWindowController, NSTableViewDataSource, 
         if tableView === sidebar {
             switch sideRows[row] {
             case .header(let t):
-                let l = NSTextField(labelWithString: t); l.font = Theme.ui(10, .semibold); l.textColor = Theme.textDim; return l
+                // Wrapped in a plain view: a group row restyles a bare label in the system face.
+                let l = NSTextField(labelWithString: t); l.font = Theme.ui(10, .semibold); l.textColor = Theme.textDim
+                let v = NSView(); l.translatesAutoresizingMaskIntoConstraints = false; v.addSubview(l)
+                NSLayoutConstraint.activate([l.leadingAnchor.constraint(equalTo: v.leadingAnchor, constant: 2), l.centerYAnchor.constraint(equalTo: v.centerYAnchor)])
+                v.setAccessibilityElement(false); l.setAccessibilityRole(.staticText)
+                return v
             case .source(_, let t, let n):
                 let l = NSTextField(labelWithString: "\(t)  \(n)")
                 l.font = Theme.ui(12); l.textColor = Theme.text; l.lineBreakMode = .byTruncatingTail

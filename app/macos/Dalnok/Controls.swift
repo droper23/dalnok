@@ -855,6 +855,12 @@ final class ToggleChip: NSControl {
         glow.frame = bounds
         glow.shadowPath = CGPath(roundedRect: glow.bounds, cornerWidth: face.cornerRadius, cornerHeight: face.cornerRadius, transform: nil)
         label.frame = CGRect(x: 0, y: (bounds.height - 13) / 2, width: bounds.width, height: 13)
+        if Theme.look.controls == .drafted, let f = label.font as? NSFont {
+            // Optically centred: the capital's middle on the chip's middle (the serif's ascender sat it low).
+            let size = label.fontSize, scaled = NSFont(descriptor: f.fontDescriptor, size: size) ?? f
+            let top = (bounds.midY + scaled.capHeight / 2 - scaled.ascender).rounded(.toNearestOrEven)
+            label.frame = CGRect(x: 0, y: top, width: bounds.width, height: ceil(scaled.ascender - scaled.descender) + 1)
+        }
         label.contentsScale = window?.backingScaleFactor ?? 2
         if Theme.look.controls == .drafted {
             let s = Int(letter.unicodeScalars.first?.value ?? 0) &* 7 &+ Atelier.seed(frame.origin)
@@ -939,7 +945,8 @@ final class IconButton: NSButton {
         isBordered = false
         bezelStyle = .regularSquare
         let cfg = NSImage.SymbolConfiguration(pointSize: size, weight: weight)
-        image = NSImage(systemSymbolName: symbol, accessibilityDescription: help)?.withSymbolConfiguration(cfg)
+        image = AtelierGlyphs.image(symbol) ?? NSImage(systemSymbolName: symbol, accessibilityDescription: help)?.withSymbolConfiguration(cfg)
+        image?.accessibilityDescription = help
         contentTintColor = Theme.text
         toolTip = help
         setAccessibilityLabel(help)
@@ -953,7 +960,7 @@ final class IconButton: NSButton {
     required init?(coder: NSCoder) { fatalError() }
     func setSymbol(_ name: String, tint: NSColor = Theme.text) {
         let cfg = NSImage.SymbolConfiguration(pointSize: 13, weight: .semibold)
-        image = NSImage(systemSymbolName: name, accessibilityDescription: toolTip)?.withSymbolConfiguration(cfg)
+        image = AtelierGlyphs.image(name) ?? NSImage(systemSymbolName: name, accessibilityDescription: toolTip)?.withSymbolConfiguration(cfg)
         contentTintColor = tint
     }
     /// A view toggle (mixer, launcher…) that is showing: accent icon on a tinted pill, eased in and out.

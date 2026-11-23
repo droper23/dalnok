@@ -579,6 +579,7 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         sidechain.action = #selector(sidechainChosen)
         sidechain.toolTip = "Sidechain: which track's signal this plug-in listens to (for ducking and keyed effects)"
         sidechain.isHidden = !(loaded && dalnok_plugin_has_sidechain(session.engine.handle, slot))
+        if Theme.look.devices == .schematic { sidechain.isBordered = false } // a caption-line choice, not a grey control
         // Bypass: the pedal's footswitch in Warm Analog, a power button here in Graphite.
         power.bezelStyle = .inline
         power.isBordered = false
@@ -639,7 +640,9 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
             m.heightAnchor.constraint(equalToConstant: 118).isActive = true
             m.isHidden = !(loaded && Faceplate.showMeters) || (m === inMeter && instrument) // an instrument has no audio input
         }
-        let body = NSStackView(views: pedal.map { [header, $0] } ?? [header, above, faceRow, below])
+        // Atelier: the name is a caption under the station, not a header over it (the owner's fourth round).
+        let schematicCaption = Theme.look.devices == .schematic && pedal == nil
+        let body = NSStackView(views: pedal.map { [header, $0] } ?? (schematicCaption ? [above, faceRow, below, header] : [header, above, faceRow, below]))
         body.orientation = .vertical
         body.alignment = pedal == nil ? .leading : .centerX
         body.spacing = 4
@@ -786,6 +789,7 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
                 return
             }
             Faceplate.plate(ctx, bounds, accent: color, dimmed: !loaded || bypassed, seed: Faceplate.seed(title.stringValue), wear: Faceplate.wear)
+            if Theme.look.devices == .schematic { drawSignalCourse(ctx) }
             return
         }
         // A pedal: the enclosure is the PedalBody; here only the input and output jacks on its sides.
@@ -834,6 +838,12 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
             sidechain.removeAllItems()
             // NSPopUpButton.addItems drops duplicate titles; tracks can share a name.
             for title in titles { sidechain.menu?.addItem(NSMenuItem(title: title, action: nil, keyEquivalent: "")) }
+            if Theme.look.devices == .schematic { // the borderless pop-up shows its item's own face
+                for item in sidechain.itemArray {
+                    item.attributedTitle = NSAttributedString(string: item.title,
+                                                              attributes: [.font: Theme.note(11), .foregroundColor: Theme.textDim])
+                }
+            }
         }
         sidechain.item(at: 0)?.tag = 0
         for (i, t) in others.enumerated() { sidechain.item(at: i + 1)?.tag = Int(t.id) }
@@ -895,6 +905,8 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
                 c.onChange = { [weak self] v in self?.set(id, v) }
                 c.toolTip = "\(fixedString(p.title)): drag up or down (⇧ fine), scroll or use the arrow keys; double-click for the default."
                 c.setAccessibilityLabel(fixedString(p.title))
+                c.letter = InspectorPanel.letter(knobs.count)
+                if FaceplateControl.legendRows { c.toolTip = "\(fixedString(p.title)): drag along the scale (⇧ fine), scroll or use the arrow keys; double-click for the default." }
                 controls.append(c)
                 knobs.append((c, label(fixedString(p.title), dim: false), label(display(p), dim: true), id))
             }
@@ -1102,6 +1114,7 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
             screen.codexKind = kind
             screen.codexSubject = Codex.subject(kind: kind, name: title.stringValue, parameters: allParameters.map { fixedString($0.title) })
             screen.figureNumber = figureNumber
+            if let fig = screen.atelierFigure { screen.figureLink = figureLink(fig) }
         }
         if let screen = d as? ResponseScreen {
             screen.tint = color.blended(withFraction: 0.35, of: .white) ?? color
@@ -1114,6 +1127,26 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         (d as? HistoryScreen)?.tint = color.blended(withFraction: 0.35, of: .white) ?? color
         d.translatesAutoresizingMaskIntoConstraints = false
         return d
+    }
+
+    /// Atelier: ties a figure's parts to this unit's parameters (by role, from their names) and its key's letters.
+    private func figureLink(_ fig: AtelierFigure) -> FigureLink {
+        var link = FigureLink()
+        link.ids = FigureRole.match(allParameters.filter { $0.automatable && !$0.read_only }.map { ($0.id, fixedString($0.title)) }, roles: fig.roles)
+        link.value = { [weak self] id in self?.current(id)?.value }
+        link.text = { [weak self] id in self?.current(id).map { self?.display($0) ?? "" } }
+        link.letter = { [weak self] id in (self?.knobs.first { $0.id == id }?.knob as? FaceplateControl)?.letter }
+        link.set = { [weak self] id, v in
+            guard let self else { return }
+            self.set(id, v)
+            if let k = self.knobs.first(where: { $0.id == id })?.knob as? FaceplateControl { k.value = v }
+        }
+        link.notes = { [weak self] in
+            guard let self, self.loaded else { return [] }
+            let lat = self.session.track(self.trackId)?.plugins.first { $0.id == self.slot }?.latency ?? 0
+            return lat > 0 ? [String(format: "latency %.1f ms", Double(lat) / max(1, self.session.engine.sampleRate) * 1000)] : []
+        }
+        return link
     }
 
     /// Right-click ▸ Display: replaces the unit's display and remembers the choice for this plug-in (nil: automatic).
@@ -1225,6 +1258,30 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
     }
 
     @objc private func openTapped() { onOpen?() }
+
+    /// Atelier: the chain's line through this station: in from the left edge to the first part, out from the last part to
+    /// the right edge (never under the key's text). Bypassed, a dashed shunt arcs over the station instead.
+    private func drawSignalCourse(_ ctx: CGContext) {
+        guard let row = faceRow else { return }
+        let parts = row.arrangedSubviews.filter { !$0.isHidden && $0.frame.width > 0 && !($0 is NSStackView) && $0.className != "NSView" }
+        guard let first = parts.first, let last = parts.last else { return }
+        let a = first.convert(first.bounds, to: self), b = last.convert(last.bounds, to: self)
+        let y = (bounds.midY).rounded() + 0.5
+        let off = !loaded || bypassed
+        let ink = Theme.ink(off ? 0.3 : 0.6)
+        Atelier.rule(ctx, CGPoint(x: 0, y: y), CGPoint(x: a.minX - 4, y: y), weight: Atelier.hair, color: ink)
+        Atelier.arrowhead(ctx, at: CGPoint(x: a.minX - 3, y: y), angle: 0, color: ink, size: 5)
+        Atelier.rule(ctx, CGPoint(x: b.maxX + 4, y: y), CGPoint(x: bounds.maxX, y: y), weight: Atelier.hair, color: ink)
+        if off {
+            let shunt = CGMutablePath()
+            shunt.move(to: CGPoint(x: 2, y: y))
+            shunt.addCurve(to: CGPoint(x: bounds.maxX - 2, y: y), control1: CGPoint(x: bounds.width * 0.2, y: isFlipped ? 8 : bounds.maxY - 8),
+                           control2: CGPoint(x: bounds.width * 0.8, y: isFlipped ? 8 : bounds.maxY - 8))
+            ctx.addPath(shunt); ctx.setStrokeColor(Theme.ink(0.75).cgColor); ctx.setLineWidth(0.8); ctx.setLineDash(phase: 0, lengths: [3, 2]); ctx.strokePath()
+            ctx.setLineDash(phase: 0, lengths: [])
+            Atelier.note(ctx, "bypassed", at: CGPoint(x: bounds.midX, y: isFlipped ? 10 : bounds.maxY - 22), size: 9, color: Theme.textDim, flipped: isFlipped, align: .center)
+        }
+    }
 
     // MARK: Bypass and the pedal (Warm Analog)
 

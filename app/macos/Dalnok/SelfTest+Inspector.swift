@@ -171,6 +171,19 @@ extension SelfTest {
         } else { check(false, "the insert row is on screen") }
         undo("Add Plug-in") // the insert
         check(s.track(t.id)?.effects.isEmpty == true && ins.insertRows.isEmpty, "undo removes the insert from the inspector")
+        // A long chain: the list shows 6 and offers the rest; Atelier's figure folds the middle into one lettered range.
+        for _ in 0..<9 { ins.onDropPlugin?("dalnok:channel-eq", t.id) }
+        s.refresh(onDisplayTick: true)
+        ins.reload()
+        check(s.track(t.id)?.effects.count == 9 && ins.insertRows.count == InspectorPanel.insertsShown, "nine inserts: the list shows \(InspectorPanel.insertsShown) (\(ins.insertRows.count))")
+        ins.showAllInsertsForTest()
+        check(ins.insertRows.count == 9, "Show all 9 lists every insert (\(ins.insertRows.count))")
+        if Theme.look.mixer == .instrument {
+            let folded = ins.figure.rows.contains { if case .folded(let r) = $0 { return r == 3...7 } else { return false } }
+            check(ins.figure.rows.count == 5 && folded, "the signal-path figure folds inserts D–H into one range (\(ins.figure.rows.count) rows)")
+        }
+        for _ in 0..<9 { undo("Add Plug-in") }
+        check(s.track(t.id)?.effects.isEmpty == true, "the nine inserts undo away")
         // Live: the meter during playback, and automation moving the dial.
         let pts = [DalnokAutoPoint(frame: 0, value: -18), DalnokAutoPoint(frame: Int64(e.sampleRate * 60), value: -18)]
         check(s.setAutomation(t.id, 0, pts), "volume automation for the live check")

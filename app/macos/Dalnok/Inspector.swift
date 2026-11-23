@@ -18,7 +18,7 @@ final class InspectorPanel: SidePanelView {
     }
     let session: Session
     /// The track shown (the selected track); nil shows an empty note.
-    var track: DalnokTrackId? { didSet { if track != oldValue { reload() } } }
+    var track: DalnokTrackId? { didSet { if track != oldValue { showAllInserts = false; reload() } } }
     var onOpenPlugin: ((DalnokTrackId, Int32) -> Void)?
     var onAddPlugin: ((DalnokTrackId) -> Void)?
     /// A plug-in dragged from the Library or the browser and dropped anywhere on the Inspector: insert it last.
@@ -55,6 +55,8 @@ final class InspectorPanel: SidePanelView {
     private(set) var insertRows: [InspectorInsertRow] = []
     private(set) var sendRows: [InspectorSendRow] = []
     let meter = MeterView()
+    /// Atelier: Fig. 3, the track's signal path, at the foot.
+    let figure = InspectorFigure()
     private var shown: Int?
 
     init(session: Session) {
@@ -129,6 +131,7 @@ final class InspectorPanel: SidePanelView {
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
         scroll.scrollerStyle = .overlay
+        scroll.verticalScroller?.setAccessibilityLabel("Inspector scroll bar")
         scroll.drawsBackground = false
         scroll.translatesAutoresizingMaskIntoConstraints = false
         addSubview(scroll)
@@ -206,11 +209,15 @@ final class InspectorPanel: SidePanelView {
         let trackHead = PanelHead("Track"), channelHead = PanelHead("Channel"), insertsHead = PanelHead("Inserts"), sendsHead = PanelHead("Sends")
         let levelHead = PanelHead("Level")
         for v in [header, empty, trackHead, inputRow!, outputRow, monitorRow!, channelHead, dials, chips, insertsHead, insertsStack,
-                  sendsHead, sendsStack, addSend, levelHead, meter] as [NSView] {
+                  sendsHead, sendsStack, addSend, levelHead, meter, figure] as [NSView] {
             stack.addArrangedSubview(v)
         }
+        figure.translatesAutoresizingMaskIntoConstraints = false
+        figureHeight = figure.heightAnchor.constraint(equalToConstant: 0)
+        figureHeight.isActive = true
+        stack.setCustomSpacing(22, after: meter)
         // Full-width rows (the stack's leading alignment would otherwise size them to fit).
-        for v in [header, trackHead, inputRow!, outputRow, monitorRow!, channelHead, dials, chips, insertsHead, insertsStack, sendsHead, sendsStack, levelHead, meter] as [NSView] {
+        for v in [header, trackHead, inputRow!, outputRow, monitorRow!, channelHead, dials, chips, insertsHead, insertsStack, sendsHead, sendsStack, levelHead, meter, figure] as [NSView] {
             v.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -(stack.edgeInsets.left + stack.edgeInsets.right)).isActive = true
         }
         empty.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -26).isActive = true
@@ -219,9 +226,18 @@ final class InspectorPanel: SidePanelView {
         stack.setCustomSpacing(12, after: chips)
         stack.setCustomSpacing(12, after: insertsStack)
         stack.setCustomSpacing(12, after: addSend)
-        sectionViews = [trackHead, inputRow!, outputRow, monitorRow!, channelHead, dials, chips, insertsHead, insertsStack, sendsHead, sendsStack, addSend, levelHead, meter, header]
+        sectionViews = [trackHead, inputRow!, outputRow, monitorRow!, channelHead, dials, chips, insertsHead, insertsStack, sendsHead, sendsStack, addSend, levelHead, meter, header, figure]
     }
     private var sectionViews: [NSView] = []
+    private var figureHeight: NSLayoutConstraint!
+    /// The figure's height follows its path (it scrolls with the panel, as the owner chose).
+    override func layout() {
+        super.layout()
+        guard figureHeight != nil else { return }
+        let show = Theme.look.mixer == .instrument && empty.isHidden
+        let h: CGFloat = show ? figure.neededHeight : 0
+        if abs(figureHeight.constant - h) > 0.5 || figure.isHidden != !show { figureHeight.constant = h; figure.isHidden = !show; needsLayout = true }
+    }
 
     // MARK: Refresh (everything is read back from the session)
 
@@ -273,19 +289,39 @@ final class InspectorPanel: SidePanelView {
             shown = sig
             rebuildRows(t)
         }
+        needsLayout = true // the figure's room is decided in layout()
+        figure.path = InspectorFigure.Path(track: t.name, input: audio ? (input.titleOfSelectedItem.map { $0.components(separatedBy: " — ").first ?? $0 } ?? "In") : (t.isBus ? "Sends" : "Instrument"),
+                                           output: output.titleOfSelectedItem ?? "Master",
+                                           inserts: t.effects.map { ($0.name, $0.bypassed) })
         updateParameters()
     }
+
+    /// The insert list shows this many, then "Show all N" (a long chain no longer pushes the rest off the panel).
+    static let insertsShown = 6
+    private var showAllInserts = false
+    @objc private func toggleAllInserts() { showAllInserts.toggle(); shown = nil; reload() }
+    func showAllInsertsForTest() { if !showAllInserts { toggleAllInserts() } }
 
     private func rebuildRows(_ t: TrackView) {
         insertsStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         insertRows = []
-        for (i, p) in t.effects.enumerated() {
+        let effects = t.effects
+        let visible = showAllInserts || effects.count <= Self.insertsShown + 1 ? effects.count : Self.insertsShown
+        for (i, p) in effects.prefix(visible).enumerated() {
             let row = InspectorInsertRow(number: i + 1, plugin: p)
             row.onOpen = { [weak self] slot in self?.onOpenPlugin?(t.id, slot) }
             row.onBypass = { [weak self] slot, on in self?.session.setPluginBypassed(t.id, slot, on) }
             insertsStack.addArrangedSubview(row)
             row.widthAnchor.constraint(equalTo: insertsStack.widthAnchor).isActive = true
             insertRows.append(row)
+        }
+        if effects.count > Self.insertsShown + 1 {
+            let more = FocusableButton(title: showAllInserts ? "Show fewer" : "Show all \(effects.count)", target: self, action: #selector(toggleAllInserts))
+            more.isBordered = false
+            more.font = Theme.look.mixer == .instrument ? Theme.note(12) : Theme.ui(11)
+            more.contentTintColor = Theme.text
+            more.setAccessibilityLabel(showAllInserts ? "Show fewer inserts" : "Show all \(effects.count) inserts")
+            insertsStack.addArrangedSubview(more)
         }
         let add = FocusableButton(title: t.effects.isEmpty ? "+ Add an insert" : "+ Insert", target: self, action: #selector(addInsert))
         add.isBordered = false
@@ -473,4 +509,119 @@ final class InspectorSendRow: NSView {
     }
     required init?(coder: NSCoder) { fatalError() }
     override func menu(for event: NSEvent) -> NSMenu? { menuProvider?() }
+}
+
+/// Atelier's figure at the Inspector's foot (the owner asked for an illustration there; the audit: "never a static
+/// decoration"): the selected track's signal path drawn as engraved solids in the shared oblique. The input jack, one
+/// block per insert lettered A, B, … (a bypassed one drawn open, its blade raised), the fader block and the output, with a
+/// legend on clean plate below and a "Fig." caption. Redrawn only when the path changes.
+@MainActor
+final class InspectorFigure: NSView {
+    struct Path: Equatable { var track = "", input = "In", output = "Master"; var inserts: [(name: String, off: Bool)] = []
+        static func == (a: Path, b: Path) -> Bool {
+            a.track == b.track && a.input == b.input && a.output == b.output && a.inserts.map(\.name) == b.inserts.map(\.name) && a.inserts.map(\.off) == b.inserts.map(\.off)
+        }
+    }
+    var path = Path() { didSet { if path != oldValue { needsDisplay = true; setAccessibilityValue(summary) } } }
+    override var isFlipped: Bool { true }
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        setAccessibilityElement(true)
+        setAccessibilityRole(.image)
+        setAccessibilityLabel("Signal path figure")
+    }
+    required init?(coder: NSCoder) { fatalError() }
+    var summary: String {
+        ([path.input] + path.inserts.map { $0.off ? "\($0.name) (bypassed)" : $0.name } + ["fader", path.output]).joined(separator: ", then ")
+    }
+    /// Inserts drawn one by one up to this many; beyond it the middle folds into one lettered range ("D–K · 8 more").
+    static let maxShown = 6
+    /// The rows the figure draws: an insert, or a folded range of them.
+    enum Row { case insert(Int), folded(ClosedRange<Int>) }
+    var rows: [Row] {
+        let n = path.inserts.count
+        if n <= Self.maxShown { return (0..<n).map { .insert($0) } }
+        return [.insert(0), .insert(1), .insert(2), .folded(3...(n - 2)), .insert(n - 1)]
+    }
+    static let rowHeight: CGFloat = 20
+    /// The figure's height for its path (the panel scrolls; owner: "vertical path").
+    var neededHeight: CGFloat { 30 + CGFloat(max(1, rows.count)) * Self.rowHeight + 70 }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard bounds.height > 60, bounds.width > 120, let ctx = NSGraphicsContext.current?.cgContext else { return }
+        let ink = Theme.text, dim = Theme.ink(0.55)
+        Atelier.rule(ctx, CGPoint(x: 0, y: 0.5), CGPoint(x: bounds.width, y: 0.5), weight: Atelier.hair, color: Theme.ink(0.45))
+        let x = 38.0 // the signal's axis, down the panel (room for a folded range's letters to its left)
+        var y: CGFloat = 16
+        // The input jack, end on.
+        let jack = CGRect(x: x - 6, y: y, width: 12, height: 12)
+        Atelier.obliqueSide(ctx, circle: jack)
+        ctx.setFillColor(Theme.panelRaised.cgColor); ctx.fillEllipse(in: jack)
+        Atelier.loop(ctx, jack, weight: Atelier.fine, color: ink); Atelier.loop(ctx, jack.insetBy(dx: 3.5, dy: 3.5), weight: Atelier.fine, color: ink)
+        Atelier.note(ctx, path.input, at: CGPoint(x: x + 14, y: y - 1), size: 10, color: Theme.textDim)
+        y = jack.maxY + 6
+        if rows.isEmpty {
+            Atelier.rule(ctx, CGPoint(x: x, y: y), CGPoint(x: x, y: y + Self.rowHeight), weight: Atelier.fine, color: dim)
+            Atelier.note(ctx, "no inserts: straight to the fader", at: CGPoint(x: x + 14, y: y + 4), size: 9.5, color: Theme.textDim)
+            y += Self.rowHeight
+        }
+        let nameAttrs: [NSAttributedString.Key: Any] = [.font: Theme.title(11, .regular), .foregroundColor: Theme.text]
+        for row in rows {
+            Atelier.rule(ctx, CGPoint(x: x, y: y), CGPoint(x: x, y: y + 7), weight: Atelier.fine, color: dim)
+            Atelier.arrowhead(ctx, at: CGPoint(x: x, y: y + 8), angle: .pi / 2, color: dim, size: 4)
+            let front = CGRect(x: x - 9, y: y + 8, width: 18, height: 12)
+            switch row {
+            case .insert(let i):
+                let p = path.inserts[i]
+                solid(ctx, front, open: p.off)
+                Atelier.note(ctx, InspectorPanel.letter(i), at: CGPoint(x: x - 13, y: front.minY), size: 10, color: Atelier.gold, align: .right)
+                let label = p.name + (p.off ? " (off)" : "")
+                (label as NSString).draw(with: CGRect(x: x + 16, y: front.minY - 1, width: bounds.width - x - 20, height: 15),
+                                         options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine], attributes: nameAttrs)
+            case .folded(let r):
+                // A folded range: three stacked plates, lettered by their range.
+                for k in [2, 1, 0] as [CGFloat] { solid(ctx, front.offsetBy(dx: k * 2, dy: -k * 2), open: false) }
+                Atelier.note(ctx, "\(InspectorPanel.letter(r.lowerBound))–\(InspectorPanel.letter(r.upperBound))", at: CGPoint(x: x - 13, y: front.minY), size: 10, color: Atelier.gold, align: .right)
+                Atelier.note(ctx, "\(r.count) more (see the list above)", at: CGPoint(x: x + 16, y: front.minY), size: 10, color: Theme.textDim)
+            }
+            y = front.maxY
+        }
+        // The fader on its rail, then the output post.
+        Atelier.rule(ctx, CGPoint(x: x, y: y), CGPoint(x: x, y: y + 28), weight: Atelier.fine, color: dim)
+        Atelier.slideBlock(ctx, center: CGPoint(x: x, y: y + 14), width: 14, height: 10, ink: ink, active: false)
+        Atelier.note(ctx, "fader", at: CGPoint(x: x + 16, y: y + 7), size: 10, color: Theme.textDim)
+        y += 28
+        Atelier.arrowhead(ctx, at: CGPoint(x: x, y: y + 4), angle: .pi / 2, color: dim, size: 4)
+        let post = CGRect(x: x - 4, y: y + 5, width: 8, height: 8)
+        Atelier.obliqueSide(ctx, circle: post)
+        ctx.setFillColor(Theme.panelRaised.cgColor); ctx.fillEllipse(in: post)
+        Atelier.loop(ctx, post, weight: Atelier.fine, color: ink)
+        Atelier.note(ctx, path.output, at: CGPoint(x: x + 14, y: y + 2), size: 10, color: Theme.textDim)
+        Atelier.note(ctx, "Fig. 3 · Signal path of \(path.track)", at: CGPoint(x: bounds.midX, y: bounds.height - 15), size: 9.5, color: Theme.textDim, align: .center)
+    }
+
+    /// An insert as a block in the shared oblique (y down): front, top and right faces, the right one hatched.
+    private func solid(_ ctx: CGContext, _ front: CGRect, open: Bool) {
+        let v = Atelier.recede, ink = Theme.ink(open ? 0.5 : 0.95)
+        let top = CGMutablePath(), side = CGMutablePath()
+        top.addLines(between: [CGPoint(x: front.minX, y: front.minY), CGPoint(x: front.minX + v.dx, y: front.minY + v.dy),
+                               CGPoint(x: front.maxX + v.dx, y: front.minY + v.dy), CGPoint(x: front.maxX, y: front.minY)]); top.closeSubpath()
+        side.addLines(between: [CGPoint(x: front.maxX, y: front.minY), CGPoint(x: front.maxX + v.dx, y: front.minY + v.dy),
+                                CGPoint(x: front.maxX + v.dx, y: front.maxY + v.dy), CGPoint(x: front.maxX, y: front.maxY)]); side.closeSubpath()
+        ctx.saveGState()
+        ctx.setFillColor(Theme.panelRaised.cgColor)
+        ctx.addPath(top); ctx.fillPath(); ctx.addPath(side); ctx.fillPath(); ctx.fill(front)
+        ctx.addPath(side); ctx.clip(); Atelier.hatch(ctx, side.boundingBox.insetBy(dx: -1, dy: -1), spacing: 1.2, color: Theme.ink(0.5), weight: 0.4)
+        ctx.restoreGState()
+        if open {
+            ctx.saveGState(); ctx.clip(to: front); Atelier.hatch(ctx, front, spacing: 3, color: Theme.ink(0.25), weight: 0.4); ctx.restoreGState()
+        } else {
+            // Engraved face: two fine rules, like a plate's border.
+            Atelier.box(ctx, front.insetBy(dx: 2.5, dy: 2.5), weight: Atelier.hair, color: Theme.ink(0.5))
+        }
+        for p in [top, side] { ctx.addPath(p); ctx.setStrokeColor(Theme.ink(0.75).cgColor); ctx.setLineWidth(0.55); ctx.strokePath() }
+        Atelier.box(ctx, front, weight: Atelier.fine, color: ink)
+    }
+
+    static func letter(_ i: Int) -> String { InspectorPanel.letter(i) }
 }
