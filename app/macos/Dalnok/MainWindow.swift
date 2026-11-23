@@ -660,6 +660,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         let empty = session.tracks.isEmpty
         devicePanel.isHidden = empty || !Self.showDevicePanel
         let showingEmpty = !emptyState.isHidden && timeline.isHidden
+        if showingEmpty != empty || sidePanelsSuppressed != empty { applySidePanelsForStartPage(empty, animated: didShowContent) }
         if showingEmpty != empty {
             let changing = didShowContent // the first state at launch appears without animation
             didShowContent = true
@@ -1638,13 +1639,37 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     /// View ▸ Library (Y) and View ▸ Inspector (I): the side panels. Each slides open like the mixer (instantly under
     /// Reduce Motion), remembers whether it is open and its width, and widens the window's minimum so the arrangement
     /// keeps room for its headers and some timeline.
+    /// The start page (a project with no tracks) is a title page: the Library and Inspector step aside without
+    /// forgetting that they were open, and come back with the first track.
+    private(set) var sidePanelsSuppressed = false
+    func applySidePanelsForStartPage(_ empty: Bool, animated: Bool) {
+        guard sidePanelsSuppressed != empty else { return }
+        sidePanelsSuppressed = empty
+        transport.libraryButton.isEnabled = !empty
+        transport.inspectorButton.isEnabled = !empty
+        let lib = Self.showLibrary && !empty, insp = Self.showInspector && !empty
+        if lib { library.load() }
+        if insp { inspector.track = selectedTrack; inspector.reload() }
+        for (panel, width, open, stored) in [(library as NSView, libraryWidth!, lib, LibraryPanel.storedWidth),
+                                              (inspector as NSView, inspectorWidth!, insp, InspectorPanel.storedWidth)] {
+            if open { panel.isHidden = false }
+            if !animated || Motion.reduced { width.constant = open ? stored : 0; panel.isHidden = !open; continue }
+            Motion.views(Motion.gentle, { width.animator().constant = open ? stored : 0 }, completion: {
+                DispatchQueue.main.async { MainActor.assumeIsolated { if self.sidePanelsSuppressed == empty && !open { panel.isHidden = true } } }
+            })
+        }
+        fitSidePanels()
+    }
+
     @objc func toggleLibrary(_ sender: Any?) {
+        guard !sidePanelsSuppressed else { return }
         Self.showLibrary.toggle()
         let show = Self.showLibrary
         if show { library.load(); library.isHidden = false }
         slide(library, libraryWidth, to: show ? LibraryPanel.storedWidth : 0, show: show) { !MainWindowController.showLibrary }
     }
     @objc func toggleInspector(_ sender: Any?) {
+        guard !sidePanelsSuppressed else { return }
         Self.showInspector.toggle()
         let show = Self.showInspector
         if show { inspector.isHidden = false; inspector.track = selectedTrack; inspector.reload() }
@@ -1666,7 +1691,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     /// there is no room for it, so the arrangement never gets narrower than its headers and a strip of timeline.
     func fitSidePanels(adding: CGFloat = 0) {
         guard let window else { return }
-        let panels = (Self.showLibrary ? LibraryPanel.storedWidth : 0) + (Self.showInspector ? InspectorPanel.storedWidth : 0)
+        let panels = sidePanelsSuppressed ? 0 : (Self.showLibrary ? LibraryPanel.storedWidth : 0) + (Self.showInspector ? InspectorPanel.storedWidth : 0)
         window.minSize = NSSize(width: Self.baseMinWidth + panels, height: window.minSize.height)
         if window.frame.width < window.minSize.width, !window.styleMask.contains(.fullScreen) {
             var f = window.frame
@@ -2313,10 +2338,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             return Theme.activeStyle == .atelier
         case #selector(toggleLibrary(_:)):
             item.state = Self.showLibrary ? .on : .off
-            return true
+            return !sidePanelsSuppressed
         case #selector(toggleInspector(_:)):
             item.state = Self.showInspector ? .on : .off
-            return true
+            return !sidePanelsSuppressed
         case #selector(copy(_:)), #selector(cut(_:)), #selector(duplicateClips(_:)):
             return !pianoRollIsKey && !timeline.selectedClips.isEmpty
         case #selector(paste(_:)):
