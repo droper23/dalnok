@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+- **Every look now has moving plug-in figures of its own.** Graphite draws telemetry (phosphor traces on a dot grid: the compressor's gain computer with the signal riding it, a reverb's decay field, delay echo taps, a distortion's transfer curve, an LFO scope); Prism draws optics in spectral light (an iris that closes as the compressor works, caustic rings, light echoes, a prism refracting a sine into harmonics, interfering waves, and the EQ's curve coloured by frequency); Warm Analog's pedal windows draw their circuit (a tape loop with its heads, a swaying spring, a glowing triode, a lamp pulsing at the LFO's rate, a gain-reduction needle). Drag a figure's parts as in Atelier; they light with the parameter's name and value.
+- **Settings is nine pages** (General, Appearance, Audio, MIDI, Recording, Plug-ins, Keyboard Shortcuts, Files and Library, Advanced) **with a search field**. Library folders and audio preview, the device panel's height, and the recordings and recovery folders are now in Settings; options that only one look uses appear only in that look.
+- Check boxes, pop-up menus, buttons, sliders and text selection are drawn in each look's colours instead of the system's blue.
+- A solo now fades the tracks it silences in the arrangement (following buses as the engine does), and muted clips say "muted" in every look.
+- Each look's level meters use their own colours; in Graphite and Warm Analog the playhead leaves a short afterglow while it runs.
+- An empty device chain shows a small drawing of the signal's path in the look's style; click its empty slot to add a plug-in.
+- Warm Analog: knob labels on pedals are short enough to read (LC FREQ, THRESH…), and a sidechain is shown as a patch cable in the source track's colour.
+- Prism: the Settings and welcome windows are glass, like the main window.
+- The New Project page hides the mixer too, and shows its drop zone only while you drag files over it.
+- Built-in plug-ins read "Built in" in the Plug-in Manager; the Library shows each plug-in's format.
+- After a crash, the offer to recover now waits until the first-launch questions are answered; closing the welcome window no longer brings it back at the next launch (Settings ▸ General ▸ Choose Look and Shortcuts Again…).
+- Faster when idle: plug-in figures stop animating while Dalnok is in the background, minimised or scrolled out of view, and the master meter redraws only when its reading changes.
 - **Library ▸ Files**, a file browser in the Library: the current project's folder, Music, Desktop, Downloads, Home and any folders you add (Add Folder…, or right-click). Folders unfold in place and list the audio files, Dalnok projects and other DAWs' projects Dalnok can take. Click an audio file to hear it (Preview audio on click), drag it onto the arrangement or press Return to import it; double-click a project to open it. The search looks through the project's folder, your added folders and the places you have opened.
 - **First launch asks which look you want** before the keyboard-shortcut question: a card with a picture of each theme, Light or Dark for Prism and Atelier, and the whole app (the welcome window included) changes as you pick.
 - **The device panel's height can be changed in every theme:** drag its top edge. Taller panels show more rows of controls and larger figures; the height is remembered.
