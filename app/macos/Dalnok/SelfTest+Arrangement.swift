@@ -98,11 +98,11 @@ extension SelfTest {
     func markersAndTrackTools() async {
         let e = s.engine
         e.pause()
-        e.seek(Int64(e.sampleRate * 2)); await wait(0.15)
+        e.seek(Int64(e.sampleRate * 2)); await settle(e, Int64(e.sampleRate * 2))
         check(perform("Add Marker", exact: true) && s.markers.count == 1 && e.undoName == "Add Marker", "Transport ▸ Add Marker adds one at the playhead")
-        e.seek(Int64(e.sampleRate * 6)); await wait(0.15)
+        e.seek(Int64(e.sampleRate * 6)); await settle(e, Int64(e.sampleRate * 6))
         _ = perform("Add Marker", exact: true)
-        e.seek(0); await wait(0.15)
+        e.seek(0); await settle(e, 0)
         var ok = perform("Next Marker", exact: true); await wait(0.15)
         check(ok && abs(e.position - Int64(e.sampleRate * 2)) < 2, "Next Marker jumps to the first marker (\(e.position))")
         ok = perform("Next Marker", exact: true); await wait(0.15)
@@ -119,7 +119,7 @@ extension SelfTest {
         check((moved?.frame ?? 0) > m0.frame && e.undoName == "Move Marker", "dragging a marker flag moves it (\(m0.frame) → \(moved?.frame ?? -1))")
         _ = perform("Undo")
         check(s.markers.first { $0.id == m0.id }?.frame == m0.frame, "undo puts it back")
-        e.seek(0); await wait(0.15)
+        e.seek(0); await settle(e, 0)
         tl.mouseDown(with: mouse(.leftMouseDown, flag)); tl.mouseUp(with: mouse(.leftMouseUp, flag))
         await wait(0.15)
         check(abs(e.position - m0.frame) < 2, "clicking a marker flag moves the playhead there")
@@ -150,7 +150,7 @@ extension SelfTest {
         _ = perform("Composition Overview")
         w.overview.keyDown(with: key("\u{1b}", 53))
         check(w.overview.isHidden, "Esc returns from the overview")
-        e.seek(positionBeforeOverview); await wait(0.15)
+        e.seek(positionBeforeOverview); await settle(e, positionBeforeOverview)
         check(perform("Delete Marker", exact: true) && s.markers.count == 1, "Delete Marker removes the marker at the playhead")
         _ = perform("Undo"); _ = perform("Undo")
         s.markers.forEach { s.removeMarker($0.id) }
@@ -281,7 +281,7 @@ extension SelfTest {
 
     func tapeMachine() async {
         let e = s.engine
-        e.pause(); e.seek(0); await wait(0.15)
+        e.pause(); e.seek(0); await settle(e, 0)
         check(perform("Tape Machine", exact: true) && w.tapeDeck?.window?.isVisible == true, "View ▸ Tape Machine opens the deck")
         guard let deck = w.tapeDeck?.deck else { return }
         let saved = Motion.override; Motion.override = true; defer { Motion.override = saved }
@@ -354,7 +354,7 @@ extension SelfTest {
             try? rep.representation(using: .png, properties: [:])?.write(to: workdir.appendingPathComponent("tape-machine.png"))
         }
         w.tapeDeck?.window?.close()
-        e.seek(0); await wait(0.1)
+        e.seek(0); await settle(e, 0)
         // Warm Analog: the same keys live in the control bar, so the window is optional.
         if (Theme.activeStyle == .warmAnalog) {
             let strip = w.transport.tapeStrip
@@ -393,7 +393,7 @@ extension SelfTest {
         check(perform("Undo") && s.track(t0.id)?.clips.count == before, "undo removes the duplicate")
         // Cut and paste with real key events.
         w.timeline.selectClips([c.id])
-        e.seek(c.end + 24_000); await wait(0.15)
+        e.seek(c.end + 24_000); await waitUntil { e.position == c.end + 24_000 } // the audio thread applies seeks
         let at = e.position
         _ = NSApp.mainMenu?.performKeyEquivalent(with: keyEvent("x", code: 7, .command))
         check(s.clip(c.id) == nil && e.undoName.hasPrefix("Cut"), "⌘X cuts the clip (\(e.undoName))")
@@ -407,7 +407,7 @@ extension SelfTest {
         let all = s.tracks.flatMap(\.clips).count
         check(ShortcutRegistry.shared.action("edit.select_all").map { ShortcutRegistry.shared.perform($0) } == true && w.timeline.selectedClips.count == all, "Edit ▸ Select All selects \(all) clips")
         w.timeline.selectClips([])
-        e.seek(0); await wait(0.1)
+        e.seek(0); await settle(e, 0)
     }
 
     // MARK: Migration & onboarding

@@ -94,7 +94,22 @@ final class SelfTest {
         w.timeline.mouseUp(with: mouse(.leftMouseUp, CGPoint(x: p.x + dx, y: p.y)))
     }
 
-    func wait(_ seconds: Double) async { try? await Task.sleep(for: .seconds(seconds)) }
+    /// DALNOK_SELFTEST_WAIT_SCALE shortens (or lengthens) every fixed pause, to find the ones a step really needs.
+    static let waitScale = ProcessInfo.processInfo.environment["DALNOK_SELFTEST_WAIT_SCALE"].flatMap(Double.init) ?? 1
+    func wait(_ seconds: Double) async { try? await Task.sleep(for: .seconds(seconds * Self.waitScale)) }
+    /// Waits until `condition` holds (checked every 10 ms), at most `timeout` seconds: as quick as the app is, and
+    /// patient when the machine is busy (parallel runs). Returns whether it held.
+    /// After a seek: until the audio thread has applied it (the playhead within a quarter second of `frame`, so it also
+    /// holds while playing).
+    func settle(_ e: Engine, _ frame: Int64) async {
+        await waitUntil { abs(e.position - frame) < Int64(e.sampleRate) / 4 }
+    }
+    @discardableResult
+    func waitUntil(timeout: Double = 2, _ condition: () -> Bool) async -> Bool {
+        let end = Date().addingTimeInterval(timeout)
+        while !condition() { if Date() > end { return false }; try? await Task.sleep(for: .milliseconds(10)) }
+        return true
+    }
 
     func run() {
         Self.running = true
