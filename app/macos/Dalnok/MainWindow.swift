@@ -885,8 +885,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         for t in session.tracks where !t.volumeAuto.isEmpty || !t.panAuto.isEmpty {
             let v = session.automationValue(t, 0, at: e.position), p = session.automationValue(t, 1, at: e.position)
             if let row = headers.row(t.id) {
-                if let v, !row.gain.tracking { row.gain.db = v }
-                if let p, !row.pan.tracking { row.pan.pan = p }
+                if let v, !row.gain.tracking { row.gain.db = v; row.showReadouts(db: v) }
+                if let p, !row.pan.tracking { row.pan.pan = p; row.showReadouts(pan: p) }
             }
             if !inspector.isHidden, inspector.track == t.id { inspector.showAutomated(volume: v, pan: p) }
             if !mixer.isHidden, let strip = mixer.strips.first(where: { $0.trackId == t.id }) {
@@ -1944,6 +1944,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         switchTheme(Theme.activeStyle)
         settings.refresh()
     }
+    /// View ▸ Illustrated Controls (Atelier): larger, more fully engraved controls. Rebuilds the windows like a theme
+    /// change (project, undo history, zoom and scroll stay); refused while recording.
+    @objc func toggleIllustrated(_ sender: Any?) {
+        guard Theme.activeStyle == .atelier, let app = NSApp.delegate as? AppDelegate else { return }
+        let was = Illustrated.on
+        Illustrated.on = !was
+        if !app.switchTheme(to: Theme.activeStyle, variant: Theme.activeVariant, force: true) {
+            Illustrated.on = was
+            flash("Finish recording before changing the controls")
+        }
+    }
     func switchTheme(_ next: Theme.Style) {
         guard let app = NSApp.delegate as? AppDelegate else { return }
         let old = Theme.preferredStyle
@@ -2281,6 +2292,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         case #selector(toggleMixer(_:)):
             item.state = Self.showMixer ? .on : .off
             return true
+        case #selector(toggleIllustrated(_:)):
+            item.state = Illustrated.on ? .on : .off
+            return Theme.activeStyle == .atelier
         case #selector(toggleLibrary(_:)):
             item.state = Self.showLibrary ? .on : .off
             return true

@@ -31,7 +31,7 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
 
     // General
     let comingFrom = NSPopUpButton(frame: .zero, pullsDown: false)
-    let copyAudio = NSButton(checkboxWithTitle: "Copy audio into the project folder when saving", target: nil, action: nil)
+    let copyAudio = SettingsController.checkbox("Copy audio into the project folder when saving")
     let automationMode = NSPopUpButton(frame: .zero, pullsDown: false)
     // Appearance
     let themePicker = NSPopUpButton(frame: .zero, pullsDown: false)
@@ -40,23 +40,23 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
     static let variantChoices = ["system", "light", "dark"]
     let appearanceNote = NSTextField(wrappingLabelWithString: "")
     let relaunch = NSButton(title: "Relaunch Now", target: nil, action: nil)
-    let barsAndBeats = NSButton(checkboxWithTitle: "Bars and beats (otherwise minutes and seconds)", target: nil, action: nil)
-    let secondaryClock = NSButton(checkboxWithTitle: "Show a small second clock under the position display", target: nil, action: nil)
+    let barsAndBeats = SettingsController.checkbox("Bars and beats (otherwise minutes and seconds)")
+    let secondaryClock = SettingsController.checkbox("Show a small second clock under the position display")
     let trackHeight = NSSlider(value: 88, minValue: 48, maxValue: 400, target: nil, action: nil)
     let clipBounce = NSSlider(value: 0.65, minValue: 0, maxValue: 1, target: nil, action: nil)
-    let showHints = NSButton(checkboxWithTitle: "Describe the control under the pointer below the project name", target: nil, action: nil)
+    let showHints = SettingsController.checkbox("Describe the control under the pointer below the project name")
     private let trackHeightValue = NSTextField(labelWithString: "")
     // Audio & MIDI
     let outputPopup = NSPopUpButton(frame: .zero, pullsDown: true)
     let inputPopup = NSPopUpButton(frame: .zero, pullsDown: true)
-    let inputMonitoring = NSButton(checkboxWithTitle: "Armed tracks play their input (auto input monitoring)", target: nil, action: nil)
+    let inputMonitoring = SettingsController.checkbox("Armed tracks play their input (auto input monitoring)")
     private let midiInputs = NSTextField(wrappingLabelWithString: "")
     // Recording
-    let countIn = NSButton(checkboxWithTitle: "Count in one bar before recording", target: nil, action: nil)
-    let metronome = NSButton(checkboxWithTitle: "Metronome click", target: nil, action: nil)
+    let countIn = SettingsController.checkbox("Count in one bar before recording")
+    let metronome = SettingsController.checkbox("Metronome click")
     // Plug-ins
-    let deviceMeters = NSButton(checkboxWithTitle: "Show input and output meters on plug-ins (Graphite)", target: nil, action: nil)
-    let isolatePlugins = NSButton(checkboxWithTitle: "Run plug-ins in separate processes", target: nil, action: nil)
+    let deviceMeters = SettingsController.checkbox("Show input and output meters on plug-ins (Graphite)")
+    let isolatePlugins = SettingsController.checkbox("Run plug-ins in separate processes")
     /// How worn the plug-in units look (Graphite): 0 new … 1 well used.
     let wear = NSSlider(value: 0.25, minValue: 0, maxValue: 1, target: nil, action: nil)
     let peakHold = NSSlider(value: 1.5, minValue: 0, maxValue: 3, target: nil, action: nil)
@@ -66,9 +66,9 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
     let bypassDim = NSSlider(value: 0.12, minValue: 0, maxValue: 0.5, target: nil, action: nil)
     let bypassMotion = NSSlider(value: 0.5, minValue: 0.1, maxValue: 1.5, target: nil, action: nil)
     let lightFade = NSSlider(value: 0.7, minValue: 0, maxValue: 2, target: nil, action: nil)
-    let readoutsFade = NSButton(checkboxWithTitle: "Readouts fade with the other lights (otherwise they switch off at once)", target: nil, action: nil)
-    let selectionGlow = NSButton(checkboxWithTitle: "Outline the selected plug-in", target: nil, action: nil)
-    let gainRings = NSButton(checkboxWithTitle: "Gain knobs light up with their track's level", target: nil, action: nil)
+    let readoutsFade = SettingsController.checkbox("Readouts fade with the other lights (otherwise they switch off at once)")
+    let selectionGlow = SettingsController.checkbox("Outline the selected plug-in")
+    let gainRings = SettingsController.checkbox("Gain knobs light up with their track's level")
     private var sliderValues: [NSSlider: (NSTextField, (Double) -> String)] = [:]
     /// The keyboard-shortcut editor, shown in its own pane.
     let shortcuts = ShortcutEditorController()
@@ -92,6 +92,14 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
         content.wantsLayer = true
         content.layer?.backgroundColor = Theme.panel.cgColor
         window.contentView = content
+        defer {
+            if Theme.activeStyle == .atelier { // the parchment over the whole sheet (never takes clicks)
+                let paper = PaperGrainView(frame: content.bounds)
+                paper.autoresizingMask = [.width, .height]
+                content.addSubview(paper)
+            }
+        }
+        let atelier = Theme.look.mixer == .instrument
         // Sidebar.
         let sidebar = NSStackView()
         sidebar.orientation = .vertical
@@ -101,16 +109,25 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
         sidebar.wantsLayer = true
         sidebar.layer?.backgroundColor = Theme.window.cgColor
         for p in Pane.allCases {
-            let b = NSButton(title: "  " + p.title, image: NSImage(systemSymbolName: p.symbol, accessibilityDescription: nil) ?? NSImage(),
+            // Symbols centred in one fixed-width box, so every title starts at the same x (the audit: ragged labels).
+            let b = NSButton(title: "  " + p.title, image: Self.fixedSymbol(p.symbol, width: 20),
                              target: self, action: #selector(paneChosen(_:)))
             b.tag = p.rawValue
             b.isBordered = false
             b.imagePosition = .imageLeading
             b.alignment = .left
-            b.font = Theme.ui(12.5, .medium)
+            b.font = atelier ? Theme.title(13.5) : Theme.ui(12.5, .medium)
             b.contentTintColor = Theme.textDim
             b.wantsLayer = true
-            b.layer?.cornerRadius = 6
+            b.layer?.cornerRadius = atelier ? 0 : 6
+            if atelier { // the chosen section is marked by a red rule at its edge (no rounded pill)
+                let rule = CALayer()
+                rule.name = "rule"
+                rule.backgroundColor = Atelier.vermilion.cgColor
+                rule.frame = CGRect(x: 0, y: 4, width: 2, height: 22)
+                rule.isHidden = true
+                b.layer?.addSublayer(rule)
+            }
             b.translatesAutoresizingMaskIntoConstraints = false
             b.heightAnchor.constraint(equalToConstant: 30).isActive = true
             b.widthAnchor.constraint(equalToConstant: 170).isActive = true
@@ -161,7 +178,8 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
         ])
         for b in sidebarButtons {
             let on = b.tag == p.rawValue
-            b.layer?.backgroundColor = on ? Theme.selection.withAlphaComponent(0.35).cgColor : nil
+            b.layer?.backgroundColor = on ? (Theme.look.mixer == .instrument ? Theme.laneHighlight : Theme.selection.withAlphaComponent(0.35)).cgColor : nil
+            b.layer?.sublayers?.first { $0.name == "rule" }?.isHidden = !on
             b.contentTintColor = on ? Theme.text : Theme.textDim
         }
         window?.title = p == .general ? "Settings" : "Settings: \(p.title)"
@@ -169,9 +187,27 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
 
     // MARK: Building
 
+    /// A check box in the sheet's label style (the audit: two were set larger, in another face).
+    static func checkbox(_ title: String) -> NSButton {
+        let b = NSButton(checkboxWithTitle: title, target: nil, action: nil)
+        b.font = Theme.look.mixer == .instrument ? Theme.title(13) : Theme.ui(12)
+        return b
+    }
+    /// An SF Symbol drawn centred in a box of fixed width, so a column of icon buttons lines its titles up.
+    static func fixedSymbol(_ name: String, width: CGFloat) -> NSImage {
+        let symbol = NSImage(systemSymbolName: name, accessibilityDescription: nil)?.withSymbolConfiguration(.init(pointSize: 13, weight: .regular)) ?? NSImage()
+        let h = max(16, symbol.size.height)
+        let img = NSImage(size: NSSize(width: width, height: h), flipped: false) { r in
+            symbol.draw(in: NSRect(x: (r.width - symbol.size.width) / 2, y: (r.height - symbol.size.height) / 2, width: symbol.size.width, height: symbol.size.height))
+            return true
+        }
+        img.isTemplate = true
+        return img
+    }
+
     private func label(_ s: String) -> NSTextField {
         let l = NSTextField(labelWithString: s)
-        l.font = Theme.ui(12, .medium)
+        l.font = Theme.look.mixer == .instrument ? Theme.title(13) : Theme.ui(12, .medium)
         l.textColor = Theme.text
         l.alignment = .right
         return l
@@ -187,6 +223,7 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
         let b = NSButton(title: title, target: self, action: sel)
         b.bezelStyle = .rounded
         b.controlSize = .small
+        b.font = Theme.ui(11)
         return b
     }
     private func row(_ views: [NSView]) -> NSStackView {

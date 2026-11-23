@@ -47,6 +47,10 @@ final class MixerPanel: NSView {
         addBusButton.target = self
         addBusButton.action = #selector(addBus)
         addBusButton.toolTip = "New bus (an aux track that mixes what you route or send to it)"
+        if Theme.look.mixer == .instrument { // full-contrast serif, like the drawing's other keys (it nearly vanished on the umber)
+            addBusButton.isBordered = false
+            addBusButton.attributedTitle = NSAttributedString(string: "+ Bus", attributes: [.font: Theme.title(13, .semibold), .foregroundColor: Atelier.vermilion])
+        }
         NSLayoutConstraint.activate([
             scroll.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Theme.look.consoleMixer ? Analog.cheekWidth : 0),
             scroll.trailingAnchor.constraint(equalTo: master.leadingAnchor),
@@ -154,10 +158,10 @@ final class MixerPanel: NSView {
 
 @MainActor
 final class ChannelStrip: NSView {
-    static let width: CGFloat = 92
+    static var width: CGFloat { Illustrated.size(92, 1.25) }
     let session: Session
     let trackId: DalnokTrackId
-    let output = NSPopUpButton(frame: .zero, pullsDown: false)
+    let output = RuledPopUpButton(frame: .zero, pullsDown: false)
     let sendsStack = NSStackView()
     let routingScroll = NSScrollView()
     let addSend = NSPopUpButton(frame: .zero, pullsDown: true)
@@ -272,7 +276,7 @@ final class ChannelStrip: NSView {
             faderRow.topAnchor.constraint(equalTo: pan.bottomAnchor, constant: 6),
             faderRow.centerXAnchor.constraint(equalTo: centerXAnchor),
             faderRow.bottomAnchor.constraint(equalTo: dbLabel.topAnchor, constant: -2),
-            fader.widthAnchor.constraint(equalToConstant: 44),
+            fader.widthAnchor.constraint(equalToConstant: Illustrated.size(44, 1.3)),
             meter.widthAnchor.constraint(equalToConstant: 14),
             dbLabel.bottomAnchor.constraint(equalTo: chips.topAnchor, constant: -4),
             dbLabel.centerXAnchor.constraint(equalTo: centerXAnchor),

@@ -160,9 +160,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Switches the appearance live: rebuilds the main window (and closes secondary windows) around the same
     /// session, keeping the window frame, the open project, undo history and MIDI inputs. Refused while recording.
-    @discardableResult func switchTheme(to style: Theme.Style, variant: Theme.Variant? = nil) -> Bool {
+    /// `force` rebuilds the windows in the same style (View ▸ Illustrated Controls changes control sizes).
+    @discardableResult func switchTheme(to style: Theme.Style, variant: Theme.Variant? = nil, force: Bool = false) -> Bool {
         let variant = variant ?? Theme.resolvedVariant(for: style)
-        guard style != Theme.activeStyle || variant != Theme.activeVariant else { return true }
+        guard force || style != Theme.activeStyle || variant != Theme.activeVariant else { return true }
         guard !engine.isRecording else { return false }
         let old = main!
         let frame = old.window?.frame
@@ -497,6 +498,7 @@ func buildMenu(target: MainWindowController) -> NSMenu {
         item("Composition Overview", #selector(W.toggleCompositionOverview(_:)), "o", [.command, .option]),
         themeMenu,
         item("Next Theme", #selector(W.toggleAnalogStyle(_:)), "a", [.command, .option]),
+        item("Illustrated Controls", #selector(W.toggleIllustrated(_:)), ""),
         item("Tape Machine", #selector(W.showTapeDeck(_:)), "t", [.command, .shift]),
         fullScreen,
     ])

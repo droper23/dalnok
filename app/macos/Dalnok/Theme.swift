@@ -103,10 +103,11 @@ enum Theme {
                                          ink: 0xF0E3C4, well: 0x1A130A, selection: 0xF0E3C4,
                                          muteOn: 0x7FA6B8, soloOn: 0xD4A747, monitorOn: 0xD98A45, recordOn: 0xE0754E, clipRed: 0xE0754E)
         /// Atelier: a plate on parchment. Sepia ink, red ochre for the few things that must be seen, ochre gold for rules.
+        /// textDim ≥ 7:1 and the ochre numerals (cycle) ≥ 5:1 on the parchment (2026-11-22 audit).
         static let atelier = Palette(window: 0xE9DEC6, panel: 0xEDE3CE, panelRaised: 0xF4ECDB, control: 0xDCCDAE, controlHi: 0xC9B78F,
                                      laneA: 0xF5EEDE, laneB: 0xF0E7D3, laneHighlight: 0xE8D9B8, lcd: 0xF6F0E2,
-                                     text: 0x3A2916, textDim: 0x67523A, textFaint: 0x7F6A4E, accent: 0xA8361F, playhead: 0xA8361F,
-                                     cycle: 0x9C7424, selectedHeader: 0xE6D6B4, knobHover: 0xD8C7A2, launcher: 0xECE2CC,
+                                     text: 0x3A2916, textDim: 0x54432F, textFaint: 0x715E45, accent: 0xA8361F, playhead: 0xA8361F,
+                                     cycle: 0x74561A, selectedHeader: 0xE6D6B4, knobHover: 0xD8C7A2, launcher: 0xECE2CC,
                                      ink: 0x3A2916, shade: 0x3B2F1E, light: true, well: 0xE0D2B4, selection: 0x3A2916,
                                      muteOn: 0x33607E, soloOn: 0xB48728, monitorOn: 0xA9652A, recordOn: 0xA8361F, clipRed: 0xA8361F)
     }
@@ -329,7 +330,7 @@ enum Theme {
             // Atelier: drawing inks on ivory. Deep, slightly muted pigments (vermilion, ochre, teal, indigo, ...) at a
             // lightness that keeps dark waveforms and white-on-ink labels readable; warm and cool alternate.
             let hues: [Double] = [35, 230, 85, 165, 330, 255, 60, 195, 10, 140, 290, 110]
-            return OKLCH.color(l: (isLight ? 0.56 : 0.72) + (i % 2 == 1 ? 0.05 : 0), c: 0.115, h: hues[i])
+            return OKLCH.color(l: (isLight ? 0.56 : 0.70) + (i % 2 == 1 ? 0.05 : 0), c: isLight ? 0.115 : 0.09, h: hues[i]) // the umber plate: softer, as pigment on dark paper
         case .rainbow, .console: break
         }
         if look.consoleTrackColors {

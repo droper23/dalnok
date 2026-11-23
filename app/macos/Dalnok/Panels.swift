@@ -290,8 +290,8 @@ final class TransportBar: NSView {
             transport.centerXAnchor.constraint(equalTo: centerXAnchor).withPriority(.defaultHigh),
             tools.leadingAnchor.constraint(greaterThanOrEqualTo: transport.trailingAnchor, constant: 20),
             transport.centerYAnchor.constraint(equalTo: centerYAnchor),
-            lcd.widthAnchor.constraint(equalToConstant: 150),
-            lcd.heightAnchor.constraint(equalToConstant: 34),
+            lcd.widthAnchor.constraint(equalToConstant: Theme.look.transport == .typeset ? Illustrated.size(150, 1.2) : 150),
+            lcd.heightAnchor.constraint(equalToConstant: Theme.look.transport == .typeset ? Illustrated.size(34, 1.2) : 34),
             timeLabel.centerXAnchor.constraint(equalTo: lcd.centerXAnchor),
             subTimeLabel.centerXAnchor.constraint(equalTo: lcd.centerXAnchor),
             subTimeLabel.bottomAnchor.constraint(equalTo: lcd.bottomAnchor, constant: -1),
@@ -328,7 +328,10 @@ final class TransportBar: NSView {
         case .typeset:
             lcd.layer?.backgroundColor = Theme.lcd.cgColor
             lcd.layer?.cornerRadius = 0
-            if let l = lcd.layer { SketchBorderLayer.attach(to: l, color: Theme.text.withAlphaComponent(0.75), width: 1.1, seed: 404, overshoot: 4) }
+            // An engraved counter: a ruled housing screwed to the plate, the figures on a drum (shaded top and bottom).
+            let size = CGSize(width: Illustrated.size(150, 1.2), height: Illustrated.size(34, 1.2))
+            lcd.layer?.contents = Atelier.counterHousing(size: size)
+            lcd.layer?.contentsScale = 2
             timeLabel.textColor = Theme.text
             subTimeLabel.textColor = Theme.textDim
             tempoField.font = Theme.display(15)
@@ -534,15 +537,16 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
         inputButton.target = self
         inputButton.action = #selector(inputTapped)
         gain.onBegin = { [weak self] in guard let self else { return }; self.session.engine.beginGroup("Volume"); AutomationWriter.shared?.touch(self.trackId, 0, true) }
-        gain.onGainChange = { [weak self] db in guard let self else { return }; self.session.setGain(self.trackId, db: db) }
+        gain.onGainChange = { [weak self] db in guard let self else { return }; self.session.setGain(self.trackId, db: db); self.showReadouts(db: db) }
         gain.onEnd = { [weak self] in guard let self else { return }; self.session.engine.endGroup(); AutomationWriter.shared?.touch(self.trackId, 0, false) }
         pan.onBegin = { [weak self] in guard let self else { return }; self.session.engine.beginGroup("Pan"); AutomationWriter.shared?.touch(self.trackId, 1, true) }
-        pan.onPanChange = { [weak self] p in guard let self else { return }; self.session.setPan(self.trackId, p) }
+        pan.onPanChange = { [weak self] p in guard let self else { return }; self.session.setPan(self.trackId, p); self.showReadouts(pan: p) }
         pan.onEnd = { [weak self] in guard let self else { return }; self.session.engine.endGroup(); AutomationWriter.shared?.touch(self.trackId, 1, false) }
         if Theme.look.headers == .scoreLabels { inputButton.font = Theme.note(11) }
         for label in [gainLabel, panLabel] {
-            label.font = Theme.mono(10, .medium)
+            label.font = Theme.mono(9, .medium) // fits the row the old GAIN/PAN captions had
             label.textColor = Theme.textDim
+            label.setAccessibilityElement(false) // the knob reports its own value
             label.alignment = .center
         }
         meter.vertical = true
@@ -590,9 +594,9 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
             pan.widthAnchor.constraint(equalToConstant: 30),
             pan.heightAnchor.constraint(equalToConstant: 30),
             gainLabel.centerXAnchor.constraint(equalTo: gain.centerXAnchor),
-            gainLabel.topAnchor.constraint(equalTo: gain.bottomAnchor, constant: 2),
+            gainLabel.topAnchor.constraint(equalTo: gain.bottomAnchor, constant: 0),
             panLabel.centerXAnchor.constraint(equalTo: pan.centerXAnchor),
-            panLabel.topAnchor.constraint(equalTo: pan.bottomAnchor, constant: 2),
+            panLabel.topAnchor.constraint(equalTo: pan.bottomAnchor, constant: 0),
             meter.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
             meter.topAnchor.constraint(equalTo: topAnchor, constant: 10),
             meter.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
@@ -608,6 +612,12 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
     override var isFlipped: Bool { true }
 
     /// Applies model values (after edits, undo, or scripts) without fighting an active drag.
+    /// The values under the knobs (the audit: a producer reads levels without hovering). Same row height as the old
+    /// GAIN and PAN captions; the knobs' accessibility names still say what they are.
+    func showReadouts(db: Float? = nil, pan p: Float? = nil) {
+        if let db { let s = db <= -95 ? "−∞ dB" : String(format: "%@%.1f dB", db >= 0 ? "+" : "−", abs(db)); if gainLabel.stringValue != s { gainLabel.stringValue = s } }
+        if let p { let s = PanKnob.format(Double(p)); if panLabel.stringValue != s { panLabel.stringValue = s } }
+    }
     func update(_ t: TrackView, index: Int) {
         if color != t.color || muted != t.muted { needsDisplay = true }
         color = t.color
@@ -670,6 +680,8 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
         let db: Float = t.gainDb.isFinite ? t.gainDb : -.infinity
         if !gain.tracking { if hasShown { gain.glide(toDb: db) } else { gain.db = db } }
         if !pan.tracking { if hasShown { pan.glide(toPan: t.pan) } else { pan.pan = t.pan } }
+        if !gain.tracking { showReadouts(db: db) }
+        if !pan.tracking { showReadouts(pan: t.pan) }
         hasShown = true
         gain.setAccessibilityLabel("Volume, \(t.name)")
         pan.setAccessibilityLabel("Pan, \(t.name)")

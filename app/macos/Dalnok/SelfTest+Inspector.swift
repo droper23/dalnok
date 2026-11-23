@@ -7,7 +7,7 @@ import DalnokEngine
 
 extension SelfTest {
     func sidePanels() async {
-        let e = s.engine
+        _ = s.engine
         guard let main = w.window else { return check(false, "side panels: main window") }
         let shown = (MainWindowController.showLibrary, MainWindowController.showInspector)
         defer {
@@ -47,6 +47,25 @@ extension SelfTest {
 
         await inspectorEdits(main)
         await libraryBrowsing(main)
+        await illustratedControls()
+    }
+
+    /// View ▸ Illustrated Controls: Atelier only; larger controls after a rebuild, and back.
+    private func illustratedControls() async {
+        guard Theme.activeStyle == .atelier else {
+            check(menuItem("Illustrated Controls")?.isEnabled == false || !(w.validateMenuItem(menuItem("Illustrated Controls") ?? NSMenuItem())), "Illustrated Controls is Atelier's only")
+            return
+        }
+        let was = Illustrated.on
+        check(perform("Illustrated Controls") && Illustrated.on != was, "View > Illustrated Controls switches the drawings' size")
+        await wait(0.3)
+        w.window?.contentView?.layoutSubtreeIfNeeded()
+        if Illustrated.on {
+            check(ChannelStrip.width > 92 && (w.inspector.volume.frame.width > 58 || w.inspector.isHidden), "illustrated: wider strips and larger dials")
+        }
+        check(s.tracks.count > 0 && !w.timeline.isHidden, "the project survives the rebuild")
+        check(perform("Illustrated Controls") && Illustrated.on == was, "and back")
+        await wait(0.3)
     }
 
     /// Undo only the step named, so a failed check never undoes someone else's setup.

@@ -138,13 +138,26 @@ final class CommandPalette: NSObject, NSTableViewDataSource, NSTableViewDelegate
         let bg = NSView()
         bg.wantsLayer = true
         bg.layer?.backgroundColor = Theme.panelRaised.cgColor
-        bg.layer?.cornerRadius = 12
-        bg.layer?.borderWidth = 1
-        bg.layer?.borderColor = Theme.separator.cgColor
+        let atelier = Theme.look.mixer == .instrument
+        bg.layer?.cornerRadius = atelier ? 0 : 12 // Atelier: a ruled plate, square cornered
+        bg.layer?.borderWidth = atelier ? 1.2 : 1
+        bg.layer?.borderColor = (atelier ? Theme.text : Theme.separator).cgColor
+        if atelier { // the plate's inner fine rule (a view inset by Auto Layout: the plate has no size yet here)
+            let inner = NSView()
+            inner.wantsLayer = true
+            inner.layer?.borderWidth = 0.5
+            inner.layer?.borderColor = Theme.ink(0.5).cgColor
+            inner.translatesAutoresizingMaskIntoConstraints = false
+            bg.addSubview(inner)
+            NSLayoutConstraint.activate([
+                inner.leadingAnchor.constraint(equalTo: bg.leadingAnchor, constant: 3), inner.trailingAnchor.constraint(equalTo: bg.trailingAnchor, constant: -3),
+                inner.topAnchor.constraint(equalTo: bg.topAnchor, constant: 3), inner.bottomAnchor.constraint(equalTo: bg.bottomAnchor, constant: -3),
+            ])
+        }
         panel.contentView = bg
 
         field.placeholderString = "Search commands…"
-        field.font = .systemFont(ofSize: 17)
+        field.font = Theme.look.mixer == .instrument ? Theme.title(18) : .systemFont(ofSize: 17)
         field.isBordered = false
         field.drawsBackground = false
         field.focusRingType = .none
@@ -293,16 +306,21 @@ final class CommandPalette: NSObject, NSTableViewDataSource, NSTableViewDelegate
     // MARK: Table
 
     func numberOfRows(in tableView: NSTableView) -> Int { results.count }
+    func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? { LibraryRowView() }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         let e = results[row]
         let cell = NSView()
         let title = NSTextField(labelWithString: e.title)
-        title.font = .systemFont(ofSize: 13, weight: .medium)
+        let atelier = Theme.look.mixer == .instrument
+        title.font = atelier ? Theme.title(14) : .systemFont(ofSize: 13, weight: .medium)
+        title.setContentCompressionResistancePriority(.required, for: .horizontal) // the name never truncates; the path gives way
         title.textColor = e.enabled ? Theme.text : Theme.textDim.withAlphaComponent(0.5)
         let via = row < matchedVia.count ? matchedVia[row] : nil
         let path = NSTextField(labelWithString: via.map { "“\($0)” · " + e.path } ?? e.path)
-        path.font = .systemFont(ofSize: 11)
+        path.font = atelier ? Theme.note(12) : .systemFont(ofSize: 11)
+        path.lineBreakMode = .byTruncatingTail
+        path.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         path.textColor = Theme.textDim
         let key = NSTextField(labelWithString: e.shortcut)
         key.font = Theme.mono(12, .medium)

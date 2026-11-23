@@ -259,6 +259,7 @@ private let specs: [String: Spec] = [
     "zoomToFit": Spec(id: "view.zoom_to_fit", category: "Timeline and Navigation", detail: "Fit the whole project in the window.", keywords: ["fit project"]),
     "toggleMixer:": Spec(id: "mixer.toggle", category: "Mixer", detail: "Show or hide the mixer.", keywords: ["console"]),
     "toggleDevicePanel:": Spec(id: "view.device_panel", category: "Plug-ins", detail: "Show or hide the selected track's plug-ins.", keywords: ["effects", "pedalboard", "inserts"]),
+    "toggleIllustrated:": Spec(id: "view.illustrated_controls", category: "Views and Windows", detail: "Atelier: larger controls drawn as engraved instruments (turned dials, fader blocks, the counter).", keywords: ["engraved", "drawings", "atelier", "density", "size"]),
     "toggleLibrary:": Spec(id: "view.library", category: "Views and Windows", detail: "Show or hide the Library: plug-ins, favourites, collections and recent projects.", keywords: ["browser", "sidebar", "plug-ins", "places"]),
     "toggleInspector:": Spec(id: "view.inspector", category: "Views and Windows", detail: "Show or hide the Inspector: the selected track's channel.", keywords: ["channel strip", "track settings", "sends", "inserts"]),
     "toggleLauncher:": Spec(id: "view.clip_launcher", category: "Views and Windows", detail: "Show or hide the clip launcher.", keywords: ["session"]),

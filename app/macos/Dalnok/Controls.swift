@@ -105,6 +105,7 @@ final class FaderControl: NSControl {
     override func draw(_ dirtyRect: NSRect) {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
         if vertical { drawVertical(ctx); return }
+        if Theme.look.controls == .drafted { drawDraftedHorizontal(ctx); return }
         let g = grooveRect, pos = Self.position(for: db), capX = x(for: pos)
         // Groove with inner shadow feel.
         ctx.setFillColor(Theme.hex(0x0A0B0D).cgColor)
@@ -216,11 +217,23 @@ final class FaderControl: NSControl {
         }
         Atelier.scale(ctx, x: g.minX - 3, marks: marks, left: true, font: Theme.mono(7))
         Atelier.scale(ctx, x: g.maxX + 3, marks: marks.map { ($0.y, nil, $0.major) }, left: false, font: Theme.mono(7))
-        let cap = CGRect(x: x - 10, y: capY - 6, width: 20, height: 12)
-        ctx.setFillColor(Theme.panelRaised.cgColor); ctx.fill(cap)
-        Atelier.hatch(ctx, cap.insetBy(dx: 1.5, dy: 1.5), spacing: 2.6, color: (colorCap ? tint : Theme.text).withAlphaComponent(tracking ? 0.55 : 0.3), weight: 0.6, seed: 4)
-        Atelier.box(ctx, cap.insetBy(dx: 0.5, dy: 0.5), weight: tracking ? Atelier.heavy : Atelier.medium, color: colorCap ? tint : Theme.text, seed: 9, overshoot: 2)
-        Atelier.rule(ctx, CGPoint(x: cap.minX - 4, y: capY), CGPoint(x: cap.maxX + 4, y: capY), weight: Atelier.fine, color: Theme.text, seed: 12)
+        // The rail's ends: slotted screws holding it to the plate.
+        for sy in [g.minY - 5, g.maxY + 5] where bounds.height > 90 { Atelier.screwHead(ctx, CGPoint(x: x, y: sy), radius: Illustrated.on ? 3 : 2.2) }
+        let cap = Atelier.slideBlock(ctx, center: CGPoint(x: x, y: capY), width: Illustrated.on ? 26 : 20, height: Illustrated.on ? 16 : 12,
+                                     ink: colorCap ? tint : Theme.text, active: tracking)
+        focusRing(ctx, cap)
+    }
+    /// Atelier, horizontal (the Inspector's sends): a ruled slot with the level in the track's ink and a small block.
+    private func drawDraftedHorizontal(_ ctx: CGContext) {
+        let g = grooveRect, capX = x(for: Self.position(for: db)), y = g.midY.rounded() + 0.5
+        Atelier.rule(ctx, CGPoint(x: g.minX, y: y), CGPoint(x: g.maxX, y: y), weight: Atelier.fine, color: Theme.ink(0.55))
+        if capX - g.minX > 1 { Atelier.rule(ctx, CGPoint(x: g.minX, y: y), CGPoint(x: capX, y: y), weight: 2.4, color: tint.withAlphaComponent(0.85)) }
+        let u = x(for: Self.position(for: 0)).rounded() + 0.5 // unity, a longer graduation
+        for (d, long) in [(Float(-48), false), (-24, false), (-12, false), (-6, false), (0, true), (6, false)] {
+            let tx = d == 0 ? u : x(for: Self.position(for: d)).rounded() + 0.5
+            Atelier.rule(ctx, CGPoint(x: tx, y: y + 3), CGPoint(x: tx, y: y + (long ? 7 : 5)), weight: long ? 0.6 : Atelier.hair, color: Theme.ink(long ? 0.75 : 0.45))
+        }
+        let cap = Atelier.slideBlock(ctx, center: CGPoint(x: capX, y: y), width: 9, height: 12, ink: Theme.text, active: tracking)
         focusRing(ctx, cap)
     }
     private func focusRing(_ ctx: CGContext, _ cap: CGRect) {
@@ -323,6 +336,8 @@ class RotaryKnob: NSControl {
     private let haloValue = CAShapeLayer()
     private let face = CAShapeLayer()
     private let pointer = CAShapeLayer()
+    /// Atelier: the dial drawn as a turned part seen a little from above: its knurled side under the face (cached image).
+    private let skirt = CALayer()
     static let revealScale: CGFloat = 0.68
     var faceScale: CGFloat { face.affineTransform().a } // for tests
 
@@ -349,6 +364,7 @@ class RotaryKnob: NSControl {
         pointer.lineWidth = 2
         pointer.lineCap = .round
         face.addSublayer(pointer)
+        if Theme.look.controls == .drafted { layer?.addSublayer(skirt) } // Atelier: the turned part's side, under its top face
         layer?.addSublayer(face)
         if Theme.look.hardwareControls {
             // Discrete LED dots instead of a continuous ring (dash of zero length + round caps).
@@ -438,6 +454,12 @@ class RotaryKnob: NSControl {
             ? Atelier.loopPath(CGRect(x: c.x - faceR, y: c.y - faceR, width: faceR * 2, height: faceR * 2), seed: Atelier.seed(frame.origin))
             : CGPath(ellipseIn: CGRect(x: c.x - faceR, y: c.y - faceR, width: faceR * 2, height: faceR * 2), transform: nil)
         if Theme.look.hardwareControls { face.contents = Self.capImage(diameter: faceR * 2, hover: hovering || tracking) }
+        if Theme.look.controls == .drafted {
+            // The face rests at 0.7 of its radius; the skirt is drawn for exactly that size.
+            skirt.frame = bounds
+            skirt.contentsScale = 2
+            skirt.contents = Atelier.turnedSkirt(size: bounds.size, radius: faceR * 0.7)
+        }
         let a = angle(value)
         let ptr = CGMutablePath()
         ptr.move(to: CGPoint(x: c.x + cos(a) * faceR * 0.28, y: c.y + sin(a) * faceR * 0.28))

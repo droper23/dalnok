@@ -117,3 +117,45 @@ final class PanelResizeEdge: NSView {
     }
     override func mouseUp(with event: NSEvent) { start = nil; onEnd?() }
 }
+
+/// A pop-up drawn in the theme's idiom where the system bezel breaks it: in Atelier a ruled box with the choice set in
+/// the serif and an engraved chevron (the audit: system pop-ups in the mixer and inspector). Elsewhere the system's.
+@MainActor
+final class RuledPopUpButton: NSPopUpButton {
+    private var ruled: Bool { Theme.look.mixer == .instrument }
+    override init(frame: NSRect, pullsDown: Bool) {
+        super.init(frame: frame, pullsDown: pullsDown)
+        if ruled { isBordered = false }
+    }
+    required init?(coder: NSCoder) { fatalError() }
+    override var intrinsicContentSize: NSSize {
+        var s = super.intrinsicContentSize
+        if ruled { s.height = 22 }
+        return s
+    }
+    override func draw(_ dirtyRect: NSRect) {
+        guard ruled, let ctx = NSGraphicsContext.current?.cgContext else { return super.draw(dirtyRect) }
+        let r = bounds.insetBy(dx: 0.5, dy: 1.5)
+        ctx.setFillColor(Theme.panelRaised.withAlphaComponent(0.6).cgColor); ctx.fill(r)
+        Atelier.box(ctx, r, weight: Atelier.hair, color: Theme.ink(isEnabled ? 0.7 : 0.35))
+        let title = titleOfSelectedItem ?? title
+        let attrs: [NSAttributedString.Key: Any] = [.font: Theme.title(12), .foregroundColor: isEnabled ? Theme.text : Theme.textDim]
+        let size = (title as NSString).size(withAttributes: attrs)
+        let room = r.width - 22
+        let shown = size.width <= room ? title : Self.truncate(title, to: room, attrs)
+        (shown as NSString).draw(at: CGPoint(x: r.minX + 6, y: r.midY - size.height / 2), withAttributes: attrs)
+        // The chevron: two short engraved strokes.
+        let cx = r.maxX - 9, cy = r.midY
+        let down = isFlipped ? CGFloat(1) : -1
+        Atelier.rule(ctx, CGPoint(x: cx - 3, y: cy - 1.5 * down), CGPoint(x: cx, y: cy + 1.5 * down), weight: 0.8, color: Theme.ink(0.75))
+        Atelier.rule(ctx, CGPoint(x: cx, y: cy + 1.5 * down), CGPoint(x: cx + 3, y: cy - 1.5 * down), weight: 0.8, color: Theme.ink(0.75))
+        if window?.firstResponder === self {
+            ctx.setStrokeColor(NSColor.keyboardFocusIndicatorColor.cgColor); ctx.setLineWidth(1); ctx.stroke(r.insetBy(dx: -1.5, dy: -1.5))
+        }
+    }
+    private static func truncate(_ s: String, to width: CGFloat, _ attrs: [NSAttributedString.Key: Any]) -> String {
+        var t = s
+        while !t.isEmpty, ((t + "…") as NSString).size(withAttributes: attrs).width > width { t.removeLast() }
+        return t + "…"
+    }
+}

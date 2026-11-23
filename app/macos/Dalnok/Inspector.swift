@@ -35,9 +35,9 @@ final class InspectorPanel: SidePanelView {
     private let number = NSTextField(labelWithString: "")
     let nameLabel = NSTextField(labelWithString: "")
     // Track
-    let input = NSPopUpButton(frame: .zero, pullsDown: false)
-    let output = NSPopUpButton(frame: .zero, pullsDown: false)
-    let monitor = NSPopUpButton(frame: .zero, pullsDown: false)
+    let input = RuledPopUpButton(frame: .zero, pullsDown: false)
+    let output = RuledPopUpButton(frame: .zero, pullsDown: false)
+    let monitor = RuledPopUpButton(frame: .zero, pullsDown: false)
     private var inputRow: NSView!, monitorRow: NSView!
     // Channel
     let volume = GainKnob()
@@ -101,8 +101,8 @@ final class InspectorPanel: SidePanelView {
     }
     private func dialColumn(_ title: String, _ knob: RotaryKnob, _ value: NSTextField) -> NSView {
         knob.translatesAutoresizingMaskIntoConstraints = false
-        knob.widthAnchor.constraint(equalToConstant: 58).isActive = true
-        knob.heightAnchor.constraint(equalToConstant: 58).isActive = true
+        knob.widthAnchor.constraint(equalToConstant: Illustrated.size(58, 1.35)).isActive = true
+        knob.heightAnchor.constraint(equalToConstant: Illustrated.size(58, 1.35)).isActive = true
         value.font = Theme.look.mixer == .instrument ? Theme.title(12.5) : Theme.mono(11)
         value.textColor = Theme.text
         value.alignment = .center
