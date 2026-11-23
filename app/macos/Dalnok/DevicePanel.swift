@@ -1003,6 +1003,20 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         updateDisplay()
     }
 
+    /// Warm Analog: the family whose circuit the pedal's window draws (dynamics keep their LED ladder).
+    var pedalFigure: AtelierFigure? {
+        if let cached = pedalFigureCache { return cached }
+        let f = findPedalFigure()
+        pedalFigureCache = .some(f)
+        return f
+    }
+    private func findPedalFigure() -> AtelierFigure? {
+        let kind = automaticKind()
+        guard let f = AtelierFigure.of(kind: kind, subject: Codex.subject(kind: kind, name: title.stringValue, parameters: allParameters.map { fixedString($0.title) })),
+              f != .governor else { return nil }
+        return f
+    }
+    private var pedalFigureCache: AtelierFigure??
     /// Warm Analog: the pedal's signal LEDs and readout window (the same data a Graphite faceplate shows).
     private func pollPedal(_ pedal: PedalBody) {
         guard loaded, !folded, !pedal.screen.isHidden else { return }
@@ -1050,6 +1064,17 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
                 screen.curve = freqs.map { Double(a.outputDb(at: $0, rate: rate)) / 3 + 12 } // spectrum, scaled into view
                 screen.reading = "SPECTRUM"
             }
+        case _ where pedalFigure != nil:
+            // The family's circuit, moving (PedalScreen); its parameters from the unit's link.
+            guard let fig = pedalFigure else { return }
+            screen.mode = switch fig { case .pendulum: .tape; case .chamber: .spring; case .clipping: .tube; case .crank: .lamp; case .governor: .ladder }
+            let link = figureLink(fig), roles = fig.roles
+            screen.params = (link.v(roles[0]), roles.count > 1 ? link.v(roles[1]) : 0.5)
+            var outBuf = [Float](repeating: 0, count: 256)
+            let n = Int(dalnok_plugin_tap(h, slot, nil, &outBuf, 256))
+            let peak = n > 0 ? outBuf.prefix(n).map(abs).max() ?? 0 : 0
+            let words = roles.compactMap { link.t($0) }.joined(separator: " · ")
+            screen.reading = peak > 1e-5 ? String(format: "%.0f dBFS", 20 * log10(peak)) : (words.isEmpty ? "READY" : words)
         case .scope, .goniometer, .history, .transfer:
             screen.mode = .scope
             var outBuf = [Float](repeating: 0, count: 1_024)
@@ -2115,7 +2140,7 @@ enum PedalLabel {
     static let words: [String: String] = [
         "frequency": "FREQ", "freq": "FREQ", "gain": "GAIN", "q-factor": "Q", "q": "Q", "resonance": "RES", "threshold": "THRESH",
         "attack": "ATK", "release": "REL", "ratio": "RATIO", "detection": "DETECT", "makeup": "MAKEUP", "slope": "SLOPE",
-        "enable": "ON", "enabled": "ON", "on": "ON", "bypass": "BYP", "mix": "MIX", "dry/wet": "MIX", "feedback": "FDBK",
+        "enable": "ON", "enabled": "ON", "on": "ON", "on/off": "ON", "active": "ON", "bypass": "BYP", "mix": "MIX", "dry/wet": "MIX", "feedback": "FDBK",
         "time": "TIME", "delay": "DELAY", "width": "WIDTH", "depth": "DEPTH", "rate": "RATE", "decay": "DECAY", "drive": "DRIVE",
         "output": "OUT", "input": "IN", "level": "LEVEL", "volume": "VOL", "tone": "TONE", "knee": "KNEE", "lookahead": "LOOK",
         "pre-delay": "PRE", "predelay": "PRE", "damping": "DAMP", "size": "SIZE", "sidechain": "SC", "filter": "FILT",
@@ -2127,7 +2152,7 @@ enum PedalLabel {
         let own = words[last.lowercased()] ?? (last.count > 7 ? String(last.prefix(6)) : last).uppercased()
         let group = parts.dropLast()
         if group.isEmpty { return own }
-        if group.count == 1, let g = group.first, g.count <= 4 || Int(g) != nil { return "\(g.uppercased()) \(own)" }
+        if group.count == 1, let g = group.first, g.count <= 4 || Int(g) != nil, g.count + own.count < 8 { return "\(g.uppercased()) \(own)" }
         // "Low Cut" → LC, "Band 2" → B2 (numbers kept whole).
         let initials = group.map { w in Int(w) != nil ? w : String(w.prefix(1)).uppercased() }.joined()
         return "\(initials) \(own)"

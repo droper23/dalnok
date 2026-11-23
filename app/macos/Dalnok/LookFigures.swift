@@ -426,7 +426,9 @@ struct LookPen {
         let knee = pt(tIn), top = pt(1)
         tag(.threshold, at: CGPoint(x: knee.x + 10, y: knee.y + 8))
         tag(.ratio, at: CGPoint(x: top.x - 14, y: top.y - 16), align: .right)
-        note(abs(reductionDb) < 0.05 ? "open" : String(format: "−%.1f dB", abs(reductionDb)), f)
+        // The reduction under the iris (the corner is the curve's).
+        text(abs(reductionDb) < 0.05 ? "open" : String(format: "−%.1f dB", abs(reductionDb)), CGPoint(x: c.x, y: min(f.maxY - 10, c.y + R + 1)),
+             size: 8, color: ink.withAlphaComponent(0.6), align: .center)
         return [FigureHandle(role: .threshold, point: knee, axis: CGVector(dx: 1, dy: -1), span: side * 0.8),
                 FigureHandle(role: .ratio, point: top, axis: CGVector(dx: 0, dy: 1), span: side * 0.6)]
     }
