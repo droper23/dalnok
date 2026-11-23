@@ -620,6 +620,7 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         editButton.action = #selector(editTapped(_:))
         editButton.toolTip = "Choose which parameters this controller shows"
         openButton.isEnabled = loaded
+        openButton.setContentCompressionResistancePriority(.required, for: .vertical) // its label never squeezed
         editButton.isEnabled = loaded
         // Sidechain source (plug-ins with an auxiliary input only).
         sidechain.controlSize = .small
@@ -659,6 +660,7 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         foldButton.action = #selector(foldTapped)
         foldButton.toolTip = "Fold \(name) to a narrow strip (click the strip to unfold)"
         foldButton.setAccessibilityLabel("Fold \(name)")
+        if Theme.look.devices == .schematic { labelFoldButton() } // Atelier: say it (the owner couldn't find a way to fold)
         // One button opens the plug-in; choosing the controller's parameters is in the unit's menu (Edit Controls…).
         let header = NSStackView(views: [foldButton, power, title, etchedTitle, NSView(), sidechain, openButton])
         header.spacing = 6
@@ -1059,20 +1061,6 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         updateDisplay()
     }
 
-    /// Warm Analog: the family whose circuit the pedal's window draws (dynamics keep their LED ladder).
-    var pedalFigure: AtelierFigure? {
-        if let cached = pedalFigureCache { return cached }
-        let f = findPedalFigure()
-        pedalFigureCache = .some(f)
-        return f
-    }
-    private func findPedalFigure() -> AtelierFigure? {
-        let kind = automaticKind()
-        guard let f = AtelierFigure.of(kind: kind, subject: Codex.subject(kind: kind, name: title.stringValue, parameters: allParameters.map { fixedString($0.title) })),
-              f != .governor else { return nil }
-        return f
-    }
-    private var pedalFigureCache: AtelierFigure??
     /// Warm Analog: the pedal's signal LEDs and readout window (the same data a Graphite faceplate shows).
     private func pollPedal(_ pedal: PedalBody) {
         guard loaded, !folded, !pedal.screen.isHidden else { return }
@@ -1092,7 +1080,7 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
             screen.reduction += ((max(-48, db) + 48) / 2 - screen.reduction) * 0.35 // 0…24 on the ladder's scale
             screen.reading = peak > 1e-5 ? String(format: "%.0f dBFS", db) : "NO SIGNAL"
         case .gainReduction:
-            screen.mode = .needle
+            screen.mode = .ladder
             var inBuf = [Float](repeating: 0, count: 1_024), outBuf = inBuf
             let n = Int(dalnok_plugin_tap(h, slot, &inBuf, &outBuf, 1_024))
             var ri: Float = 0, ro: Float = 0
@@ -1120,17 +1108,6 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
                 screen.curve = freqs.map { Double(a.outputDb(at: $0, rate: rate)) / 3 + 12 } // spectrum, scaled into view
                 screen.reading = "SPECTRUM"
             }
-        case _ where pedalFigure != nil:
-            // The family's circuit, moving (PedalScreen); its parameters from the unit's link.
-            guard let fig = pedalFigure else { return }
-            screen.mode = switch fig { case .pendulum: .tape; case .chamber: .spring; case .clipping: .tube; case .crank: .lamp; case .governor: .ladder }
-            let link = figureLink(fig), roles = fig.roles
-            screen.params = (link.v(roles[0]), roles.count > 1 ? link.v(roles[1]) : 0.5)
-            var outBuf = [Float](repeating: 0, count: 256)
-            let n = Int(dalnok_plugin_tap(h, slot, nil, &outBuf, 256))
-            let peak = n > 0 ? outBuf.prefix(n).map(abs).max() ?? 0 : 0
-            let words = roles.compactMap { link.t($0) }.joined(separator: " · ")
-            screen.reading = peak > 1e-5 ? String(format: "%.0f dBFS", 20 * log10(peak)) : (words.isEmpty ? "READY" : words)
         case .scope, .goniometer, .history, .transfer:
             screen.mode = .scope
             var outBuf = [Float](repeating: 0, count: 1_024)
@@ -1554,12 +1531,20 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         return CATransform3DRotate(t, angle, 0, 1, 0)
     }
 
+    /// Atelier: the fold control as words in the caption's hand ("‹ fold", "unfold ›"), not a faint chevron.
+    private func labelFoldButton() {
+        foldButton.image = nil
+        foldButton.attributedTitle = NSAttributedString(string: folded ? "unfold ›" : "‹ fold",
+                                                         attributes: [.font: Theme.note(12), .foregroundColor: Atelier.vermilion])
+    }
+
     /// Folds or unfolds. Warm Analog turns the stomp box onto its side edge (a quarter turn about its upright axis, in
     /// perspective) while the space it took closes up; Graphite slides the faceplate shut onto a slim rack blank.
     func setFolded(_ f: Bool, animated: Bool) {
         guard f != folded else { return }
         folded = f
         foldButton.setAccessibilityLabel(f ? "Unfold" : "Fold")
+        if Theme.look.devices == .schematic { labelFoldButton() }
         let animate = animated && !Motion.reduced && window != nil
         let from = bounds.width
         // Warm Analog: the pedal tips onto its side like the box it is (see tipPedal).
