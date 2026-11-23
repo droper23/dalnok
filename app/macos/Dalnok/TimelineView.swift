@@ -60,6 +60,9 @@ final class TimelineView: NSView {
     private let playheadLayer = CALayer()
     private let playheadCap = CAShapeLayer()
     private let playheadHalo = CAGradientLayer()  // Prism: the column of light around the playhead
+    /// Graphite and Warm Analog: the afterglow behind the playhead while it runs (a phosphor trace's persistence; a
+    /// lamp's warmth), fading in when playing starts and out when it stops.
+    private let playheadTrail = CAGradientLayer()
     private let spectrumFan = CAGradientLayer()   // Prism: light dispersed by the playhead's prism head
     private var mins: [Float] = [], maxs: [Float] = []
 
@@ -311,7 +314,10 @@ final class TimelineView: NSView {
             playheadCap.shadowRadius = playing ? 6 : 2
             playheadCap.shadowOpacity = playing ? 0.9 : 0.5
             switch Theme.look.arrangement {
-            case .flat: break
+            case .flat: playheadTrail.opacity = playing && !Motion.reduced ? 1 : 0
+                if recording { playheadTrail.colors = [Theme.recordOn.withAlphaComponent(0).cgColor, Theme.recordOn.withAlphaComponent(0.06).cgColor, Theme.recordOn.withAlphaComponent(0.2).cgColor] }
+                else { let glow = Theme.activeStyle == .warmAnalog ? Theme.hex(0xFFB866) : Theme.playhead
+                    playheadTrail.colors = [glow.withAlphaComponent(0).cgColor, glow.withAlphaComponent(0.05).cgColor, glow.withAlphaComponent(0.16).cgColor] }
             case .glass: playheadHalo.opacity = playing || recording ? 1 : 0.55 // the guide brightens while light runs through it
                 playheadHalo.colors = [color.withAlphaComponent(0).cgColor, color.withAlphaComponent(recording ? 0.35 : 0.22).cgColor, color.withAlphaComponent(0).cgColor]
             case .manuscript: playheadCap.shadowOpacity = 0 // ink doesn't glow
@@ -455,6 +461,10 @@ final class TimelineView: NSView {
         playheadLayer.isHidden = x < -2 || x > bounds.width + 2
         playheadCap.position = CGPoint(x: x, y: Theme.rulerHeight - 12) // below the bar numbers, so "1" stays readable
         playheadCap.isHidden = playheadLayer.isHidden
+        if Theme.look.arrangement == .flat {
+            playheadTrail.frame = CGRect(x: x - 48, y: Theme.rulerHeight, width: 48, height: bounds.height)
+            playheadTrail.isHidden = playheadLayer.isHidden
+        }
         if Theme.look.arrangement == .glass {
             playheadHalo.frame = CGRect(x: x - 7, y: Theme.rulerHeight, width: 14, height: bounds.height)
             playheadHalo.isHidden = playheadLayer.isHidden
@@ -1747,7 +1757,14 @@ extension TimelineView {
     /// Playhead and selection layers for the theme's family (set up once; the window is rebuilt on a theme switch).
     func configureFamilyLayers() {
         switch Theme.look.arrangement {
-        case .flat: break
+        case .flat:
+            let glow = Theme.activeStyle == .warmAnalog ? Theme.hex(0xFFB866) : Theme.playhead
+            playheadTrail.startPoint = CGPoint(x: 0, y: 0.5); playheadTrail.endPoint = CGPoint(x: 1, y: 0.5)
+            playheadTrail.colors = [glow.withAlphaComponent(0).cgColor, glow.withAlphaComponent(0.05).cgColor, glow.withAlphaComponent(0.16).cgColor]
+            playheadTrail.locations = [0, 0.7, 1]
+            playheadTrail.zPosition = 8
+            playheadTrail.opacity = 0
+            layer?.addSublayer(playheadTrail)
         case .glass:
             // An optical guide: a fine bright core inside a soft column of light, and a prism head that splits the light
             // into a small spectrum fan over the ruler (it marks the position without covering bar numbers).
