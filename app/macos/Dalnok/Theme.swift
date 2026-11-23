@@ -452,6 +452,7 @@ enum OKLCH {
 }
 
 // MARK: Stock controls in the look's colour
+@MainActor
 extension Theme {
     /// The colour stock controls take instead of the system's blue (the 2026-11-23 audit: blue check boxes, sliders,
     /// popups, default buttons and text selection in every look).
@@ -572,6 +573,7 @@ extension Theme {
     }
 }
 
+@MainActor
 extension Theme {
     /// A check box drawn in the look rather than in the system's blue.
     static func checkbox(_ title: String, target: AnyObject? = nil, action: Selector? = nil) -> NSButton {

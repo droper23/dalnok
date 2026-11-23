@@ -188,8 +188,8 @@ enum Screenshots {
             // DALNOK_GALLERY_MOTION: the device panel's figures stepped through their motion, a frame each quarter second
             // of motion time, to review every animation's drawing frame by frame (the clock is tested by the self-test).
             if ProcessInfo.processInfo.environment["DALNOK_GALLERY_MOTION"] != nil {
-                func movers(_ v: NSView) -> [FigureAnimating] { (v as? FigureAnimating).map { [$0] } ?? v.subviews.flatMap(movers) }
-                let all = movers(w.devicePanel)
+                var all: [FigureAnimating] = [], stack: [NSView] = [w.devicePanel]
+                while let v = stack.popLast() { if let m = v as? FigureAnimating { all.append(m) } else { stack += v.subviews } }
                 for k in 1...8 {
                     for m in all { m.advanceFigure(0.25) }
                     w.devicePanel.layoutSubtreeIfNeeded()
