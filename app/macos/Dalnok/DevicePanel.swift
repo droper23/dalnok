@@ -907,7 +907,7 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
             let source = others.first { Int($0.id) == sidechain.selectedTag() }
             for item in sidechain.itemArray {
                 let on = item.tag == sidechain.selectedTag() && item.tag != 0
-                item.attributedTitle = NSAttributedString(string: item.title.replacingOccurrences(of: "SC: ", with: on ? "SC ◂ " : "SC "),
+                item.attributedTitle = NSAttributedString(string: item.title, // the title itself stays (tests, VoiceOver)
                     attributes: [.font: Theme.ui(10, .bold), .foregroundColor: on ? (source?.color ?? Theme.text) : Theme.hex(0xC9A36B)])
             }
             scSource = source?.color

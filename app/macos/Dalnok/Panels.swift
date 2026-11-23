@@ -1034,7 +1034,11 @@ final class TrackHeaderColumn: NSView, TrackScrollHost {
             // Atelier: the column's head as a plate's title, "Tracks" in the serif (on the gold band of the umber plate).
             let head = CGRect(x: 0, y: 3, width: bounds.width - 46, height: Theme.rulerHeight - 7)
             let band = !Theme.palette.light
-            if band { Atelier.gold.setFill(); head.fill() }
+            if band { // the band, and its rules carried on under the + to the divider (audit V3: it stopped short)
+                Atelier.gold.setFill(); head.fill()
+                Atelier.rule(ctx, CGPoint(x: head.maxX, y: head.minY + 0.5), CGPoint(x: bounds.width, y: head.minY + 0.5), weight: Atelier.medium, color: Atelier.gold)
+                Atelier.rule(ctx, CGPoint(x: head.maxX, y: head.maxY - 0.5), CGPoint(x: bounds.width, y: head.maxY - 0.5), weight: Atelier.medium, color: Atelier.gold)
+            }
             let t = (hiddenCount > 0 ? "Tracks · \(hiddenCount) hidden" : "Tracks") as NSString
             t.draw(at: NSPoint(x: 12, y: head.midY - 9), withAttributes: [.font: Theme.title(14, .semibold), .foregroundColor: band ? Theme.window : Theme.text])
             if !band {

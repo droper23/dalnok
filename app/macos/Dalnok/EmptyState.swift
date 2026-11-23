@@ -171,9 +171,9 @@ final class EmptyStateView: NSView, NSTextFieldDelegate {
         audio.widthAnchor.constraint(equalTo: basicsStack.widthAnchor, constant: -30).isActive = true
 
         cards = [
-            StartCard(title: "Audio Track", detail: "Record a microphone or an instrument", symbol: "waveform",
+            StartCard(title: "Audio Track", detail: "Record a voice or an instrument", symbol: "waveform",
                       target: self, action: #selector(newAudioTapped)),
-            StartCard(title: "Instrument Track", detail: "Play a synth from a MIDI keyboard", symbol: "pianokeys",
+            StartCard(title: "Instrument Track", detail: "Play a synth from a keyboard", symbol: "pianokeys",
                       target: self, action: #selector(newInstrumentTapped)),
         ]
         let choices = NSStackView(views: cards)

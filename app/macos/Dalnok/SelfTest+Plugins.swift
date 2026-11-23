@@ -617,7 +617,9 @@ extension SelfTest {
         delay.sidechain.isHidden = sidechainWasHidden
         s.removeTrack(namedNone); s.removeTrack(duplicate2); s.removeTrack(duplicate1)
         let names = delay.knobs.map { $0.label.stringValue }
-        check(delay.knobs.count == 4 && names.contains { $0.caseInsensitiveCompare("Dry/Wet Mix") == .orderedSame }, "controller shows AUDelay's parameters (\(names))")
+        // Warm Analog prints the short panel name (PedalLabel), the full one in its tooltip.
+        let fullNames = delay.knobs.map { $0.label.toolTip ?? $0.label.stringValue }
+        check(delay.knobs.count == 4 && (names + fullNames).contains { $0.caseInsensitiveCompare("Dry/Wet Mix") == .orderedSame }, "controller shows AUDelay's parameters (\(names))")
         if let lim = panel.devices.last {
             let limNames = lim.knobs.map { $0.label.stringValue }
             check(lim.knobs.count == lim.controlIds.count && !limNames.contains(""), "every limiter control has a named knob (\(limNames))")
@@ -640,7 +642,10 @@ extension SelfTest {
                   && pedal.screen.frame.maxY < pedal.footswitch.frame.minY - 14 && pedal.screen.frame.width > 60,
                   "the pedal has a readout window under its controls (\(pedal.screen.frame))")
             delay.pollMeters(); delay.pollMeters()
-            check(pedal.screen.mode == .scope, "AUDelay's window shows its output trace (\(pedal.screen.mode))")
+            check(pedal.screen.mode == .tape && pedal.screen.animates, "AUDelay's window draws its tape loop, moving (\(pedal.screen.mode))")
+            let phase0 = pedal.screen.phase
+            pedal.screen.advanceFigure(0.1)
+            check(pedal.screen.phase > phase0, "the tape loop turns (\(phase0) → \(pedal.screen.phase))")
             if let knob = pedal.controls.first {
                 knob.onChange?(0.3)
                 check(pedal.screen.showingValue && pedal.screen.text.lowercased().contains("dry/wet") && pedal.screen.text.contains("30"),
