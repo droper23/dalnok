@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-23
+
+Four themes in six looks, each with its own moving plug-in figures; the Library and Inspector; Settings in nine pages. Project format 14: 0.3.0 can't open projects that use phase invert. Known gaps: MIDI files can't be imported yet; files from the Library land at the start of new tracks, not at the pointer; the app is ad-hoc signed, not notarized.
+
 - **Every look now has moving plug-in figures of its own.** Graphite draws telemetry (phosphor traces on a dot grid: the compressor's gain computer with the signal riding it, a reverb's decay field, delay echo taps, a distortion's transfer curve, an LFO scope); Prism draws optics in spectral light (an iris that closes as the compressor works, caustic rings, light echoes, a prism refracting a sine into harmonics, interfering waves, and the EQ's curve coloured by frequency); Warm Analog's pedal windows draw their circuit (a tape loop with its heads, a swaying spring, a glowing triode, a lamp pulsing at the LFO's rate, a gain-reduction needle). Drag a figure's parts as in Atelier; they light with the parameter's name and value.
 - **Settings is nine pages** (General, Appearance, Audio, MIDI, Recording, Plug-ins, Keyboard Shortcuts, Files and Library, Advanced) **with a search field**. Library folders and audio preview, the device panel's height, and the recordings and recovery folders are now in Settings; options that only one look uses appear only in that look.
 - Check boxes, pop-up menus, buttons, sliders and text selection are drawn in each look's colours instead of the system's blue.
