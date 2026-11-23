@@ -629,6 +629,10 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         sidechain.toolTip = "Sidechain: which track's signal this plug-in listens to (for ducking and keyed effects)"
         sidechain.isHidden = !(loaded && dalnok_plugin_has_sidechain(session.engine.handle, slot))
         if Theme.look.devices == .schematic { sidechain.isBordered = false } // a caption-line choice, not a grey control
+        if Theme.look.pedalboard { // a jack on the pedal's top edge, patched by a cable in the source track's colour
+            sidechain.isBordered = false
+            sidechain.identifier = NSUserInterfaceItemIdentifier("stock") // its own face, not the look's popup well
+        }
         // Bypass: the pedal's footswitch in Warm Analog, a power button here in Graphite.
         power.bezelStyle = .inline
         power.isBordered = false
@@ -786,6 +790,7 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
     override func layout() {
         super.layout()
         CATransaction.begin(); CATransaction.setDisableActions(true); applyRecess(); CATransaction.commit()
+        updateSidechainCable()
     }
 
     /// Lights (LED rings, switch lamps, readouts, meters, screens, VU lamps) fade to `target` over Settings' fade time.
@@ -898,6 +903,57 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         sidechain.item(at: 0)?.tag = 0
         for (i, t) in others.enumerated() { sidechain.item(at: i + 1)?.tag = Int(t.id) }
         sidechain.selectItem(withTag: Int(dalnok_plugin_sidechain(session.engine.handle, trackId, slot)))
+        if Theme.look.pedalboard {
+            let source = others.first { Int($0.id) == sidechain.selectedTag() }
+            for item in sidechain.itemArray {
+                let on = item.tag == sidechain.selectedTag() && item.tag != 0
+                item.attributedTitle = NSAttributedString(string: item.title.replacingOccurrences(of: "SC: ", with: on ? "SC ◂ " : "SC "),
+                    attributes: [.font: Theme.ui(10, .bold), .foregroundColor: on ? (source?.color ?? Theme.text) : Theme.hex(0xC9A36B)])
+            }
+            scSource = source?.color
+            needsLayout = true
+        }
+    }
+    /// Warm Analog: the sidechain's patch cable, from the SC jack over the pedal's top edge, in the source's colour.
+    private var scSource: NSColor? { didSet { updateSidechainCable() } }
+    private let scCable = CAShapeLayer()
+    private let scJackLayer = CALayer()
+    static let scJack: NSImage = {
+        let img = NSImage(size: NSSize(width: 16, height: 16), flipped: false) { r in
+            guard let ctx = NSGraphicsContext.current?.cgContext else { return false }
+            Analog.jack(ctx, at: CGPoint(x: r.midX, y: r.midY), radius: 6)
+            return true
+        }
+        return img
+    }()
+    private func updateSidechainCable() {
+        guard Theme.look.pedalboard, let layer else { scCable.removeFromSuperlayer(); scJackLayer.removeFromSuperlayer(); return }
+        guard !sidechain.isHidden, let pedal else { scCable.removeFromSuperlayer(); scJackLayer.removeFromSuperlayer(); return }
+        // The SC jack sits just left of its label, patched or not.
+        let jack = sidechain.convert(NSPoint(x: -8, y: sidechain.bounds.midY), to: self)
+        if scJackLayer.superlayer == nil { layer.addSublayer(scJackLayer) }
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        scJackLayer.contents = DeviceView.scJack
+        scJackLayer.frame = CGRect(x: jack.x - 8, y: jack.y - 8, width: 16, height: 16)
+        scJackLayer.zPosition = 41
+        CATransaction.commit()
+        guard let color = scSource else { scCable.removeFromSuperlayer(); return }
+        if scCable.superlayer == nil { layer.addSublayer(scCable) }
+        let top = pedal.convert(NSPoint(x: pedal.bounds.midX, y: pedal.isFlipped ? 0 : pedal.bounds.maxY), to: self)
+        // A loop out of the jack, sagging to the side, into the pedal's top edge (the sidechain input).
+        let path = CGMutablePath()
+        path.move(to: jack)
+        let end = CGPoint(x: min(top.x - 30, jack.x - 40), y: top.y - 2)
+        path.addCurve(to: end, control1: CGPoint(x: jack.x - 34, y: jack.y + 2), control2: CGPoint(x: end.x - 6, y: end.y + 18))
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        scCable.path = path
+        scCable.fillColor = nil
+        scCable.strokeColor = color.cgColor
+        scCable.lineWidth = 3.2
+        scCable.lineCap = .round
+        scCable.shadowColor = NSColor.black.cgColor; scCable.shadowOpacity = 0.55; scCable.shadowRadius = 2; scCable.shadowOffset = CGSize(width: 0, height: -1.5)
+        scCable.zPosition = 40
+        CATransaction.commit()
     }
     @objc private func sidechainChosen() {
         if dalnok_plugin_set_sidechain(session.engine.handle, trackId, slot, DalnokTrackId(sidechain.selectedTag())) != DALNOK_OK {
