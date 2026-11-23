@@ -300,7 +300,8 @@ extension SelfTest {
         check(node.children.map(\.title) == ["Takes", "Zqx Glass.aiff"] && node.children.first?.folder != nil,
               "a folder unfolds to its sub-folders, then the files Dalnok takes (\(node.children.map(\.title)))")
         guard let file = node.children.last else { return }
-        check((lib.outlineView(lib.outline, pasteboardWriterForItem: file) as? NSURL) as URL? == sound, "an audio file drags as its file URL")
+        let dragged = (lib.outlineView(lib.outline, pasteboardWriterForItem: file) as? NSURL) as URL?
+        check(dragged?.resolvingSymlinksInPath().path == sound.resolvingSymlinksInPath().path, "an audio file drags as its file URL (\(dragged?.path ?? "none"))")
         let count = s.tracks.count
         lib.outline.selectRowIndexes(IndexSet(integer: lib.outline.row(forItem: file)), byExtendingSelection: false)
         lib.activateRow()

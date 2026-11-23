@@ -71,7 +71,7 @@ final class ShortcutChooserController: NSObject {
 
     private func lookStep() -> NSView {
         lookCards = Theme.Style.allCases.map { style in
-            let c = LookCard(style: style, variant: Theme.resolvedVariant(for: style))
+            let c = LookCard(style: style, variant: style == Theme.activeStyle ? Theme.activeVariant : Theme.resolvedVariant(for: style))
             c.isSelected = style == Theme.activeStyle
             c.onPick = { [weak self] s, v in self?.chooseLook(s, v) }
             return c
@@ -169,13 +169,13 @@ final class ShortcutChooserController: NSObject {
 /// A theme on the first-launch page: its picture (a capture of the generated demo project), name and one line; Light |
 /// Dark below for the themes that have both. Picking the card or a version applies it.
 @MainActor
-final class LookCard: NSView {
+final class LookCard: NSView, KeyOwner {
     let style: Theme.Style
     private(set) var variant: Theme.Variant
     var onPick: ((Theme.Style, Theme.Variant) -> Void)?
     var isSelected = false { didSet { needsDisplay = true; setAccessibilityValue(isSelected ? "selected" : nil) } }
     let versions: NSSegmentedControl?
-    private let picture = NSImageView()
+    private let picture = LookPicture()
     static let size = NSSize(width: 204, height: 128)
 
     init(style: Theme.Style, variant: Theme.Variant) {
@@ -187,7 +187,6 @@ final class LookCard: NSView {
         setAccessibilityRole(.button)
         setAccessibilityLabel("\(style.title) look")
         setAccessibilityHelp(style.summary)
-        picture.imageScaling = .scaleProportionallyUpOrDown
         picture.image = Self.image(style, variant)
         picture.wantsLayer = true
         picture.layer?.cornerRadius = style == .atelier ? 0 : 6
@@ -244,12 +243,27 @@ final class LookCard: NSView {
     }
 
     override func mouseDown(with event: NSEvent) { onPick?(style, variant) }
+    // Keyboard: Tab reaches each card; Space or Return picks it (the menu leaves those keys to it).
+    override var acceptsFirstResponder: Bool { NSApp.isFullKeyboardAccessEnabled }
+    override var canBecomeKeyView: Bool { NSApp.isFullKeyboardAccessEnabled && !isHiddenOrHasHiddenAncestor }
+    override func becomeFirstResponder() -> Bool { needsDisplay = true; return true }
+    override func resignFirstResponder() -> Bool { needsDisplay = true; return true }
+    func ownsKey(_ event: NSEvent) -> Bool { window?.firstResponder === self && [36, 49, 76].contains(event.keyCode) }
+    override func keyDown(with event: NSEvent) {
+        if [36, 49, 76].contains(event.keyCode) { onPick?(style, variant) } else { super.keyDown(with: event) }
+    }
     override func accessibilityPerformPress() -> Bool { onPick?(style, variant); return true }
     @objc private func versionChosen() {
         variant = versions?.selectedSegment == 1 ? .light : .dark
         onPick?(style, variant)
     }
     override func draw(_ dirtyRect: NSRect) {
+        defer {
+            if window?.firstResponder === self {
+                NSColor.keyboardFocusIndicatorColor.setStroke()
+                let f = NSBezierPath(rect: bounds.insetBy(dx: 2.5, dy: 2.5)); f.lineWidth = 2; f.stroke()
+            }
+        }
         let r = bounds.insetBy(dx: 0.5, dy: 0.5)
         if Theme.activeStyle == .atelier, let ctx = NSGraphicsContext.current?.cgContext {
             if isSelected { Theme.laneHighlight.setFill(); r.fill() }
@@ -259,5 +273,17 @@ final class LookCard: NSView {
         let path = NSBezierPath(roundedRect: r, xRadius: 10, yRadius: 10)
         (isSelected ? Theme.ink(0.08) : Theme.ink(0.03)).setFill(); path.fill()
         (isSelected ? Theme.accent : Theme.ink(0.12)).setStroke(); path.lineWidth = isSelected ? 2 : 1; path.stroke()
+    }
+}
+
+/// A look's picture, drawn (not an image control: the card is the control, the picture decoration).
+@MainActor
+final class LookPicture: NSView {
+    var image: NSImage? { didSet { needsDisplay = true } }
+    override func draw(_ dirtyRect: NSRect) {
+        guard let image else { Theme.ink(0.06).setFill(); bounds.fill(); return }
+        let s = image.size, k = min(bounds.width / max(1, s.width), bounds.height / max(1, s.height))
+        let r = NSRect(x: (bounds.width - s.width * k) / 2, y: (bounds.height - s.height * k) / 2, width: s.width * k, height: s.height * k)
+        image.draw(in: r)
     }
 }
