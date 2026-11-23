@@ -106,6 +106,14 @@ theme, while a 4-bar loop plays:
 <tr><td align="center"><img src="assets/screenshots/plugins-atelier-dark.gif" alt="Atelier Dark plug-ins, before the Codex redesign" width="100%"><br><sub>Atelier Dark (before the Codex redesign) · <a href="assets/videos/plugins-atelier-dark.mp4">video</a></sub></td></tr>
 </table>
 
+In Atelier the chain is one engraving: each plug-in is a station on the drawn signal line, and its figure is an
+instrument you drag by its lettered parts: a flyball governor for dynamics, the vaulted acoustic chamber for reverbs,
+a pendulum for delays, a sine through its clipping curve for distortion, a crank and disc for modulation. Every
+parameter in the key is drawn as the instrument for its unit (slide rule, vernier, stopwatch, protractor, balance).
+
+<p align="center"><img src="assets/screenshots/figures-atelier-dark.png" alt="Atelier's plug-in figures: governor, acoustic chamber, pendulum, clipped wave, crank and disc (Atelier Dark)" width="100%"><br>
+<img src="assets/screenshots/figures-atelier-light.png" alt="The same figures in Atelier Light" width="100%"><br><sub>Atelier's plug-in figures, dark and light</sub></p>
+
 Third-party plug-ins get the same treatment. The display is chosen from what a plug-in declares, its name and its
 parameters, and any unit can be switched to another display. Settings ▸ Plug-ins ▸ Safety runs each third-party
 plug-in in its own process (on by default).
