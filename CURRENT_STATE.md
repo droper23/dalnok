@@ -5,7 +5,26 @@ milestone: 0.4.0 released 2026-11-23 (four themes in six looks with their own fi
 ---
 # Current State
 
-## Latest (2026-11-23, afternoon): Atelier seismograph, clearer controls, plain dials, fast self-test
+## Latest (2026-11-23, evening): plug-in multi-select, figure motion, fuller Atelier keys, folded strips
+PR #21 merged (`main` a37d3c2); `dist/Dalnok.app` rebuilt from it. No engine change.
+- **Multi-select:** ⌘/⇧-click units in the chain, ⌫ removes them (one undo step), right-click "Remove N Plug-ins",
+  a click outside the units or Esc deselects (`DevicePanel.select`, `deselectIfOutside`, `KeyOwner`). Several rows in
+  the Library or the Plug-ins window, or several dragged (`NSPasteboard.dalnokPluginPaths`), insert in order as one
+  step (`MainWindowController.insertPlugins`).
+- **Settings ▸ Appearance ▸ Figure motion** (`Faceplate.figureMotion`): hold under the pointer / always / only when
+  pointed at.
+- **Atelier:** short key sections stack in one column (`FaceplateColumn`), the key starts at the plate's top; the
+  seismograph's strip clears both margin notes; folded units drawn as an engraved slip (`FoldStrip.drawPlateEdge`);
+  folded names shrink to 8.5 pt before truncating, without "Dalnok".
+- **Track headers:** the FX count and group take a second line when the source name is long (`TrackHeaderRow.setInput`).
+- **README:** seismograph, key instruments, plain dials, figure motion, multi-select; Atelier figure stills regenerated.
+- **Verified:** self-test matrix 12/12 PASS (one Warm Analog 48 kHz run crashed at an early clip drag under load and
+  passed alone), a fresh-preferences run PASS, CI 6/6 (build-test passed on a re-run: `record-crash.sh` reported an
+  invalid capture spool once; this PR touches no engine code; not investigated).
+- **Open:** the early clip-drag flake under parallel load and the `record-crash.sh` flake; pan traveller still has no
+  still; Scarlett hardware tests (ask the owner); fuzz.
+
+## Earlier (2026-11-23, afternoon): Atelier seismograph, clearer controls, plain dials, fast self-test
 PRs #18 (plug-in looks revert, fold, OPEN, matrix script) and #19 (seismograph) merged; `main` 3b8dadf. No engine change.
 - **Graphite and Warm Analog plug-in figures reverted** at the owner's request (Prism's optics and Atelier's stay; Warm
   Analog keeps `PedalLabel` and the sidechain cable). Atelier: no crop marks between plug-ins, units fold.
