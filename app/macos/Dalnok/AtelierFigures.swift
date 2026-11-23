@@ -252,8 +252,9 @@ extension FaceplateScreen {
         let thrDb = number(link.t(.threshold)) ?? (-48 + 48 * link.v(.threshold, 0.6))
         let ratio = max(1, number(link.t(.ratio)) ?? (1 + 9 * link.v(.ratio, 0.4)))
         // The plane at the left (ratio), the strip to its right.
-        let plane = CGRect(x: f.minX + 2, y: f.minY + 14, width: 30, height: 30)
-        let strip = CGRect(x: plane.maxX + 12, y: f.minY + 6, width: f.maxX - plane.maxX - 26, height: f.height - 20)
+        let plane = CGRect(x: f.minX + 4, y: f.minY + 16, width: 30, height: 30)
+        // The strip starts below the margin note (which is written at the field's top, right-aligned).
+        let strip = CGRect(x: plane.maxX + 26, y: f.minY + 15, width: f.maxX - plane.maxX - 40, height: f.height - 24)
         let mid = strip.midY, half = strip.height / 2 - 4
         func amp(_ db: Double) -> CGFloat { CGFloat(max(0, min(1, (db + 48) / 48))) * half } // −48…0 dBFS
         // The paper: a ruled strip with time marks scrolling with it.
@@ -269,8 +270,14 @@ extension FaceplateScreen {
         let hasSound = live.contains { $0.input > -60 }
         func curve(_ inDb: Double) -> Double { inDb <= thrDb ? inDb : thrDb + (inDb - thrDb) / ratio }
         var levels: [(input: Double, output: Double)] = []
-        if hasSound {
-            levels = live.map { ($0.input, $0.input - $0.reduction) }
+        if hasSound { // eased over a few columns, so a sudden change bends the pen rather than jumping it
+            var e: (Double, Double)?
+            levels = live.map { lv in
+                let now = (max(-60, lv.input), max(-60, lv.input - lv.reduction))
+                let eased = e.map { ($0.0 + (now.0 - $0.0) * 0.35, $0.1 + (now.1 - $0.1) * 0.35) } ?? now
+                e = eased
+                return (eased.0, eased.1)
+            }
         } else {
             for i in 0..<columns {
                 let t = Double(i) * 0.022 + Double(figureAngle) * 0.25
@@ -291,11 +298,10 @@ extension FaceplateScreen {
         }
         ctx.saveGState(); ctx.clip(to: strip.insetBy(dx: 1, dy: 1))
         // What was taken off: hatched between the input's and the output's reach, above and below the line.
-        for i in levels.indices where levels[i].input - levels[i].output > 0.3 {
-            let x = x0 + CGFloat(i) * 2, a = amp(levels[i].input), b = amp(levels[i].output)
-            for sgn in [CGFloat(-1), 1] {
-                Atelier.rule(ctx, CGPoint(x: x, y: mid + sgn * b), CGPoint(x: x, y: mid + sgn * a), weight: 0.9, color: Atelier.gold.withAlphaComponent(0.7))
-            }
+        for i in levels.indices where levels[i].input - levels[i].output > 0.3 { // between the two pens, nowhere else
+            let x = x0 + CGFloat(i) * 2, swing = sin(Double(i) * 0.42 + Double(scroll) * 0.07)
+            let yIn = mid - CGFloat(swing) * amp(levels[i].input), yOut = mid - CGFloat(swing) * amp(levels[i].output)
+            Atelier.rule(ctx, CGPoint(x: x, y: yOut), CGPoint(x: x, y: yIn), weight: 0.9, color: Atelier.gold.withAlphaComponent(0.7))
         }
         let input = trace { amp(levels[$0].input) }, output = trace { amp(levels[$0].output) }
         ctx.saveGState(); ctx.setLineDash(phase: 0, lengths: [1.5, 1.5])
@@ -323,10 +329,21 @@ extension FaceplateScreen {
         Atelier.rule(ctx, base, knee, weight: Atelier.medium, color: ink)
         Atelier.rule(ctx, knee, top, weight: Atelier.medium, color: ink)
         // Lettering and readouts.
-        letterCallout(ctx, link, .threshold, at: CGPoint(x: strip.maxX + 4, y: railY), to: CGPoint(x: strip.maxX + 10, y: railY - 9))
-        readout(ctx, link, .threshold, at: CGPoint(x: strip.minX + 4, y: max(f.minY, railY - 15)))
-        letterCallout(ctx, link, .ratio, at: top, to: CGPoint(x: top.x + 6, y: top.y - 10))
-        readout(ctx, link, .ratio, at: CGPoint(x: plane.minX, y: plane.maxY + 4))
+        // Letters by their parts; the values in the left column, under the plane, clear of the strip.
+        letterCallout(ctx, link, .threshold, at: CGPoint(x: strip.maxX + 4, y: railY), to: CGPoint(x: strip.maxX + 9, y: railY - 9))
+        letterCallout(ctx, link, .ratio, at: top, to: CGPoint(x: top.x + 7, y: top.y - 7))
+        // A lit part's tag (name and value) is wider than the column: it goes in the band above the strip, where the
+        // margin note gives way to it.
+        let litRole: FigureRole? = [FigureRole.ratio, .threshold].first { figureDrag?.role == $0 || hoverRole == $0 || highlightRole == $0 }
+        for (role, y) in [(FigureRole.ratio, plane.maxY + 4), (FigureRole.threshold, plane.maxY + 19)] where role != litRole {
+            readout(ctx, link, role, at: CGPoint(x: plane.minX, y: y))
+        }
+        if let shown = litRole {
+            readout(ctx, link, shown, at: CGPoint(x: strip.minX, y: f.minY - 1))
+            marginNotes = []
+            return [FigureHandle(role: .threshold, point: CGPoint(x: strip.maxX - 10, y: railY), axis: CGVector(dx: 0, dy: -1), span: half),
+                    FigureHandle(role: .ratio, point: top, axis: CGVector(dx: 0, dy: 1), span: 24)]
+        }
         marginNotes = [reductionDb < 0.05 ? "no reduction now" : String(format: "taken off now −%.1f dB", reductionDb)]
         return [FigureHandle(role: .threshold, point: CGPoint(x: strip.maxX - 10, y: railY), axis: CGVector(dx: 0, dy: -1), span: half),
                 FigureHandle(role: .ratio, point: top, axis: CGVector(dx: 0, dy: 1), span: 24)]
@@ -394,7 +411,7 @@ extension FaceplateScreen {
         ctx.setFillColor(ink.cgColor); ctx.fillEllipse(in: CGRect(x: pivot.x - 1.8, y: pivot.y - 1.8, width: 3.6, height: 3.6))
         let reach = mark(1)
         letterCallout(ctx, link, .time, at: CGPoint(x: reach.x + 8, y: reach.y), to: CGPoint(x: reach.x + 20, y: reach.y - 12))
-        readout(ctx, link, .time, at: CGPoint(x: min(f.maxX - 40, reach.x + 14), y: reach.y + 4))
+        readout(ctx, link, .time, at: CGPoint(x: min(f.maxX - 40, reach.x + 22), y: reach.y + 10)) // clear of the arc's end
         letterCallout(ctx, link, .feedback, at: CGPoint(x: pivot.x - 4, y: lastY), to: CGPoint(x: f.minX + 8, y: lastY - 6))
         readout(ctx, link, .feedback, at: CGPoint(x: f.minX + 2, y: lastY - 2))
         marginNotes = energyDb > -80 ? [String(format: "echoes now %.0f dB", energyDb)] : []

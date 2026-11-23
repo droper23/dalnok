@@ -27,7 +27,7 @@ run() { # look:variant rate
   cp -R "$OUT/bin" "$dir/bin" && mv "$dir/bin/Dalnok" "$dir/bin/$name"
   defaults delete "$name" >/dev/null 2>&1; [ -s "$PREFS" ] && defaults import "$name" "$PREFS"
   local t0=$SECONDS
-  env DALNOK_RECOVERY_DIR="$dir/rec" DALNOK_RECORDINGS_DIR="$dir/recordings" DALNOK_THEME="$look" DALNOK_VARIANT="$variant" \
+  env DALNOK_BACKGROUND=1 DALNOK_RECOVERY_DIR="$dir/rec" DALNOK_RECORDINGS_DIR="$dir/recordings" DALNOK_THEME="$look" DALNOK_VARIANT="$variant" \
       DALNOK_SAMPLE_RATE="$rate" caffeinate -du "$dir/bin/$name" /System/Library/Sounds/Submarine.aiff \
       /System/Library/Sounds/Glass.aiff --selftest "$dir" > "$dir/selftest.log" 2>&1
   defaults delete "$name" >/dev/null 2>&1

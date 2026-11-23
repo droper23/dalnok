@@ -41,7 +41,8 @@ Swift/AppKit front end on macOS. GPL-3.0-or-later. This repo is also the project
   passes `needs: .frontmost` and reports SKIP with the reason instead of failing. `DALNOK_SAMPLE_RATE=44100` runs
   the engine at 44.1 kHz whatever the device's rate (the self-test must pass at 44.1 and 48 kHz).
   `scripts/dev/selftest-matrix.sh` runs it in all six looks at both rates at once (about 85 s instead of 14 min): each
-  run is its own copy named `Dalnok-<look>-<rate>`, so it has its own preferences domain and never touches "Dalnok".
+  run is its own copy named `Dalnok-<look>-<rate>`, so it has its own preferences domain and never touches "Dalnok";
+  `DALNOK_BACKGROUND=1` keeps such runs out of the Dock and menu bar (use it for any batch of app runs).
   Wait for state in new steps with `waitUntil { … }` / `settle(e, frame)`, not fixed sleeps, so steps hold under load.
 - `.build/debug/dalnok-cli commands`, `command <proj> <name> '<json>' [--save]`, `render-project`,
   `bench --tracks N` (release build for meaningful numbers),

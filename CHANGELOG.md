@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Atelier: a plug-in's key writes every parameter's name out in full (the name column fits the longest name) and fills one column before starting the next; the figures' labels never sit on their drawings (the seismograph's values in their own column, a lit tag above the strip).
+- Atelier: amounts are read on a small sextant; Settings ▸ Appearance ▸ Plug-in controls can show plain dials instead of the drawn instruments.
 - Atelier: the compressor is drawn as a seismograph. A strip of paper runs under two pens; the faint one writes what comes in, the bold one what goes out, and wherever the sound rises past the threshold rails the out-pen is held back and the difference is hatched in gold. Drag the rails for the threshold and the inclined plane beside it for the ratio.
 - Atelier: clearer controls in a plug-in's key: an arched quadrant for amounts, a dry/wet comparison slate for mixes, an octave rule lettered 20 · 200 · 2k · 20k for frequencies, a pointer on the decibel vernier, an inclined plane for ratios, a notched selector for modes, and a balanced traveller (L · C · R) for pan.
 - Graphite's plug-ins show their faceplate displays again (VU meter, EQ screen, transfer curve) and Warm Analog's pedals their readout windows (gain-reduction ladder, response, trace), as before 0.4.0; the moving figures stay in Prism and Atelier. Warm Analog keeps the shorter knob labels and the sidechain patch cable.

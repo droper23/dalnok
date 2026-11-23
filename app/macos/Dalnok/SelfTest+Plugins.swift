@@ -875,6 +875,16 @@ extension SelfTest {
                         check(screen.highlightRole == .threshold, "pointing at the Threshold row lights the collar")
                         row?.onHover?(false)
                         screen.figureAngle = 0
+                        if Theme.look.devices == .schematic, let r = row {
+                            let saved = Faceplate.plainDials
+                            Faceplate.plainDials = false
+                            let drawn = r.rowInstrument
+                            Faceplate.plainDials = true
+                            let plain = r.rowInstrument
+                            Faceplate.plainDials = saved
+                            check(drawn != .dial && plain == .dial,
+                                  "Settings' plain dials replace the key's drawn instruments, and back (\(drawn) → \(plain))")
+                        }
                     } else { check(false, "the compressor is drawn as its family's figure with a threshold part (\(String(describing: screen.atelierFigure)))") }
                 }
                 check(!unit.sidechain.isHidden && unit.sidechain.itemTitles.first == "SC: None" && unit.sidechain.indexOfItem(withTag: Int(other)) > 0,

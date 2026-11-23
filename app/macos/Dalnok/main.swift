@@ -521,7 +521,13 @@ func buildMenu(target: MainWindowController) -> NSMenu {
 }
 
 let app = NSApplication.shared
-app.setActivationPolicy(.regular)
+// DALNOK_BACKGROUND (self-test matrix, galleries): no Dock icon and no menu bar, so parallel test runs don't crowd the
+// screen; the windows and menus still work for the tests.
+if ProcessInfo.processInfo.environment["DALNOK_BACKGROUND"] != nil {
+    // (AppKit then adds its own Dictation and Emoji items to Edit; the tests check the app's menus only.)
+    UserDefaults.standard.register(defaults: ["NSDisabledDictationMenuItem": true, "NSDisabledCharacterPaletteMenuItem": true])
+    app.setActivationPolicy(.accessory)
+} else { app.setActivationPolicy(.regular) }
 BundledFonts.registerAll() // theme typefaces, before any view asks for a font
 let delegate = AppDelegate()
 app.delegate = delegate
