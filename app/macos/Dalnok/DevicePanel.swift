@@ -2028,7 +2028,8 @@ final class EmptyChainCard: NSView {
     override func resetCursorRects() { addCursorRect(slotRect, cursor: .pointingHand) }
     override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); startPulse() }
     override var isHidden: Bool { didSet { startPulse() } }
-    override func layout() { super.layout(); startPulse() }
+    private var pulsedSize: NSSize = .zero
+    override func layout() { super.layout(); if bounds.size != pulsedSize { startPulse() } }
 
     /// The signal's path through the empty slot, in this view's (flipped) coordinates.
     private func signalPath() -> CGPath {
@@ -2044,6 +2045,7 @@ final class EmptyChainCard: NSView {
     /// A point of light travels the signal's path (each look's own: a phosphor dot, a lamp glint, a spectral bead).
     private func startPulse() {
         pulse.removeAllAnimations()
+        pulsedSize = bounds.size
         guard window != nil, !isHidden, Theme.look.devices != .schematic, bounds.width > 400, !Motion.reduced, !SelfTest.running else { pulse.isHidden = true; return }
         wantsLayer = true
         if pulse.superlayer == nil { layer?.addSublayer(pulse) }
@@ -2054,9 +2056,8 @@ final class EmptyChainCard: NSView {
         let c = Theme.look.devices == .cards ? Theme.hex(0x9FE8FF) : Theme.look.pedalboard ? Theme.hex(0xFFB866) : Theme.controlTint
         pulse.backgroundColor = c.cgColor
         pulse.shadowColor = c.cgColor; pulse.shadowRadius = 5; pulse.shadowOpacity = 0.9; pulse.shadowOffset = .zero
-        // The layer's own coordinates are not flipped: mirror the path.
-        var flip = CGAffineTransform(a: 1, b: 0, c: 0, d: -1, tx: 0, ty: bounds.height)
-        let path = isFlipped ? (signalPath().copy(using: &flip) ?? signalPath()) : signalPath()
+        // A flipped view's layer is geometry-flipped by AppKit, so the view's path is the layer's path.
+        let path = signalPath()
         let move = CAKeyframeAnimation(keyPath: "position")
         move.path = path
         move.calculationMode = .paced

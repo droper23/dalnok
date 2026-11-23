@@ -53,7 +53,11 @@ struct FigureLink {
     /// The parameter's name, for the part's tag.
     var name: (UInt32) -> String? = { _ in nil }
 
-    func v(_ r: FigureRole, _ fallback: Double = 0.5) -> Double { ids[r].flatMap(value) ?? fallback }
+    /// The part's value, 0…1 (never NaN or out of range: figures count and loop with it).
+    func v(_ r: FigureRole, _ fallback: Double = 0.5) -> Double {
+        let x = ids[r].flatMap(value) ?? fallback
+        return x.isFinite ? max(0, min(1, x)) : fallback
+    }
     func t(_ r: FigureRole) -> String? { ids[r].flatMap(text) }
     func l(_ r: FigureRole) -> String? { ids[r].flatMap(letter) }
 }

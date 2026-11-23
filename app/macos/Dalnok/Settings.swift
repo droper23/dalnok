@@ -95,6 +95,20 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
     /// The chosen page's highlight: one layer that glides from page to page (the motion review: selection snapped).
     private let selectionMark = CALayer()
     private weak var sidebarView: NSView?
+    private lazy var backdrop: PrismBackdropView = {
+        let back = PrismBackdropView(frame: .zero)
+        back.autoresizingMask = [.width, .height]
+        back.panes = { b in [NSRect(x: 8, y: 8, width: 174, height: b.height - 16), NSRect(x: 190, y: 8, width: b.width - 198, height: b.height - 16)] }
+        return back
+    }()
+    /// Prism: glass over the light field (one pane for the sidebar, one for the pages); other looks: solid panels.
+    private func applyLookBackground() {
+        let prism = Theme.activeStyle == .prism
+        if let content = window?.contentView { backdrop.frame = content.bounds; content.layer?.backgroundColor = (prism ? NSColor.clear : Theme.panel).cgColor }
+        backdrop.isHidden = !prism
+        backdrop.needsDisplay = true
+        sidebarView?.layer?.backgroundColor = (prism ? NSColor.clear : Theme.window).cgColor
+    }
     private let paneHost = NSView()
     private(set) var pane: Pane = .general
     private var main: MainWindowController? { (NSApp.delegate as? AppDelegate)?.main }
@@ -121,13 +135,7 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
         }
         let atelier = Theme.look.mixer == .instrument
         // Sidebar.
-        if Theme.activeStyle == .prism { // glass over the light field: one pane for the pages, one for the sidebar
-            content.layer?.backgroundColor = NSColor.clear.cgColor
-            let back = PrismBackdropView(frame: content.bounds)
-            back.autoresizingMask = [.width, .height]
-            back.panes = { b in [NSRect(x: 8, y: 8, width: 174, height: b.height - 16), NSRect(x: 190, y: 8, width: b.width - 198, height: b.height - 16)] }
-            content.addSubview(back)
-        }
+        content.addSubview(backdrop) // Prism's glass; shown and hidden by applyLookBackground (a theme switch keeps this window)
         let sidebar = NSStackView()
         sidebarView = sidebar
         sidebar.orientation = .vertical
@@ -498,7 +506,10 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
     /// Search: the pages with a match stay lit in the sidebar, the first one opens, and matching row names light up.
     @objc func searchChanged(_ sender: Any?) {
         let q = search.stringValue.trimmingCharacters(in: .whitespaces)
-        let hits = q.isEmpty ? [] : searchIndex.filter { $0.text.range(of: q, options: [.caseInsensitive, .diacriticInsensitive]) != nil }
+        let hidden = Set(rowsOnlyFor.filter { !$0.when() }.flatMap(\.rows).compactMap { row in (0..<row.numberOfCells).compactMap { row.cell(at: $0).contentView as? NSTextField }.first }.map(ObjectIdentifier.init))
+        let hits = q.isEmpty ? [] : searchIndex.filter { e in
+            e.text.range(of: q, options: [.caseInsensitive, .diacriticInsensitive]) != nil && !(e.label.map { hidden.contains(ObjectIdentifier($0)) } ?? false)
+        }
         matches = Pane.allCases.filter { p in hits.contains { $0.pane == p } }
         for b in sidebarButtons { b.alphaValue = q.isEmpty || matches.contains { $0.rawValue == b.tag } ? 1 : 0.35 }
         for e in searchIndex { e.label?.textColor = hits.contains { $0.label === e.label && e.label != nil } ? Theme.accent : Theme.text }
@@ -508,6 +519,7 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
     // MARK: State
 
     func refresh() {
+        applyLookBackground()
         comingFrom.selectItem(at: SourceDAW.preferred.flatMap { SourceDAW.allCases.firstIndex(of: $0).map { $0 + 1 } } ?? 0)
         copyAudio.state = MainWindowController.copyAudioOnSave ? .on : .off
         automationMode.selectItem(at: AutomationWriter.mode.rawValue)

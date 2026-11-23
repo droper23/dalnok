@@ -182,19 +182,21 @@ final class Session {
         let all = allTracks
         guard all.contains(where: \.solo) else { return [] }
         let byId = Dictionary(all.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
-        func downstream(_ t: TrackView) -> [DalnokTrackId] { // the buses (and stacks) a track plays into
-            var out: [DalnokTrackId] = [], seen = Set<DalnokTrackId>(), next = [t.output, t.stack].filter { $0 != 0 }
+        // Where each track's sound goes: its output bus, its stack and its sends, followed to the master (once each).
+        var down: [DalnokTrackId: Set<DalnokTrackId>] = [:]
+        for t in all {
+            var out = Set<DalnokTrackId>(), next = [t.output, t.stack].filter { $0 != 0 } + t.sends.map(\.bus)
             while let id = next.popLast() {
-                guard seen.insert(id).inserted, let b = byId[id] else { continue }
-                out.append(id); next += [b.output, b.stack].filter { $0 != 0 }
+                guard id != 0, out.insert(id).inserted, let b = byId[id] else { continue }
+                next += [b.output, b.stack] + b.sends.map(\.bus)
             }
-            return out
+            down[t.id] = out
         }
         var audible = Set<DalnokTrackId>()
         for t in all where t.solo {
             audible.insert(t.id)
-            audible.formUnion(downstream(t)) // a soloed source keeps its buses
-            for u in all where downstream(u).contains(t.id) { audible.insert(u.id) } // a soloed bus keeps what feeds it
+            audible.formUnion(down[t.id] ?? []) // a soloed source keeps its buses (outputs and sends)
+            for u in all where down[u.id]?.contains(t.id) == true { audible.insert(u.id) } // a soloed bus keeps what feeds it
         }
         return Set(all.map(\.id)).subtracting(audible)
     }

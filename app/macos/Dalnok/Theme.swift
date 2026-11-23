@@ -469,21 +469,28 @@ extension Theme {
     /// Tints the stock controls under `view`: check boxes and radios, slider fills, segmented selections, the default
     /// button. Cheap enough to run each time a window becomes key.
     static func tintControls(in view: NSView?) {
-        guard let view else { return }
+        guard let view, view.identifier?.rawValue != "stock" else { return } // a plug-in's own editor keeps its look
         let tint = controlTint
         switch view {
         // Only when different, so a pass over an already tinted window redraws nothing.
         case let s as NSSlider: if s.trackFillColor != tint { s.trackFillColor = tint }
         case let s as NSSegmentedControl: if s.selectedSegmentBezelColor != tint { s.selectedSegmentBezelColor = tint }
-        case let p as NSPopUpButton where !p.pullsDown && p.isBordered && p.identifier?.rawValue != "stock":
-            // The system's blue chevron pill becomes a field in the look: no bezel, a framed well drawn by a layer.
-            p.isBordered = false
-            p.wantsLayer = true
-            p.layer?.cornerRadius = activeStyle == .atelier ? 0 : 5
-            p.layer?.borderWidth = 1
-            p.layer?.borderColor = (activeStyle == .atelier ? ink(0.55) : ink(0.16)).cgColor
-            p.layer?.backgroundColor = (activeStyle == .atelier ? NSColor.clear : ink(0.05)).cgColor
-            (p.cell as? NSPopUpButtonCell)?.arrowPosition = .arrowAtBottom
+        case let p as NSPopUpButton where !p.pullsDown && (p.isBordered || p.identifier?.rawValue == "themedPopup"):
+            // The system's blue chevron pill becomes a field in the look: no bezel, a framed well drawn by a layer
+            // (coloured again on every pass, so a theme switch restyles windows that stay open, like Settings).
+            if p.isBordered {
+                p.isBordered = false
+                p.identifier = NSUserInterfaceItemIdentifier("themedPopup")
+                p.wantsLayer = true
+                (p.cell as? NSPopUpButtonCell)?.arrowPosition = .arrowAtBottom
+            }
+            let border = (activeStyle == .atelier ? ink(0.55) : ink(0.16)).cgColor, fill = (activeStyle == .atelier ? NSColor.clear : ink(0.05)).cgColor
+            if p.layer?.borderColor != border || p.layer?.backgroundColor != fill {
+                p.layer?.cornerRadius = activeStyle == .atelier ? 0 : 5
+                p.layer?.borderWidth = 1
+                p.layer?.borderColor = border
+                p.layer?.backgroundColor = fill
+            }
         case let b as NSButton:
             if isCheckOrRadio(b) { /* drawn by ThemedCheckCell where made with Theme.checkbox */ }
             else if b.isBordered, b.image == nil, !b.title.isEmpty,
@@ -505,7 +512,7 @@ extension Theme {
 
     /// Every window: its stock controls and its text selection in the look's colour, each time it becomes key.
     static func installControlTint() {
-        for name in [NSWindow.didBecomeKeyNotification, NSWindow.didBecomeMainNotification] {
+        for name in [NSWindow.didBecomeKeyNotification] {
             NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { n in
                 let window = n.object as? NSWindow
                 MainActor.assumeIsolated {

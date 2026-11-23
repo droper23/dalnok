@@ -663,7 +663,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     private func modelChanged() {
         if !tintPending { // rows rebuilt by this change (Inspector, start page) take the look's colour, once per pass
             tintPending = true
-            DispatchQueue.main.async { [weak self] in self?.tintPending = false; Theme.tintControls(in: self?.window?.contentView) }
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.tintPending = false
+                for v in [self.inspector, self.emptyState] as [NSView] where !v.isHidden { Theme.tintControls(in: v) }
+            }
         }
         headers.sync()
         timeline.clampScrollY()
@@ -731,7 +735,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         for p in session.meterPoints { globals.combine(p.bar); globals.combine(p.numerator); globals.combine(p.denominator) }
         let c = session.cycle
         globals.combine(c.on); globals.combine(c.start); globals.combine(c.end)
-        for t in session.allTracks where t.solo { globals.combine(t.id) } // a solo dims every other lane
+        for id in session.soloSilenced().sorted() { globals.combine(id) } // a solo (or re-routing under one) dims lanes
         let l = layout.finalize(), g = globals.finalize()
         if l != timelineLayout || g != timelineGlobals || session.rereadTracks.isEmpty {
             timeline.needsDisplay = true

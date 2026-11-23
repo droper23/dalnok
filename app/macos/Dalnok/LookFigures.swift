@@ -34,11 +34,13 @@ extension FaceplateScreen {
                 ctx.drawLinearGradient(g, start: CGPoint(x: 0, y: f.minY), end: CGPoint(x: 0, y: f.maxY), options: [])
             }
             ctx.setFillColor(LookPen.phosphor.withAlphaComponent(0.09).cgColor)
-            var x = f.minX + 4; while x < f.maxX { var y = f.minY + 4; while y < f.maxY { ctx.fill(CGRect(x: x, y: y, width: 1, height: 1)); y += 8 }; x += 8 }
+            let grid = CGMutablePath() // one fill for the whole grid
+            var x = f.minX + 4; while x < f.maxX { var y = f.minY + 4; while y < f.maxY { grid.addRect(CGRect(x: x, y: y, width: 1, height: 1)); y += 8 }; x += 8 }
+            ctx.addPath(grid); ctx.fillPath()
         }
         ctx.saveGState()
-        if poweredOff { ctx.setAlpha(0.35) }
-        let pen = LookPen(prism: prism, ctx: ctx, screen: self, link: link)
+        let pen = LookPen(prism: prism, ctx: ctx, screen: self, link: link, dim: poweredOff ? 0.35 : 1)
+        ctx.setAlpha(pen.dim)
         let field = f.insetBy(dx: 6, dy: 5)
         var handles: [FigureHandle] = []
         switch fig {
@@ -69,7 +71,18 @@ struct LookPen {
     let ctx: CGContext
     let screen: FaceplateScreen
     let link: FigureLink
+    /// A bypassed unit's figure is drawn faint; every stroke's own alpha is multiplied by this.
+    var dim: CGFloat = 1
     var angle: CGFloat { CGFloat(screen.figureAngle) }
+    /// The spectrum, built once per version (light, dark).
+    private static var spectra: [Bool: CGGradient] = [:]
+    func spectrum() -> CGGradient? {
+        if let g = Self.spectra[light] { return g }
+        let cols = (0...6).map { hue(CGFloat($0) / 6).cgColor } as CFArray
+        let g = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: cols, locations: nil)
+        Self.spectra[light] = g
+        return g
+    }
 
     /// Graphite's phosphor (signal) and amber (what you hold).
     static let phosphor = Theme.hex(0x5FE3C4)
@@ -91,7 +104,7 @@ struct LookPen {
     /// The signal's line: phosphor with a glow (Graphite) or light dispersed along the spectrum from `x0` to `x1` (Prism).
     func trace(_ path: CGPath, width: CGFloat = 1.6, x0: CGFloat? = nil, x1: CGFloat? = nil, alpha: CGFloat = 1) {
         ctx.saveGState()
-        ctx.setAlpha(alpha)
+        ctx.setAlpha(alpha * dim)
         ctx.setLineCap(.round); ctx.setLineJoin(.round)
         if prism {
             let b = path.boundingBox
@@ -99,8 +112,7 @@ struct LookPen {
                 ctx.addPath(path); ctx.setLineWidth(width * 3.2); ctx.setStrokeColor(NSColor.white.withAlphaComponent(0.08).cgColor); ctx.strokePath()
             }
             ctx.addPath(path); ctx.setLineWidth(width); ctx.replacePathWithStrokedPath(); ctx.clip()
-            let cols = (0...6).map { hue(CGFloat($0) / 6).cgColor } as CFArray
-            if let g = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: cols, locations: nil) {
+            if let g = spectrum() {
                 ctx.drawLinearGradient(g, start: CGPoint(x: x0 ?? b.minX, y: 0), end: CGPoint(x: x1 ?? b.maxX, y: 0), options: [.drawsBeforeStartLocation, .drawsAfterEndLocation])
             }
         } else {
@@ -118,11 +130,11 @@ struct LookPen {
         ctx.restoreGState()
     }
     /// A glowing dot (Graphite) or a bead of light (Prism).
-    func dot(_ c: CGPoint, r: CGFloat, color: NSColor? = nil, alpha: CGFloat = 1) {
+    func dot(_ c: CGPoint, r: CGFloat, color: NSColor? = nil, alpha: CGFloat = 1, glow: Bool = true) {
         let col = color ?? (prism ? (light ? Theme.text : NSColor.white) : Self.phosphor)
         ctx.saveGState()
-        ctx.setAlpha(alpha)
-        if !light { ctx.setShadow(offset: .zero, blur: r * 2.4, color: col.cgColor) }
+        ctx.setAlpha(alpha * dim)
+        if !light && glow { ctx.setShadow(offset: .zero, blur: r * 2.4, color: col.cgColor) }
         ctx.setFillColor(col.cgColor); ctx.fillEllipse(in: CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r))
         ctx.restoreGState()
     }
@@ -278,7 +290,7 @@ struct LookPen {
         for _ in 0..<70 {
             let px = x0 + rnd() * (plot.maxX - x0), e = env(px)
             guard e > 0.03 else { continue }
-            dot(CGPoint(x: px, y: plot.maxY - rnd() * e * (plot.height - 6)), r: 0.9, alpha: 0.35 + 0.6 * e)
+            dot(CGPoint(x: px, y: plot.maxY - rnd() * e * (plot.height - 6)), r: 0.9, alpha: 0.35 + 0.6 * e, glow: false)
         }
         let sizeP = CGPoint(x: x0, y: plot.maxY - 8), decayP = CGPoint(x: min(plot.maxX - 4, x0 + tail * 0.55), y: plot.maxY - env(x0 + tail * 0.55) * (plot.height - 4))
         tag(.size, at: CGPoint(x: sizeP.x + 16, y: plot.maxY - 13))
@@ -294,7 +306,7 @@ struct LookPen {
         let time = CGFloat(link.v(.time, 0.4)), fb = CGFloat(link.v(.feedback, 0.5))
         let plot = CGRect(x: f.minX + 4, y: f.minY + 12, width: f.width - 8, height: f.height - 18)
         rule(CGPoint(x: plot.minX, y: plot.maxY), CGPoint(x: plot.maxX, y: plot.maxY))
-        let gap = plot.width * (0.08 + 0.3 * time), g = 0.15 + 0.8 * fb
+        let gap = max(4, plot.width * (0.08 + 0.3 * time)), g = 0.15 + 0.8 * fb
         var x = plot.minX + 6, h = plot.height - 6, i = 0
         var second = CGPoint.zero
         while x < plot.maxX - 2 && h > 2 {
