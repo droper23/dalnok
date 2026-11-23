@@ -142,3 +142,33 @@ Done in `feat/atelier-polish`:
   insert list shows the first 6, then "Show all N".
 - After merge: README stills, tours and plug-in clips for every theme, and the status-site screenshots (ask before
   publishing the site).
+
+## Owner review, fifth round (2026-11-22, late night)
+Owner's notes (screenshot of the band project in Atelier Dark): the mixer figure's caption ran through the master
+meter; the figures should move (the crank and the sine should turn, the governor spin, the pendulum swing); it isn't
+clear which part changes which parameter; plug-ins with few parameters (AUDistortion) used two columns; the device
+panel's height should be resizable in every theme; Space stopped working after using the Library; the Library should
+have a file browser like Ableton's; the Inspector's figure should show which plug-in you're looking at; the New Project
+page should hide the Library and Inspector; first launch should ask for the theme.
+Answers to the questions asked: file browser = **places + folder tree with click-to-audition**; figure clarity =
+**linked hover highlight** and **drag-direction marks** (not named leaders); onboarding = **live preview cards**.
+
+Done in `feat/atelier-motion-library-files`:
+- Motion: one 30 Hz `FigureClock` drives every figure on screen. The governor spins (faster with gain reduction; the far
+  ball fainter), the pendulum swings between the marks of its reach (period from the delay time) while the echo runs
+  down the repeat arcs, the crank is a Scotch yoke whose slider draws the LFO (turning at the rate), the clipped wave
+  runs through its curve with the present sample projected, and the chamber's sound travels along the rays and spreads
+  from the source. A figure holds still while the pointer is on a part or drags it, under Reduce Motion, and in stills.
+  This lifts guardrail 5 for the plug-in figures (owner's decision).
+- Clarity: every draggable part shows engraved arrows along its drag direction; pointing at a part lights it and its
+  key row in gold, and its read-out becomes a tag with the parameter's name; pointing at a key row lights its part.
+  Handles sit on fixed marks (the reach, the depth setting, the period bracket), never on the moving parts.
+- Key layout: one column whenever the rows fit beside the figure (rows tighten to 19 pt when that is what it takes).
+- Device panel: the top edge resizes it in every theme (remembered; taller units, a larger figure, more key rows in
+  Atelier, a third knob row in Graphite and Prism). C6 done: a 14 pt gutter keeps the scroll bar off the plates.
+- B4 done: the control bar's master meter is an engraved arc with a lozenge needle, held peak in gold.
+- C5 done: a fade at the arrangement's and the track list's foot while more tracks lie below.
+- C12 partly: "+ Bus" keeps 12 pt from the last strip. Mixer caption wraps inside the figure's room.
+- Inspector: the plug-ins in view in the device panel are gold (Fig. 3) or barred (the insert list, every theme); the
+  one last clicked gets a pointer.
+- Still open: C7 (selected wash to the divider, Master's rule), C12 (title block, section marker), VoiceOver by ear.

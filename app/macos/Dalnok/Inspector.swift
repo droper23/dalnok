@@ -546,7 +546,7 @@ final class InspectorFigure: NSView {
     }
     var path = Path() { didSet { if path != oldValue { needsDisplay = true; setAccessibilityValue(summary) } } }
     /// Inserts shown in the device panel now (by index), and the one last clicked there: drawn in gold.
-    var inView: Set<Int> = [] { didSet { if inView != oldValue { needsDisplay = true } } }
+    var inView: Set<Int> = [] { didSet { if inView != oldValue { needsDisplay = true; setAccessibilityValue(summary) } } }
     var focused: Int? { didSet { if focused != oldValue { needsDisplay = true } } }
     override var isFlipped: Bool { true }
     override init(frame: NSRect) {
@@ -557,7 +557,8 @@ final class InspectorFigure: NSView {
     }
     required init?(coder: NSCoder) { fatalError() }
     var summary: String {
-        ([path.input] + path.inserts.map { $0.off ? "\($0.name) (bypassed)" : $0.name } + ["fader", path.output]).joined(separator: ", then ")
+        ([path.input] + path.inserts.enumerated().map { i, p in p.name + (p.off ? " (bypassed)" : "") + (inView.contains(i) ? " (in the device panel)" : "") }
+            + ["fader", path.output]).joined(separator: ", then ")
     }
     /// Inserts drawn one by one up to this many; beyond it the middle folds into one lettered range ("D–K · 8 more").
     static let maxShown = 6
@@ -629,9 +630,7 @@ final class InspectorFigure: NSView {
         Atelier.loop(ctx, post, weight: Atelier.fine, color: ink)
         Atelier.note(ctx, path.output, at: CGPoint(x: x + 14, y: y + 2), size: 10, color: Theme.textDim)
         Atelier.note(ctx, "Fig. 3 · Signal path of \(path.track)", at: CGPoint(x: bounds.midX, y: bounds.height - 15), size: 9.5, color: Theme.textDim, align: .center)
-        if !inView.isEmpty {
-            Atelier.note(ctx, "in gold: the plates in the device panel", at: CGPoint(x: bounds.midX, y: bounds.height - 29), size: 8.5, color: Theme.textDim, align: .center)
-        }
+
     }
 
     /// An insert as a block in the shared oblique (y down): front, top and right faces, the right one hatched.
