@@ -17,11 +17,17 @@ final class LibraryPanel: SidePanelView, NSOutlineViewDataSource, NSOutlineViewD
         get { let w = UserDefaults.standard.double(forKey: "libraryWidth"); return w > 0 ? min(max(w, widthRange.lowerBound), widthRange.upperBound) : defaultWidth }
         set { UserDefaults.standard.set(Double(newValue), forKey: "libraryWidth") }
     }
-    enum Place: Equatable { case all, favorites, recent, projects, collection(String) }
+    enum Place: Equatable { case all, favorites, recent, projects, files, collection(String) }
 
     /// Inserts the plug-in at an add path on the selected track; returns an error message on failure.
     var onInsert: ((String) -> String?)?
     var onOpenProject: ((URL) -> Void)?
+    /// A file from the Files place, taken by double-click or Return: imported (audio, foreign projects) or opened.
+    var onTakeFile: ((URL) -> Void)?
+    /// The saved project's folder, the Files place's first entry.
+    var projectFolder: () -> URL? = { nil }
+    let previewToggle = NSButton(checkboxWithTitle: "Preview audio on click", target: nil, action: nil)
+    private var searchToken = 0
     var onMessage: ((String) -> Void)?
     let resizeEdge = PanelResizeEdge(direction: 1)
 
@@ -59,7 +65,7 @@ final class LibraryPanel: SidePanelView, NSOutlineViewDataSource, NSOutlineViewD
         placesStack.alignment = .leading
         placesStack.spacing = 1
         for (p, title, symbol) in [(Place.all, "Plug-ins", "puzzlepiece.extension"), (.favorites, "Favourites", "star"),
-                                   (.recent, "Recently Used", "clock"), (.projects, "Projects", "folder")] {
+                                   (.recent, "Recently Used", "clock"), (.projects, "Projects", "folder"), (.files, "Files", "internaldrive")] {
             let b = LibraryPlaceButton(title: title, symbol: symbol)
             b.onPress = { [weak self] in self?.choose(p) }
             placesStack.addArrangedSubview(b)
@@ -123,7 +129,13 @@ final class LibraryPanel: SidePanelView, NSOutlineViewDataSource, NSOutlineViewD
         scroll.scrollerStyle = .overlay
         scroll.drawsBackground = false
 
-        let top = NSStackView(views: [head("Places"), placesStack, collectionsHead, collectionsStack, head("Browser"), tabs, search])
+        previewToggle.target = self
+        previewToggle.action = #selector(previewToggled)
+        previewToggle.state = LibraryPreview.enabled ? .on : .off
+        previewToggle.font = Theme.look.mixer == .instrument ? Theme.title(12) : Theme.ui(11)
+        previewToggle.toolTip = "Click an audio file to hear it"
+        previewToggle.isHidden = true
+        let top = NSStackView(views: [head("Places"), placesStack, collectionsHead, collectionsStack, head("Browser"), tabs, previewToggle, search])
         top.orientation = .vertical
         top.alignment = .leading
         top.spacing = 5
@@ -173,7 +185,10 @@ final class LibraryPanel: SidePanelView, NSOutlineViewDataSource, NSOutlineViewD
         for (p, b) in placeButtons { b.isSelected = p == place }
         for case let b as LibraryPlaceButton in collectionsStack.arrangedSubviews { b.isSelected = place == .collection(b.label) }
         tabs.isEnabled = place != .projects
-        search.placeholderString = place == .projects ? "Search projects" : "Search plug-ins"
+        tabs.isHidden = place == .files
+        previewToggle.isHidden = place != .files
+        if place != .files { LibraryPreview.shared.stop() }
+        search.placeholderString = place == .projects ? "Search projects" : place == .files ? "Search opened folders" : "Search plug-ins"
     }
     func rebuildCollections() {
         collectionsStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
@@ -243,7 +258,7 @@ final class LibraryPanel: SidePanelView, NSOutlineViewDataSource, NSOutlineViewD
 
     private func inPlace(_ p: Plugin) -> Bool {
         switch place {
-        case .all, .projects: return true
+        case .all, .projects, .files: return true
         case .favorites: return PluginLibrary.favorites.contains(p.addPath)
         case .recent: return PluginLibrary.recent.contains(p.addPath)
         case .collection(let name): return PluginLibrary.collections[name]?.contains(p.addPath) ?? false
@@ -262,6 +277,7 @@ final class LibraryPanel: SidePanelView, NSOutlineViewDataSource, NSOutlineViewD
 
     func reload() {
         let q = search.stringValue.trimmingCharacters(in: .whitespaces)
+        if place == .files { return reloadFiles(q) }
         if place == .projects {
             let urls = NSDocumentController.shared.recentDocumentURLs
             roots = urls.filter { q.isEmpty || $0.deletingPathExtension().lastPathComponent.localizedCaseInsensitiveContains(q) }.map { LibraryNode(project: $0) }
@@ -276,12 +292,82 @@ final class LibraryPanel: SidePanelView, NSOutlineViewDataSource, NSOutlineViewD
         for n in roots where n.category != nil && (open || expanded.contains(n.category!)) { outline.expandItem(n) }
     }
 
+    // MARK: Files
+
+    private func reloadFiles(_ q: String) {
+        searchToken += 1
+        let places = LibraryFiles.places(projectFolder: projectFolder())
+        if q.isEmpty {
+            roots = places.map { LibraryNode(folder: $0.url, title: $0.title, removable: $0.removable) } + [LibraryNode(action: "Add Folder…")]
+            outline.reloadData()
+            return
+        }
+        // Searching: every place's tree, off the main thread; the latest search wins.
+        // The project, the owner's folders, and the standard places opened in this session: walking Desktop or
+        // Downloads unasked would raise macOS's privacy prompts (and Home is large).
+        let token = searchToken
+        let dirs = places.filter { $0.removable || $0.title == "Current Project" || openedPlaces.contains($0.url.standardizedFileURL) }.map(\.url)
+        roots = []; outline.reloadData()
+        Task.detached(priority: .userInitiated) {
+            let found = LibraryFiles.search(q, in: dirs)
+            await MainActor.run { [weak self] in
+                guard let self, self.searchToken == token, self.place == .files else { return }
+                self.roots = found.map { LibraryNode(file: $0) }
+                self.outline.reloadData()
+                self.onFilesSearched?(found.count)
+            }
+        }
+    }
+    /// Standard places unfolded in this session (searched too).
+    private var openedPlaces = Set<URL>()
+    /// After a file search lands (self-test).
+    var onFilesSearched: ((Int) -> Void)?
+    @objc private func previewToggled() {
+        LibraryPreview.enabled = previewToggle.state == .on
+        if !LibraryPreview.enabled { LibraryPreview.shared.stop() }
+    }
+    @objc func addFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.allowsMultipleSelection = true
+        panel.prompt = "Add to Library"
+        let done: (NSApplication.ModalResponse) -> Void = { [weak self] r in
+            MainActor.assumeIsolated {
+                guard r == .OK else { return }
+                for u in panel.urls { self?.addFolder(u) }
+            }
+        }
+        if let window { panel.beginSheetModal(for: window, completionHandler: done) } else { done(panel.runModal()) }
+    }
+    func addFolder(_ url: URL) {
+        var f = LibraryFiles.userFolders
+        if !f.contains(where: { $0.standardizedFileURL == url.standardizedFileURL }) { f.append(url); LibraryFiles.userFolders = f }
+        if place != .files { choose(.files) } else { reload() }
+    }
+    @objc private func removeFolder(_ sender: NSMenuItem) {
+        guard let url = sender.representedObject as? URL else { return }
+        LibraryFiles.userFolders = LibraryFiles.userFolders.filter { $0.standardizedFileURL != url.standardizedFileURL }
+        reload()
+    }
+    @objc private func showInFinder(_ sender: NSMenuItem) {
+        if let url = sender.representedObject as? URL { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+    }
+    func outlineViewSelectionDidChange(_ notification: Notification) {
+        guard place == .files else { return }
+        let n = outline.selectedRow >= 0 ? outline.item(atRow: outline.selectedRow) as? LibraryNode : nil
+        if let u = n?.file, LibraryFiles.kind(u) == .audio, LibraryPreview.enabled { LibraryPreview.shared.play(u) } else { LibraryPreview.shared.stop() }
+    }
+
     // MARK: Outline
 
-    func outlineView(_ o: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int { (item as? LibraryNode)?.children.count ?? roots.count }
+    func outlineView(_ o: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
+        guard let n = item as? LibraryNode else { return roots.count }
+        n.loadFolder()
+        return n.children.count
+    }
     func outlineView(_ o: NSOutlineView, child index: Int, ofItem item: Any?) -> Any { (item as? LibraryNode)?.children[index] ?? roots[index] }
-    func outlineView(_ o: NSOutlineView, isItemExpandable item: Any) -> Bool { (item as? LibraryNode)?.category != nil }
+    func outlineView(_ o: NSOutlineView, isItemExpandable item: Any) -> Bool { (item as? LibraryNode).map { $0.category != nil || $0.folder != nil } ?? false }
     func outlineViewItemDidExpand(_ n: Notification) {
+        if let f = (n.userInfo?["NSObject"] as? LibraryNode)?.folder, roots.contains(where: { $0.folder == f }) { openedPlaces.insert(f.standardizedFileURL) }
         if let c = (n.userInfo?["NSObject"] as? LibraryNode)?.category, search.stringValue.isEmpty, place == .all { expanded.insert(c) }
     }
     func outlineViewItemDidCollapse(_ n: Notification) {
@@ -328,7 +414,28 @@ final class LibraryPanel: SidePanelView, NSOutlineViewDataSource, NSOutlineViewD
             if let p = n.plugin {
                 cell.toolTip = "\(p.name) · \(p.vendor) · \(p.format). Drag onto a track or the device chain; double-click inserts on the selected track."
                 cell.setAccessibilityLabel("\(p.name), \(p.vendor)")
-            } else if let u = n.project { cell.toolTip = u.path; cell.setAccessibilityLabel("Project \(n.title)") }
+            } else if let u = n.project { cell.toolTip = u.path; cell.setAccessibilityLabel("Project \(n.title)")
+            } else if let u = n.file {
+                let kind = LibraryFiles.kind(u)
+                cell.toolTip = u.path + (kind == .audio ? "\nClick to hear it; drag onto the arrangement or double-click to import." : "\nDouble-click to open it.")
+                cell.setAccessibilityLabel("\(kind == .audio ? "Audio file" : "Project") \(n.title)")
+                let badge = NSTextField(labelWithString: u.pathExtension.lowercased())
+                badge.font = atelier ? Theme.note(11) : Theme.mono(10)
+                badge.textColor = atelier ? Atelier.gold : Theme.textDim
+                badge.translatesAutoresizingMaskIntoConstraints = false
+                badge.setAccessibilityElement(false)
+                cell.addSubview(badge)
+                NSLayoutConstraint.activate([badge.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -4),
+                                             badge.centerYAnchor.constraint(equalTo: cell.centerYAnchor)])
+                trailing = badge
+            } else if let u = n.folder {
+                t.font = atelier ? Theme.title(12.5, .semibold) : Theme.ui(12, .medium)
+                cell.toolTip = u.path
+                cell.setAccessibilityLabel("Folder \(n.title)")
+            } else if n.action != nil {
+                t.textColor = atelier ? Atelier.vermilion : Theme.accent
+                cell.setAccessibilityLabel("Add a folder to the library")
+            }
         }
         NSLayoutConstraint.activate([
             t.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 2), t.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
@@ -337,6 +444,7 @@ final class LibraryPanel: SidePanelView, NSOutlineViewDataSource, NSOutlineViewD
         return cell
     }
     func outlineView(_ o: NSOutlineView, pasteboardWriterForItem item: Any) -> NSPasteboardWriting? {
+        if let u = (item as? LibraryNode)?.file { return u as NSURL } // onto the arrangement: imported there
         guard let p = (item as? LibraryNode)?.plugin else { return nil }
         let it = NSPasteboardItem()
         it.setString(p.addPath, forType: .dalnokPlugin)
@@ -347,6 +455,8 @@ final class LibraryPanel: SidePanelView, NSOutlineViewDataSource, NSOutlineViewD
     @objc func activateRow() {
         let row = outline.clickedRow >= 0 ? outline.clickedRow : outline.selectedRow
         guard row >= 0, let n = outline.item(atRow: row) as? LibraryNode else { return }
+        if n.action != nil { return addFolder() }
+        if let u = n.file { LibraryPreview.shared.stop(); onTakeFile?(u); return }
         if let p = n.plugin {
             if let err = onInsert?(p.addPath) { onMessage?("Couldn’t add \(p.name): \(err)") }
         } else if let u = n.project {
@@ -363,6 +473,20 @@ final class LibraryPanel: SidePanelView, NSOutlineViewDataSource, NSOutlineViewD
 extension LibraryPanel: NSMenuDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
+        if place == .files {
+            let n = outline.clickedRow >= 0 ? outline.item(atRow: outline.clickedRow) as? LibraryNode : nil
+            if let u = n?.file ?? n?.folder {
+                let show = NSMenuItem(title: "Show in Finder", action: #selector(showInFinder(_:)), keyEquivalent: "")
+                show.representedObject = u; show.target = self; menu.addItem(show)
+            }
+            if n?.removable == true, let u = n?.folder {
+                let rm = NSMenuItem(title: "Remove Folder from Library", action: #selector(removeFolder(_:)), keyEquivalent: "")
+                rm.representedObject = u; rm.target = self; menu.addItem(rm)
+            }
+            let add = NSMenuItem(title: "Add Folder…", action: #selector(addFolder as () -> Void), keyEquivalent: "")
+            add.target = self; menu.addItem(add)
+            return
+        }
         guard outline.clickedRow >= 0, let p = (outline.item(atRow: outline.clickedRow) as? LibraryNode)?.plugin else { return }
         let fav = PluginLibrary.favorites.contains(p.addPath)
         let f = NSMenuItem(title: fav ? "Remove from Favourites" : "Add to Favourites", action: #selector(toggleFavorite(_:)), keyEquivalent: "")
@@ -408,10 +532,28 @@ final class LibraryNode {
     let category: String?
     let plugin: PluginManagerController.Plugin?
     let project: URL?
-    let children: [LibraryNode]
-    init(category: String, children: [LibraryNode]) { title = category; self.category = category; plugin = nil; project = nil; self.children = children }
-    init(plugin: PluginManagerController.Plugin) { title = plugin.name; category = nil; self.plugin = plugin; project = nil; children = [] }
-    init(project: URL) { title = project.deletingPathExtension().lastPathComponent; category = nil; plugin = nil; self.project = project; children = [] }
+    /// Files place: a folder (read when first unfolded), a file, or the "Add Folder…" row.
+    let folder: URL?, file: URL?, action: String?
+    let removable: Bool
+    private(set) var children: [LibraryNode]
+    private var folderLoaded = false
+    init(category: String, children: [LibraryNode]) { title = category; self.category = category; plugin = nil; project = nil; folder = nil; file = nil; action = nil; removable = false; self.children = children }
+    init(plugin: PluginManagerController.Plugin) { title = plugin.name; category = nil; self.plugin = plugin; project = nil; folder = nil; file = nil; action = nil; removable = false; children = [] }
+    init(project: URL) { title = project.deletingPathExtension().lastPathComponent; category = nil; plugin = nil; self.project = project; folder = nil; file = nil; action = nil; removable = false; children = [] }
+    init(folder: URL, title: String? = nil, removable: Bool = false) {
+        self.title = title ?? folder.lastPathComponent; category = nil; plugin = nil; project = nil; self.folder = folder; file = nil; action = nil; self.removable = removable; children = []
+    }
+    init(file: URL) { title = file.lastPathComponent; category = nil; plugin = nil; project = nil; folder = nil; self.file = file; action = nil; removable = false; children = [] }
+    init(action: String) { title = action; category = nil; plugin = nil; project = nil; folder = nil; file = nil; self.action = action; removable = false; children = [] }
+    /// Reads a folder's listing the first time it is unfolded.
+    func loadFolder() {
+        guard let folder, !folderLoaded else { return }
+        folderLoaded = true
+        children = LibraryFiles.list(folder).map { u in
+            (try? u.resourceValues(forKeys: [.isDirectoryKey, .isPackageKey])).map { $0.isDirectory == true && $0.isPackage != true } == true
+                ? LibraryNode(folder: u) : LibraryNode(file: u)
+        }
+    }
 }
 
 /// A place or collection: symbol, title, count; selected with the theme's highlight.

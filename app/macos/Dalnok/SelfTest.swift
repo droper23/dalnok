@@ -112,6 +112,12 @@ final class SelfTest {
     func steps() async {
         let e = s.engine
         if ProcessInfo.processInfo.environment["DALNOK_A11Y_ONLY"] != nil { await accessibilityPass(); return finish() }
+        // Fast iteration on one area (never a substitute for the full run): panels, plugins.
+        switch ProcessInfo.processInfo.environment["DALNOK_SELFTEST_ONLY"] {
+        case "panels": await sidePanels(); return finish()
+        case "plugins": devicePanel(); return finish()
+        default: break
+        }
         check(s.tracks.count == files.count, "import \(files.count) files -> \(s.tracks.count) tracks")
         check(e.undoName.hasPrefix("Import"), "import is one undo step (\(e.undoName))")
         guard let first = s.tracks.first?.clips.first else { return finish() }
@@ -424,12 +430,24 @@ final class SelfTest {
         let project = workdir.appendingPathComponent("selftest.dalnok")
         check(w.saveProject(to: project), "save project")
         check(!e.isDirty && w.window?.isDocumentEdited == false, "saved state is clean")
+        let panelsWere = (MainWindowController.showLibrary, MainWindowController.showInspector)
+        if !MainWindowController.showLibrary { w.toggleLibrary(nil) }
+        if !MainWindowController.showInspector { w.toggleInspector(nil) }
         check(perform("New"), "menu File > New")
         check(s.tracks.isEmpty, "new project is empty")
         check(!w.emptyState.isHidden && w.timeline.isHidden, "empty state shown for an empty project")
+        w.window?.contentView?.layoutSubtreeIfNeeded()
+        check(w.library.isHidden && w.inspector.isHidden && w.library.frame.width < 1 && w.inspector.frame.width < 1
+              && MainWindowController.showLibrary && MainWindowController.showInspector && !w.transport.libraryButton.isEnabled,
+              "the start page hides the Library and Inspector but remembers them")
+        check(menuItem("Library", exact: true).map { !w.validateMenuItem($0) } ?? false, "View > Library is off on the start page")
         await startPage()
         let opened = await withCheckedContinuation { cont in w.openProject(project) { cont.resume(returning: $0) } }
         check(opened, "background open completed")
+        w.window?.contentView?.layoutSubtreeIfNeeded()
+        check(!w.library.isHidden && !w.inspector.isHidden && w.transport.libraryButton.isEnabled, "the panels come back with the project")
+        if !panelsWere.0 { w.toggleLibrary(nil) }
+        if !panelsWere.1 { w.toggleInspector(nil) }
         check(s.tracks.count == files.count, "reopened \(s.tracks.count) tracks")
         check(s.clip(first.id)?.start == lt.start && s.clip(first.id)?.length == lt.length, "edits survived save/open")
         check(w.window?.title == "selftest", "window title is project name (\(w.window?.title ?? "-"))")

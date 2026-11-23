@@ -447,6 +447,18 @@ final class FaceplateControl: NSControl, ParameterControl {
     static let rowSize = NSSize(width: 252, height: 21)
     /// The row's letter (A, B, …), shared with the plate's figure and the order of the legend.
     var letter = "" { didSet { if letter != oldValue { needsDisplay = true } } }
+    /// Atelier: lit while the pointer is on this row or on the figure's part that it drives (the two point at each other).
+    var linked = false { didSet { if linked != oldValue { needsDisplay = true } } }
+    /// The pointer entered (true) or left (false) the row: the figure lights the part this row drives.
+    var onHover: ((Bool) -> Void)?
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        guard Self.legendRows else { return }
+        addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect], owner: self))
+    }
+    override func mouseEntered(with event: NSEvent) { onHover?(true) }
+    override func mouseExited(with event: NSEvent) { onHover?(false) }
 
     init(name: String, steps: Int32) {
         self.name = name
@@ -560,6 +572,10 @@ final class FaceplateControl: NSControl, ParameterControl {
     private func drawLegendRow(_ ctx: CGContext) {
         let ink = Theme.ink(dimmed ? 0.45 : 1), mid = bounds.midY.rounded() + 0.5
         let sr = scaleRect
+        if linked || tracking { // the row and its part in the figure, lit together: a gold wash under a fine gold rule
+            ctx.setFillColor(Atelier.gold.withAlphaComponent(0.13).cgColor); ctx.fill(bounds.insetBy(dx: 0, dy: 0.5))
+            Atelier.rule(ctx, CGPoint(x: 0, y: bounds.maxY - 0.75), CGPoint(x: bounds.width, y: bounds.maxY - 0.75), weight: Atelier.hair, color: Atelier.gold)
+        }
         // Letter (gold italic numerals and letters are ornament: guardrail 2) and name (upright serif).
         Atelier.note(ctx, letter, at: CGPoint(x: 1, y: mid - 8), size: 10.5, color: Atelier.gold)
         let nameFont = Theme.title(11, .regular)
@@ -789,8 +805,14 @@ final class FaceplateSection: NSView {
         grid.rowSpacing = 2
         grid.columnSpacing = 2
         if FaceplateControl.legendRows { // Atelier: a ruled key, read down; a long section continues in a second column
-            grid.rowSpacing = 1; grid.columnSpacing = 14
-            let perColumn = FaceplateSection.legendRowsPerColumn
+            // One column whenever the rows fit beside the figure (tightened a little if that is what it takes); the
+            // panel's height (its top edge drags) decides how many fit.
+            let room = FaceplateSection.legendHeight - (title.isEmpty ? 4 : 17)
+            let roomy = max(1, Int(room / (FaceplateControl.rowSize.height + 1))), tight = Int(room / FaceplateSection.tightRow)
+            let compact = controls.count > roomy && controls.count <= tight
+            let perColumn = compact ? tight : roomy
+            let rowHeight = compact ? FaceplateSection.tightRow : FaceplateControl.rowSize.height
+            grid.rowSpacing = compact ? 0 : 1; grid.columnSpacing = 14
             let cols = max(1, Int((Double(controls.count) / Double(perColumn)).rounded(.up)))
             let n = Int((Double(controls.count) / Double(cols)).rounded(.up))
             for r in 0..<n {
@@ -800,7 +822,7 @@ final class FaceplateSection: NSView {
             }
             for c in controls {
                 c.widthAnchor.constraint(equalToConstant: FaceplateControl.rowSize.width).isActive = true
-                c.heightAnchor.constraint(equalToConstant: FaceplateControl.rowSize.height).isActive = true
+                c.heightAnchor.constraint(equalToConstant: rowHeight).isActive = true
             }
             grid.translatesAutoresizingMaskIntoConstraints = false
             addSubview(grid)
@@ -831,8 +853,9 @@ final class FaceplateSection: NSView {
     }
     required init?(coder: NSCoder) { fatalError() }
     override var isFlipped: Bool { true }
-    /// Atelier legend rows that fit one column under the plate's figure.
-    static let legendRowsPerColumn = 7
+    /// Atelier: the height the key has beside the figure (the figure's own height), and a row's least height.
+    static var legendHeight: CGFloat { 158 + Codex.captionHeight + DevicePanel.extra }
+    static let tightRow: CGFloat = 19
     override func draw(_ dirtyRect: NSRect) {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
         if FaceplateControl.legendRows {

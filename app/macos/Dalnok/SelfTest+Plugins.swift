@@ -850,6 +850,21 @@ extension SelfTest {
                         let after = unit.current(id)?.value ?? -1
                         check(after > before + 0.05, "dragging the governor's collar raises the threshold (\(before) → \(after))")
                         unit.set(id, before)
+                        // Motion: the governor spins (it holds still under the pointer); its part and key row light together.
+                        let a0 = screen.figureAngle
+                        screen.advanceFigure(0.1)
+                        check(screen.figureAngle > a0, "the governor spins (\(a0) → \(screen.figureAngle))")
+                        screen.hoverRole = .threshold
+                        let held = screen.figureAngle
+                        screen.advanceFigure(0.1)
+                        let row = unit.knobs.first { $0.id == id }?.knob as? FaceplateControl
+                        check(screen.figureAngle == held && row?.linked == true, "pointing at the collar holds the governor and lights its key row")
+                        screen.hoverRole = nil
+                        check(row?.linked == false, "and the row goes dark again")
+                        row?.onHover?(true)
+                        check(screen.highlightRole == .threshold, "pointing at the Threshold row lights the collar")
+                        row?.onHover?(false)
+                        screen.figureAngle = 0
                     } else { check(false, "Atelier draws the compressor as a governor with a threshold collar (\(String(describing: screen.atelierFigure)))") }
                 }
                 check(!unit.sidechain.isHidden && unit.sidechain.itemTitles.first == "SC: None" && unit.sidechain.indexOfItem(withTag: Int(other)) > 0,
@@ -866,6 +881,31 @@ extension SelfTest {
             } else { check(false, "Dalnok Compressor appears in the device panel") }
             s.removePlugin(track, comp); panel.rebuild()
         } else { check(false, "Dalnok Compressor inserts on a track") }
+        // The panel's top edge resizes it (every theme): taller units, remembered, and back.
+        if let comp = try? s.addPlugin(track, path: "dalnok:compressor") {
+            panel.rebuild(); w.window?.contentView?.layoutSubtreeIfNeeded()
+            // The Inspector marks the plug-ins in view in the device panel (its list, and Atelier's Fig. 3), and the one clicked.
+            w.inspector.track = track; w.inspector.reload()
+            if let unit = panel.devices.first(where: { $0.slot == comp }) { unit.scrollToVisible(unit.bounds) }
+            panel.selectedSlot = comp; panel.reportViewing()
+            let mark = w.inspector.insertRows.first { $0.slot == comp }
+            let index = s.track(track)?.effects.firstIndex { $0.id == comp }
+            check(mark?.inView == true && index.map { w.inspector.figure.inView.contains($0) && w.inspector.figure.focused == $0 } == true,
+                  "the Inspector marks the plug-in shown and clicked in the device panel (view \(panel.viewingSlots), comp \(comp), rows \(w.inspector.insertRows.map(\.slot)), fig \(w.inspector.figure.inView), index \(String(describing: index)), hidden \(panel.isHidden))")
+            panel.selectedSlot = nil
+            let was = DevicePanel.extra, edge = panel.resizeEdge, h0 = panel.frame.height
+            edge.onDrag?(edge.currentHeight() + 90); edge.onEnd?()
+            w.window?.contentView?.layoutSubtreeIfNeeded()
+            let unit = panel.devices.first { $0.slot == comp }
+            check(abs(panel.frame.height - (h0 + 90)) < 1 && abs(DevicePanel.extra - (was + 90)) < 1
+                  && abs((unit?.frame.height ?? 0) - DevicePanel.unitHeight) < 1,
+                  "dragging the device panel's top edge makes it and its units taller (\(h0) → \(panel.frame.height), unit \(unit?.frame.height ?? 0))")
+            edge.onDrag?(10); edge.onEnd?()
+            w.window?.contentView?.layoutSubtreeIfNeeded()
+            check(abs(panel.frame.height - DevicePanel.baseHeight) < 1, "the panel never gets shorter than its base height (\(panel.frame.height))")
+            DevicePanel.extra = was; edge.onDrag?(DevicePanel.baseHeight + was); edge.onEnd?()
+            s.removePlugin(track, comp); panel.rebuild()
+        }
         check(perform("Device Panel") && w.devicePanel.isHidden, "View > Device Panel hides it")
         _ = perform("Device Panel")
         s.removePlugin(track, limiter)

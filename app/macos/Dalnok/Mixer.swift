@@ -137,8 +137,16 @@ final class MixerPanel: NSView {
         Atelier.rule(ctx, CGPoint(x: ring.maxX, y: sigma.y), CGPoint(x: m.x - 12, y: m.y), weight: Atelier.fine, color: ink)
         Atelier.arrowhead(ctx, at: CGPoint(x: m.x - 11, y: m.y), angle: 0, color: ink)
         Atelier.note(ctx, "M", at: CGPoint(x: m.x, y: m.y - 9), size: 14, color: Atelier.vermilion, align: .center, roman: true)
-        Atelier.note(ctx, "Fig. — The course of the signal: channels (A…) through their buses, summed (Σ), to the master (M). Dashed: sends.",
-                     at: CGPoint(x: room.midX, y: room.maxY - 14), size: 11, color: Theme.textDim, align: .center)
+        // The caption wraps inside the figure's room, so it never runs into the master strip and its meter.
+        let para = NSMutableParagraphStyle(); para.alignment = .center; para.lineBreakMode = .byWordWrapping
+        let caption = NSAttributedString(string: "Fig. — The course of the signal: channels (A…) through their buses, summed (Σ), to the master (M). Dashed: sends.",
+                                         attributes: [.font: Theme.note(11), .foregroundColor: Theme.textDim, .paragraphStyle: para])
+        let box = CGRect(x: room.minX, y: 0, width: room.width, height: 40)
+        let h = ceil(caption.boundingRect(with: box.size, options: [.usesLineFragmentOrigin]).height)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: true)
+        caption.draw(with: CGRect(x: room.minX, y: room.maxY + 2 - h, width: room.width, height: h + 2), options: [.usesLineFragmentOrigin])
+        NSGraphicsContext.restoreGraphicsState()
     }
     private func Inspector_letter(_ i: Int) -> String { InspectorPanel.letter(i) }
 
@@ -158,6 +166,7 @@ final class MixerPanel: NSView {
                 stack.addArrangedSubview(s)
             }
             stack.addArrangedSubview(addBusButton)
+            if let last = strips.last { stack.setCustomSpacing(12, after: last) } // audit C12: "+ Bus" kept off the last strip
         }
         // A strip is rebuilt only when something it shows besides its scalars changed (a clip edit changes nothing
         // here); the rest update their faders and buttons in place. The send menus list every bus, so the

@@ -11,6 +11,8 @@ final class MeterView: NSView {
     private(set) var clipped = false
     private var last = CACurrentMediaTime()
     var vertical = false
+    /// Atelier's master in the control bar (audit B4): an engraved arc with a needle instead of two columns.
+    var needle = false { didSet { if needle != oldValue { needsDisplay = true } } }
 
     static let floorDb: Float = -60, ceilDb: Float = 6
 
@@ -38,6 +40,42 @@ final class MeterView: NSView {
 
     private func color(_ db: Float) -> NSColor {
         db >= 0 ? Theme.hex(0xE0574F) : db >= -6 ? Theme.hex(0xE3A857) : db >= -18 ? Theme.hex(0xB9C46A) : Theme.hex(0x5FB39B)
+    }
+
+    /// An arc indicator as on an engraved instrument: a graduated arc (−60 to +6 dB, the louder channel), a lozenge
+    /// needle from a pivot at the foot, the held peak as a gold tick on the arc, and the clip as a filled stop at +6.
+    private func drawNeedle(_ ctx: CGContext) {
+        let pivot = CGPoint(x: bounds.midX, y: bounds.minY + 3)
+        let r = min(bounds.width / 2 - 6, bounds.height - 8)
+        func angle(_ db: Float) -> CGFloat { (140 - 100 * fraction(db)) * .pi / 180 }
+        func at(_ a: CGFloat, _ rr: CGFloat) -> CGPoint { CGPoint(x: pivot.x + cos(a) * rr, y: pivot.y + sin(a) * rr) }
+        let arc = CGMutablePath()
+        arc.addArc(center: pivot, radius: r, startAngle: angle(Self.floorDb), endAngle: angle(Self.ceilDb), clockwise: true)
+        ctx.addPath(arc); ctx.setStrokeColor(Theme.ink(0.7).cgColor); ctx.setLineWidth(Atelier.fine); ctx.strokePath()
+        // The loud end (0 to +6 dB) doubled with a hatched band, as a printed scale marks its red zone.
+        let hot = CGMutablePath()
+        hot.addArc(center: pivot, radius: r - 2, startAngle: angle(0), endAngle: angle(Self.ceilDb), clockwise: true)
+        ctx.addPath(hot); ctx.setStrokeColor(Theme.ink(0.55).cgColor); ctx.setLineWidth(2.5); ctx.strokePath()
+        for db: Float in [-60, -40, -30, -20, -12, -6, -3, 0, 3, 6] {
+            let major = [-40, -20, -6, 0].contains(db)
+            Atelier.rule(ctx, at(angle(db), r), at(angle(db), r + (major ? 4.5 : 2.5)), weight: Atelier.hair, color: Theme.ink(0.75))
+        }
+        for (db, label) in [(Float(-20), "20"), (0, "0")] {
+            let p = at(angle(db), r - 10) // inside the arc, clear of the bar's edge
+            Atelier.note(ctx, label, at: CGPoint(x: p.x, y: p.y - 4), size: 7.5, color: Theme.textDim, flipped: false, align: .center, roman: true)
+        }
+        let hold = max(holdDb.0, holdDb.1)
+        if hold > Self.floorDb { Atelier.rule(ctx, at(angle(hold), r - 4), at(angle(hold), r + 1), weight: Atelier.medium, color: Atelier.gold) }
+        if clipped { ctx.setFillColor(Atelier.vermilion.cgColor); let c = at(angle(Self.ceilDb), r); ctx.fillEllipse(in: CGRect(x: c.x - 2.2, y: c.y - 2.2, width: 4.4, height: 4.4)) }
+        // The needle: a slim lozenge from the pivot, its counterweight a small turned boss.
+        let a = angle(max(levelDb.0, levelDb.1)), tip = at(a, r - 1), side = CGPoint(x: -sin(a) * 1.3, y: cos(a) * 1.3)
+        let mid = at(a, r * 0.18)
+        let lozenge = CGMutablePath()
+        lozenge.addLines(between: [pivot, CGPoint(x: mid.x + side.x, y: mid.y + side.y), tip, CGPoint(x: mid.x - side.x, y: mid.y - side.y)]); lozenge.closeSubpath()
+        ctx.addPath(lozenge); ctx.setFillColor(Theme.text.cgColor); ctx.fillPath()
+        let boss = CGRect(x: pivot.x - 3, y: pivot.y - 3, width: 6, height: 6)
+        ctx.setFillColor(Theme.panelRaised.cgColor); ctx.fillEllipse(in: boss)
+        Atelier.loop(ctx, boss, weight: Atelier.fine, color: Theme.text)
     }
 
     /// Warm Analog: a ladder of LED segments (lit up to the level, peak segment held, unlit segments dim).
@@ -76,6 +114,7 @@ final class MeterView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
         if Theme.look.ledLadderMeters { return drawLadder(ctx) }
+        if needle { return drawNeedle(ctx) }
         if Theme.look.meters == .lightPipe || Theme.look.meters == .graduated {
             // Two pipes (Prism) or two drawn columns (Atelier), side by side or stacked.
             let gap: CGFloat = vertical ? 2 : 1.5

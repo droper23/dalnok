@@ -615,6 +615,11 @@ final class TimelineView: NSView {
         }
         drawAutomation(ctx)
         if glassClip { ctx.restoreGState() }
+        // A fade at the foot while more tracks lie below (audit C5: a cut-off row gave no cue).
+        if scrollY < maxScrollY - 1, Theme.look.arrangement != .glass {
+            let h: CGFloat = 26, r = CGRect(x: 0, y: bounds.height - h, width: bounds.width, height: h)
+            NSGradient(starting: Theme.laneA.withAlphaComponent(0), ending: Theme.laneA.withAlphaComponent(0.9))?.draw(in: r, angle: 90)
+        }
         drawRuler(ctx, scale: scale)
         updateSelectionGlow()
 

@@ -1,11 +1,38 @@
 ---
-updated: 2026-11-22
+updated: 2026-11-23
 phase: Phases 1, 3 and 4 complete; 2 (power-loss test) and 5 in progress
 milestone: 0.3.0, Phase 4 complete; recording I/O (separate devices, Input Monitoring, measured latency) verified on a Scarlett
 ---
 # Current State
 
-## Latest (2026-11-22, late night): Atelier plug-ins as one engraving
+## Latest (2026-11-23, past midnight): moving figures, Library ▸ Files, first-launch looks
+Branch `feat/atelier-motion-library-files` (from `main` f19f0c0). The owner's fifth round; decisions in
+`06 - Design/Atelier Audit 2026-11-22.md`. No engine or API change (C API 46, format 14).
+- **Fixed: Space after the Library** (and any clicked list): bare shortcut keys go to the registry before the focused
+  view (`CommittingWindow.shortcutFirst`); text, `KeyOwner` views, navigation keys and FKA-focused controls keep theirs.
+- **Atelier figures move** (`FigureClock`, 30 Hz, only while on screen; still under the pointer, Reduce Motion and in
+  stills): governor spins, pendulum swings, crank (Scotch yoke) turns, the clipped wave runs, the chamber's sound
+  travels. Drag-direction arrows on every part; part and key row light together with a named tag.
+- **Device panel** height resizable in every theme (top edge; `devicePanelExtra`); Atelier keys one column when they fit;
+  scroll-bar gutter (C6). **Inspector** marks the plug-ins in view in the device panel and the one clicked.
+- **Library ▸ Files** (`LibraryFiles.swift`): places + added folders, unfold in place, click to preview, drag/Return to
+  import, projects open; search over the project, added folders and places opened this session.
+- **Start page** hides the Library and Inspector (remembered). **First launch** asks for the look first (live, pictures in
+  `Resources/Looks`), then shortcuts. Audit **B4** (needle master meter), **C5** (lower-edge fades), C12 partly.
+- Graphite README tour and plug-in clip retaken (every frame checked). Gallery frames 16-library-files, 17-first-launch;
+  15-figures has a mid-motion row.
+- **Verification:** self-test matrix (explicit rate, `caffeinate -du`), all PASS, 0 FAIL, 15 machine SKIPs each:
+  Graphite 1047 / 1028, Warm Analog 1032 / 1013, Prism Dark and Light 1047 / 1028, Atelier Dark and Light 1056 / 1037
+  (48 / 44.1 kHz). `swift test --disable-sandbox` 289 pass; gen-api up to date. Gallery stills of all six looks reviewed.
+  Not verified with real keys: this terminal host lacks Accessibility permission, so `drive.swift` couldn't post input.
+- **Next (for the next agent, in order):** 1. **Settings restructured** into clear pages (see the 0.4.0 plan).
+  2. **Graphite, Warm Analog and Prism brought to Atelier's level** (one audit note per theme, then fixes: plug-in
+  figures that move and link to their rows, meters, panels, first-launch cards). 3. A **full bug and edge-case pass**
+  (checklist in `08 - Testing and Benchmarks/Release 0.4.0 Plan.md`, incl. real-key focus checks once Accessibility is
+  granted). 4. Release **0.4.0** per that plan. Still open: audit C7, C12 (title block, marker), VoiceOver by ear,
+  Prism `--perf 20` repeat, README tours/clips of the other five looks (they predate the moving figures).
+
+## Earlier (2026-11-22, late night): Atelier plug-ins as one engraving
 Same branch `feat/atelier-polish` (PR #12). The owner found the legend plates still too close to Graphite; decisions
 in `06 - Design/Atelier Audit 2026-11-22.md` (fourth round), design in `06 - Design/Atelier.md`.
 - The chain is one diagram: stations on the signal line, caption at the foot, mercury columns, margin notes, bypass shunt.

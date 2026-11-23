@@ -15,6 +15,9 @@ cp .build/release/dalnok-plughost "$APP/Contents/MacOS/dalnok-plughost" # out-of
 # Theme typefaces (SIL OFL), from the SwiftPM resource bundle; Fonts.swift registers them at launch.
 FONTS=$(find .build/release/Dalnok_Dalnok.bundle -type d -name Fonts | head -1)
 cp -R "$FONTS" "$APP/Contents/Resources/Fonts"
+# The looks offered at first launch (captures of the generated demo project; regenerated with the README stills).
+LOOKS=$(find .build/release/Dalnok_Dalnok.bundle -type d -name Looks | head -1)
+cp -R "$LOOKS" "$APP/Contents/Resources/Looks"
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

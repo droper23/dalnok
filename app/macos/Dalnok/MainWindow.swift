@@ -31,7 +31,22 @@ final class CommittingWindow: NSWindow {
             let hit = frame.hitTest(frame.superview?.convert(event.locationInWindow, from: nil) ?? event.locationInWindow)
             if hit.map({ !$0.isDescendant(of: field) }) ?? true { makeFirstResponder(nil) }
         }
+        if event.type == .keyDown, Self.shortcutFirst(event, responder: firstResponder),
+           NSApp.mainMenu?.performKeyEquivalent(with: event) == true { return }
         super.sendEvent(event)
+    }
+
+    /// AppKit offers an unmodified key to the focused view first and to the menu only if that view leaves it, so a
+    /// clicked list (the Library's), table or slider swallowed Space and the transport stopped answering. Bare
+    /// shortcut keys go to the shortcut registry first instead; the menu itself still leaves them to text being
+    /// edited, to views that own their keys (`KeyOwner`, tape keys) and to Tab. Navigation keys (arrows, Return,
+    /// Escape, Delete, Tab) stay with the focused view, and with Full Keyboard Access on, Space presses a focused control.
+    static func shortcutFirst(_ event: NSEvent, responder: NSResponder?) -> Bool {
+        guard event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
+              ![123, 124, 125, 126, 36, 76, 53, 48, 51, 117, 115, 119, 116, 121].contains(event.keyCode),
+              !(responder is NSText) else { return false }
+        if event.keyCode == 49, NSApp.isFullKeyboardAccessEnabled, responder is NSControl { return false }
+        return true
     }
 }
 
@@ -174,9 +189,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     lazy var conceptGuide = ConceptGuideController()
     lazy var welcome = WelcomeController(main: self)
     /// First launch: which app's shortcuts the person knows.
-    lazy var shortcutChooser = ShortcutChooserController()
+    /// First launch (look, then shortcuts): one for the app, so it survives the window rebuild a look change makes.
+    var shortcutChooser: ShortcutChooserController { ShortcutChooserController.shared }
     private(set) var lastImportReport: ImportReport?
-    static let foreignExtensions: Set<String> = ["rpp", "als", "logicx", "fcpxml", "fcpxmld", "dawproject"]
+    nonisolated static let foreignExtensions: Set<String> = ["rpp", "als", "logicx", "fcpxml", "fcpxmld", "dawproject"]
     private var tickCount = 0
     let transport = TransportBar()
     let headers: TrackHeaderColumn
@@ -359,6 +375,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         inspector.isHidden = !Self.showInspector
         if Self.showLibrary { library.load() }
         wireSidePanels()
+        wireDevicePanelResize()
         Atelier.unifyFonts(in: inspector)
         mixerHeight = mixer.heightAnchor.constraint(equalToConstant: Self.showMixer ? MixerPanel.height : 0)
         mixerHeight.isActive = true
@@ -367,6 +384,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         mixer.onOpenPlugin = { [weak self] t, slot in self?.openPluginWindow(track: t, slot: slot) }
         mixer.onAddPlugin = { [weak self] t in self?.headers.select(t); self?.showPlugins(nil) }
         devicePanel.onOpen = { [weak self] track, slot in self?.openPluginWindow(track: track, slot: slot) }
+        devicePanel.onViewing = { [weak self] slots, focused in
+            self?.inspector.setViewing(slots, focused: focused) // matched by slot against the inspector's own track
+        }
         devicePanel.onShowControls = { [weak self] track, slot in self?.openPluginControls(track: track, slot: slot) }
         devicePanel.onAdd = { [weak self] in self?.showPlugins(nil) }
         devicePanel.onDropPlugin = { [weak self] path, track, index in
@@ -645,6 +665,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         let empty = session.tracks.isEmpty
         devicePanel.isHidden = empty || !Self.showDevicePanel
         let showingEmpty = !emptyState.isHidden && timeline.isHidden
+        if showingEmpty != empty || sidePanelsSuppressed != empty { applySidePanelsForStartPage(empty, animated: didShowContent) }
         if showingEmpty != empty {
             let changing = didShowContent // the first state at launch appears without animation
             didShowContent = true
@@ -1623,13 +1644,37 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     /// View ▸ Library (Y) and View ▸ Inspector (I): the side panels. Each slides open like the mixer (instantly under
     /// Reduce Motion), remembers whether it is open and its width, and widens the window's minimum so the arrangement
     /// keeps room for its headers and some timeline.
+    /// The start page (a project with no tracks) is a title page: the Library and Inspector step aside without
+    /// forgetting that they were open, and come back with the first track.
+    private(set) var sidePanelsSuppressed = false
+    func applySidePanelsForStartPage(_ empty: Bool, animated: Bool) {
+        guard sidePanelsSuppressed != empty else { return }
+        sidePanelsSuppressed = empty
+        transport.libraryButton.isEnabled = !empty
+        transport.inspectorButton.isEnabled = !empty
+        let lib = Self.showLibrary && !empty, insp = Self.showInspector && !empty
+        if lib { library.load() }
+        if insp { inspector.track = selectedTrack; inspector.reload() }
+        for (panel, width, open, stored) in [(library as NSView, libraryWidth!, lib, LibraryPanel.storedWidth),
+                                              (inspector as NSView, inspectorWidth!, insp, InspectorPanel.storedWidth)] {
+            if open { panel.isHidden = false }
+            if !animated || Motion.reduced { width.constant = open ? stored : 0; panel.isHidden = !open; continue }
+            Motion.views(Motion.gentle, { width.animator().constant = open ? stored : 0 }, completion: {
+                DispatchQueue.main.async { MainActor.assumeIsolated { if self.sidePanelsSuppressed == empty && !open { panel.isHidden = true } } }
+            })
+        }
+        fitSidePanels()
+    }
+
     @objc func toggleLibrary(_ sender: Any?) {
+        guard !sidePanelsSuppressed else { return }
         Self.showLibrary.toggle()
         let show = Self.showLibrary
         if show { library.load(); library.isHidden = false }
         slide(library, libraryWidth, to: show ? LibraryPanel.storedWidth : 0, show: show) { !MainWindowController.showLibrary }
     }
     @objc func toggleInspector(_ sender: Any?) {
+        guard !sidePanelsSuppressed else { return }
         Self.showInspector.toggle()
         let show = Self.showInspector
         if show { inspector.isHidden = false; inspector.track = selectedTrack; inspector.reload() }
@@ -1651,7 +1696,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     /// there is no room for it, so the arrangement never gets narrower than its headers and a strip of timeline.
     func fitSidePanels(adding: CGFloat = 0) {
         guard let window else { return }
-        let panels = (Self.showLibrary ? LibraryPanel.storedWidth : 0) + (Self.showInspector ? InspectorPanel.storedWidth : 0)
+        let panels = sidePanelsSuppressed ? 0 : (Self.showLibrary ? LibraryPanel.storedWidth : 0) + (Self.showInspector ? InspectorPanel.storedWidth : 0)
         window.minSize = NSSize(width: Self.baseMinWidth + panels, height: window.minSize.height)
         if window.frame.width < window.minSize.width, !window.styleMask.contains(.fullScreen) {
             var f = window.frame
@@ -1661,12 +1706,36 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             window.setFrame(f, display: true, animate: !Motion.reduced && adding > 0)
         }
     }
+    /// The device panel's top edge: drag to make it taller (more rows of controls, a larger figure); the arrangement
+    /// keeps at least 140 pt. The units re-lay their keys when the drag ends.
+    private func wireDevicePanelResize() {
+        let edge = devicePanel.resizeEdge
+        edge.currentHeight = { [weak self] in self?.devicePanelHeight.constant ?? DevicePanel.height }
+        edge.onDrag = { [weak self] h in
+            guard let self, Self.showDevicePanel else { return }
+            let spare = max(0, self.timeline.frame.height - 140) + (self.devicePanelHeight.constant - DevicePanel.baseHeight)
+            DevicePanel.extra = min(h - DevicePanel.baseHeight, spare)
+            self.devicePanelHeight.constant = DevicePanel.height
+            self.devicePanel.applyHeight()
+        }
+        edge.onEnd = { [weak self] in self?.devicePanel.rebuildAll() }
+    }
     private func wireSidePanels() {
         library.onInsert = { [weak self] path in
             guard let self, let track = self.selectedTrack else { return "select a track first" }
             return self.insertPlugin(path, on: track)
         }
         library.onOpenProject = { [weak self] url in self?.openSelectedProject(url) }
+        library.projectFolder = { [weak self] in self?.session.projectURL?.deletingLastPathComponent() }
+        library.onTakeFile = { [weak self] url in
+            guard let self else { return }
+            switch LibraryFiles.kind(url) {
+            case .audio: self.session.importFiles([url])
+            case .project: self.openSelectedProject(url)
+            case .foreignProject: self.importProject(url)
+            case nil: break
+            }
+        }
         library.onMessage = { [weak self] m in self?.flash(m) }
         library.resizeEdge.onDrag = { [weak self] w in
             guard let self else { return }
@@ -2298,10 +2367,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             return Theme.activeStyle == .atelier
         case #selector(toggleLibrary(_:)):
             item.state = Self.showLibrary ? .on : .off
-            return true
+            return !sidePanelsSuppressed
         case #selector(toggleInspector(_:)):
             item.state = Self.showInspector ? .on : .off
-            return true
+            return !sidePanelsSuppressed
         case #selector(copy(_:)), #selector(cut(_:)), #selector(duplicateClips(_:)):
             return !pianoRollIsKey && !timeline.selectedClips.isEmpty
         case #selector(paste(_:)):

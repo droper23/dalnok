@@ -293,7 +293,21 @@ final class InspectorPanel: SidePanelView {
         figure.path = InspectorFigure.Path(track: t.name, input: audio ? (input.titleOfSelectedItem.map { $0.components(separatedBy: " — ").first ?? $0 } ?? "In") : (t.isBus ? "Sends" : "Instrument"),
                                            output: output.titleOfSelectedItem ?? "Master",
                                            inserts: t.effects.map { ($0.name, $0.bypassed) })
+        applyViewing()
         updateParameters()
+    }
+
+    /// The device panel's units in view and the one last clicked (by slot): marked in the insert list and Fig. 3.
+    private var viewing: (slots: Set<Int32>, focused: Int32?) = ([], nil)
+    func setViewing(_ slots: Set<Int32>, focused: Int32?) {
+        viewing = (slots, focused)
+        applyViewing()
+    }
+    private func applyViewing() {
+        let effects = track.flatMap { session.track($0) }?.effects ?? []
+        for r in insertRows { r.inView = viewing.slots.contains(r.slot) }
+        figure.inView = Set(effects.enumerated().filter { viewing.slots.contains($0.element.id) }.map(\.offset))
+        figure.focused = viewing.focused.flatMap { f in effects.firstIndex { $0.id == f } }
     }
 
     /// The insert list shows this many, then "Show all N" (a long chain no longer pushes the rest off the panel).
@@ -456,7 +470,15 @@ final class InspectorInsertRow: NSView {
     required init?(coder: NSCoder) { fatalError() }
     override var isFlipped: Bool { true }
     @objc private func openTapped() { onOpen?(slot) }
+    /// Shown in the device panel now: a bar down the row's leading edge (gold in Atelier, the accent elsewhere).
+    var inView = false { didSet { if inView != oldValue { needsDisplay = true; setAccessibilityValue(inView ? "in the device panel" : nil) } } }
     override func draw(_ dirtyRect: NSRect) {
+        defer {
+            if inView {
+                (Theme.look.mixer == .instrument ? Atelier.gold : Theme.accent).setFill()
+                NSRect(x: 0, y: 3, width: 2, height: bounds.height - 6).fill()
+            }
+        }
         // A ruled box in Atelier, a quiet slot elsewhere.
         if Theme.look.mixer == .instrument, let ctx = NSGraphicsContext.current?.cgContext {
             Atelier.box(ctx, bounds.insetBy(dx: 0.5, dy: 0.5), weight: Atelier.hair, color: Theme.ink(0.55))
@@ -523,6 +545,9 @@ final class InspectorFigure: NSView {
         }
     }
     var path = Path() { didSet { if path != oldValue { needsDisplay = true; setAccessibilityValue(summary) } } }
+    /// Inserts shown in the device panel now (by index), and the one last clicked there: drawn in gold.
+    var inView: Set<Int> = [] { didSet { if inView != oldValue { needsDisplay = true; setAccessibilityValue(summary) } } }
+    var focused: Int? { didSet { if focused != oldValue { needsDisplay = true } } }
     override var isFlipped: Bool { true }
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -532,7 +557,8 @@ final class InspectorFigure: NSView {
     }
     required init?(coder: NSCoder) { fatalError() }
     var summary: String {
-        ([path.input] + path.inserts.map { $0.off ? "\($0.name) (bypassed)" : $0.name } + ["fader", path.output]).joined(separator: ", then ")
+        ([path.input] + path.inserts.enumerated().map { i, p in p.name + (p.off ? " (bypassed)" : "") + (inView.contains(i) ? " (in the device panel)" : "") }
+            + ["fader", path.output]).joined(separator: ", then ")
     }
     /// Inserts drawn one by one up to this many; beyond it the middle folds into one lettered range ("D–K · 8 more").
     static let maxShown = 6
@@ -572,12 +598,18 @@ final class InspectorFigure: NSView {
             let front = CGRect(x: x - 9, y: y + 8, width: 18, height: 12)
             switch row {
             case .insert(let i):
-                let p = path.inserts[i]
-                solid(ctx, front, open: p.off)
+                let p = path.inserts[i], seen = inView.contains(i)
+                solid(ctx, front, open: p.off, seen: seen)
                 Atelier.note(ctx, InspectorPanel.letter(i), at: CGPoint(x: x - 13, y: front.minY), size: 10, color: Atelier.gold, align: .right)
+                if focused == i { // a hand pointing at the plate last clicked in the device panel
+                    Atelier.rule(ctx, CGPoint(x: 2, y: front.midY), CGPoint(x: x - 24, y: front.midY), weight: Atelier.fine, color: Atelier.gold)
+                    Atelier.arrowhead(ctx, at: CGPoint(x: x - 23, y: front.midY), angle: 0, color: Atelier.gold, size: 4.5)
+                }
                 let label = p.name + (p.off ? " (off)" : "")
+                var attrs = nameAttrs
+                if seen { attrs[.foregroundColor] = Atelier.gold; attrs[.underlineStyle] = NSUnderlineStyle.single.rawValue }
                 (label as NSString).draw(with: CGRect(x: x + 16, y: front.minY - 1, width: bounds.width - x - 20, height: 15),
-                                         options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine], attributes: nameAttrs)
+                                         options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine], attributes: attrs)
             case .folded(let r):
                 // A folded range: three stacked plates, lettered by their range.
                 for k in [2, 1, 0] as [CGFloat] { solid(ctx, front.offsetBy(dx: k * 2, dy: -k * 2), open: false) }
@@ -598,11 +630,12 @@ final class InspectorFigure: NSView {
         Atelier.loop(ctx, post, weight: Atelier.fine, color: ink)
         Atelier.note(ctx, path.output, at: CGPoint(x: x + 14, y: y + 2), size: 10, color: Theme.textDim)
         Atelier.note(ctx, "Fig. 3 · Signal path of \(path.track)", at: CGPoint(x: bounds.midX, y: bounds.height - 15), size: 9.5, color: Theme.textDim, align: .center)
+
     }
 
     /// An insert as a block in the shared oblique (y down): front, top and right faces, the right one hatched.
-    private func solid(_ ctx: CGContext, _ front: CGRect, open: Bool) {
-        let v = Atelier.recede, ink = Theme.ink(open ? 0.5 : 0.95)
+    private func solid(_ ctx: CGContext, _ front: CGRect, open: Bool, seen: Bool = false) {
+        let v = Atelier.recede, ink = seen ? Atelier.gold : Theme.ink(open ? 0.5 : 0.95)
         let top = CGMutablePath(), side = CGMutablePath()
         top.addLines(between: [CGPoint(x: front.minX, y: front.minY), CGPoint(x: front.minX + v.dx, y: front.minY + v.dy),
                                CGPoint(x: front.maxX + v.dx, y: front.minY + v.dy), CGPoint(x: front.maxX, y: front.minY)]); top.closeSubpath()

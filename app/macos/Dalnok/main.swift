@@ -161,7 +161,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Switches the appearance live: rebuilds the main window (and closes secondary windows) around the same
     /// session, keeping the window frame, the open project, undo history and MIDI inputs. Refused while recording.
     /// `force` rebuilds the windows in the same style (View ▸ Illustrated Controls changes control sizes).
-    @discardableResult func switchTheme(to style: Theme.Style, variant: Theme.Variant? = nil, force: Bool = false) -> Bool {
+    @discardableResult func switchTheme(to style: Theme.Style, variant: Theme.Variant? = nil, force: Bool = false, keeping extra: [NSWindow] = []) -> Bool {
         let variant = variant ?? Theme.resolvedVariant(for: style)
         guard force || style != Theme.activeStyle || variant != Theme.activeVariant else { return true }
         guard !engine.isRecording else { return false }
@@ -177,7 +177,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             before = image
         }
         let settings = old.settings
-        old.tearDown(keeping: [settings.window].compactMap { $0 })
+        old.tearDown(keeping: [settings.window].compactMap { $0 } + extra)
         Theme.activeStyle = style
         Theme.activeVariant = variant
         session.forceRefresh() // track colours come from the style's palette

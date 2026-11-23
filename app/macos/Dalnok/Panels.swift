@@ -292,6 +292,7 @@ final class TransportBar: NSView {
 
         masterMeter.toolTip = "Output level (click to reset the clip indicator)"
         masterMeter.setAccessibilityLabel("Master level meter")
+        masterMeter.needle = Theme.look.meters == .graduated // Atelier
         for (b, sel) in [(launcherButton, #selector(launcherTapped)), (automationButton, #selector(automationTapped)),
                          (mixerButton, #selector(mixerTapped)), (devicesButton, #selector(devicesTapped)),
                          (libraryButton, #selector(libraryTapped)), (inspectorButton, #selector(inspectorTapped))] {
@@ -325,8 +326,8 @@ final class TransportBar: NSView {
 
             tools.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
             tools.centerYAnchor.constraint(equalTo: centerYAnchor),
-            masterMeter.widthAnchor.constraint(equalToConstant: 132),
-            masterMeter.heightAnchor.constraint(equalToConstant: 8),
+            masterMeter.widthAnchor.constraint(equalToConstant: Theme.look.meters == .graduated ? 84 : 132),
+            masterMeter.heightAnchor.constraint(equalToConstant: Theme.look.meters == .graduated ? 32 : 8),
         ])
         timeCenter = timeLabel.centerYAnchor.constraint(equalTo: lcd.centerYAnchor)
         timeCenter?.isActive = true
@@ -1008,7 +1009,12 @@ final class TrackHeaderColumn: NSView, TrackScrollHost {
             row.frame = CGRect(x: 0, y: session.laneTop(i) - scrollY, width: rowClip.bounds.width, height: session.laneHeight(i))
         }
         addButton.frame = CGRect(x: bounds.width - 40, y: 0, width: 34, height: Theme.rulerHeight)
+        // The foot fades while more tracks lie below (audit C5), as the lanes beside it do.
+        if lowerFade.superview == nil { addSubview(lowerFade, positioned: .above, relativeTo: rowClip) }
+        lowerFade.frame = CGRect(x: 0, y: bounds.height - 26, width: bounds.width - 1, height: 26)
+        lowerFade.isHidden = Theme.look.headers == .glass || scrollY >= session.lanesHeight - rowClip.bounds.height - 1
     }
+    private let lowerFade = LowerEdgeFade()
 
     override func draw(_ dirtyRect: NSRect) {
         if Theme.look.headers == .glass {
@@ -1104,5 +1110,15 @@ extension NSLayoutConstraint {
     func withPriority(_ priority: NSLayoutConstraint.Priority) -> NSLayoutConstraint {
         self.priority = priority
         return self
+    }
+}
+
+/// A fade into the panel's colour at a list's foot (more below). Clicks pass through it.
+@MainActor
+final class LowerEdgeFade: NSView {
+    override var isFlipped: Bool { true }
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    override func draw(_ dirtyRect: NSRect) {
+        NSGradient(starting: Theme.panel.withAlphaComponent(0), ending: Theme.panel.withAlphaComponent(0.92))?.draw(in: bounds, angle: 90)
     }
 }
