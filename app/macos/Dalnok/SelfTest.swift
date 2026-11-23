@@ -115,7 +115,7 @@ final class SelfTest {
         // Fast iteration on one area (never a substitute for the full run): panels, plugins.
         switch ProcessInfo.processInfo.environment["DALNOK_SELFTEST_ONLY"] {
         case "panels": await sidePanels(); return finish()
-        case "plugins": await deferredPluginLoading(); await isolatedPluginEditors(); return finish()
+        case "plugins": devicePanel(); return finish()
         default: break
         }
         check(s.tracks.count == files.count, "import \(files.count) files -> \(s.tracks.count) tracks")

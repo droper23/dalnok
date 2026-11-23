@@ -241,19 +241,22 @@ enum Screenshots {
             // Atelier: the five instrument figures side by side, with sample values (the modulation figure has no
             // Apple plug-in to show it in a chain).
             if Theme.look.devices == .schematic {
-                let sheet = NSView(frame: NSRect(x: 0, y: 0, width: 5 * 250, height: 190))
+                // Top row at rest (as in stills); bottom row mid-motion with its first part lit, as when pointed at.
+                let sheet = NSView(frame: NSRect(x: 0, y: 0, width: 5 * 250, height: 370))
                 sheet.wantsLayer = true; sheet.layer?.backgroundColor = Theme.panel.cgColor
                 let figs: [(FaceplateDisplay.Kind, Codex.Subject)] = [(.gainReduction, .plain), (.history, .chamber), (.history, .echo), (.transfer, .plain), (.goniometer, .modulation)]
-                for (i, (kind, subject)) in figs.enumerated() {
+                for (i, (kind, subject)) in figs.enumerated() + figs.enumerated().map({ ($0.offset + 5, $0.element) }) {
                     let screen: FaceplateScreen = kind == .gainReduction ? MovingCoilMeter(mode: .gainReduction) : kind == .transfer ? TransferScreen() : kind == .goniometer ? GoniometerScreen() : HistoryScreen()
-                    screen.frame = NSRect(x: CGFloat(i) * 250 + 7, y: 10, width: 236, height: 170)
-                    screen.codexKind = kind; screen.codexSubject = subject; screen.figureNumber = i + 1
+                    screen.frame = NSRect(x: CGFloat(i % 5) * 250 + 7, y: i < 5 ? 190 : 10, width: 236, height: 170)
+                    if i >= 5 { screen.figureAngle = 1.2; screen.highlightRole = AtelierFigure.of(kind: kind, subject: subject)?.roles.first }
+                    screen.codexKind = kind; screen.codexSubject = subject; screen.figureNumber = i % 5 + 1
                     var link = FigureLink()
                     let roles = AtelierFigure.of(kind: kind, subject: subject)?.roles ?? []
                     for (k, r) in roles.enumerated() { link.ids[r] = UInt32(k + 1) }
                     link.value = { id in [0.62, 0.45][Int(id) - 1] }
                     link.text = { id in ["value \(id)", "value \(id)"][Int(id) - 1] }
                     link.letter = { id in ["A", "B"][Int(id) - 1] }
+                    link.name = { id in roles[Int(id) - 1].rawValue.capitalized }
                     screen.figureLink = link
                     sheet.addSubview(screen)
                 }

@@ -1,10 +1,12 @@
 // Atelier's plug-in figures as instruments (the owner, fourth round: "the drawing is the control"). Each family is one
 // engraved figure whose lettered parts are dragged: a flyball governor for dynamics, a vaulted chamber for reverbs, a
 // pendulum for delays, a sine through its clipping curve for distortion, a crank and disc for modulation. The letters
-// are the key's letters for the same parameters. Figures are drawn from the plug-in's parameters and live data; nothing
-// ornamental animates (guardrail 5). Data first: labels sit on clean plate.
+// are the key's letters for the same parameters. Figures are drawn from the plug-in's parameters and live data, and move
+// (owner, 2026-11-22: the governor spins, the pendulum swings, the crank turns), holding still under the pointer, under
+// Reduce Motion and in stills. Data first: labels sit on clean plate.
 // SPDX-License-Identifier: GPL-3.0-or-later
 import AppKit
+import QuartzCore
 
 /// What a figure part controls; found among a plug-in's parameters by name.
 enum FigureRole: String, CaseIterable {
@@ -48,6 +50,8 @@ struct FigureLink {
     var end: () -> Void = {}
     /// Margin facts (latency, sidechain…), set by the unit.
     var notes: () -> [String] = { [] }
+    /// The parameter's name, for the part's tag.
+    var name: (UInt32) -> String? = { _ in nil }
 
     func v(_ r: FigureRole, _ fallback: Double = 0.5) -> Double { ids[r].flatMap(value) ?? fallback }
     func t(_ r: FigureRole) -> String? { ids[r].flatMap(text) }
@@ -96,7 +100,54 @@ enum AtelierFigure {
     }
 }
 
+/// Drives the figures' motion (the owner: "the crank should actually rotate, the governor should spin, the pendulum
+/// should swing"). One 30 Hz timer for every figure on screen; a figure holds still while the pointer is on one of its
+/// parts or drags it, under Reduce Motion, in stills and tests (Motion off), and while its window is hidden.
+@MainActor
+final class FigureClock {
+    static let shared = FigureClock()
+    private let screens = NSHashTable<FaceplateScreen>.weakObjects()
+    private var timer: Timer?
+    private var last = CACurrentMediaTime()
+    func add(_ s: FaceplateScreen) {
+        screens.add(s)
+        guard timer == nil else { return }
+        last = CACurrentMediaTime()
+        let t = Timer(timeInterval: 1.0 / 30, repeats: true) { _ in MainActor.assumeIsolated { FigureClock.shared.tick() } }
+        RunLoop.main.add(t, forMode: .common)
+        timer = t
+    }
+    func remove(_ s: FaceplateScreen) {
+        screens.remove(s)
+        if screens.allObjects.isEmpty { timer?.invalidate(); timer = nil }
+    }
+    private func tick() {
+        let now = CACurrentMediaTime(), dt = min(0.1, now - last)
+        last = now
+        guard !Motion.reduced else { return }
+        for s in screens.allObjects {
+            guard let w = s.window, w.occlusionState.contains(.visible), !s.isHiddenOrHasHiddenAncestor else { continue }
+            s.advanceFigure(dt)
+        }
+    }
+}
+
 extension FaceplateScreen {
+    /// One step of the figure's motion; its speed comes from its parameters and live data.
+    func advanceFigure(_ dt: Double) {
+        guard let fig = atelierFigure, figureDrag == nil, hoverRole == nil else { return }
+        let link = figureLink ?? FigureLink()
+        let speed: Double = switch fig {
+        case .governor: 2 * .pi * (0.22 + 1.6 * min(1, abs(figureLive) / 18)) // spins up as it reduces
+        case .pendulum: 2 * .pi / (0.7 + 1.8 * link.v(.time, 0.4))           // a longer delay, a longer swing
+        case .clipping: 2 * .pi * 0.35
+        case .crank: 2 * .pi * (0.12 + 1.1 * link.v(.rate, 0.4))              // turns at the rate
+        case .chamber: 2 * .pi / (1.2 + 2.5 * link.v(.decay, 0.5))            // a longer decay, slower waves
+        }
+        figureAngle = (figureAngle + dt * speed).truncatingRemainder(dividingBy: 2 * .pi * 64)
+        needsDisplay = true
+    }
+
     // MARK: Drawing
 
     /// Draws one of the new figures in `f` (y down) and records its handles. Live values come from the screen's data.
@@ -111,11 +162,16 @@ extension FaceplateScreen {
         case .crank: handles = crank(ctx, f, link)
         }
         figureHandles = handles
-        // Drag marks: a small ring at every part that can be dragged (thicker while dragged).
+        // Drag marks: a ring at every part that can be dragged, with engraved arrows along the way it moves (owner:
+        // "not intuitive what to change"). The part under the pointer, being dragged, or whose key row is under the
+        // pointer is lit in gold with its parameter's name and value beside it.
         for h in handles where link.ids[h.role] != nil {
-            let r = CGRect(x: h.point.x - 3.2, y: h.point.y - 3.2, width: 6.4, height: 6.4)
+            let lit = figureDrag?.role == h.role || hoverRole == h.role || highlightRole == h.role
+            let ink = lit ? Atelier.gold : Theme.text
+            arrows(ctx, h, color: lit ? Atelier.gold : Theme.ink(0.55))
+            let r = CGRect(x: h.point.x - (lit ? 4.2 : 3.2), y: h.point.y - (lit ? 4.2 : 3.2), width: lit ? 8.4 : 6.4, height: lit ? 8.4 : 6.4)
             ctx.setFillColor(Theme.panelRaised.cgColor); ctx.fillEllipse(in: r)
-            Atelier.loop(ctx, r, weight: figureDrag?.role == h.role ? Atelier.heavy : Atelier.fine, color: Theme.text)
+            Atelier.loop(ctx, r, weight: lit ? Atelier.medium : Atelier.fine, color: ink)
         }
         // Margin notes: live facts in the annotation hand, right-aligned at the field's foot.
         var y = f.minY
@@ -125,81 +181,113 @@ extension FaceplateScreen {
         }
     }
 
+    /// Two small engraved arrowheads either side of a part, along the direction it drags.
+    private func arrows(_ ctx: CGContext, _ h: FigureHandle, color: NSColor) {
+        let len = hypot(h.axis.dx, h.axis.dy)
+        guard len > 0 else { return }
+        let ux = h.axis.dx / len, uy = h.axis.dy / len, gap: CGFloat = 9
+        for s in [CGFloat(1), -1] {
+            let tip = CGPoint(x: h.point.x + s * ux * (gap + 4), y: h.point.y + s * uy * (gap + 4))
+            Atelier.rule(ctx, CGPoint(x: h.point.x + s * ux * gap * 0.62, y: h.point.y + s * uy * gap * 0.62), tip, weight: Atelier.hair, color: color)
+            Atelier.arrowhead(ctx, at: tip, angle: atan2(s * uy, s * ux), color: color, size: 3.6)
+        }
+    }
+
     private func letterCallout(_ ctx: CGContext, _ link: FigureLink, _ role: FigureRole, at p: CGPoint, to q: CGPoint) {
         guard let letter = link.l(role) else { return }
         Atelier.callout(ctx, letter, from: p, to: q)
     }
+    /// A part's value where the figure prints it; while the part is lit (pointed at, dragged, or its key row pointed at)
+    /// the value becomes a gold-ruled tag with the parameter's name, in the same place so it never covers another label.
     private func readout(_ ctx: CGContext, _ link: FigureLink, _ role: FigureRole, at p: CGPoint, align: NSTextAlignment = .left) {
-        guard let t = link.t(role) else { return }
-        Atelier.note(ctx, t, at: p, size: 9.5, color: Theme.text, align: align, roman: true)
+        let lit = figureDrag?.role == role || hoverRole == role || highlightRole == role
+        guard lit, let id = link.ids[role] else {
+            if let t = link.t(role) { Atelier.note(ctx, t, at: p, size: 9.5, color: Theme.text, align: align, roman: true) }
+            return
+        }
+        let name = link.name(id) ?? role.rawValue.capitalized
+        let text = link.text(id).map { "\(name)  \($0)" } ?? name
+        let w = (text as NSString).size(withAttributes: [.font: Theme.title(10, .regular)]).width + 8
+        var box = CGRect(x: align == .right ? p.x - w + 4 : p.x - 4, y: p.y - 1, width: w, height: 15)
+        let room = bounds.insetBy(dx: 3, dy: 3)
+        box.origin.x = max(room.minX, min(room.maxX - w, box.origin.x))
+        ctx.setFillColor(Theme.panelRaised.cgColor); ctx.fill(box)
+        Atelier.box(ctx, box, weight: Atelier.hair, color: Atelier.gold)
+        Atelier.note(ctx, text, at: CGPoint(x: box.minX + 4, y: box.minY + 1), size: 10, color: Theme.text, roman: true)
+    }
+    private func ball(_ ctx: CGContext, _ c: CGPoint, r: CGFloat, alpha: CGFloat = 1) {
+        let disc = CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r)
+        ctx.setFillColor(Theme.panelRaised.cgColor); ctx.fillEllipse(in: disc)
+        ctx.saveGState(); ctx.setAlpha(alpha); ctx.addEllipse(in: disc); ctx.clip(); Atelier.globeShade(ctx, disc); ctx.restoreGState()
+        Atelier.loop(ctx, disc, weight: Atelier.fine, color: Theme.ink(alpha))
     }
 
     /// The flyball governor: a spindle on a base, two arms hinged at its head carrying turned balls, links to a collar.
-    /// The collar's height is the threshold (A), the arms' length the ratio (B); the balls swing out with the live
-    /// gain reduction.
+    /// The collar's height is the threshold (A), the arms' reach the ratio (B); the balls swing out with the live gain
+    /// reduction, and the whole head spins about the spindle, faster as it works.
     private func governor(_ ctx: CGContext, _ f: CGRect, _ link: FigureLink, reductionDb: Double) -> [FigureHandle] {
         let ink = Theme.text, cx = f.minX + f.width * 0.42
         let top = f.minY + 12, baseY = f.maxY - 14
         let thr = link.v(.threshold, 0.6), ratio = link.v(.ratio, 0.4)
         let red = min(1, abs(reductionDb) / 18)
         let theta = (28 + 36 * red) * .pi / 180
-        let L = 30 + 24 * CGFloat(ratio)
-        // Base: a slab in the shared oblique; the spindle stands on it.
+        let L = 30 + 24 * CGFloat(ratio), spin = CGFloat(figureAngle)
         let base = CGRect(x: cx - 26, y: baseY, width: 52, height: 7)
         solid(ctx, base)
         Atelier.rule(ctx, CGPoint(x: cx - 1.2, y: top), CGPoint(x: cx - 1.2, y: baseY), weight: Atelier.fine, color: ink)
         Atelier.rule(ctx, CGPoint(x: cx + 1.2, y: top), CGPoint(x: cx + 1.2, y: baseY), weight: Atelier.fine, color: ink)
-        // Head and pivot.
         let head = CGRect(x: cx - 5, y: top - 6, width: 10, height: 6)
         solid(ctx, head)
+        // A mark on the head turns with the spindle, so the spin reads even with the balls behind.
+        Atelier.rule(ctx, CGPoint(x: cx + 4.5 * cos(spin), y: top - 6), CGPoint(x: cx + 4.5 * cos(spin), y: top), weight: Atelier.fine, color: Atelier.gold)
         let pivot = CGPoint(x: cx, y: top + 2)
-        // Collar: its travel is the threshold scale (graduated beside the spindle).
         let travel = (top + 20)...(baseY - 12)
         let cy = travel.upperBound - CGFloat(thr) * (travel.upperBound - travel.lowerBound)
         for i in 0...8 {
             let gy = travel.lowerBound + (travel.upperBound - travel.lowerBound) * CGFloat(i) / 8
             Atelier.rule(ctx, CGPoint(x: cx - 14, y: gy), CGPoint(x: cx - (i % 4 == 0 ? 20 : 17), y: gy), weight: Atelier.hair, color: Theme.ink(0.55))
         }
-        // Arms, balls and links, both sides.
-        var ballR = CGPoint.zero
+        // The swing's reach, dotted, both sides (where the balls pass when they face us).
         for s in [CGFloat(-1), 1] {
-            let ball = CGPoint(x: pivot.x + s * sin(theta) * L, y: pivot.y + cos(theta) * L)
-            let mid = CGPoint(x: pivot.x + s * sin(theta) * L * 0.5, y: pivot.y + cos(theta) * L * 0.5)
-            Atelier.rule(ctx, pivot, ball, weight: Atelier.medium, color: ink)
-            Atelier.rule(ctx, mid, CGPoint(x: cx + s * 4, y: cy), weight: Atelier.fine, color: ink)
-            let r: CGFloat = 9.5
-            let disc = CGRect(x: ball.x - r, y: ball.y - r, width: 2 * r, height: 2 * r)
-            ctx.setFillColor(Theme.panelRaised.cgColor); ctx.fillEllipse(in: disc)
-            ctx.saveGState(); ctx.addEllipse(in: disc); ctx.clip(); Atelier.globeShade(ctx, disc); ctx.restoreGState()
-            Atelier.loop(ctx, disc, weight: Atelier.fine, color: ink)
-            if s > 0 { ballR = ball }
+            let arc = CGMutablePath()
+            let mid = CGFloat.pi / 2 - s * theta
+            arc.addArc(center: pivot, radius: L, startAngle: mid - 0.5, endAngle: mid + 0.5, clockwise: false)
+            ctx.addPath(arc); ctx.setStrokeColor(Theme.ink(0.35).cgColor); ctx.setLineWidth(0.5); ctx.setLineDash(phase: 0, lengths: [1, 2]); ctx.strokePath(); ctx.setLineDash(phase: 0, lengths: [])
+        }
+        // Arms, balls and links: the pair turns about the spindle (x foreshortened by cos, the far ball drawn first, fainter).
+        let reach = sin(theta) * L, drop = cos(theta) * L
+        let pair = [(spin, CGFloat(1)), (spin + .pi, CGFloat(1))].map { (a, _) in (x: reach * cos(a), z: sin(a)) }.sorted { $0.z < $1.z }
+        for b in pair {
+            let alpha = b.z < 0 ? 0.55 + 0.45 * (1 + b.z) : 1
+            let ballC = CGPoint(x: pivot.x + b.x, y: pivot.y + drop)
+            let mid = CGPoint(x: pivot.x + b.x * 0.5, y: pivot.y + drop * 0.5)
+            Atelier.rule(ctx, pivot, ballC, weight: Atelier.medium, color: Theme.ink(alpha))
+            Atelier.rule(ctx, mid, CGPoint(x: cx + 4 * (b.x / max(1, reach)), y: cy), weight: Atelier.fine, color: Theme.ink(alpha))
+            ball(ctx, ballC, r: 9.5 * (1 + 0.08 * b.z), alpha: alpha)
         }
         let collar = CGRect(x: cx - 6, y: cy - 3, width: 12, height: 6)
         solid(ctx, collar)
-        // The swing's arc, dotted, so the reduction reads as an angle.
-        let arc = CGMutablePath()
-        arc.addArc(center: pivot, radius: L, startAngle: .pi / 2 - 70 * .pi / 180, endAngle: .pi / 2 - 10 * .pi / 180, clockwise: false)
-        ctx.addPath(arc); ctx.setStrokeColor(Theme.ink(0.4).cgColor); ctx.setLineWidth(0.5); ctx.setLineDash(phase: 0, lengths: [1, 2]); ctx.strokePath(); ctx.setLineDash(phase: 0, lengths: [])
-        // Letters and readouts.
+        let reachPoint = CGPoint(x: pivot.x + reach, y: pivot.y + drop)
         letterCallout(ctx, link, .threshold, at: CGPoint(x: cx - 6, y: cy), to: CGPoint(x: cx - 24, y: cy + 12))
         readout(ctx, link, .threshold, at: CGPoint(x: cx - 22, y: cy + 14), align: .right)
-        letterCallout(ctx, link, .ratio, at: CGPoint(x: ballR.x + 7, y: ballR.y - 3), to: CGPoint(x: ballR.x + 18, y: ballR.y - 14))
-        readout(ctx, link, .ratio, at: CGPoint(x: min(f.maxX - 2, ballR.x + 14), y: ballR.y + 6))
+        letterCallout(ctx, link, .ratio, at: CGPoint(x: reachPoint.x + 7, y: reachPoint.y - 3), to: CGPoint(x: reachPoint.x + 18, y: reachPoint.y - 14))
+        readout(ctx, link, .ratio, at: CGPoint(x: min(f.maxX - 2, reachPoint.x + 14), y: reachPoint.y + 6))
         marginNotes = [abs(reductionDb) < 0.05 ? "no reduction now" : String(format: "reduction now −%.1f dB", abs(reductionDb))]
+        _ = ink
         return [FigureHandle(role: .threshold, point: CGPoint(x: cx + 9, y: cy), axis: CGVector(dx: 0, dy: -1), span: travel.upperBound - travel.lowerBound),
-                FigureHandle(role: .ratio, point: ballR, axis: CGVector(dx: sin(theta), dy: cos(theta)), span: 22)]
+                FigureHandle(role: .ratio, point: reachPoint, axis: CGVector(dx: sin(theta), dy: cos(theta)), span: 22)]
     }
 
     /// The vaulted chamber, as first drawn for the Codex (the owner wanted it back): the hall in one-point perspective on
-    /// its dark field, rays from the source to the listener by way of the walls, brighter with the live sound. Its own
-    /// points are the parts: the vault is the room's size (drag it up or down), the listener the decay (drag it along
-    /// the floor). They carry the key's letters; the source keeps its plain mark.
+    /// its dark field, rays from the source to the listener by way of the walls; the sound travels along them and spreads
+    /// from the source in rings, slower as the decay grows. The vault is the room's size (drag it up or down), the
+    /// listener the decay (drag it along the floor).
     private func chamberFigure(_ ctx: CGContext, _ f: CGRect, _ link: FigureLink, energyDb: Double) -> [FigureHandle] {
         guard let hall = self as? HistoryScreen else { return [] }
         ctx.setFillColor(Theme.lcd.cgColor); ctx.fill(f)
         Atelier.screen(ctx, f)
         let linked = link.ids[.size] != nil || link.ids[.decay] != nil
-        let p = hall.chamber(ctx, f.insetBy(dx: 1, dy: 1), letters: linked ? (nil, link.l(.size), link.l(.decay)) : ("A", "B", "C"))
+        let p = hall.chamber(ctx, f.insetBy(dx: 1, dy: 1), letters: linked ? (nil, link.l(.size), link.l(.decay)) : ("A", "B", "C"), phase: figureAngle)
         readout(ctx, link, .size, at: CGPoint(x: p.vault.x + 4, y: p.vault.y + 4))
         readout(ctx, link, .decay, at: CGPoint(x: min(f.maxX - 34, p.listener.x - 6), y: p.listener.y + 4))
         marginNotes = energyDb > -80 ? [String(format: "sound now %.0f dB", energyDb)] : []
@@ -207,15 +295,14 @@ extension FaceplateScreen {
                 FigureHandle(role: .decay, point: p.listener, axis: CGVector(dx: 1, dy: 0), span: 60)]
     }
 
-    /// The pendulum: its swing is the delay time (A, drag the bob along its arc); each repeat is a fainter arc below,
-    /// as many as the feedback gives (B, drag the last arc up or down).
+    /// The pendulum: it swings between the marks of its reach, which is the delay time (A, drag the right mark along the
+    /// arc); each repeat is a fainter arc below, lighting in turn as the bob passes, as many as the feedback gives (B,
+    /// drag the last arc up or down).
     private func pendulum(_ ctx: CGContext, _ f: CGRect, _ link: FigureLink, energyDb: Double) -> [FigureHandle] {
         let ink = Theme.text, time = link.v(.time, 0.4), fb = link.v(.feedback, 0.4)
         let pivot = CGPoint(x: f.minX + f.width * 0.42, y: f.minY + 10), rod = min(f.height - 46, 86)
         let alpha = (8 + 34 * CGFloat(time)) * .pi / 180
-        // Bracket: a beam in the shared oblique, the pivot pin beneath.
         solid(ctx, CGRect(x: pivot.x - 30, y: pivot.y - 8, width: 60, height: 5))
-        // Graduated arc of the swing, and the rest position dotted.
         let arc = CGMutablePath()
         arc.addArc(center: pivot, radius: rod + 6, startAngle: .pi / 2 - 0.85, endAngle: .pi / 2 + 0.85, clockwise: false)
         ctx.addPath(arc); ctx.setStrokeColor(Theme.ink(0.55).cgColor); ctx.setLineWidth(0.5); ctx.strokePath()
@@ -225,44 +312,48 @@ extension FaceplateScreen {
                          CGPoint(x: pivot.x + cos(a) * (rod + (i % 3 == 0 ? 11 : 9)), y: pivot.y + sin(a) * (rod + (i % 3 == 0 ? 11 : 9))), weight: Atelier.hair, color: Theme.ink(0.6))
         }
         Atelier.rule(ctx, pivot, CGPoint(x: pivot.x, y: pivot.y + rod), weight: 0.4, color: Theme.ink(0.35), dash: [1, 2])
-        // Repeats: concentric arcs under the bob, fading.
+        // Repeats: concentric arcs under the bob, fading; the echo running down them follows the swing.
         let repeats = 1 + Int(fb * 6)
+        let wave = (figureAngle / .pi).truncatingRemainder(dividingBy: 1) * Double(repeats + 1)
         var lastY = pivot.y + rod
         for i in 1...repeats {
             let r = rod + 14 + CGFloat(i) * 5
             let rep = CGMutablePath()
             rep.addArc(center: pivot, radius: r, startAngle: .pi / 2 - alpha * 0.8, endAngle: .pi / 2 + alpha * 0.8, clockwise: false)
-            ctx.addPath(rep); ctx.setStrokeColor(Theme.ink(max(0.12, 0.7 - CGFloat(i) * 0.09)).cgColor); ctx.setLineWidth(0.6); ctx.strokePath()
+            let glow = CGFloat(max(0, 1 - abs(wave - Double(i)))) * 0.35
+            ctx.addPath(rep); ctx.setStrokeColor(Theme.ink(min(1, max(0.12, 0.7 - CGFloat(i) * 0.09) + glow)).cgColor); ctx.setLineWidth(0.6 + glow); ctx.strokePath()
             lastY = pivot.y + r
         }
-        // The rod and bob at the swing's extreme, its other extreme ghosted.
-        for (s, a) in [(CGFloat(-1), 0.3), (1, 1.0)] as [(CGFloat, CGFloat)] {
-            let bob = CGPoint(x: pivot.x + s * sin(alpha) * rod, y: pivot.y + cos(alpha) * rod)
-            Atelier.rule(ctx, pivot, bob, weight: a > 0.5 ? Atelier.medium : Atelier.hair, color: Theme.ink(a))
-            let r: CGFloat = 8, disc = CGRect(x: bob.x - r, y: bob.y - r, width: 2 * r, height: 2 * r)
-            if a > 0.5 {
-                Atelier.obliqueSide(ctx, circle: disc)
-                ctx.setFillColor(Theme.panelRaised.cgColor); ctx.fillEllipse(in: disc)
-                ctx.saveGState(); ctx.addEllipse(in: disc); ctx.clip(); Atelier.globeShade(ctx, disc); ctx.restoreGState()
-            }
-            Atelier.loop(ctx, disc, weight: Atelier.fine, color: Theme.ink(a))
+        // The reach: both extremes ghosted; the rod and bob swing between them.
+        let mark = { (s: CGFloat) in CGPoint(x: pivot.x + s * sin(alpha) * rod, y: pivot.y + cos(alpha) * rod) }
+        for s in [CGFloat(-1), 1] {
+            let b = mark(s)
+            Atelier.rule(ctx, pivot, b, weight: Atelier.hair, color: Theme.ink(0.25))
+            Atelier.loop(ctx, CGRect(x: b.x - 8, y: b.y - 8, width: 16, height: 16), weight: Atelier.hair, color: Theme.ink(0.3))
         }
+        let now = alpha * CGFloat(cos(figureAngle))
+        let bob = CGPoint(x: pivot.x + sin(now) * rod, y: pivot.y + cos(now) * rod)
+        Atelier.rule(ctx, pivot, bob, weight: Atelier.medium, color: ink)
+        let disc = CGRect(x: bob.x - 8, y: bob.y - 8, width: 16, height: 16)
+        Atelier.obliqueSide(ctx, circle: disc)
+        ball(ctx, bob, r: 8)
         ctx.setFillColor(ink.cgColor); ctx.fillEllipse(in: CGRect(x: pivot.x - 1.8, y: pivot.y - 1.8, width: 3.6, height: 3.6))
-        let bob = CGPoint(x: pivot.x + sin(alpha) * rod, y: pivot.y + cos(alpha) * rod)
-        letterCallout(ctx, link, .time, at: CGPoint(x: bob.x + 8, y: bob.y), to: CGPoint(x: bob.x + 20, y: bob.y - 12))
-        readout(ctx, link, .time, at: CGPoint(x: min(f.maxX - 40, bob.x + 14), y: bob.y + 4))
+        let reach = mark(1)
+        letterCallout(ctx, link, .time, at: CGPoint(x: reach.x + 8, y: reach.y), to: CGPoint(x: reach.x + 20, y: reach.y - 12))
+        readout(ctx, link, .time, at: CGPoint(x: min(f.maxX - 40, reach.x + 14), y: reach.y + 4))
         letterCallout(ctx, link, .feedback, at: CGPoint(x: pivot.x - 4, y: lastY), to: CGPoint(x: f.minX + 8, y: lastY - 6))
         readout(ctx, link, .feedback, at: CGPoint(x: f.minX + 2, y: lastY - 2))
         marginNotes = energyDb > -80 ? [String(format: "echoes now %.0f dB", energyDb)] : []
         let tangent = CGVector(dx: cos(alpha), dy: -sin(alpha))
-        return [FigureHandle(role: .time, point: bob, axis: tangent, span: rod * 0.6),
+        return [FigureHandle(role: .time, point: reach, axis: tangent, span: rod * 0.6),
                 FigureHandle(role: .feedback, point: CGPoint(x: pivot.x, y: lastY), axis: CGVector(dx: 0, dy: 1), span: 34)]
     }
 
-    /// The clipped wave by construction: input sine below, the transfer curve in its square, the output sine at the
-    /// side, joined by dotted projection lines. Drive (A) is the curve's knee: drag it along the diagonal.
+    /// The clipped wave by construction: the input sine runs down from under the square, through the transfer curve, and
+    /// out to the right as the clipped wave; a dotted projection carries the present sample across. Drive (A) is the
+    /// curve's knee: drag it along the diagonal.
     private func clipping(_ ctx: CGContext, _ f: CGRect, _ link: FigureLink) -> [FigureHandle] {
-        let ink = Theme.text, drive = link.v(.drive, 0.4)
+        let ink = Theme.text, drive = link.v(.drive, 0.4), phase = figureAngle
         let side = min(f.height * 0.56, f.width * 0.42)
         let sq = CGRect(x: f.minX + 14, y: f.minY + 6, width: side, height: side)
         let k = 1 + 9 * drive
@@ -276,24 +367,25 @@ extension FaceplateScreen {
             return CGPoint(x: sq.midX + CGFloat(x) * side / 2, y: sq.midY - CGFloat(curve(x)) * side / 2)
         }
         ctx.addPath(Codex.path(pts)); ctx.setStrokeColor(ink.cgColor); ctx.setLineWidth(Atelier.medium); ctx.strokePath()
-        // Input sine below the square (time runs down), output sine to its right (time runs right).
+        // Time runs away from the curve: down the input, right along the output; the present sample is at t = 0.
+        func sample(_ t: Double) -> Double { 0.9 * sin(phase - t * 2 * .pi + .pi / 2) }
         let inTop = sq.maxY + 6, inH = f.maxY - inTop - 4
         let input = (0...40).map { i -> CGPoint in
             let t = Double(i) / 40
-            return CGPoint(x: sq.midX + CGFloat(sin(t * 2 * .pi)) * side / 2 * 0.9, y: inTop + CGFloat(t) * inH)
+            return CGPoint(x: sq.midX + CGFloat(sample(t)) * side / 2, y: inTop + CGFloat(t) * inH)
         }
         ctx.addPath(Codex.path(input)); ctx.setStrokeColor(Theme.ink(0.7).cgColor); ctx.setLineWidth(Atelier.fine); ctx.strokePath()
         let outLeft = sq.maxX + 8, outW = f.maxX - outLeft - 4
         let output = (0...60).map { i -> CGPoint in
             let t = Double(i) / 60
-            return CGPoint(x: outLeft + CGFloat(t) * outW, y: sq.midY - CGFloat(curve(sin(t * 2 * .pi) * 0.9)) * side / 2)
+            return CGPoint(x: outLeft + CGFloat(t) * outW, y: sq.midY - CGFloat(curve(sample(t))) * side / 2)
         }
         ctx.addPath(Codex.path(output)); ctx.setStrokeColor(ink.cgColor); ctx.setLineWidth(Atelier.fine); ctx.strokePath()
-        // Projection of one point: input at its peak, up to the curve, across to the output.
-        let peakX = sq.midX + side / 2 * 0.9, py = sq.midY - CGFloat(curve(0.9)) * side / 2
-        Codex.dotted(ctx, CGPoint(x: peakX, y: inTop + inH * 0.25), CGPoint(x: peakX, y: py), alpha: 0.5)
-        Codex.dotted(ctx, CGPoint(x: peakX, y: py), CGPoint(x: outLeft + outW * 0.25, y: py), alpha: 0.5)
-        // Live input/output points from the transfer data, on the curve.
+        // Projection of the present sample: from the input, up to the curve, across to the output.
+        let x0 = sample(0), px = sq.midX + CGFloat(x0) * side / 2, py = sq.midY - CGFloat(curve(x0)) * side / 2
+        Codex.dotted(ctx, CGPoint(x: px, y: inTop), CGPoint(x: px, y: py), alpha: 0.5)
+        Codex.dotted(ctx, CGPoint(x: px, y: py), CGPoint(x: outLeft, y: py), alpha: 0.5)
+        ctx.setFillColor(Theme.text.cgColor); ctx.fillEllipse(in: CGRect(x: px - 1.6, y: py - 1.6, width: 3.2, height: 3.2))
         for p in liveTransfer.suffix(40) {
             let c = CGPoint(x: sq.midX + p.x * side / 2, y: sq.midY - p.y * side / 2)
             guard sq.contains(c) else { continue }
@@ -308,8 +400,9 @@ extension FaceplateScreen {
         return [FigureHandle(role: .drive, point: knee, axis: CGVector(dx: -0.707, dy: -0.707), span: side * 0.5)]
     }
 
-    /// The crank and disc: a turned disc whose pin radius is the depth (B, drag the pin), driving a rod whose trace is
-    /// the LFO drawn out to the right; its period is the rate (A, drag the first crest left or right).
+    /// The crank and disc (a Scotch yoke): the disc turns at the rate, its pin drives a slider up and down a guide, and
+    /// the slider draws the LFO out to the right. The pin's radius is the depth (B, drag the ring on the fixed radius);
+    /// the bracket over one period is the rate (A, drag its end: shorter is faster).
     private func crank(_ ctx: CGContext, _ f: CGRect, _ link: FigureLink) -> [FigureHandle] {
         let ink = Theme.text, rate = link.v(.rate, 0.4), depth = link.v(.depth, 0.5)
         let R: CGFloat = min(26, f.height * 0.22)
@@ -319,32 +412,44 @@ extension FaceplateScreen {
         ctx.setFillColor(Theme.panelRaised.cgColor); ctx.fillEllipse(in: disc)
         Atelier.loop(ctx, disc, weight: Atelier.fine, color: ink)
         Atelier.loop(ctx, disc.insetBy(dx: 3, dy: 3), weight: Atelier.hair, color: Theme.ink(0.45))
-        let pinR = R * (0.2 + 0.7 * CGFloat(depth)), a = -CGFloat.pi / 4
+        let turn = -CGFloat(figureAngle)
+        for k in 0..<6 { // spokes turn with the disc
+            let a = turn + CGFloat(k) * .pi / 3
+            Atelier.rule(ctx, CGPoint(x: c.x + cos(a) * 4, y: c.y + sin(a) * 4), CGPoint(x: c.x + cos(a) * (R - 4), y: c.y + sin(a) * (R - 4)), weight: Atelier.hair, color: Theme.ink(0.35))
+        }
+        let pinR = R * (0.2 + 0.7 * CGFloat(depth)), a0 = -CGFloat.pi / 4, a = a0 + turn
         let pin = CGPoint(x: c.x + cos(a) * pinR, y: c.y + sin(a) * pinR)
-        Atelier.rule(ctx, c, pin, weight: Atelier.hair, color: Theme.ink(0.5), dash: [1, 1.5])
+        let setting = CGPoint(x: c.x + cos(a0) * pinR, y: c.y + sin(a0) * pinR)
+        Atelier.rule(ctx, c, CGPoint(x: c.x + cos(a0) * (R + 6), y: c.y + sin(a0) * (R + 6)), weight: Atelier.hair, color: Theme.ink(0.45), dash: [1, 1.5])
         ctx.setFillColor(ink.cgColor); ctx.fillEllipse(in: CGRect(x: c.x - 1.6, y: c.y - 1.6, width: 3.2, height: 3.2))
-        // The trace: amplitude from the pin's radius, cycles across the field from the rate.
+        // The slider on its guide, level with the pin; its trace runs out to the right.
         let x0 = disc.maxX + 14, x1 = f.maxX - 4, amp = pinR
         let cycles = 0.75 + 3.25 * rate
+        Atelier.rule(ctx, CGPoint(x: x0, y: c.y - R - 4), CGPoint(x: x0, y: c.y + R + 4), weight: Atelier.hair, color: Theme.ink(0.5))
         let trace = (0...90).map { i -> CGPoint in
             let t = Double(i) / 90
-            return CGPoint(x: x0 + CGFloat(t) * (x1 - x0), y: c.y - CGFloat(sin(t * cycles * 2 * .pi + Double(a))) * amp)
+            return CGPoint(x: x0 + CGFloat(t) * (x1 - x0), y: c.y + CGFloat(sin(Double(a) + t * cycles * 2 * .pi)) * amp)
         }
         Atelier.rule(ctx, CGPoint(x: x0, y: c.y), CGPoint(x: x1, y: c.y), weight: Atelier.hair, color: Theme.ink(0.4))
         ctx.addPath(Codex.path(trace)); ctx.setStrokeColor(ink.cgColor); ctx.setLineWidth(Atelier.fine); ctx.strokePath()
-        // The connecting rod from the pin to the trace's start, and the slider block on the guide.
-        let start = trace[0]
-        Atelier.rule(ctx, pin, start, weight: Atelier.medium, color: ink)
-        solid(ctx, CGRect(x: start.x - 4, y: start.y - 3, width: 8, height: 6))
-        let crestT = 0.25 / cycles
-        let crest = CGPoint(x: x0 + CGFloat(min(1, crestT)) * (x1 - x0), y: c.y - amp)
-        letterCallout(ctx, link, .rate, at: CGPoint(x: crest.x + 2, y: crest.y - 3), to: CGPoint(x: crest.x + 12, y: f.minY + 6))
-        readout(ctx, link, .rate, at: CGPoint(x: crest.x + 14, y: f.minY + 2))
-        letterCallout(ctx, link, .depth, at: CGPoint(x: pin.x + 3, y: pin.y - 3), to: CGPoint(x: pin.x + 6, y: disc.minY - 6))
+        let slider = CGPoint(x: x0, y: pin.y)
+        Atelier.rule(ctx, pin, slider, weight: Atelier.medium, color: ink)
+        ctx.setFillColor(Theme.panelRaised.cgColor); ctx.fillEllipse(in: CGRect(x: pin.x - 2.4, y: pin.y - 2.4, width: 4.8, height: 4.8))
+        Atelier.loop(ctx, CGRect(x: pin.x - 2.4, y: pin.y - 2.4, width: 4.8, height: 4.8), weight: Atelier.fine, color: ink)
+        solid(ctx, CGRect(x: slider.x - 4, y: slider.y - 3, width: 8, height: 6))
+        // One period, measured over the trace.
+        let periodW = (x1 - x0) / CGFloat(cycles), by = c.y - R - 10
+        let end = CGPoint(x: min(x1, x0 + periodW), y: by)
+        Atelier.rule(ctx, CGPoint(x: x0, y: by), end, weight: Atelier.hair, color: Theme.ink(0.6))
+        for x in [x0, end.x] { Atelier.rule(ctx, CGPoint(x: x, y: by - 3), CGPoint(x: x, y: by + 3), weight: Atelier.hair, color: Theme.ink(0.6)) }
+        Atelier.note(ctx, "T", at: CGPoint(x: (x0 + end.x) / 2, y: by - 12), size: 8.5, color: Theme.textDim, align: .center)
+        letterCallout(ctx, link, .rate, at: CGPoint(x: end.x + 2, y: by - 2), to: CGPoint(x: end.x + 12, y: max(f.minY + 6, by - 10)))
+        readout(ctx, link, .rate, at: CGPoint(x: min(f.maxX - 40, end.x + 24), y: max(f.minY + 2, by - 13)))
+        letterCallout(ctx, link, .depth, at: CGPoint(x: setting.x + 3, y: setting.y - 3), to: CGPoint(x: setting.x + 6, y: disc.minY - 6))
         readout(ctx, link, .depth, at: CGPoint(x: disc.minX, y: disc.maxY + 8))
         marginNotes = []
-        return [FigureHandle(role: .rate, point: crest, axis: CGVector(dx: -1, dy: 0), span: (x1 - x0) * 0.6),
-                FigureHandle(role: .depth, point: pin, axis: CGVector(dx: cos(a), dy: sin(a)), span: R * 0.7)]
+        return [FigureHandle(role: .rate, point: end, axis: CGVector(dx: -1, dy: 0), span: (x1 - x0) * 0.6),
+                FigureHandle(role: .depth, point: setting, axis: CGVector(dx: cos(a0), dy: sin(a0)), span: R * 0.7)]
     }
 
     /// A small solid in the shared oblique (y down): front, top and right faces, the right one hatched.

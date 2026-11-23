@@ -111,7 +111,7 @@ enum FaceplateDisplay {
         case .goniometer: 216
         default: max(s.width, 176)
         }
-        return NSSize(width: w, height: 158 + Codex.captionHeight)
+        return NSSize(width: w, height: 158 + Codex.captionHeight + DevicePanel.extra)
     }
     private static func baseSize(_ kind: Kind, rows: Int) -> NSSize {
         switch kind {
@@ -193,6 +193,16 @@ class FaceplateScreen: NSView {
     var figureHandles: [FigureHandle] = []
     var figureDrag: (role: FigureRole, start: CGPoint, value: Double, handle: FigureHandle)?
     var marginNotes: [String] = []
+    /// The figure's own motion (radians, advanced by `FigureClock`; 0 in stills and under Reduce Motion): the governor
+    /// spins, the pendulum swings, the crank turns, the waves run, the chamber's sound travels.
+    var figureAngle: Double = 0
+    /// The last live value the figure was drawn with (the governor spins faster as it reduces).
+    var figureLive: Double = -90
+    /// The part under the pointer (lit with its key row, and the machine holds still so it can be taken), and the part
+    /// whose key row is under the pointer.
+    var hoverRole: FigureRole? { didSet { if hoverRole != oldValue { needsDisplay = true; onHoverRole?(hoverRole) } } }
+    var highlightRole: FigureRole? { didSet { if highlightRole != oldValue { needsDisplay = true } } }
+    var onHoverRole: ((FigureRole?) -> Void)?
     /// The latest input/output pairs (transfer figures), normalised to the input's peak.
     var liveTransfer: [CGPoint] { [] }
     var atelierFigure: AtelierFigure? { Theme.look.devices == .schematic ? AtelierFigure.of(kind: codexKind, subject: codexSubject) : nil }
@@ -200,6 +210,21 @@ class FaceplateScreen: NSView {
     override func mouseDown(with event: NSEvent) { if !(atelierFigure != nil && figureMouseDown(event)) { super.mouseDown(with: event) } }
     override func mouseDragged(with event: NSEvent) { if figureDrag != nil { figureMouseDragged(event) } else { super.mouseDragged(with: event) } }
     override func mouseUp(with event: NSEvent) { if figureDrag != nil { figureMouseUp() } else { super.mouseUp(with: event) } }
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        guard atelierFigure != nil else { return }
+        addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseMoved, .mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect], owner: self))
+    }
+    override func mouseMoved(with event: NSEvent) {
+        guard atelierFigure != nil, figureDrag == nil else { return super.mouseMoved(with: event) }
+        hoverRole = figureHandle(at: convert(event.locationInWindow, from: nil))?.role
+    }
+    override func mouseExited(with event: NSEvent) { if figureDrag == nil { hoverRole = nil } }
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window != nil && atelierFigure != nil { FigureClock.shared.add(self) } else { FigureClock.shared.remove(self) }
+    }
     /// Displays that render their own unlit state (the moving-coil meter keeps its face, just without lamps).
     var drawsOwnOffState: Bool { false }
     /// A light face behind the glass (the VU meter's paper): dirt shows dark on it rather than pale.
@@ -1480,6 +1505,7 @@ extension FaceplateScreen {
             case let h as HistoryScreen: Double(h.latest.output)
             default: -90
             }
+            figureLive = live
             drawFigure(fig, ctx, field, live: live)
             ctx.restoreGState()
             return true
@@ -1638,7 +1664,8 @@ extension HistoryScreen {
     /// Reverbs: a vaulted hall in one-point perspective (an arcade of columns down each side, a coffered floor), with
     /// sound rays from the source reflecting to the listener; the rays darken with the output level.
     @discardableResult
-    func chamber(_ ctx: CGContext, _ f: CGRect, letters: (source: String?, vault: String?, listener: String?) = ("A", "B", "C")) -> (vault: CGPoint, listener: CGPoint) {
+    func chamber(_ ctx: CGContext, _ f: CGRect, letters: (source: String?, vault: String?, listener: String?) = ("A", "B", "C"),
+                 phase: Double = 0) -> (vault: CGPoint, listener: CGPoint) {
         let lvl = CGFloat(max(0, min(1, (latest.output + 60) / 60)))
         let ink = Theme.ink(0.7), faint = Theme.ink(0.3)
         let outer = CGRect(x: f.minX + 6, y: f.minY + 10, width: f.width - 12, height: f.height - 14)
@@ -1705,10 +1732,26 @@ extension HistoryScreen {
         let hits = [CGPoint(x: back.minX + 4, y: back.midY), CGPoint(x: back.maxX - 3, y: back.minY + 6), archPoint(backArch, rise: backRise, 1.5 * .pi),
                     CGPoint(x: front.maxX - front.width * 0.12, y: front.minY + front.height * 0.45)]
         let ray = Atelier.vermilion.withAlphaComponent(0.25 + 0.65 * lvl)
+        // The sound travels: the rays' dashes run from the source to the listener (phase from the figure's motion).
+        let run = CGFloat(phase / (2 * .pi) * 8).truncatingRemainder(dividingBy: 4)
+        func travelling(_ a: CGPoint, _ b: CGPoint) {
+            ctx.saveGState(); ctx.setStrokeColor(ray.cgColor); ctx.setLineWidth(0.6); ctx.setLineDash(phase: -run, lengths: [2.5, 1.5])
+            ctx.move(to: a); ctx.addLine(to: b); ctx.strokePath(); ctx.restoreGState()
+        }
         for h in hits {
-            Atelier.rule(ctx, src, h, weight: 0.6, color: ray, dash: [2.5, 1.5])
-            Atelier.rule(ctx, h, lis, weight: 0.6, color: ray, dash: [2.5, 1.5])
+            travelling(src, h); travelling(h, lis)
             Atelier.arrowhead(ctx, at: CGPoint(x: (h.x + lis.x) / 2, y: (h.y + lis.y) / 2), angle: atan2(lis.y - h.y, lis.x - h.x), color: ray, size: 4)
+        }
+        // And spreads from the source in rings on the floor (flattened by the perspective), fading as they go.
+        if phase != 0 {
+            ctx.saveGState(); ctx.clip(to: front)
+            for k in 0..<2 {
+                let t = CGFloat((phase / (2 * .pi) + Double(k) * 0.5).truncatingRemainder(dividingBy: 1))
+                let r = 6 + t * front.width * 0.45
+                ctx.setStrokeColor(Atelier.vermilion.withAlphaComponent((1 - t) * (0.2 + 0.5 * lvl)).cgColor); ctx.setLineWidth(0.6)
+                ctx.strokeEllipse(in: CGRect(x: src.x - r, y: src.y - r * 0.32, width: 2 * r, height: r * 0.64))
+            }
+            ctx.restoreGState()
         }
         ctx.setFillColor(Theme.text.cgColor)
         ctx.fillEllipse(in: CGRect(x: src.x - 2, y: src.y - 2, width: 4, height: 4))

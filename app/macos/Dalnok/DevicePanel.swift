@@ -9,7 +9,26 @@ import DalnokEngine
 
 @MainActor
 final class DevicePanel: NSView {
-    static var height: CGFloat { Theme.look.pedalboard ? 268 : 226 } // Warm Analog: upright stomp boxes; Graphite: two rows of faceplate controls
+    /// The panel's least height (Warm Analog: upright stomp boxes; Graphite: two rows of faceplate controls), and the
+    /// height the owner dragged it to above that (its top edge resizes it in every theme; remembered).
+    static var baseHeight: CGFloat { Theme.look.pedalboard ? 268 : 226 }
+    static let extraRange: ClosedRange<CGFloat> = 0...320
+    static var extra: CGFloat {
+        get { min(max(CGFloat(UserDefaults.standard.double(forKey: "devicePanelExtra")), extraRange.lowerBound), extraRange.upperBound) }
+        set { UserDefaults.standard.set(Double(min(max(newValue, extraRange.lowerBound), extraRange.upperBound)), forKey: "devicePanelExtra") }
+    }
+    static var height: CGFloat { baseHeight + extra }
+    /// A unit's height: 8 pt above it, and a 14 pt gutter below so the horizontal scroll bar never sits on a plate (C6).
+    static var unitHeight: CGFloat { height - 22 }
+    /// The top edge: drag to resize (reports the wanted height while dragging, and the end of the drag).
+    let resizeEdge = HeightResizeEdge()
+    private var addTileHeight: NSLayoutConstraint?
+    /// Applies `DevicePanel.height` to the units on screen (while dragging; `rebuildAll` re-lays their keys after).
+    func applyHeight() {
+        devices.forEach { $0.heightConstraint?.constant = DevicePanel.unitHeight }
+        addTileHeight?.constant = DevicePanel.unitHeight
+        needsDisplay = true
+    }
     let session: Session
     var track: DalnokTrackId? { didSet { if oldValue != track { rebuild() } } }
     private(set) var devices: [DeviceView] = []
@@ -32,7 +51,9 @@ final class DevicePanel: NSView {
         b.setAccessibilityLabel("Add plug-in")
         b.translatesAutoresizingMaskIntoConstraints = false
         b.widthAnchor.constraint(equalToConstant: 120).isActive = true
-        b.heightAnchor.constraint(equalToConstant: DevicePanel.height - 20).isActive = true
+        let h = b.heightAnchor.constraint(equalToConstant: DevicePanel.unitHeight)
+        h.isActive = true
+        addTileHeight = h
         return b
     }()
     var onOpen: ((DalnokTrackId, Int32) -> Void)?
@@ -55,7 +76,7 @@ final class DevicePanel: NSView {
         if dropLine.superlayer == nil { doc.wantsLayer = true; doc.layer?.addSublayer(dropLine) }
         dropLine.backgroundColor = Theme.selection.cgColor
         dropLine.zPosition = 50
-        dropLine.frame = CGRect(x: x - 1.5, y: 8, width: 3, height: DevicePanel.height - 16)
+        dropLine.frame = CGRect(x: x - 1.5, y: 8, width: 3, height: bounds.height - 16)
         dropLine.isHidden = false
     }
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation { draggingUpdated(sender) }
@@ -100,7 +121,7 @@ final class DevicePanel: NSView {
         stack.orientation = .horizontal
         stack.alignment = .top
         stack.spacing = Theme.look.pedalboard ? 40 : 10 // analog: room for the patch cables between units
-        stack.edgeInsets = NSEdgeInsets(top: 10, left: Theme.look.pedalboard ? 64 : 12, bottom: 10, right: Theme.look.pedalboard ? 64 : 12)
+        stack.edgeInsets = NSEdgeInsets(top: 8, left: Theme.look.pedalboard ? 64 : 12, bottom: 14, right: Theme.look.pedalboard ? 64 : 12)
         let doc = FlippedView()
         stack.translatesAutoresizingMaskIntoConstraints = false
         doc.addSubview(stack)
@@ -152,6 +173,11 @@ final class DevicePanel: NSView {
         ])
         setAccessibilityLabel("Device panel")
         installEdgeFade()
+        addSubview(resizeEdge)
+        NSLayoutConstraint.activate([
+            resizeEdge.leadingAnchor.constraint(equalTo: leadingAnchor), resizeEdge.trailingAnchor.constraint(equalTo: trailingAnchor),
+            resizeEdge.topAnchor.constraint(equalTo: topAnchor), resizeEdge.heightAnchor.constraint(equalToConstant: 5),
+        ])
     }
     required init?(coder: NSCoder) { fatalError() }
 
@@ -463,6 +489,9 @@ final class PressRecognizer: NSGestureRecognizer {
 
 @MainActor
 final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate, NSDraggingSource {
+    var heightConstraint: NSLayoutConstraint?
+    /// Rows of knobs (Graphite, Prism): two past six controls, three when the panel was dragged tall enough for them.
+    static func knobRows(_ count: Int) -> Int { count <= 6 ? 1 : count > 12 && DevicePanel.extra >= 76 ? 3 : 2 }
     func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation { .move }
     let session: Session
     let trackId: DalnokTrackId
@@ -651,7 +680,8 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         body.translatesAutoresizingMaskIntoConstraints = false
         bodyStack = body
         attachBody()
-        heightAnchor.constraint(equalToConstant: DevicePanel.height - 20).isActive = true
+        heightConstraint = heightAnchor.constraint(equalToConstant: DevicePanel.unitHeight)
+        heightConstraint?.isActive = true
         if let pedal {
             header.widthAnchor.constraint(equalTo: pedal.widthAnchor).isActive = true
             minWidth = widthAnchor.constraint(greaterThanOrEqualToConstant: 150)
@@ -881,7 +911,7 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         if !loaded { return note(unavailableMessage) }
         if ids.isEmpty { return note("No automatable parameters. Use Open for the plug-in's own window.") }
         let params = ids.compactMap { id in current(id).map { (id: id, p: $0) } }
-        let rows = params.count > 6 ? 2 : 1
+        let rows = Self.knobRows(params.count)
         if let display {
             NSLayoutConstraint.deactivate(displaySize)
             let size = FaceplateDisplay.size(displayKind, rows: rows)
@@ -915,6 +945,7 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         }
         views.last?.groove = false
         views.forEach { sectionsRow.addArrangedSubview($0) }
+        hookRowHover()
         refreshBypass()
     }
 
@@ -1114,7 +1145,7 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
             screen.codexKind = kind
             screen.codexSubject = Codex.subject(kind: kind, name: title.stringValue, parameters: allParameters.map { fixedString($0.title) })
             screen.figureNumber = figureNumber
-            if let fig = screen.atelierFigure { screen.figureLink = figureLink(fig) }
+            if let fig = screen.atelierFigure { screen.figureLink = figureLink(fig); linkHover(screen) }
         }
         if let screen = d as? ResponseScreen {
             screen.tint = color.blended(withFraction: 0.35, of: .white) ?? color
@@ -1129,6 +1160,27 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         return d
     }
 
+    /// Atelier: a part of the figure and its key row light together, whichever the pointer is on.
+    private func linkHover(_ screen: FaceplateScreen) {
+        screen.onHoverRole = { [weak self, weak screen] role in
+            guard let self else { return }
+            let id = role.flatMap { screen?.figureLink?.ids[$0] }
+            for k in self.knobs { (k.knob as? FaceplateControl)?.linked = id != nil && k.id == id }
+        }
+        hookRowHover()
+    }
+    /// The key rows tell the figure which part to light (rebuilt with the rows).
+    private func hookRowHover() {
+        for k in knobs {
+            guard let c = k.knob as? FaceplateControl else { continue }
+            let id = k.id
+            c.onHover = { [weak self] inside in
+                guard let screen = self?.display as? FaceplateScreen, let ids = screen.figureLink?.ids else { return }
+                screen.highlightRole = inside ? ids.first { $0.value == id }?.key : nil
+            }
+        }
+    }
+
     /// Atelier: ties a figure's parts to this unit's parameters (by role, from their names) and its key's letters.
     private func figureLink(_ fig: AtelierFigure) -> FigureLink {
         var link = FigureLink()
@@ -1136,6 +1188,7 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         link.value = { [weak self] id in self?.current(id)?.value }
         link.text = { [weak self] id in self?.current(id).map { self?.display($0) ?? "" } }
         link.letter = { [weak self] id in (self?.knobs.first { $0.id == id }?.knob as? FaceplateControl)?.letter }
+        link.name = { [weak self] id in self?.current(id).map { fixedString($0.title) } }
         link.set = { [weak self] id, v in
             guard let self else { return }
             self.set(id, v)
@@ -1158,8 +1211,7 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         let d = makeDisplay(kind ?? automaticKind())
         display = d
         row.insertArrangedSubview(d, at: i)
-        let rows = knobs.count > 6 ? 2 : 1
-        let size = FaceplateDisplay.size(displayKind, rows: rows)
+        let size = FaceplateDisplay.size(displayKind, rows: Self.knobRows(knobs.count))
         displaySize = [d.widthAnchor.constraint(equalToConstant: size.width), d.heightAnchor.constraint(equalToConstant: size.height)]
         NSLayoutConstraint.activate(displaySize)
     }
@@ -1895,4 +1947,28 @@ final class EdgeFadeView: NSView {
             NSGradient(starting: base.withAlphaComponent(0), ending: base.withAlphaComponent(0.92))?.draw(in: bounds, angle: 0)
         }
     }
+}
+
+/// A horizontal edge that resizes the view under it vertically (the device panel's top edge).
+@MainActor
+final class HeightResizeEdge: NSView {
+    var onDrag: ((CGFloat) -> Void)?
+    var onEnd: (() -> Void)?
+    var currentHeight: () -> CGFloat = { 0 }
+    private var start: (y: CGFloat, height: CGFloat)?
+    init() {
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        toolTip = "Drag to resize the device panel"
+        setAccessibilityElement(false)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+    override func resetCursorRects() { addCursorRect(bounds, cursor: .resizeUpDown) }
+    override func mouseDown(with event: NSEvent) { start = (event.locationInWindow.y, currentHeight()) }
+    override func mouseDragged(with event: NSEvent) {
+        guard let start else { return }
+        onDrag?(start.height + (event.locationInWindow.y - start.y)) // window y grows upward: dragging up makes it taller
+    }
+    override func mouseUp(with event: NSEvent) { if start != nil { start = nil; onEnd?() } }
+    override func hitTest(_ point: NSPoint) -> NSView? { isHidden ? nil : super.hitTest(point) }
 }

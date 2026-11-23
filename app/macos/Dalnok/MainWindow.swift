@@ -374,6 +374,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         inspector.isHidden = !Self.showInspector
         if Self.showLibrary { library.load() }
         wireSidePanels()
+        wireDevicePanelResize()
         Atelier.unifyFonts(in: inspector)
         mixerHeight = mixer.heightAnchor.constraint(equalToConstant: Self.showMixer ? MixerPanel.height : 0)
         mixerHeight.isActive = true
@@ -1700,6 +1701,20 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             if f.maxX > room.maxX { f.origin.x = max(room.minX, room.maxX - f.width) }
             window.setFrame(f, display: true, animate: !Motion.reduced && adding > 0)
         }
+    }
+    /// The device panel's top edge: drag to make it taller (more rows of controls, a larger figure); the arrangement
+    /// keeps at least 140 pt. The units re-lay their keys when the drag ends.
+    private func wireDevicePanelResize() {
+        let edge = devicePanel.resizeEdge
+        edge.currentHeight = { [weak self] in self?.devicePanelHeight.constant ?? DevicePanel.height }
+        edge.onDrag = { [weak self] h in
+            guard let self, Self.showDevicePanel else { return }
+            let spare = max(0, self.timeline.frame.height - 140) + (self.devicePanelHeight.constant - DevicePanel.baseHeight)
+            DevicePanel.extra = min(h - DevicePanel.baseHeight, spare)
+            self.devicePanelHeight.constant = DevicePanel.height
+            self.devicePanel.applyHeight()
+        }
+        edge.onEnd = { [weak self] in self?.devicePanel.rebuildAll() }
     }
     private func wireSidePanels() {
         library.onInsert = { [weak self] path in
