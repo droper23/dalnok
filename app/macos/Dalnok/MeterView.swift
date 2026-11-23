@@ -43,7 +43,19 @@ final class MeterView: NSView {
     }
 
     private func color(_ db: Float) -> NSColor {
-        db >= 0 ? Theme.hex(0xE0574F) : db >= -6 ? Theme.hex(0xE3A857) : db >= -18 ? Theme.hex(0xB9C46A) : Theme.hex(0x5FB39B)
+        Self.ramp(db)
+    }
+    /// Each look's meter colours, quiet to loud (the audit: one ramp per look, its own): Graphite phosphor teal to
+    /// amber to coral; Warm Analog LED green, amber, red; Prism along the spectrum, cyan through violet to pink;
+    /// Atelier its inks.
+    static func ramp(_ db: Float) -> NSColor {
+        let (low, mid, hot, over): (UInt32, UInt32, UInt32, UInt32) = switch Theme.activeStyle {
+        case .graphite: (0x4FD1B5, 0x8FD9A0, 0xF2B35A, 0xF0645A)
+        case .warmAnalog: (0x7BD86B, 0xC8D45A, 0xFFB347, 0xF0523C)
+        case .prism: Theme.isLight ? (0x2BA8D9, 0x6F6CE0, 0xD9489C, 0xE0384F) : (0x6FE3FF, 0xA99BFF, 0xFF7AC6, 0xFF5470)
+        case .atelier: (0x5FB39B, 0xB9C46A, 0xE3A857, 0xE0574F)
+        }
+        return Theme.hex(db >= 0 ? over : db >= -6 ? hot : db >= -18 ? mid : low)
     }
 
     /// An arc indicator as on an engraved instrument: a graduated arc (−60 to +6 dB, the louder channel), a lozenge

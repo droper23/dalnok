@@ -456,6 +456,15 @@ extension Theme {
     /// The colour stock controls take instead of the system's blue (the 2026-11-23 audit: blue check boxes, sliders,
     /// popups, default buttons and text selection in every look).
     static var controlTint: NSColor { activeStyle == .atelier ? cycle : accent }
+    /// A push button's face in the look (instead of the system's grey).
+    static var buttonFace: NSColor {
+        switch activeStyle {
+        case .atelier: isLight ? hex(0xE9DFC8) : hex(0x3A3022)
+        case .warmAnalog: hex(0x4A3A2C)
+        case .prism: isLight ? NSColor.white.withAlphaComponent(0.85) : hex(0x2A3550)
+        default: hex(0x34373F)
+        }
+    }
 
     /// Tints the stock controls under `view`: check boxes and radios, slider fills, segmented selections, the default
     /// button. Cheap enough to run each time a window becomes key.
@@ -466,9 +475,24 @@ extension Theme {
         // Only when different, so a pass over an already tinted window redraws nothing.
         case let s as NSSlider: if s.trackFillColor != tint { s.trackFillColor = tint }
         case let s as NSSegmentedControl: if s.selectedSegmentBezelColor != tint { s.selectedSegmentBezelColor = tint }
+        case let p as NSPopUpButton where !p.pullsDown && p.isBordered && p.identifier?.rawValue != "stock":
+            // The system's blue chevron pill becomes a field in the look: no bezel, a framed well drawn by a layer.
+            p.isBordered = false
+            p.wantsLayer = true
+            p.layer?.cornerRadius = activeStyle == .atelier ? 0 : 5
+            p.layer?.borderWidth = 1
+            p.layer?.borderColor = (activeStyle == .atelier ? ink(0.55) : ink(0.16)).cgColor
+            p.layer?.backgroundColor = (activeStyle == .atelier ? NSColor.clear : ink(0.05)).cgColor
+            (p.cell as? NSPopUpButtonCell)?.arrowPosition = .arrowAtBottom
         case let b as NSButton:
             if isCheckOrRadio(b) { /* drawn by ThemedCheckCell where made with Theme.checkbox */ }
-            else if b.keyEquivalent == "\r" && b.isBordered && b.bezelColor != tint { b.bezelColor = tint }
+            else if b.isBordered, b.image == nil, !b.title.isEmpty,
+                    b.identifier?.rawValue != "stock" {
+                // The grey system bezel takes the look's surface; the default button its colour (padding and press
+                // states stay the system's).
+                let want = b.keyEquivalent == "\r" ? tint : buttonFace
+                if b.bezelColor != want { b.bezelColor = want }
+            }
         default: break
         }
         for s in view.subviews { tintControls(in: s) }
@@ -485,7 +509,7 @@ extension Theme {
             NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { n in
                 let window = n.object as? NSWindow
                 MainActor.assumeIsolated {
-                    guard let w = window else { return }
+                    guard let w = window, !(w is NSSavePanel), !w.className.contains("Alert") else { return }
                     tintControls(in: w.contentView)
                     if let fe = w.fieldEditor(true, for: nil) as? NSTextView {
                         fe.selectedTextAttributes = [.backgroundColor: controlTint.withAlphaComponent(0.38), .foregroundColor: text]

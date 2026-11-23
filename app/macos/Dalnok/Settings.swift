@@ -92,6 +92,9 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
 
     private var paneViews: [Pane: NSView] = [:]
     private var sidebarButtons: [NSButton] = []
+    /// The chosen page's highlight: one layer that glides from page to page (the motion review: selection snapped).
+    private let selectionMark = CALayer()
+    private weak var sidebarView: NSView?
     private let paneHost = NSView()
     private(set) var pane: Pane = .general
     private var main: MainWindowController? { (NSApp.delegate as? AppDelegate)?.main }
@@ -119,6 +122,7 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
         let atelier = Theme.look.mixer == .instrument
         // Sidebar.
         let sidebar = NSStackView()
+        sidebarView = sidebar
         sidebar.orientation = .vertical
         sidebar.alignment = .leading
         sidebar.spacing = 2
@@ -198,17 +202,33 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
         paneHost.subviews.forEach { $0.removeFromSuperview() }
         guard let v = paneViews[p] else { return }
         Theme.tintControls(in: v)
+        if window?.isVisible == true { Motion.pageIn(v) }
         v.translatesAutoresizingMaskIntoConstraints = false
         paneHost.addSubview(v)
         NSLayoutConstraint.activate([
             v.leadingAnchor.constraint(equalTo: paneHost.leadingAnchor), v.trailingAnchor.constraint(equalTo: paneHost.trailingAnchor),
             v.topAnchor.constraint(equalTo: paneHost.topAnchor), v.bottomAnchor.constraint(equalTo: paneHost.bottomAnchor),
         ])
+        let atelier = Theme.look.mixer == .instrument
         for b in sidebarButtons {
             let on = b.tag == p.rawValue
-            b.layer?.backgroundColor = on ? (Theme.look.mixer == .instrument ? Theme.laneHighlight : Theme.selection.withAlphaComponent(0.35)).cgColor : nil
-            b.layer?.sublayers?.first { $0.name == "rule" }?.isHidden = !on
+            b.layer?.backgroundColor = nil
+            b.layer?.sublayers?.first { $0.name == "rule" }?.isHidden = !on || !atelier
             b.contentTintColor = on ? Theme.text : Theme.textDim
+        }
+        if let side = sidebarView, let chosen = sidebarButtons.first(where: { $0.tag == p.rawValue }) {
+            side.wantsLayer = true
+            side.layoutSubtreeIfNeeded()
+            if selectionMark.superlayer == nil {
+                selectionMark.backgroundColor = (atelier ? Theme.laneHighlight : Theme.selection.withAlphaComponent(0.35)).cgColor
+                selectionMark.cornerRadius = atelier ? 0 : 6
+                side.layer?.insertSublayer(selectionMark, at: 0)
+                CATransaction.begin(); CATransaction.setDisableActions(true); selectionMark.frame = chosen.frame; CATransaction.commit()
+            } else {
+                // Graphite quick and exact, Warm Analog a touch slower, Prism and Atelier softer.
+                let d = switch Theme.look.motion { case .glass: 0.3; case .drafting: 0.28; case .lamp: 0.22; default: 0.16 }
+                Motion.layers(d, timing: .easeInEaseOut) { selectionMark.frame = chosen.frame }
+            }
         }
         window?.title = p == .general ? "Settings" : "Settings: \(p.title)"
     }

@@ -601,9 +601,15 @@ final class SelfTest {
             isolation.state = .on; _ = NSApp.sendAction(action, to: isolation.target, from: isolation)
             check(s.engine.pluginHost == Engine.pluginHostPath, "Safety back on")
         } else { check(false, "the Safety setting is available (dalnok-plughost next to the app)") }
-        for pane in SettingsController.Pane.allCases { w.settings.show(pane) }
-        check(w.settings.pane == .shortcuts && w.shortcutsEditor.table.window === w.settings.window,
-              "Settings has every pane, keyboard shortcuts included")
+        var shown: [SettingsController.Pane] = []
+        for pane in SettingsController.Pane.allCases { w.settings.show(pane); if w.settings.pane == pane { shown.append(pane) } }
+        w.settings.show(.shortcuts)
+        check(shown.count == 9 && w.settings.pane == .shortcuts && w.shortcutsEditor.table.window === w.settings.window,
+              "Settings has nine pages, keyboard shortcuts included (\(shown.count) shown)")
+        w.settings.search.stringValue = "monitoring"
+        w.settings.searchChanged(nil)
+        check(w.settings.matches == [.recording] && w.settings.pane == .recording, "searching Settings opens the page with the match (\(w.settings.matches))")
+        w.settings.search.stringValue = ""; w.settings.searchChanged(nil)
         w.settings.show(.general)
         if let view = w.settings.window?.contentView, let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
             view.cacheDisplay(in: view.bounds, to: bitmap)

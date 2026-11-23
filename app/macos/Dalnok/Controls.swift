@@ -531,7 +531,7 @@ class RotaryKnob: NSControl {
     private func updateReveal() {
         let meterVisible = showsMeter && meterDb > -60 && !hovering && !tracking
         let interacting = hovering || tracking || (window?.firstResponder === self && !meterVisible)
-        let color = meterVisible ? (meterDb >= 0 ? Theme.hex(0xE0574F) : meterDb >= -6 ? Theme.hex(0xE3A857) : Theme.hex(0x5FB39B)) : tint
+        let color = meterVisible ? MeterView.ramp(Float(meterDb)) : tint
         haloValue.strokeColor = color.cgColor
         haloValue.shadowColor = color.cgColor
         layoutLayers()

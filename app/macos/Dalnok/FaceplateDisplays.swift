@@ -309,6 +309,14 @@ class FaceplateScreen: NSView {
             ctx.draw(image, in: bounds)
             ctx.setBlendMode(.plusLighter); ctx.setAlpha(alpha * 0.6); ctx.draw(image, in: bounds)
         }
+        if self is ResponseScreen || self is LedAnalyzer {
+            // Dispersion: the response and spectrum take the spectrum's colour by frequency, lows red to highs violet.
+            ctx.setBlendMode(.color); ctx.setAlpha(alpha * (Theme.isLight ? 0.75 : 0.9))
+            let hues = (0...6).map { NSColor(calibratedHue: 0.78 * CGFloat($0) / 6, saturation: Theme.isLight ? 0.8 : 0.65, brightness: Theme.isLight ? 0.7 : 1, alpha: 1).cgColor } as CFArray
+            if let g = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: hues, locations: nil) {
+                ctx.drawLinearGradient(g, start: CGPoint(x: r.minX + 6, y: 0), end: CGPoint(x: r.maxX - 6, y: 0), options: [.drawsBeforeStartLocation, .drawsAfterEndLocation])
+            }
+        }
         ctx.restoreGState()
     }
 

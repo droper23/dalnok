@@ -13,7 +13,7 @@
 import AppKit
 
 final class PedalScreen: NSView, FigureAnimating {
-    enum Mode: Equatable { case ladder, curve, scope, tape, spring, tube, lamp }
+    enum Mode: Equatable { case ladder, needle, curve, scope, tape, spring, tube, lamp }
     var mode: Mode = .scope { didSet { if mode != oldValue { needsDisplay = true } } }
     var glow: NSColor = .systemOrange { didSet { needsDisplay = true } }
     /// Dark when the pedal is bypassed or not loaded.
@@ -117,17 +117,36 @@ final class PedalScreen: NSView, FigureAnimating {
                 ctx.setFillColor((on ? ink : glow.withAlphaComponent(0.16)).cgColor)
                 ctx.fill(CGRect(x: plot.minX + CGFloat(i) * (w + gap), y: plot.minY + 1, width: w, height: plot.height - 2))
             }
-        case .curve:
+        case .needle: // a small moving-coil meter reading gain reduction: 0 at the right, the needle falls left
+            let pivot = CGPoint(x: r.midX - r.width * 0.12, y: r.maxY + r.height * 0.9), rad = r.height * 1.55
+            func ang(_ db: Double) -> CGFloat { (-.pi / 2) + CGFloat(0.55 - 1.1 * min(1, db / 20)) }
+            let arc = CGMutablePath(); arc.addArc(center: pivot, radius: rad, startAngle: ang(20), endAngle: ang(0), clockwise: false)
+            ctx.addPath(arc); ctx.setStrokeColor(glow.withAlphaComponent(0.5).cgColor); ctx.setLineWidth(0.8); ctx.strokePath()
+            for db in [0.0, 2, 4, 6, 10, 20] {
+                let a = ang(db), o = CGPoint(x: pivot.x + cos(a) * rad, y: pivot.y + sin(a) * rad), i = CGPoint(x: pivot.x + cos(a) * (rad - 3.5), y: pivot.y + sin(a) * (rad - 3.5))
+                ctx.move(to: i); ctx.addLine(to: o); ctx.setStrokeColor(ink.withAlphaComponent(0.8).cgColor); ctx.setLineWidth(0.8); ctx.strokePath()
+            }
+            let a = ang(reduction), tip = CGPoint(x: pivot.x + cos(a) * (rad + 1), y: pivot.y + sin(a) * (rad + 1))
+            ctx.move(to: CGPoint(x: pivot.x + cos(a) * (rad - 14), y: pivot.y + sin(a) * (rad - 14))); ctx.addLine(to: tip)
+            ctx.setStrokeColor(ink.cgColor); ctx.setLineWidth(1.3); ctx.strokePath()
+        case .curve: // the response, with a glow under it like a phosphor trace
             ctx.setStrokeColor(glow.withAlphaComponent(0.25).cgColor); ctx.setLineWidth(0.5)
             ctx.move(to: CGPoint(x: plot.minX, y: plot.midY)); ctx.addLine(to: CGPoint(x: plot.maxX, y: plot.midY)); ctx.strokePath()
+            for k in 1...3 { // decade marks
+                let x = plot.minX + plot.width * CGFloat(k) / 3
+                ctx.move(to: CGPoint(x: x, y: plot.minY)); ctx.addLine(to: CGPoint(x: x, y: plot.maxY)); ctx.strokePath()
+            }
             guard curve.count > 1 else { break }
-            ctx.setStrokeColor(ink.cgColor); ctx.setLineWidth(1.2)
+            let line = CGMutablePath()
             for (i, db) in curve.enumerated() {
                 let p = CGPoint(x: plot.minX + plot.width * CGFloat(i) / CGFloat(curve.count - 1),
                                 y: plot.midY - plot.height / 2 * CGFloat(max(-18, min(18, db)) / 18))
-                if i == 0 { ctx.move(to: p) } else { ctx.addLine(to: p) }
+                if i == 0 { line.move(to: p) } else { line.addLine(to: p) }
             }
-            ctx.strokePath()
+            let fill = line.mutableCopy()!
+            fill.addLine(to: CGPoint(x: plot.maxX, y: plot.midY)); fill.addLine(to: CGPoint(x: plot.minX, y: plot.midY)); fill.closeSubpath()
+            ctx.addPath(fill); ctx.setFillColor(glow.withAlphaComponent(0.22).cgColor); ctx.fillPath()
+            ctx.addPath(line); ctx.setStrokeColor(ink.cgColor); ctx.setLineWidth(1.2); ctx.strokePath()
         case .tape, .spring, .tube, .lamp:
             drawFigure(ctx, plot, ink: ink)
         case .scope:

@@ -46,6 +46,32 @@ enum Motion {
     }
     static func stopPulse(_ layer: CALayer?) { layer?.removeAnimation(forKey: "pulse") }
 
+    /// A page arriving (a Settings page, a first-launch step, a panel's new contents), in the look's own character:
+    /// Graphite quick and exact (a short slide), Warm Analog like a lamp warming up (a slower fade from dim), Prism as
+    /// light through glass (a fade with a slight zoom), Atelier as a sheet laid down (a fade with a small drift up).
+    static func pageIn(_ view: NSView?) {
+        guard let view, !reduced else { return }
+        view.wantsLayer = true
+        guard let layer = view.layer else { return }
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.fromValue = Theme.look.motion == .lamp ? 0.15 : 0
+        fade.toValue = 1
+        let move = CABasicAnimation(keyPath: "transform")
+        var duration = 0.22
+        switch Theme.look.motion {
+        case .glass: move.fromValue = CATransform3DMakeScale(0.985, 0.985, 1); duration = 0.3
+        case .lamp: move.fromValue = CATransform3DIdentity; duration = 0.34
+        case .drafting: move.fromValue = CATransform3DMakeTranslation(0, view.isFlipped ? 6 : -6, 0); duration = 0.28
+        default: move.fromValue = CATransform3DMakeTranslation(8, 0, 0); duration = 0.18
+        }
+        move.toValue = CATransform3DIdentity
+        let g = CAAnimationGroup()
+        g.animations = [fade, move]
+        g.duration = duration
+        g.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.8, 0.2, 1)
+        layer.add(g, forKey: "pageIn")
+    }
+
     /// Warm lamp filaments catch quickly and cool gradually. Start at the visible brightness
     /// so rapid state changes continue smoothly instead of restarting from an endpoint.
     static func filament(_ layer: CALayer, from brightness: Float, lit: Bool) {

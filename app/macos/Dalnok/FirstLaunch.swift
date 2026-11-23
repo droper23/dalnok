@@ -61,6 +61,7 @@ final class ShortcutChooserController: NSObject, NSWindowDelegate {
             content.topAnchor.constraint(equalTo: bg.topAnchor), content.bottomAnchor.constraint(lessThanOrEqualTo: bg.bottomAnchor),
         ])
         window.contentView = bg
+        if window.isVisible { Motion.pageIn(content) }
         window.setContentSize(step == .look ? NSSize(width: 990, height: 470) : NSSize(width: 660, height: 420))
         if Theme.activeStyle == .atelier { Atelier.unifyFonts(in: bg) }
     }

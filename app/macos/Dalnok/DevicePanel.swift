@@ -1036,7 +1036,7 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
             screen.reduction += ((max(-48, db) + 48) / 2 - screen.reduction) * 0.35 // 0…24 on the ladder's scale
             screen.reading = peak > 1e-5 ? String(format: "%.0f dBFS", db) : "NO SIGNAL"
         case .gainReduction:
-            screen.mode = .ladder
+            screen.mode = .needle
             var inBuf = [Float](repeating: 0, count: 1_024), outBuf = inBuf
             let n = Int(dalnok_plugin_tap(h, slot, &inBuf, &outBuf, 1_024))
             var ri: Float = 0, ro: Float = 0

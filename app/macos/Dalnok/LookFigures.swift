@@ -243,7 +243,7 @@ struct LookPen {
         text("GR", CGPoint(x: bar.midX, y: bar.maxY + 1), size: 7, color: faint, align: .center)
         let knee = pt(tIn), top = pt(1)
         tag(.threshold, at: CGPoint(x: knee.x + 10, y: knee.y + 8))
-        tag(.ratio, at: CGPoint(x: top.x - 14, y: top.y - 16), align: .right)
+        tag(.ratio, at: CGPoint(x: top.x - 20, y: top.y - 6), align: .right)
         note(abs(reductionDb) < 0.05 ? "GR 0.0 dB" : String(format: "GR −%.1f dB", abs(reductionDb)), f)
         return [FigureHandle(role: .threshold, point: knee, axis: CGVector(dx: 1, dy: -1), span: plot.width * 0.8),
                 FigureHandle(role: .ratio, point: top, axis: CGVector(dx: 0, dy: 1), span: plot.height * 0.6)]
@@ -281,7 +281,7 @@ struct LookPen {
             dot(CGPoint(x: px, y: plot.maxY - rnd() * e * (plot.height - 6)), r: 0.9, alpha: 0.35 + 0.6 * e)
         }
         let sizeP = CGPoint(x: x0, y: plot.maxY - 8), decayP = CGPoint(x: min(plot.maxX - 4, x0 + tail * 0.55), y: plot.maxY - env(x0 + tail * 0.55) * (plot.height - 4))
-        tag(.size, at: CGPoint(x: sizeP.x + 8, y: plot.minY + 4))
+        tag(.size, at: CGPoint(x: sizeP.x + 16, y: plot.maxY - 13))
         tag(.decay, at: CGPoint(x: decayP.x + 8, y: decayP.y - 16))
         if energyDb > -80 { note(String(format: "%.0f dB", energyDb), f) }
         return [FigureHandle(role: .size, point: sizeP, axis: CGVector(dx: 1, dy: 0), span: plot.width * 0.22),
@@ -310,7 +310,7 @@ struct LookPen {
         if second == .zero { second = CGPoint(x: plot.minX + 6 + gap, y: plot.maxY - (plot.height - 6) * g) }
         let first = CGPoint(x: plot.minX + 6, y: plot.maxY - (plot.height - 6))
         rule(CGPoint(x: first.x, y: plot.maxY + 3), CGPoint(x: second.x, y: plot.maxY + 3), alpha: 2)
-        tag(.time, at: CGPoint(x: (first.x + second.x) / 2, y: plot.maxY - 14), align: .center)
+        tag(.time, at: CGPoint(x: second.x + 16, y: plot.maxY - 13))
         tag(.feedback, at: CGPoint(x: second.x + 8, y: second.y - 4))
         return [FigureHandle(role: .time, point: CGPoint(x: second.x, y: plot.maxY), axis: CGVector(dx: 1, dy: 0), span: plot.width * 0.3),
                 FigureHandle(role: .feedback, point: second, axis: CGVector(dx: 0, dy: -1), span: plot.height * 0.8)]
@@ -331,7 +331,8 @@ struct LookPen {
         let now = sin(angle) * 0.95
         dot(CGPoint(x: plot.midX + now * side / 2, y: plot.midY - shape(now) * side / 2), r: 2.6)
         // Output wave to the right: the clipped sine scrolling.
-        let out = CGRect(x: plot.maxX + 10, y: plot.minY, width: f.maxX - plot.maxX - 12, height: side)
+        let out = CGRect(x: plot.maxX + 12, y: plot.minY, width: f.maxX - plot.maxX - 20, height: side)
+        ctx.saveGState(); ctx.clip(to: out.insetBy(dx: -3, dy: -6)) // the output stays in its own window
         let wave = CGMutablePath()
         for i in 0...60 {
             let t = CGFloat(i) / 60, ph = angle - t * 4 * .pi
@@ -340,6 +341,7 @@ struct LookPen {
         }
         trace(wave, width: 1.4)
         rule(CGPoint(x: out.minX, y: out.midY), CGPoint(x: out.maxX, y: out.midY), alpha: 0.6)
+        ctx.restoreGState()
         // The handle where the curve is still bending (half way up), not on its flat top.
         let xh = min(0.95, atanh(min(0.999, 0.55 * tanh(k))) / k)
         let h = CGPoint(x: plot.midX + xh * side / 2, y: plot.midY - shape(xh) * side / 2)
