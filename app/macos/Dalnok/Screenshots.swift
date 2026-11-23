@@ -212,6 +212,15 @@ enum Screenshots {
                     shot("14-inspector-long-chain")
                     w.headers.selectedTrack = tracks.first?.id
                 }
+                // The Files place with the project's folder open (only the generated project's files are listed).
+                w.library.choose(.files)
+                if let project = w.library.roots.first(where: { $0.title == "Current Project" }) {
+                    w.library.outline.expandItem(project)
+                    if let audio = project.children.first(where: { $0.folder != nil }) { w.library.outline.expandItem(audio) }
+                }
+                try? await Task.sleep(for: .seconds(0.3))
+                shot("16-library-files")
+                w.library.choose(.all)
             }
             w.pluginManager.show()
             w.pluginManager.filter("Dalnok")

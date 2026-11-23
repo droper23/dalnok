@@ -1725,6 +1725,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             return self.insertPlugin(path, on: track)
         }
         library.onOpenProject = { [weak self] url in self?.openSelectedProject(url) }
+        library.projectFolder = { [weak self] in self?.session.projectURL?.deletingLastPathComponent() }
+        library.onTakeFile = { [weak self] url in
+            guard let self else { return }
+            switch LibraryFiles.kind(url) {
+            case .audio: self.session.importFiles([url])
+            case .project: self.openSelectedProject(url)
+            case .foreignProject: self.importProject(url)
+            case nil: break
+            }
+        }
         library.onMessage = { [weak self] m in self?.flash(m) }
         library.resizeEdge.onDrag = { [weak self] w in
             guard let self else { return }

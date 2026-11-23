@@ -275,5 +275,49 @@ extension SelfTest {
         check((s.track(t.id)?.plugins.count ?? 0) == n0 + 1, "double-click (Return) in the library inserts on the selected track")
         undo("Add Plug-in")
         lib.search.stringValue = ""; lib.reload()
+        await libraryFiles(lib)
+    }
+
+    /// The Files place: an added folder unfolds to its sub-folder and sound file; a file drags as a file URL; Return
+    /// imports it (one undo step); the search finds it off the main thread; removing the folder forgets it.
+    private func libraryFiles(_ lib: LibraryPanel) async {
+        let folders = LibraryFiles.userFolders, preview = LibraryPreview.enabled
+        defer { LibraryFiles.userFolders = folders; LibraryPreview.enabled = preview; lib.choose(.all) }
+        LibraryPreview.enabled = false // no sound from the self-test
+        let dir = workdir.appendingPathComponent("Library Files Test", isDirectory: true)
+        try? FileManager.default.removeItem(at: dir)
+        try? FileManager.default.createDirectory(at: dir.appendingPathComponent("Takes"), withIntermediateDirectories: true)
+        let sound = dir.appendingPathComponent("Zqx Glass.aiff")
+        try? FileManager.default.copyItem(at: URL(fileURLWithPath: "/System/Library/Sounds/Glass.aiff"), to: sound)
+        try? Data("not audio".utf8).write(to: dir.appendingPathComponent("notes.txt"))
+        lib.addFolder(dir)
+        check(lib.place == .files && lib.tabs.isHidden && !lib.previewToggle.isHidden, "Add Folder opens the Files place (tabs give way to Preview)")
+        guard let node = lib.roots.first(where: { $0.folder?.standardizedFileURL == dir.standardizedFileURL }) else {
+            return check(false, "the added folder is listed in Files (\(lib.roots.map(\.title)))")
+        }
+        check(lib.roots.last?.action != nil && lib.roots.contains { $0.title == "Home" }, "Files lists Home and ends with Add Folder…")
+        lib.outline.expandItem(node)
+        check(node.children.map(\.title) == ["Takes", "Zqx Glass.aiff"] && node.children.first?.folder != nil,
+              "a folder unfolds to its sub-folders, then the files Dalnok takes (\(node.children.map(\.title)))")
+        guard let file = node.children.last else { return }
+        check((lib.outlineView(lib.outline, pasteboardWriterForItem: file) as? NSURL) as URL? == sound, "an audio file drags as its file URL")
+        let count = s.tracks.count
+        lib.outline.selectRowIndexes(IndexSet(integer: lib.outline.row(forItem: file)), byExtendingSelection: false)
+        lib.activateRow()
+        for _ in 0..<40 where s.tracks.count == count { try? await Task.sleep(for: .milliseconds(50)) }
+        check(s.tracks.count == count + 1 && s.engine.undoName == "Import Audio", "Return on an audio file imports it as a track (\(s.engine.undoName))")
+        if s.tracks.count == count + 1 { undo("Import Audio") }
+        // Search: every place's tree, off the main thread.
+        var hits = -1
+        lib.onFilesSearched = { hits = $0 }
+        lib.search.stringValue = "zqx glass"; lib.reload()
+        for _ in 0..<100 where hits < 0 { try? await Task.sleep(for: .milliseconds(50)) }
+        check(lib.roots.contains { $0.file?.standardizedFileURL == sound.standardizedFileURL }, "the Files search finds the file (\(hits) hits)")
+        lib.onFilesSearched = nil
+        lib.search.stringValue = ""; lib.reload()
+        LibraryFiles.userFolders = LibraryFiles.userFolders.filter { $0.standardizedFileURL != dir.standardizedFileURL }
+        lib.reload()
+        check(!lib.roots.contains { $0.folder?.standardizedFileURL == dir.standardizedFileURL }, "a removed folder leaves the Files place")
+        try? FileManager.default.removeItem(at: dir)
     }
 }
