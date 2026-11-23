@@ -192,7 +192,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     /// First launch (look, then shortcuts): one for the app, so it survives the window rebuild a look change makes.
     var shortcutChooser: ShortcutChooserController { ShortcutChooserController.shared }
     private(set) var lastImportReport: ImportReport?
-    static let foreignExtensions: Set<String> = ["rpp", "als", "logicx", "fcpxml", "fcpxmld", "dawproject"]
+    nonisolated static let foreignExtensions: Set<String> = ["rpp", "als", "logicx", "fcpxml", "fcpxmld", "dawproject"]
     private var tickCount = 0
     let transport = TransportBar()
     let headers: TrackHeaderColumn

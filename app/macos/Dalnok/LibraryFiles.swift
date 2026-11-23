@@ -13,7 +13,7 @@ import UniformTypeIdentifiers
 enum LibraryFiles {
     enum Kind { case audio, project, foreignProject }
 
-    static func kind(_ url: URL) -> Kind? {
+    nonisolated static func kind(_ url: URL) -> Kind? {
         let ext = url.pathExtension.lowercased()
         if ext == "dalnok" { return .project }
         if MainWindowController.foreignExtensions.contains(ext) { return .foreignProject }
@@ -53,18 +53,10 @@ enum LibraryFiles {
             let v = try? u.resourceValues(forKeys: Set(keys))
             let isDir = v?.isDirectory ?? false, isPackage = v?.isPackage ?? false
             if isDir && !isPackage { dirs.append(u) }
-            else if kindNonisolated(u) != nil { files.append(u) }
+            else if kind(u) != nil { files.append(u) }
         }
         let byName = { (a: URL, b: URL) in a.lastPathComponent.localizedStandardCompare(b.lastPathComponent) == .orderedAscending }
         return dirs.sorted(by: byName) + files.sorted(by: byName)
-    }
-
-    nonisolated static func kindNonisolated(_ url: URL) -> Kind? {
-        let ext = url.pathExtension.lowercased()
-        if ext == "dalnok" { return .project }
-        if ["rpp", "als", "logicx", "fcpxml", "fcpxmld", "dawproject"].contains(ext) { return .foreignProject }
-        if let t = UTType(filenameExtension: ext), t.conforms(to: .audio) { return .audio }
-        return nil
     }
 
     /// Files under `roots` whose names contain `query` (case-insensitive): at most `limit`, after looking at no more
@@ -79,7 +71,7 @@ enum LibraryFiles {
                 if rootPaths.contains(u.standardizedFileURL.path) { e.skipDescendants(); continue }
                 seen += 1
                 if seen > budget || found.count >= limit { return found }
-                guard kindNonisolated(u) != nil, u.lastPathComponent.range(of: query, options: [.caseInsensitive, .diacriticInsensitive]) != nil,
+                guard kind(u) != nil, u.lastPathComponent.range(of: query, options: [.caseInsensitive, .diacriticInsensitive]) != nil,
                       visited.insert(u.standardizedFileURL.path).inserted else { continue }
                 found.append(u)
             }
