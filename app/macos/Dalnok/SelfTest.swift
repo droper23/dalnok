@@ -112,6 +112,12 @@ final class SelfTest {
     func steps() async {
         let e = s.engine
         if ProcessInfo.processInfo.environment["DALNOK_A11Y_ONLY"] != nil { await accessibilityPass(); return finish() }
+        // Fast iteration on one area (never a substitute for the full run): panels, plugins.
+        switch ProcessInfo.processInfo.environment["DALNOK_SELFTEST_ONLY"] {
+        case "panels": await sidePanels(); return finish()
+        case "plugins": await deferredPluginLoading(); await isolatedPluginEditors(); return finish()
+        default: break
+        }
         check(s.tracks.count == files.count, "import \(files.count) files -> \(s.tracks.count) tracks")
         check(e.undoName.hasPrefix("Import"), "import is one undo step (\(e.undoName))")
         guard let first = s.tracks.first?.clips.first else { return finish() }

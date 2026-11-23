@@ -233,6 +233,18 @@ extension SelfTest {
               "typing Y or I in the library's search doesn't toggle the panels")
         check(MainWindowController.showLibrary && MainWindowController.showInspector, "both panels are still open after typing")
         main.makeFirstResponder(nil)
+        // A clicked list keeps keyboard focus; Space must still reach the transport (AppKit gives it to the list first).
+        main.makeFirstResponder(lib.outline)
+        let space = key(49, " ", in: main), down = key(125, String(UnicodeScalar(NSDownArrowFunctionKey)!), in: main)
+        let wasPlaying = s.engine.isPlaying
+        main.sendEvent(space)
+        check(s.engine.isPlaying != wasPlaying && main.firstResponder === lib.outline, "Space plays with the library's list focused")
+        main.sendEvent(space)
+        check(s.engine.isPlaying == wasPlaying, "and Space pauses again")
+        check(!CommittingWindow.shortcutFirst(down, responder: lib.outline), "arrow keys stay with the focused list")
+        main.makeFirstResponder(lib.search)
+        check(!CommittingWindow.shortcutFirst(space, responder: main.firstResponder), "Space still types in the library's search")
+        main.makeFirstResponder(nil)
         // Places and collections.
         guard let comp = all.first(where: { $0.name == "Dalnok Compressor" }) ?? all.first else { return check(false, "a plug-in for places") }
         var fav = PluginLibrary.favorites; fav.insert(comp.addPath); PluginLibrary.favorites = fav

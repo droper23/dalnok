@@ -31,7 +31,22 @@ final class CommittingWindow: NSWindow {
             let hit = frame.hitTest(frame.superview?.convert(event.locationInWindow, from: nil) ?? event.locationInWindow)
             if hit.map({ !$0.isDescendant(of: field) }) ?? true { makeFirstResponder(nil) }
         }
+        if event.type == .keyDown, Self.shortcutFirst(event, responder: firstResponder),
+           NSApp.mainMenu?.performKeyEquivalent(with: event) == true { return }
         super.sendEvent(event)
+    }
+
+    /// AppKit offers an unmodified key to the focused view first and to the menu only if that view leaves it, so a
+    /// clicked list (the Library's), table or slider swallowed Space and the transport stopped answering. Bare
+    /// shortcut keys go to the shortcut registry first instead; the menu itself still leaves them to text being
+    /// edited, to views that own their keys (`KeyOwner`, tape keys) and to Tab. Navigation keys (arrows, Return,
+    /// Escape, Delete, Tab) stay with the focused view, and with Full Keyboard Access on, Space presses a focused control.
+    static func shortcutFirst(_ event: NSEvent, responder: NSResponder?) -> Bool {
+        guard event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
+              ![123, 124, 125, 126, 36, 76, 53, 48, 51, 117, 115, 119, 116, 121].contains(event.keyCode),
+              !(responder is NSText) else { return false }
+        if event.keyCode == 49, NSApp.isFullKeyboardAccessEnabled, responder is NSControl { return false }
+        return true
     }
 }
 
