@@ -93,3 +93,11 @@ shunt over a bypassed station. Figures are instruments (`AtelierFigures.swift`):
 names (`FigureRole.match`), lettered with the key's letters, dragged along their own axis (`FigureHandle`); live data:
 gain reduction (governor), energy (chamber, pendulum), transfer points (clipped wave). Key rows choose an instrument
 from their unit (`FaceplateControl.rowInstrument`). Review sheet: gallery `15-figures.png`.
+
+## 2026-11-23: the seismograph and the key's instruments
+The owner chose, from an outside designer's proposals, a two-pen **seismograph** for the compressor (in place of the
+governor): input pen faint and dashed, output pen bold, threshold rails above and below the line (A), the ratio as an
+inclined plane at the left (B), the reduction hatched in gold between the pens; live levels when sound plays, a sample
+rhythm through the current settings at rest. The key's instruments were re-chosen for reading at a glance (knife switch,
+arched quadrant, comparison slate, vernier with pointer, lettered octave rule, stopwatch, inclined plane, notched
+selector, balanced traveller); see `FaceplateControl.rowInstrument`.
