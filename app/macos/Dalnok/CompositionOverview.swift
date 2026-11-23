@@ -132,7 +132,7 @@ final class CompositionOverview: NSView {
             let label = (family == .manuscript && sec.named ? "§ " : "") + sec.title
             ctx.saveGState(); ctx.clip(to: head.insetBy(dx: 4, dy: 0))
             (label as NSString).draw(at: CGPoint(x: head.minX + 8, y: head.minY + 8 + 40 - 28), withAttributes: [.font: titleFont, .foregroundColor: Theme.text])
-            ("bars \(sec.firstBar)–\(sec.lastBar)" as NSString).draw(at: CGPoint(x: head.minX + 8, y: head.minY + 40), withAttributes: [.font: figure, .foregroundColor: Theme.textDim])
+            ((sec.firstBar == sec.lastBar ? "bar \(sec.firstBar)" : "bars \(sec.firstBar)–\(sec.lastBar)") as NSString).draw(at: CGPoint(x: head.minX + 8, y: head.minY + 40), withAttributes: [.font: figure, .foregroundColor: Theme.textDim])
             ctx.restoreGState()
             // Column rule.
             ctx.setFillColor(Theme.ink(family == .manuscript ? 0.25 : 0.08).cgColor)
@@ -163,7 +163,10 @@ final class CompositionOverview: NSView {
             }
         }
         if window?.firstResponder === self, cols.indices.contains(selected) {
-            if family == .manuscript { Atelier.box(ctx, cols[selected].insetBy(dx: 2, dy: 2), weight: 2, color: NSColor.keyboardFocusIndicatorColor, seed: selected, overshoot: 4) }
+            if family == .manuscript { // the chosen section: a double rule in the codex's red, heavy then fine
+                Atelier.box(ctx, cols[selected].insetBy(dx: 2, dy: 2), weight: Atelier.heavy, color: Atelier.vermilion)
+                Atelier.box(ctx, cols[selected].insetBy(dx: 5, dy: 5), weight: Atelier.hair, color: Atelier.vermilion)
+            }
             else {
                 ctx.setStrokeColor(NSColor.keyboardFocusIndicatorColor.cgColor); ctx.setLineWidth(2)
                 ctx.stroke(cols[selected].insetBy(dx: 2, dy: 2))

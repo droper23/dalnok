@@ -258,6 +258,10 @@ enum Faceplate {
 
     /// Text cut into the plate: a dark shadow below light lettering.
     static func engrave(_ text: String, in rect: CGRect, font: NSFont, color: NSColor = engraving, align: NSTextAlignment = .center) {
+        // A long name is set smaller (to three quarters) before it is ever cut short with an ellipsis.
+        let natural = (text as NSString).size(withAttributes: [.font: font]).width
+        let font = natural > rect.width && rect.width > 0
+            ? (NSFont(descriptor: font.fontDescriptor, size: max(font.pointSize * 0.75, font.pointSize * rect.width / natural)) ?? font) : font
         let para = NSMutableParagraphStyle(); para.alignment = align; para.lineBreakMode = .byTruncatingTail
         if Theme.look.devices == .cards || Theme.look.devices == .schematic { // printed, not cut into metal
             let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color, .paragraphStyle: para]

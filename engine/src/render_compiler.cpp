@@ -236,6 +236,7 @@ std::unique_ptr<RenderState> RenderCompiler::compile(const CompileInputs &inputs
         rt.runtime = t.runtime;
         rt.bus = t.kind == kTrackBus;
         rt.monoSource = !rt.bus; // buses are stereo (balance pan)
+        rt.invert = t.phaseInvert;
         if (t.kind == kTrackAudio) { rt.inputChannel = t.inputChannel; rt.inputMonitor = t.inputMonitor; rt.armed = t.armed; }
         for (const auto &p : t.volumeAuto) // fader taper: amplitude^(1/4); -inf at the bottom
             rt.volumeAuto.push_back({p.frame, p.value <= -95 ? 0.0f : std::pow(dbToGain(p.value), 0.25f)});

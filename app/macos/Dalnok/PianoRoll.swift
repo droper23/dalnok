@@ -235,7 +235,7 @@ final class PianoRollView: NSView {
             if Theme.look.editors == .engraved {
                 // Engraved: a round head where the note starts and a duration line whose weight is its velocity; a fine
                 // end tick marks where it stops (and where to grab it). Selected notes are boxed in ink.
-                let ink = OKLCH.adjust(tint.base, dl: Theme.isLight ? -0.12 : 0.1, chromaScale: 1)
+                let ink = OKLCH.adjust(tint.base, dl: Theme.isLight ? -0.12 : 0.05, chromaScale: Theme.isLight ? 1 : 0.8)
                 let weight = 1 + 4 * v, mid = r.midY
                 let ns = Atelier.seed(CGPoint(x: CGFloat(n.start % 100_000), y: CGFloat(n.pitch)))
                 // The duration as one pen stroke whose pressure (weight) is the velocity.
@@ -438,7 +438,7 @@ final class PianoRollView: NSView {
                 ctx.setFillColor((sel ? NSColor.white : tint.waveform).cgColor)
                 ctx.fillEllipse(in: CGRect(x: sx - 2, y: bar.minY - 2.5, width: 6, height: 6))
             case .engraved: // a stem with an open head (a filled one when selected), like a printed plot
-                let ink = OKLCH.adjust(tint.base, dl: Theme.isLight ? -0.12 : 0.1, chromaScale: 1)
+                let ink = OKLCH.adjust(tint.base, dl: Theme.isLight ? -0.12 : 0.05, chromaScale: Theme.isLight ? 1 : 0.8)
                 Atelier.rule(ctx, CGPoint(x: sx + 1, y: lane.maxY - 4), CGPoint(x: sx + 1, y: lane.maxY - 4 - h), weight: Atelier.fine, color: sel ? Theme.text : ink)
                 let head = CGRect(x: sx - 2, y: lane.maxY - 4 - h - 3, width: 6, height: 6)
                 ctx.setFillColor(Theme.panel.cgColor); ctx.fillEllipse(in: head)

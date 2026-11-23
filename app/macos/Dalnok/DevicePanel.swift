@@ -15,7 +15,7 @@ final class DevicePanel: NSView {
     private(set) var devices: [DeviceView] = []
     private let scroll = NSScrollView()
     private let stack = NSStackView()
-    private let emptyCard = NSView()
+    private let emptyCard = EmptyChainCard()
     private let emptyTitle = NSTextField(labelWithString: "DEVICE CHAIN")
     private let empty = NSTextField(labelWithString: "")
     private let addButton = NSButton(title: "Add Plug-in…", target: nil, action: nil)
@@ -114,12 +114,18 @@ final class DevicePanel: NSView {
         if Theme.look.devices == .schematic { emptyCard.layer?.cornerRadius = 0; emptyCard.layer?.borderColor = Theme.ink(0.35).cgColor }
         emptyCard.layer?.borderColor = Theme.hairline.cgColor
         emptyCard.layer?.borderWidth = 1
-        if Theme.look.devices == .schematic, let l = emptyCard.layer { SketchBorderLayer.attach(to: l, color: Theme.ink(0.55), seed: 33, overshoot: 4) }
         emptyCard.layer?.cornerRadius = 6
-        emptyTitle.font = Theme.ui(10, .semibold)
+        let schematic = Theme.look.devices == .schematic
+        if schematic { // Atelier: an empty plate (drawn by the card) instead of a box with a system button
+            emptyCard.layer?.backgroundColor = nil; emptyCard.layer?.borderWidth = 0; emptyCard.layer?.cornerRadius = 0
+            emptyTitle.stringValue = "Device Chain"
+            addButton.isBordered = false
+            addButton.attributedTitle = NSAttributedString(string: "+ Add a plug-in", attributes: [.font: Theme.title(13, .semibold), .foregroundColor: Atelier.vermilion])
+        }
+        emptyTitle.font = schematic ? Theme.title(15, .semibold) : Theme.ui(10, .semibold)
         emptyTitle.textColor = Theme.textDim
-        empty.font = Theme.ui(12)
-        empty.textColor = Theme.textDim
+        empty.font = schematic ? Theme.note(13) : Theme.ui(12)
+        empty.textColor = schematic ? Theme.text : Theme.textDim
         empty.maximumNumberOfLines = 2
         empty.lineBreakMode = .byTruncatingTail
         addButton.target = self
@@ -135,16 +141,17 @@ final class DevicePanel: NSView {
             doc.widthAnchor.constraint(greaterThanOrEqualTo: scroll.contentView.widthAnchor),
             emptyCard.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Theme.look.pedalboard ? 64 : 12),
             emptyCard.centerYAnchor.constraint(equalTo: centerYAnchor),
-            emptyCard.widthAnchor.constraint(equalToConstant: 360), emptyCard.heightAnchor.constraint(equalToConstant: 132),
-            emptyTitle.leadingAnchor.constraint(equalTo: emptyCard.leadingAnchor, constant: 16),
-            emptyTitle.topAnchor.constraint(equalTo: emptyCard.topAnchor, constant: 14),
+            emptyCard.widthAnchor.constraint(equalToConstant: schematic ? 560 : 360), emptyCard.heightAnchor.constraint(equalToConstant: schematic ? 150 : 132),
+            emptyTitle.leadingAnchor.constraint(equalTo: emptyCard.leadingAnchor, constant: schematic ? 20 : 16),
+            emptyTitle.topAnchor.constraint(equalTo: emptyCard.topAnchor, constant: schematic ? 18 : 14),
             empty.leadingAnchor.constraint(equalTo: emptyTitle.leadingAnchor),
-            empty.trailingAnchor.constraint(equalTo: emptyCard.trailingAnchor, constant: -16),
+            empty.trailingAnchor.constraint(equalTo: emptyCard.leadingAnchor, constant: schematic ? 250 : 344),
             empty.topAnchor.constraint(equalTo: emptyTitle.bottomAnchor, constant: 10),
             addButton.leadingAnchor.constraint(equalTo: emptyTitle.leadingAnchor),
             addButton.topAnchor.constraint(equalTo: empty.bottomAnchor, constant: 10),
         ])
         setAccessibilityLabel("Device panel")
+        installEdgeFade()
     }
     required init?(coder: NSCoder) { fatalError() }
 
@@ -303,6 +310,23 @@ final class DevicePanel: NSView {
     override func layout() {
         super.layout()
         layoutCables()
+        updateEdgeFade()
+    }
+    /// A fade at the right edge while plates continue past it (the audit: the last plate was cut off with no cue).
+    private let edgeFade = EdgeFadeView()
+    private func installEdgeFade() {
+        addSubview(edgeFade, positioned: .above, relativeTo: scroll)
+        scroll.contentView.postsBoundsChangedNotifications = true
+        NotificationCenter.default.addObserver(forName: NSView.boundsDidChangeNotification, object: scroll.contentView, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.updateEdgeFade() }
+        }
+    }
+    func updateEdgeFade() {
+        let docWidth = scroll.documentView?.frame.width ?? 0
+        let frame = CGRect(x: bounds.width - 36, y: 0, width: 36, height: bounds.height)
+        if edgeFade.frame != frame { edgeFade.frame = frame }
+        let hidden = docWidth - scroll.contentView.bounds.maxX < 2
+        if edgeFade.isHidden != hidden { edgeFade.isHidden = hidden }
     }
     /// The signal path drawn as patch cables: track → first unit → … → last unit → track output.
     func layoutCables() {
@@ -1773,5 +1797,45 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         b.state = controlIds.contains(p.id) ? .on : .off
         b.isEnabled = !p.read_only
         return b
+    }
+}
+
+/// The device chain with nothing in it. Atelier: an empty plate with Fig. — the signal's course, IN through a dashed
+/// place for the first plate to OUT, lettered (A, the input; B, the empty place; C, the output). Other looks: a card.
+@MainActor
+final class EmptyChainCard: NSView {
+    override var isFlipped: Bool { true }
+    override func draw(_ dirtyRect: NSRect) {
+        guard Theme.look.devices == .schematic, let ctx = NSGraphicsContext.current?.cgContext else { return }
+        let inner = Atelier.hardware(ctx, bounds, accent: Atelier.vermilion, dimmed: false, seed: 33)
+        // The figure, in the right part of the plate.
+        let fig = CGRect(x: inner.minX + 262, y: inner.minY + 12, width: inner.maxX - inner.minX - 274, height: inner.height - 40)
+        guard fig.width > 120 else { return }
+        let ink = Theme.ink(0.8), y = fig.midY
+        let slot = CGRect(x: fig.midX - 44, y: fig.minY + 10, width: 88, height: fig.height - 20)
+        Atelier.rule(ctx, CGPoint(x: fig.minX + 22, y: y), CGPoint(x: slot.minX - 6, y: y), weight: Atelier.fine, color: ink)
+        Atelier.arrowhead(ctx, at: CGPoint(x: slot.minX - 2, y: y), angle: 0, color: ink)
+        Atelier.box(ctx, slot, weight: Atelier.fine, color: Theme.ink(0.45))
+        Atelier.hatch(ctx, slot.insetBy(dx: 3, dy: 3), spacing: 5, color: Theme.ink(0.1), weight: 0.45)
+        Atelier.rule(ctx, CGPoint(x: slot.maxX + 2, y: y), CGPoint(x: fig.maxX - 22, y: y), weight: Atelier.fine, color: ink, dash: [3, 3])
+        Atelier.arrowhead(ctx, at: CGPoint(x: fig.maxX - 18, y: y), angle: 0, color: ink)
+        Atelier.note(ctx, "in", at: CGPoint(x: fig.minX, y: y - 8), size: 12, color: Theme.text)
+        Atelier.note(ctx, "out", at: CGPoint(x: fig.maxX, y: y - 8), size: 12, color: Theme.text, align: .right)
+        Atelier.callout(ctx, "A", from: CGPoint(x: fig.minX + 34, y: y), to: CGPoint(x: fig.minX + 44, y: fig.minY + 2))
+        Atelier.callout(ctx, "B", from: CGPoint(x: slot.midX, y: slot.minY), to: CGPoint(x: slot.midX + 16, y: fig.minY - 4))
+        Atelier.callout(ctx, "C", from: CGPoint(x: fig.maxX - 34, y: y), to: CGPoint(x: fig.maxX - 24, y: fig.minY + 2))
+        Atelier.note(ctx, "Fig. — The signal’s course, no plates yet", at: CGPoint(x: fig.midX, y: inner.maxY - 22), size: 11.5,
+                     color: Theme.textDim, align: .center)
+    }
+}
+
+/// A strip that fades the content under it into the panel's surface (a scroll cue). Never takes clicks.
+final class EdgeFadeView: NSView {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    override func draw(_ dirtyRect: NSRect) {
+        MainActor.assumeIsolated {
+            let base = Theme.look.devices == .pedalboard ? Theme.hex(0x211914) : Theme.panel
+            NSGradient(starting: base.withAlphaComponent(0), ending: base.withAlphaComponent(0.92))?.draw(in: bounds, angle: 0)
+        }
     }
 }

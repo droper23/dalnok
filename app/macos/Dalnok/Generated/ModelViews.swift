@@ -25,10 +25,11 @@ struct TrackFields: Equatable {
     var laneHeight: Float // lane height in points, view only (0 = the default height)
     var hidden: Bool // hidden from the arrangement and mixer (still plays)
     var output: DalnokTrackId // the bus this track plays into (0 = master)
+    var phaseInvert: Bool // polarity inverted before the inserts (API 46)
 }
 extension TrackFields {
     init(_ c: DalnokTrackInfo) {
-        self.init(id: c.id, name: fixedString(c.name), colorStep: c.color, customColor: c.custom_color, gainDb: c.gain_db, pan: c.pan, muted: c.muted, solo: c.solo, clipCount: c.clip_count, kind: c.kind, armed: c.armed, inputChannel: c.input_channel, inputMonitor: c.input_monitor, group: c.group, stack: c.stack, isStack: c.is_stack, collapsed: c.collapsed, laneHeight: c.height, hidden: c.hidden, output: c.output)
+        self.init(id: c.id, name: fixedString(c.name), colorStep: c.color, customColor: c.custom_color, gainDb: c.gain_db, pan: c.pan, muted: c.muted, solo: c.solo, clipCount: c.clip_count, kind: c.kind, armed: c.armed, inputChannel: c.input_channel, inputMonitor: c.input_monitor, group: c.group, stack: c.stack, isStack: c.is_stack, collapsed: c.collapsed, laneHeight: c.height, hidden: c.hidden, output: c.output, phaseInvert: c.phase_invert)
     }
 }
 

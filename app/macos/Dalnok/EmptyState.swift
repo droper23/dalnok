@@ -30,12 +30,14 @@ final class StartCard: NSButton {
         setAccessibilityLabel(t)
         setAccessibilityHelp(d)
 
-        let icon = NSImageView(image: NSImage(systemSymbolName: symbol, accessibilityDescription: nil)!
-            .withSymbolConfiguration(.init(pointSize: 20, weight: .regular))!)
-        icon.contentTintColor = Theme.accent
+        let atelier = Theme.activeStyle == .atelier
+        // Atelier: an engraved figure of the thing itself (a microphone, a keyboard in perspective), lettered.
+        let icon: NSView = atelier ? EngravedFigureIcon(subject: symbol)
+            : NSImageView(image: NSImage(systemSymbolName: symbol, accessibilityDescription: nil)!.withSymbolConfiguration(.init(pointSize: 20, weight: .regular))!)
+        (icon as? NSImageView)?.contentTintColor = Theme.accent
         icon.setAccessibilityElement(false)
         let name = NSTextField(labelWithString: t)
-        name.font = Theme.ui(14, .semibold)
+        name.font = atelier ? Theme.title(15, .semibold) : Theme.ui(14, .semibold)
         name.textColor = Theme.text
         let detail = NSTextField(labelWithString: d)
         detail.font = Theme.ui(11.5)
@@ -55,7 +57,8 @@ final class StartCard: NSButton {
         NSLayoutConstraint.activate([
             row.leadingAnchor.constraint(equalTo: leadingAnchor), row.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor),
             row.topAnchor.constraint(equalTo: topAnchor),
-            icon.widthAnchor.constraint(equalToConstant: 26),
+            icon.widthAnchor.constraint(equalToConstant: atelier ? 44 : 26),
+            icon.heightAnchor.constraint(equalToConstant: atelier ? 44 : 26),
             widthAnchor.constraint(equalToConstant: 280), heightAnchor.constraint(equalToConstant: 72),
         ])
         restyle(animated: false)
@@ -396,4 +399,68 @@ final class DiapasonView: NSView {
         Atelier.diapason(ctx, bounds)
     }
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
+
+/// Atelier's start cards: the subject engraved (y down, 44 pt): "waveform" a studio microphone on its stand (grille
+/// cross-hatched, body shaded on the side away from the light), "pianokeys" a keyboard in oblique perspective. Lettered
+/// a, b as on the plates. Decorative (the card carries the name).
+@MainActor
+final class EngravedFigureIcon: NSView {
+    let subject: String
+    init(subject: String) { self.subject = subject; super.init(frame: .zero); translatesAutoresizingMaskIntoConstraints = false }
+    required init?(coder: NSCoder) { fatalError() }
+    override var isFlipped: Bool { true }
+    override func draw(_ dirtyRect: NSRect) {
+        guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+        let ink = Theme.ink(0.85)
+        if subject == "pianokeys" {
+            // Front face y 27…35, top surface receding to y 15 (shifted right by 7).
+            let x0: CGFloat = 3, x1: CGFloat = 35, top: CGFloat = 27, bottom: CGFloat = 35, back: CGFloat = 15, dx: CGFloat = 7
+            let surface = CGMutablePath()
+            surface.addLines(between: [CGPoint(x: x0, y: top), CGPoint(x: x0 + dx, y: back), CGPoint(x: x1 + dx, y: back), CGPoint(x: x1, y: top)]); surface.closeSubpath()
+            ctx.setFillColor(Theme.panelRaised.cgColor); ctx.addPath(surface); ctx.fillPath(); ctx.fill(CGRect(x: x0, y: top, width: x1 - x0, height: bottom - top))
+            Atelier.hatch(ctx, CGRect(x: x0, y: top, width: x1 - x0, height: bottom - top), spacing: 1.4, color: Theme.ink(0.35), weight: 0.35)
+            // White keys: lines across the surface toward the back; black keys as short engraved slabs.
+            let n = 8
+            for i in 1..<n {
+                let f = CGFloat(i) / CGFloat(n), fx = x0 + (x1 - x0) * f
+                Atelier.rule(ctx, CGPoint(x: fx, y: top), CGPoint(x: fx + dx, y: back), weight: 0.4, color: ink)
+                Atelier.rule(ctx, CGPoint(x: fx, y: top), CGPoint(x: fx, y: bottom), weight: 0.35, color: ink.withAlphaComponent(0.6))
+                if [1, 2, 4, 5, 6].contains(i) { // the two-and-three pattern
+                    let k = CGMutablePath(), w: CGFloat = 1.8, t0: CGFloat = 0.45, t1: CGFloat = 0.95
+                    k.addLines(between: [CGPoint(x: fx - w + dx * t0, y: top - (top - back) * t0), CGPoint(x: fx + w + dx * t0, y: top - (top - back) * t0),
+                                         CGPoint(x: fx + w + dx * t1, y: top - (top - back) * t1), CGPoint(x: fx - w + dx * t1, y: top - (top - back) * t1)])
+                    k.closeSubpath(); ctx.addPath(k); ctx.setFillColor(ink.cgColor); ctx.fillPath()
+                }
+            }
+            ctx.addPath(surface); ctx.setStrokeColor(ink.cgColor); ctx.setLineWidth(0.7); ctx.strokePath()
+            Atelier.box(ctx, CGRect(x: x0, y: top, width: x1 - x0, height: bottom - top), weight: 0.7, color: ink)
+            Atelier.rule(ctx, CGPoint(x: x1, y: bottom), CGPoint(x: x1 + dx, y: bottom - (top - back) * 0.66), weight: 0.6, color: ink)
+            Atelier.rule(ctx, CGPoint(x: x1 + dx, y: back), CGPoint(x: x1 + dx, y: bottom - (top - back) * 0.66), weight: 0.6, color: ink)
+            Atelier.callout(ctx, "a", from: CGPoint(x: x0 + 12, y: 21), to: CGPoint(x: x0 + 3, y: 8))
+            return
+        }
+        // Microphone: grille capsule, collar, tapered body, stand and base.
+        let c = CGPoint(x: 20, y: 11), r: CGFloat = 8
+        let grille = CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r)
+        ctx.setFillColor(Theme.panelRaised.cgColor); ctx.fillEllipse(in: grille)
+        ctx.saveGState(); ctx.addEllipse(in: grille); ctx.clip()
+        Atelier.hatch(ctx, grille, spacing: 1.6, color: Theme.ink(0.5), weight: 0.35, cross: true)
+        ctx.restoreGState()
+        Atelier.loop(ctx, grille, weight: 0.8, color: ink)
+        Atelier.box(ctx, CGRect(x: c.x - 5.5, y: c.y + r - 0.5, width: 11, height: 3), weight: 0.6, color: ink)
+        let body = CGMutablePath()
+        body.addLines(between: [CGPoint(x: c.x - 5, y: 21.5), CGPoint(x: c.x + 5, y: 21.5), CGPoint(x: c.x + 3.5, y: 32), CGPoint(x: c.x - 3.5, y: 32)]); body.closeSubpath()
+        ctx.setFillColor(Theme.panelRaised.cgColor); ctx.addPath(body); ctx.fillPath()
+        ctx.saveGState(); ctx.addPath(body); ctx.clip()
+        Atelier.hatch(ctx, CGRect(x: c.x + 0.5, y: 21, width: 6, height: 12), spacing: 1.1, color: Theme.ink(0.55), weight: 0.35, angle: .pi / 2)
+        ctx.restoreGState()
+        ctx.addPath(body); ctx.setStrokeColor(ink.cgColor); ctx.setLineWidth(0.7); ctx.strokePath()
+        Atelier.rule(ctx, CGPoint(x: c.x, y: 32), CGPoint(x: c.x, y: 39), weight: 1, color: ink)
+        let base = CGRect(x: c.x - 9, y: 38.5, width: 18, height: 4)
+        ctx.setFillColor(Theme.panelRaised.cgColor); ctx.fillEllipse(in: base)
+        Atelier.loop(ctx, base, weight: 0.7, color: ink)
+        Atelier.callout(ctx, "a", from: CGPoint(x: c.x + 6, y: c.y - 4), to: CGPoint(x: 37, y: 4))
+        Atelier.callout(ctx, "b", from: CGPoint(x: c.x + 4, y: 27), to: CGPoint(x: 37, y: 27))
+    }
 }

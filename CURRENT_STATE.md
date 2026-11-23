@@ -5,6 +5,34 @@ milestone: 0.3.0, Phase 4 complete; recording I/O (separate devices, Input Monit
 ---
 # Current State
 
+## Latest (2026-11-22, late): Library and Inspector, phase invert, Atelier controls drawn as instruments
+Branch `feat/inspector-library` (from `main` 96faf9a). C API 46, project format 14.
+- **View ▸ Library (Y)** and **View ▸ Inspector (I)** (`06 - Design/Side Panels.md`): left sidebar (places, collections,
+  Effects/Instruments/MIDI tabs, fuzzy search, `PluginTaxonomy` categories, drag or double-click to insert) and right
+  inspector (input, output, monitor; volume and pan dials with read-outs; M S R Ø; numbered inserts with bypass;
+  lettered sends; live meter). Remembered open state and width, resizable, toolbar buttons left of the transport,
+  rebindable shortcuts, every theme in its idiom. Every edit is one undo step; nothing is cached.
+- **Engine: phase invert** (`dalnok_track_set_phase_invert`, `DalnokTrackInfo.phase_invert`, catalog
+  `track.setPhaseInvert`): flips the source before the inserts, so sends carry it. `PhaseInvert` tests (2).
+- **Atelier audit** (`06 - Design/Atelier Audit 2026-11-22.md`): five low-cost reviewers plus the owner's answers
+  (controls become drawings, gold bands on the dark plate, ruled heads on the light, two densities, header read-outs in
+  every theme). Done: turned dials, fader blocks on screwed rails, the counter housing, the empty chain as a lettered
+  plate, the mixer's signal figure, engraved start cards, View ▸ Illustrated Controls, themed plug-in browser,
+  Settings, palette and pop-ups, contrast (Light dim text 7.1:1, numerals 5.1:1), cropping fixes. Open items listed in
+  the audit note.
+- **Verification:** `swift test --disable-sandbox` 289 pass; gen-api up to date. Self-test matrix (explicit
+  `DALNOK_SAMPLE_RATE`; Full Keyboard Access off, 12 machine SKIPs each), all PASS: Graphite, Prism Dark and Light 1025 at 48 kHz / 1006 at 44.1 kHz; Atelier Light and Dark 1028 / 1009
+  (the Illustrated Controls check); Warm Analog 1010 / 991. Prism's motion checks fail while the display sleeps (three
+  clip-lift checks): run long matrices under `caffeinate -du`.
+  Accessibility pass with Full Keyboard Access on (`DALNOK_A11Y_ONLY=1 DALNOK_A11Y_REPORT=1`): 42 checks, 0 SKIP, 0 FAIL
+  in all six looks, both panels open; the setting was restored afterwards. Gallery stills of every look at scale 2
+  reviewed; the Atelier pair was sent to the owner. Perf (release, large project): no overloads or missed blocks; the
+  panels add nothing measurable (table in `08 - Testing and Benchmarks/Theme Performance 2026-11-22.md`).
+- Self-test notes: a "48 kHz" run follows the device unless `DALNOK_SAMPLE_RATE=48000` is set, and a 44.1 kHz run
+  leaves the built-in speakers at 44.1 kHz (they still are); the side-panel steps undo only named steps.
+- **Next:** PR and merge after green CI; the open audit items; VoiceOver by ear (needs the owner); README media at the
+  next release (Atelier now differs again).
+
 ## Latest (2026-11-22, night): Atelier redrawn as the Codex
 Branch `feat/atelier-codex` (from `main` 6227550, PR #9 merged). The owner rejected the sketchbook Atelier; it is now a
 codex of engraved plates (`06 - Design/Atelier.md`): ruled and measured drawing, sepia on parchment or cream and gold

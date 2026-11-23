@@ -166,6 +166,16 @@ bool Engine::setTrackHidden(DalnokTrackId track, bool hidden, std::string &err) 
     });
 }
 
+bool Engine::setPhaseInvert(DalnokTrackId track, bool on, std::string &err) {
+    return edit(on ? "Invert Phase" : "Restore Phase", true, [&](Model &m) { // structural: the snapshot carries it
+        TrackState *t = m.track(track);
+        if (!t) return fail(err, "no such track");
+        if (t->phaseInvert == on) return fail(err, on ? "already inverted" : "not inverted");
+        t->phaseInvert = on;
+        return true;
+    });
+}
+
 bool Engine::ungroupStack(DalnokTrackId stack, std::string &err) {
     return edit("Ungroup Track Stack", true, [&](Model &m) {
         TrackState *t = m.track(stack);

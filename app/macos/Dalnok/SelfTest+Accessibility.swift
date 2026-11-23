@@ -227,9 +227,12 @@ extension SelfTest {
     func accessibilityPass() async {
         guard let main = w.window else { return check(false, "a11y: main window") }
         let showed = (MainWindowController.showMixer, MainWindowController.showLauncher, MainWindowController.showDevicePanel)
+        let sides = (MainWindowController.showLibrary, MainWindowController.showInspector)
         if !showed.0 { w.toggleMixer(nil) }
         if !showed.1 { w.toggleLauncher(nil) }
         if !showed.2 { w.toggleDevicePanel(nil) }
+        if !sides.0 { w.toggleLibrary(nil) }
+        if !sides.1 { w.toggleInspector(nil) }
         if let t = s.tracks.first?.id { w.headers.select(t) }
         await wait(0.4)
         a11yCheck("the main window", main)
@@ -237,6 +240,8 @@ extension SelfTest {
         if !showed.0 { w.toggleMixer(nil) }
         if !showed.1 { w.toggleLauncher(nil) }
         if !showed.2 { w.toggleDevicePanel(nil) }
+        if !sides.0 { w.toggleLibrary(nil) }
+        if !sides.1 { w.toggleInspector(nil) }
 
         w.toggleCompositionOverview(nil); await wait(0.3)
         a11yCheck("the Composition Overview", main, root: w.overview)

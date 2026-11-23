@@ -1789,6 +1789,44 @@
         ]
       ],
       "evidence": "08 - Testing and Benchmarks/Baseline 2026-11-16."
+    },
+    {
+      "id": "side-panels",
+      "name": "Library sidebar and track Inspector",
+      "category": "Workflow & UI",
+      "priority": "P1",
+      "refs": [
+        "logic",
+        "ableton"
+      ],
+      "why": "Logic's Library and Inspector and Ableton's browser keep plug-ins and the selected channel one glance away.",
+      "steps": [
+        [
+          "View ▸ Library and View ▸ Inspector (Y, I, rebindable), toolbar buttons, remembered open state and width, resizable",
+          "verified"
+        ],
+        [
+          "Library: places, collections, Effects/Instruments/MIDI tabs, fuzzy search, taxonomy categories; drag or double-click to insert",
+          "verified"
+        ],
+        [
+          "Inspector: input, output, monitor, volume and pan with read-outs, M/S/R, numbered inserts with bypass, lettered sends, live meter",
+          "verified"
+        ],
+        [
+          "Phase invert (Ø) in the engine: before the inserts, sends carry it, one undo step, saved (format 14)",
+          "verified"
+        ],
+        [
+          "Every edit one undo step; follows selection, engine changes and automation",
+          "verified"
+        ],
+        [
+          "Drawn in every theme's idiom (Atelier: ruled heads, gold bands on the dark plate)",
+          "implemented"
+        ]
+      ],
+      "evidence": "PhaseInvert engine tests (exact negation, sends, undo, save, catalog); SelfTest+Inspector in all four themes, light and dark, at 48 and 44.1 kHz; accessibility audit with both panels open; gallery stills."
     }
   ]
 }

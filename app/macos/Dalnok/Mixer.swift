@@ -47,6 +47,10 @@ final class MixerPanel: NSView {
         addBusButton.target = self
         addBusButton.action = #selector(addBus)
         addBusButton.toolTip = "New bus (an aux track that mixes what you route or send to it)"
+        if Theme.look.mixer == .instrument { // full-contrast serif, like the drawing's other keys (it nearly vanished on the umber)
+            addBusButton.isBordered = false
+            addBusButton.attributedTitle = NSAttributedString(string: "+ Bus", attributes: [.font: Theme.title(13, .semibold), .foregroundColor: Atelier.vermilion])
+        }
         NSLayoutConstraint.activate([
             scroll.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Theme.look.consoleMixer ? Analog.cheekWidth : 0),
             scroll.trailingAnchor.constraint(equalTo: master.leadingAnchor),
@@ -72,6 +76,9 @@ final class MixerPanel: NSView {
             Theme.panel.setFill(); bounds.fill()
             if Theme.look.mixer == .instrument, let ctx = NSGraphicsContext.current?.cgContext {
                 Atelier.rule(ctx, CGPoint(x: 0, y: bounds.height - 0.75), CGPoint(x: bounds.width, y: bounds.height - 0.75), weight: Atelier.medium)
+                ctx.saveGState(); ctx.translateBy(x: 0, y: bounds.height); ctx.scaleBy(x: 1, y: -1) // the figure is drawn y down
+                drawSignalFigure(ctx)
+                ctx.restoreGState()
             } else { Theme.ink(0.06).setFill(); NSRect(x: 0, y: bounds.height - 1, width: bounds.width, height: 1).fill() }
             return
         }
@@ -88,6 +95,52 @@ final class MixerPanel: NSView {
         }
         Theme.separator.setFill(); NSRect(x: 0, y: bounds.height - 1, width: bounds.width, height: 1).fill()
     }
+
+    /// Atelier, in the room the strips leave: Fig. — the course of the signal. The first channels (lettered A, B, …)
+    /// run through their buses to the summing point (Σ) and on to the master (M), as the mixer routes them now.
+    private func drawSignalFigure(_ ctx: CGContext) {
+        let used = stack.fittingSize.width + 16
+        let room = CGRect(x: used + 24, y: 30, width: master.frame.minX - used - 56, height: bounds.height - 70)
+        guard room.width > 300, room.height > 150 else { return }
+        let tracks = Array(session.tracks.filter { !$0.isBus }.prefix(5)), buses = Array(session.buses.prefix(2))
+        guard !tracks.isEmpty else { return }
+        let ink = Theme.ink(0.75), y = { (i: Int, n: Int) -> CGFloat in room.minY + 10 + (room.height - 50) * (CGFloat(i) + 0.5) / CGFloat(max(n, 1)) }
+        // Isometric is too much here: a plan of the console in the plate's hand, ruled and lettered.
+        let sigma = CGPoint(x: room.maxX - 90, y: room.minY + (room.height - 40) / 2), m = CGPoint(x: room.maxX - 20, y: sigma.y)
+        var busPoints: [DalnokTrackId: CGPoint] = [:]
+        for (k, b) in buses.enumerated() {
+            let p = CGPoint(x: room.midX + 20, y: y(k, buses.count + 1) + 14)
+            busPoints[b.id] = p
+            let box = CGRect(x: p.x - 26, y: p.y - 9, width: 52, height: 18)
+            ctx.setFillColor(Theme.panelRaised.cgColor); ctx.fill(box)
+            Atelier.hatch(ctx, box.insetBy(dx: 1, dy: 1), spacing: 2.4, color: Theme.ink(0.12), weight: 0.35)
+            Atelier.box(ctx, box, weight: Atelier.fine, color: ink)
+            Atelier.note(ctx, b.name, at: CGPoint(x: p.x, y: p.y - 7.5), size: 11, color: Theme.text, align: .center, roman: true)
+            Atelier.rule(ctx, CGPoint(x: box.maxX, y: p.y), CGPoint(x: sigma.x - 10, y: sigma.y), weight: Atelier.hair, color: ink)
+            Atelier.arrowhead(ctx, at: CGPoint(x: sigma.x - 9, y: sigma.y), angle: atan2(sigma.y - p.y, sigma.x - 9 - box.maxX), color: ink, size: 5)
+        }
+        for (i, t) in tracks.enumerated() {
+            let p = CGPoint(x: room.minX + 46, y: y(i, tracks.count))
+            let box = CGRect(x: p.x - 40, y: p.y - 8, width: 80, height: 16)
+            Atelier.box(ctx, box, weight: Atelier.fine, color: ink)
+            Atelier.note(ctx, t.name, at: CGPoint(x: p.x, y: p.y - 7), size: 10.5, color: Theme.text, align: .center, roman: true)
+            Atelier.note(ctx, Inspector_letter(i), at: CGPoint(x: box.minX - 6, y: p.y - 7.5), size: 12, color: Atelier.gold, align: .right)
+            let dest = busPoints[t.output].map { CGPoint(x: $0.x - 26, y: $0.y) } ?? CGPoint(x: sigma.x - 10, y: sigma.y)
+            Atelier.rule(ctx, CGPoint(x: box.maxX, y: p.y), dest, weight: Atelier.hair, color: ink)
+            Atelier.arrowhead(ctx, at: dest, angle: atan2(dest.y - p.y, dest.x - box.maxX), color: ink, size: 5)
+            for s in t.sends { if let b = busPoints[s.bus] { Atelier.rule(ctx, CGPoint(x: box.maxX, y: p.y), CGPoint(x: b.x - 26, y: b.y), weight: Atelier.hair, color: Theme.ink(0.4), dash: [2, 2]) } }
+        }
+        let ring = CGRect(x: sigma.x - 10, y: sigma.y - 10, width: 20, height: 20)
+        ctx.setFillColor(Theme.panelRaised.cgColor); ctx.fillEllipse(in: ring)
+        Atelier.loop(ctx, ring, weight: Atelier.medium, color: ink)
+        Atelier.note(ctx, "Σ", at: CGPoint(x: sigma.x, y: sigma.y - 8), size: 13, color: Theme.text, align: .center, roman: true)
+        Atelier.rule(ctx, CGPoint(x: ring.maxX, y: sigma.y), CGPoint(x: m.x - 12, y: m.y), weight: Atelier.fine, color: ink)
+        Atelier.arrowhead(ctx, at: CGPoint(x: m.x - 11, y: m.y), angle: 0, color: ink)
+        Atelier.note(ctx, "M", at: CGPoint(x: m.x, y: m.y - 9), size: 14, color: Atelier.vermilion, align: .center, roman: true)
+        Atelier.note(ctx, "Fig. — The course of the signal: channels (A…) through their buses, summed (Σ), to the master (M). Dashed: sends.",
+                     at: CGPoint(x: room.midX, y: room.maxY - 14), size: 11, color: Theme.textDim, align: .center)
+    }
+    private func Inspector_letter(_ i: Int) -> String { InspectorPanel.letter(i) }
 
     @objc private func addBus() { session.addBus() }
 
@@ -118,6 +171,7 @@ final class MixerPanel: NSView {
             signatures[t.id] = sig
             if stripSignatures[t.id] == sig { s.updateParameters(t) } else { s.update(t) }
         }
+        if stripSignatures != signatures, Theme.look.mixer == .instrument { needsDisplay = true } // the signal figure follows the routing
         stripSignatures = signatures
         if !master.fader.tracking { master.fader.db = session.masterGainDb; master.dbLabel.stringValue = FaderControl.format(session.masterGainDb) }
     }
@@ -154,10 +208,10 @@ final class MixerPanel: NSView {
 
 @MainActor
 final class ChannelStrip: NSView {
-    static let width: CGFloat = 92
+    static var width: CGFloat { Illustrated.size(92, 1.25) }
     let session: Session
     let trackId: DalnokTrackId
-    let output = NSPopUpButton(frame: .zero, pullsDown: false)
+    let output = RuledPopUpButton(frame: .zero, pullsDown: false)
     let sendsStack = NSStackView()
     let routingScroll = NSScrollView()
     let addSend = NSPopUpButton(frame: .zero, pullsDown: true)
@@ -272,7 +326,7 @@ final class ChannelStrip: NSView {
             faderRow.topAnchor.constraint(equalTo: pan.bottomAnchor, constant: 6),
             faderRow.centerXAnchor.constraint(equalTo: centerXAnchor),
             faderRow.bottomAnchor.constraint(equalTo: dbLabel.topAnchor, constant: -2),
-            fader.widthAnchor.constraint(equalToConstant: 44),
+            fader.widthAnchor.constraint(equalToConstant: Illustrated.size(44, 1.3)),
             meter.widthAnchor.constraint(equalToConstant: 14),
             dbLabel.bottomAnchor.constraint(equalTo: chips.topAnchor, constant: -4),
             dbLabel.centerXAnchor.constraint(equalTo: centerXAnchor),

@@ -237,6 +237,7 @@ struct ProjectFormat {
             11: [(["markers", 0, "name"], "Verse"), (["tracks", 0, "hidden"], "1")],
             12: [(["tracks", 0, "clips", 0, "muted"], "1")],
             13: [(["tracks", 0, "plugins", 0, "format"], "dalnok"), (["tracks", 0, "plugins", 0, "folded"], "1"), (["tracks", 0, "height"], "140")],
+            14: [(["tracks", 0, "phaseInvert"], "1")],
         ]
         func text(_ v: Any?) -> String {
             guard let v else { return "nil" }

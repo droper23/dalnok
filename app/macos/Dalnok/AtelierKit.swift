@@ -280,6 +280,115 @@ enum Atelier {
         needle(ctx, center: c, angle: angle(value), length: inner + 1)
         ctx.restoreGState()
     }
+    /// A fader's block (y down) seen a little from above and to the left: the front face with engraved grip ridges and a
+    /// hairline index exactly at the level, a narrow top face catching the light, and the right side engraved in shade.
+    /// Returns the front face (for the focus ring).
+    @discardableResult
+    static func slideBlock(_ ctx: CGContext, center c: CGPoint, width w: CGFloat, height h: CGFloat, ink: NSColor, active: Bool) -> CGRect {
+        let d = max(2, h * 0.22) // the depth shown on top and side
+        let front = CGRect(x: c.x - w / 2, y: c.y - h / 2 + d / 2, width: w - d, height: h - d)
+        let topFace = CGMutablePath()
+        topFace.addLines(between: [CGPoint(x: front.minX, y: front.minY), CGPoint(x: front.minX + d, y: front.minY - d),
+                                   CGPoint(x: front.maxX + d, y: front.minY - d), CGPoint(x: front.maxX, y: front.minY)]); topFace.closeSubpath()
+        let side = CGMutablePath()
+        side.addLines(between: [CGPoint(x: front.maxX, y: front.minY), CGPoint(x: front.maxX + d, y: front.minY - d),
+                                CGPoint(x: front.maxX + d, y: front.maxY - d), CGPoint(x: front.maxX, y: front.maxY)]); side.closeSubpath()
+        ctx.saveGState()
+        ctx.setFillColor(Theme.panelRaised.cgColor)
+        ctx.addPath(topFace); ctx.fillPath(); ctx.addPath(side); ctx.fillPath(); ctx.fill(front)
+        ctx.addPath(side); ctx.clip()
+        hatch(ctx, side.boundingBox.insetBy(dx: -1, dy: -1), spacing: 1.2, color: Theme.ink(0.55), weight: 0.4)
+        ctx.restoreGState()
+        // Grip: fine ridges across the front, closer together toward the bottom (the shadow side).
+        var gy = front.minY + 2.2
+        while gy < front.maxY - 1.5 {
+            rule(ctx, CGPoint(x: front.minX + 1.5, y: gy), CGPoint(x: front.maxX - 1.5, y: gy), weight: 0.35, color: ink.withAlphaComponent(active ? 0.55 : 0.35))
+            gy += 2.2
+        }
+        for p in [topFace, side] { ctx.addPath(p); ctx.setStrokeColor(Theme.ink(0.8).cgColor); ctx.setLineWidth(0.55); ctx.strokePath() }
+        box(ctx, front, weight: active ? heavy : medium, color: ink)
+        rule(ctx, CGPoint(x: front.minX - 4, y: c.y), CGPoint(x: front.maxX + d + 4, y: c.y), weight: fine, color: Theme.text)
+        return front
+    }
+
+    /// The position display's housing (y down, drawn once per size): heavy and fine rules, a slotted screw in each
+    /// corner, and the drum's curvature engraved as hatching that thickens toward the window's top and bottom edges.
+    static func counterHousing(size: CGSize) -> CGImage? {
+        let w = Int(ceil(size.width * 2)), h = Int(ceil(size.height * 2))
+        guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        ctx.scaleBy(x: 2, y: 2)
+        ctx.translateBy(x: 0, y: size.height); ctx.scaleBy(x: 1, y: -1)
+        let r = CGRect(origin: .zero, size: size)
+        box(ctx, r.insetBy(dx: 0.75, dy: 0.75), weight: medium, color: ink)
+        let window = r.insetBy(dx: 10, dy: 4)
+        box(ctx, window, weight: hair, color: Theme.ink(0.6))
+        // Drum shading: rules closer and darker toward each edge of the window (the figures turn away from the eye).
+        for (edge, dir) in [(window.minY, CGFloat(1)), (window.maxY, -1)] {
+            for i in 0..<4 {
+                let y = edge + dir * (0.8 + CGFloat(i) * CGFloat(i + 1) * 0.55)
+                rule(ctx, CGPoint(x: window.minX + 1, y: y), CGPoint(x: window.maxX - 1, y: y), weight: 0.35, color: Theme.ink(0.42 - CGFloat(i) * 0.09))
+            }
+        }
+        for p in [CGPoint(x: 5, y: 5), CGPoint(x: r.maxX - 5, y: 5), CGPoint(x: 5, y: r.maxY - 5), CGPoint(x: r.maxX - 5, y: r.maxY - 5)] {
+            screwHead(ctx, p, radius: 2)
+        }
+        return ctx.makeImage()
+    }
+
+    /// A slotted screw head, engraved: a ring, a shaded lower half and the slot.
+    static func screwHead(_ ctx: CGContext, _ c: CGPoint, radius r: CGFloat) {
+        let disc = CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r)
+        ctx.setFillColor(Theme.panelRaised.cgColor); ctx.fillEllipse(in: disc)
+        ctx.saveGState(); ctx.addEllipse(in: disc); ctx.clip()
+        hatch(ctx, CGRect(x: disc.minX, y: c.y, width: disc.width, height: r), spacing: 1, color: Theme.ink(0.4), weight: 0.3)
+        ctx.restoreGState()
+        loop(ctx, disc, weight: 0.5, color: Theme.ink(0.8))
+        rule(ctx, CGPoint(x: c.x - r * 0.7, y: c.y - r * 0.35), CGPoint(x: c.x + r * 0.7, y: c.y + r * 0.35), weight: 0.6, color: Theme.ink(0.85))
+    }
+
+    /// The side of a turned dial seen a little from above (y down): the top face's circle drops by `depth` to the base, and
+    /// the band between is knurled (fine vertical engraving, closer and darker toward the shadow side) and outlined. Drawn
+    /// once per size and plate (cached); the dial's own face covers the top. Decorative: no value is read from it.
+    private static var skirts: [String: CGImage] = [:]
+    static func turnedSkirt(size: CGSize, radius r: CGFloat) -> CGImage? {
+        guard r > 3, size.width > 0 else { return nil }
+        let key = "\(Int(size.width * 2))x\(Int(size.height * 2))-\(Int(r * 4))-\(Theme.activeVariant.rawValue)-\(Illustrated.on)"
+        if let image = skirts[key] { return image }
+        let w = Int(ceil(size.width * 2)), h = Int(ceil(size.height * 2))
+        guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        ctx.scaleBy(x: 2, y: 2)
+        ctx.translateBy(x: 0, y: size.height); ctx.scaleBy(x: 1, y: -1) // y down, as the knob draws
+        let c = CGPoint(x: size.width / 2, y: size.height / 2)
+        let depth = max(1.6, r * (Illustrated.on ? 0.26 : 0.18))
+        let top = CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r), base = top.offsetBy(dx: 0, dy: depth)
+        // The solid: base circle, the band joining it to the top, and the top (filled so the face sits on paper).
+        let solid = CGMutablePath()
+        solid.addEllipse(in: base); solid.addRect(CGRect(x: top.minX, y: c.y, width: top.width, height: depth)); solid.addEllipse(in: top)
+        ctx.addPath(solid); ctx.setFillColor(Theme.panelRaised.cgColor); ctx.fillPath()
+        // Knurling on the band (everything of the solid outside the top face), denser toward the right, in shadow.
+        ctx.saveGState()
+        let band = CGMutablePath(); band.addPath(solid); band.addEllipse(in: top)
+        ctx.addPath(band); ctx.clip(using: .evenOdd)
+        var x = top.minX + 0.6
+        while x < top.maxX {
+            let t = (x - top.minX) / top.width
+            rule(ctx, CGPoint(x: x, y: c.y - 1), CGPoint(x: x, y: base.maxY + 1), weight: 0.35, color: ink.withAlphaComponent(0.28 + 0.4 * t))
+            x += 1.5 - 0.6 * t
+        }
+        ctx.restoreGState()
+        // Outline: the base's visible lower arc and the two sides.
+        let arc = CGMutablePath()
+        arc.addArc(center: CGPoint(x: c.x, y: c.y + depth), radius: r, startAngle: 0, endAngle: .pi, clockwise: false)
+        ctx.addPath(arc); ctx.setStrokeColor(ink.withAlphaComponent(0.75).cgColor); ctx.setLineWidth(0.7); ctx.strokePath()
+        rule(ctx, CGPoint(x: top.minX, y: c.y), CGPoint(x: top.minX, y: c.y + depth), weight: 0.6, color: ink.withAlphaComponent(0.7))
+        rule(ctx, CGPoint(x: top.maxX, y: c.y), CGPoint(x: top.maxX, y: c.y + depth), weight: 0.6, color: ink.withAlphaComponent(0.7))
+        let image = ctx.makeImage()
+        skirts[key] = image
+        return image
+    }
+
     /// Curved engraving lines across the lower right of a disc, as light from the upper left falls on a turned part.
     static func globeShade(_ ctx: CGContext, _ face: CGRect, flipped: Bool = false) {
         // The shadow side is a crescent: the disc less a lit disc moved toward the light; it is engraved in fine
@@ -521,4 +630,16 @@ enum Atelier {
         ctx.saveGState(); ctx.setStrokeColor(color.cgColor); ctx.setLineWidth(0.4); ctx.setLineDash(phase: 0, lengths: [2, 2.5])
         ctx.strokeEllipse(in: r); ctx.restoreGState()
     }
+}
+
+/// View ▸ Illustrated Controls (Atelier): larger controls with more of the engraving (deeper turned dials, fader
+/// blocks with their grips and screws, wider mixer strips and inspector dials). Off by default: the same footprint as
+/// the other themes. Changing it rebuilds the windows, as switching themes does.
+enum Illustrated {
+    static var on: Bool {
+        get { Theme.activeStyle == .atelier && UserDefaults.standard.bool(forKey: "atelierIllustrated") }
+        set { UserDefaults.standard.set(newValue, forKey: "atelierIllustrated") }
+    }
+    /// Scales a control's size when illustrated.
+    static func size(_ base: CGFloat, _ factor: CGFloat = 1.3) -> CGFloat { on ? (base * factor).rounded() : base }
 }

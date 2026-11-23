@@ -269,6 +269,12 @@ final class TimelineView: NSView {
         layer?.backgroundColor = Theme.look.arrangement == .glass ? nil : Theme.laneA.cgColor
         playheadLayer.backgroundColor = Theme.playhead.withAlphaComponent(0.9).cgColor
         playheadLayer.zPosition = 10
+        if Theme.look.arrangement == .manuscript { // a paper casing either side, so the red line reads over red-ink clips
+            playheadLayer.shadowColor = Theme.laneA.cgColor
+            playheadLayer.shadowOpacity = 1
+            playheadLayer.shadowRadius = 1.2
+            playheadLayer.shadowOffset = .zero
+        }
         layer?.addSublayer(playheadLayer)
         let cap = CGMutablePath() // pentagon pointing down (view is flipped)
         cap.move(to: CGPoint(x: -6, y: 0)); cap.addLine(to: CGPoint(x: 6, y: 0)); cap.addLine(to: CGPoint(x: 6, y: 6))
@@ -706,8 +712,8 @@ final class TimelineView: NSView {
         guard let lo = visible.map(\.pitch).min(), let hi = visible.map(\.pitch).max() else { return }
         let top = rect.minY + titleH + 4, height = rect.maxY - 4 - top
         let span = CGFloat(max(Int(hi) - Int(lo), 11)) + 1
-        let row = max(2, min(6, height / span))
-        let base = top + (height - row * span) / 2
+        let row = max(1, min(6, height / span)) // short lanes: thinner rows rather than notes over the clip's title
+        let base = max(top, top + (height - row * span) / 2)
         ctx.setFillColor(color.withAlphaComponent(dim ? 0.45 : 0.95).cgColor)
         for n in visible {
             let x0 = xPos(forFrame: Double(clip.start + n.start - clip.offset))

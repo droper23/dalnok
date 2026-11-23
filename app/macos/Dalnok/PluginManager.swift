@@ -117,14 +117,16 @@ final class PluginManagerController: NSWindowController, NSTableViewDataSource, 
         sidebar.headerView = nil
         sidebar.dataSource = self; sidebar.delegate = self
         sidebar.rowHeight = 22
-        sidebar.style = .sourceList
+        // The theme's own surface and selection, not the system's source list and accent (the audit: grey in Atelier).
+        sidebar.style = .plain
+        sidebar.backgroundColor = .clear
         sidebar.setAccessibilityLabel("Plug-in categories")
         sidebar.menu = sidebarMenu()
         let sideScroll = NSScrollView(); sideScroll.documentView = sidebar; sideScroll.hasVerticalScroller = true; sideScroll.drawsBackground = false
         sideScroll.widthAnchor.constraint(equalToConstant: 220).isActive = true
         // Main table
-        for (id, title, width) in [("fav", "", 26.0), ("name", "Name", 240.0), ("category", "Category", 170.0), ("vendor", "Vendor", 150.0),
-                                   ("format", "Format", 56.0), ("status", "Status", 190.0)] {
+        for (id, title, width) in [("fav", "", 26.0), ("name", "Name", 220.0), ("category", "Category", 150.0), ("vendor", "Vendor", 130.0),
+                                   ("format", "Format", 60.0), ("status", "Status", 120.0)] {
             let c = NSTableColumn(identifier: .init(id))
             c.title = title
             c.width = width
@@ -132,15 +134,18 @@ final class PluginManagerController: NSWindowController, NSTableViewDataSource, 
             table.addTableColumn(c)
         }
         table.dataSource = self; table.delegate = self
-        table.usesAlternatingRowBackgroundColors = true
+        table.usesAlternatingRowBackgroundColors = false
+        table.backgroundColor = .clear
+        table.gridStyleMask = .solidHorizontalGridLineMask // ruled rows
+        table.gridColor = Theme.ink(Theme.look.mixer == .instrument ? 0.16 : 0.06)
         table.rowHeight = 22
-        table.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
+        table.columnAutoresizingStyle = .uniformColumnAutoresizingStyle // every column fits: no clipped Status
         table.doubleAction = #selector(addSelected(_:))
         table.target = self
         table.setDraggingSourceOperationMask(.copy, forLocal: false)
         table.setAccessibilityLabel("Plug-ins")
         table.menu = rowMenu()
-        let scroll = NSScrollView(); scroll.documentView = table; scroll.hasVerticalScroller = true
+        let scroll = NSScrollView(); scroll.documentView = table; scroll.hasVerticalScroller = true; scroll.drawsBackground = false
 
         search.placeholderString = "Search name, vendor, category, tag or capability (fuzzy)"
         search.delegate = self
@@ -198,6 +203,11 @@ final class PluginManagerController: NSWindowController, NSTableViewDataSource, 
             split.topAnchor.constraint(equalTo: content.topAnchor, constant: 12), split.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -12),
         ])
         window.contentView = content
+        if Theme.activeStyle == .atelier { // the parchment, as in the main window (never takes clicks)
+            let paper = PaperGrainView(frame: content.bounds)
+            paper.autoresizingMask = [.width, .height]
+            content.addSubview(paper)
+        }
     }
 
     func show() {
@@ -207,12 +217,15 @@ final class PluginManagerController: NSWindowController, NSTableViewDataSource, 
         window?.makeFirstResponder(search)
     }
 
-    /// Fast: metadata and the AU registry only, merged with any cached scan results.
-    func loadMetadata() {
+    /// Fast: metadata and the AU registry only, merged with any cached scan results (the browser and the Library).
+    static func metadata() -> [Plugin] {
         let n = dalnok_plugins_scan(nil, true, nil, 0)
         var buf = [CChar](repeating: 0, count: n + 1)
         dalnok_plugins_scan(nil, true, &buf, buf.count)
-        all = Self.parse(cString(buf), cache: Self.cachedStatuses())
+        return parse(cString(buf), cache: cachedStatuses())
+    }
+    func loadMetadata() {
+        all = Self.metadata()
         reloadSidebar()
         apply()
     }
@@ -374,7 +387,8 @@ final class PluginManagerController: NSWindowController, NSTableViewDataSource, 
 
     /// Fuzzy score: every word of the query must appear in the plug-in's text, as a substring (best) or, for the
     /// name, as letters in order ("vtl" finds "Vital"). Nil = no match.
-    func score(_ p: Plugin, _ query: String) -> Int? {
+    func score(_ p: Plugin, _ query: String) -> Int? { Self.score(p, query) }
+    static func score(_ p: Plugin, _ query: String) -> Int? {
         let q = query.lowercased().split(separator: " ").map(String.init)
         guard !q.isEmpty else { return 0 }
         let name = p.name.lowercased()
@@ -455,6 +469,7 @@ final class PluginManagerController: NSWindowController, NSTableViewDataSource, 
         guard tableView === sidebar else { return true }
         if case .header = sideRows[row] { return false }; return true
     }
+    func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? { LibraryRowView() }
     func tableView(_ tableView: NSTableView, viewFor col: NSTableColumn?, row: Int) -> NSView? {
         if tableView === sidebar {
             switch sideRows[row] {

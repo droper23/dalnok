@@ -1,7 +1,7 @@
 ---
 created: 2026-11-21
 updated: 2026-11-22
-status: implemented (light and dark); redrawn as the Codex 2026-11-22 (replaces the sketchbook of the same day)
+status: implemented (light and dark); redrawn as the Codex 2026-11-22 (replaces the sketchbook of the same day); controls drawn as instruments 2026-11-22 (audit)
 related: "[[Theme System]]", "[[Prism]]"
 ---
 # Atelier: the Codex
@@ -59,6 +59,29 @@ Each display kind keeps its live data and becomes a figure:
   engraved meters, dials with lozenge needles.
 - Start page: the frontispiece figure (Fig. 1, the diapason: a tuning fork with its sine and f = 1/T).
 
+## Controls drawn as instruments (owner, 2026-11-22 evening; [[Atelier Audit 2026-11-22]])
+Owner direction: more like the "Mathematics" plate, many 3D drawn images with labels, and **the controls themselves
+become drawings**. Data stays first: engraving never runs under text, values, waveforms or meter scales.
+- **Dials** (headers, mixer, Inspector): turned parts seen a little from above; the knurled side band
+  (`Atelier.turnedSkirt`, cached per size) sits under the face; graduations, value arc and needle as before.
+- **Faders:** an engraved rail with slotted screws at its ends; the block in perspective (`Atelier.slideBlock`): front
+  face with grip ridges and a hairline index at the level, a lit top face, the side engraved in shade. The Inspector's
+  send rails use the same block on a horizontal slot.
+- **Position display:** a counter in a ruled housing screwed to the plate, the figures on a drum (hatching thickens
+  toward the window's edges) (`Atelier.counterHousing`).
+- **Empty device chain:** an empty plate with Fig. — the signal's course (in → the dashed place for a plate → out,
+  lettered A, B, C).
+- **Heads:** Dark puts panel heads ("Tracks", the Library's and Inspector's sections) on the plate's gold band, set
+  dark in the serif; Light keeps ruled heads (heavy and fine rule).
+- **View ▸ Illustrated Controls** (Atelier only, off by default): larger controls with more of the engraving (deeper
+  dials, larger blocks and screws, wider mixer strips, larger Inspector dials, a larger counter). The default keeps the
+  footprint of the other themes. Switching rebuilds the windows like a theme change.
+- Theme breaks removed: plug-in browser (ruled rows, parchment, the theme's selection), Settings (serif labels,
+  aligned icons, a red rule marks the section), command palette (a ruled plate), pop-ups in the mixer and Inspector
+  (ruled boxes, engraved chevron), piano-roll notes on the umber (softer inks), Composition Overview (red double rule).
+
 ## Accessibility
 States stay shape plus colour (filled versus ruled chips, a saltire in a check box, engraving over bypassed plates).
-Body text contrast stays above 7:1 on both plates. Figures are decorative or already exposed by their displays.
+Body text contrast stays above 7:1 on both plates: Light text 10.9:1 and dim text 7.1:1 on the parchment (dim was
+5.8:1 before the audit), ochre numerals 5.1:1 (was 3.3:1); Dark text 12.5:1, dim 8.3:1, gold 7.2:1, the band's title
+7.6:1. The playhead keeps its red but is cased in paper so it reads over red-ink clips. Figures are decorative or already exposed by their displays.

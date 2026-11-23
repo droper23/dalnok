@@ -140,6 +140,10 @@ final class TransportBar: NSView {
     let mixerButton = IconButton("slider.vertical.3", help: "Mixer (X)")
     let devicesButton = IconButton("rectangle.3.group", help: "Device Panel (⌥⌘D): the selected track's plug-ins")
     var onLauncher: (() -> Void)?, onAutomation: (() -> Void)?, onMixer: (() -> Void)?, onDevices: (() -> Void)?
+    /// The side panels, just left of the transport (as Logic's control bar has them).
+    let libraryButton = IconButton("sidebar.left", help: "Library (Y): plug-ins, collections and projects")
+    let inspectorButton = IconButton("sidebar.right", help: "Inspector (I): the selected track's channel")
+    var onLibrary: (() -> Void)?, onInspector: (() -> Void)?
     var onPlayPause: (() -> Void)?
     var onRecord: (() -> Void)?
     /// Project tempo (type and press Return) and meter.
@@ -259,7 +263,8 @@ final class TransportBar: NSView {
         masterMeter.toolTip = "Output level (click to reset the clip indicator)"
         masterMeter.setAccessibilityLabel("Master level meter")
         for (b, sel) in [(launcherButton, #selector(launcherTapped)), (automationButton, #selector(automationTapped)),
-                         (mixerButton, #selector(mixerTapped)), (devicesButton, #selector(devicesTapped))] {
+                         (mixerButton, #selector(mixerTapped)), (devicesButton, #selector(devicesTapped)),
+                         (libraryButton, #selector(libraryTapped)), (inspectorButton, #selector(inspectorTapped))] {
             b.target = self; b.action = sel
         }
         let views = NSStackView(views: [launcherButton, automationButton, mixerButton, devicesButton])
@@ -269,20 +274,24 @@ final class TransportBar: NSView {
         toolsGroup = tools
         tools.setCustomSpacing(16, after: views)
 
-        for v in [titles, transport, tools] as [NSView] {
+        let panes = NSStackView(views: [libraryButton, inspectorButton])
+        panes.spacing = 2
+        for v in [titles, panes, transport, tools] as [NSView] {
             v.translatesAutoresizingMaskIntoConstraints = false
             addSubview(v)
         }
         NSLayoutConstraint.activate([
             titles.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Theme.trafficLightInset + 8),
             titles.centerYAnchor.constraint(equalTo: centerYAnchor),
-            titles.trailingAnchor.constraint(lessThanOrEqualTo: transport.leadingAnchor, constant: -16),
+            titles.trailingAnchor.constraint(lessThanOrEqualTo: panes.leadingAnchor, constant: -12),
+            panes.trailingAnchor.constraint(equalTo: transport.leadingAnchor, constant: -14),
+            panes.centerYAnchor.constraint(equalTo: centerYAnchor),
             // Centred while there is room; in a narrow window the transport moves left rather than under the tools.
             transport.centerXAnchor.constraint(equalTo: centerXAnchor).withPriority(.defaultHigh),
             tools.leadingAnchor.constraint(greaterThanOrEqualTo: transport.trailingAnchor, constant: 20),
             transport.centerYAnchor.constraint(equalTo: centerYAnchor),
-            lcd.widthAnchor.constraint(equalToConstant: 150),
-            lcd.heightAnchor.constraint(equalToConstant: 34),
+            lcd.widthAnchor.constraint(equalToConstant: Theme.look.transport == .typeset ? Illustrated.size(150, 1.2) : 150),
+            lcd.heightAnchor.constraint(equalToConstant: Theme.look.transport == .typeset ? Illustrated.size(34, 1.2) : 34),
             timeLabel.centerXAnchor.constraint(equalTo: lcd.centerXAnchor),
             subTimeLabel.centerXAnchor.constraint(equalTo: lcd.centerXAnchor),
             subTimeLabel.bottomAnchor.constraint(equalTo: lcd.bottomAnchor, constant: -1),
@@ -319,7 +328,10 @@ final class TransportBar: NSView {
         case .typeset:
             lcd.layer?.backgroundColor = Theme.lcd.cgColor
             lcd.layer?.cornerRadius = 0
-            if let l = lcd.layer { SketchBorderLayer.attach(to: l, color: Theme.text.withAlphaComponent(0.75), width: 1.1, seed: 404, overshoot: 4) }
+            // An engraved counter: a ruled housing screwed to the plate, the figures on a drum (shaded top and bottom).
+            let size = CGSize(width: Illustrated.size(150, 1.2), height: Illustrated.size(34, 1.2))
+            lcd.layer?.contents = Atelier.counterHousing(size: size)
+            lcd.layer?.contentsScale = 2
             timeLabel.textColor = Theme.text
             subTimeLabel.textColor = Theme.textDim
             tempoField.font = Theme.display(15)
@@ -410,6 +422,8 @@ final class TransportBar: NSView {
     @objc private func automationTapped() { onAutomation?() }
     @objc private func mixerTapped() { onMixer?() }
     @objc private func devicesTapped() { onDevices?() }
+    @objc private func libraryTapped() { onLibrary?() }
+    @objc private func inspectorTapped() { onInspector?() }
 }
 
 // MARK: - Track header
@@ -523,15 +537,16 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
         inputButton.target = self
         inputButton.action = #selector(inputTapped)
         gain.onBegin = { [weak self] in guard let self else { return }; self.session.engine.beginGroup("Volume"); AutomationWriter.shared?.touch(self.trackId, 0, true) }
-        gain.onGainChange = { [weak self] db in guard let self else { return }; self.session.setGain(self.trackId, db: db) }
+        gain.onGainChange = { [weak self] db in guard let self else { return }; self.session.setGain(self.trackId, db: db); self.showReadouts(db: db) }
         gain.onEnd = { [weak self] in guard let self else { return }; self.session.engine.endGroup(); AutomationWriter.shared?.touch(self.trackId, 0, false) }
         pan.onBegin = { [weak self] in guard let self else { return }; self.session.engine.beginGroup("Pan"); AutomationWriter.shared?.touch(self.trackId, 1, true) }
-        pan.onPanChange = { [weak self] p in guard let self else { return }; self.session.setPan(self.trackId, p) }
+        pan.onPanChange = { [weak self] p in guard let self else { return }; self.session.setPan(self.trackId, p); self.showReadouts(pan: p) }
         pan.onEnd = { [weak self] in guard let self else { return }; self.session.engine.endGroup(); AutomationWriter.shared?.touch(self.trackId, 1, false) }
         if Theme.look.headers == .scoreLabels { inputButton.font = Theme.note(11) }
         for label in [gainLabel, panLabel] {
-            label.font = Theme.mono(10, .medium)
+            label.font = Theme.mono(9, .medium) // fits the row the old GAIN/PAN captions had
             label.textColor = Theme.textDim
+            label.setAccessibilityElement(false) // the knob reports its own value
             label.alignment = .center
         }
         meter.vertical = true
@@ -579,9 +594,9 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
             pan.widthAnchor.constraint(equalToConstant: 30),
             pan.heightAnchor.constraint(equalToConstant: 30),
             gainLabel.centerXAnchor.constraint(equalTo: gain.centerXAnchor),
-            gainLabel.topAnchor.constraint(equalTo: gain.bottomAnchor, constant: 2),
+            gainLabel.topAnchor.constraint(equalTo: gain.bottomAnchor, constant: 0),
             panLabel.centerXAnchor.constraint(equalTo: pan.centerXAnchor),
-            panLabel.topAnchor.constraint(equalTo: pan.bottomAnchor, constant: 2),
+            panLabel.topAnchor.constraint(equalTo: pan.bottomAnchor, constant: 0),
             meter.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
             meter.topAnchor.constraint(equalTo: topAnchor, constant: 10),
             meter.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
@@ -597,6 +612,12 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
     override var isFlipped: Bool { true }
 
     /// Applies model values (after edits, undo, or scripts) without fighting an active drag.
+    /// The values under the knobs (the audit: a producer reads levels without hovering). Same row height as the old
+    /// GAIN and PAN captions; the knobs' accessibility names still say what they are.
+    func showReadouts(db: Float? = nil, pan p: Float? = nil) {
+        if let db { let s = db <= -95 ? "−∞ dB" : String(format: "%@%.1f dB", db >= 0 ? "+" : "−", abs(db)); if gainLabel.stringValue != s { gainLabel.stringValue = s } }
+        if let p { let s = PanKnob.format(Double(p)); if panLabel.stringValue != s { panLabel.stringValue = s } }
+    }
     func update(_ t: TrackView, index: Int) {
         if color != t.color || muted != t.muted { needsDisplay = true }
         color = t.color
@@ -659,6 +680,8 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
         let db: Float = t.gainDb.isFinite ? t.gainDb : -.infinity
         if !gain.tracking { if hasShown { gain.glide(toDb: db) } else { gain.db = db } }
         if !pan.tracking { if hasShown { pan.glide(toPan: t.pan) } else { pan.pan = t.pan } }
+        if !gain.tracking { showReadouts(db: db) }
+        if !pan.tracking { showReadouts(pan: t.pan) }
         hasShown = true
         gain.setAccessibilityLabel("Volume, \(t.name)")
         pan.setAccessibilityLabel("Pan, \(t.name)")
@@ -967,8 +990,21 @@ final class TrackHeaderColumn: NSView, TrackScrollHost {
         Theme.panel.setFill()
         bounds.fill()
         let hiddenCount = session.hiddenCount
-        let title = (hiddenCount > 0 ? "TRACKS · \(hiddenCount) HIDDEN" : "TRACKS") as NSString
-        title.draw(at: NSPoint(x: 16, y: 7), withAttributes: [.font: Theme.ui(10, .semibold), .foregroundColor: Theme.textDim, .kern: 0.8])
+        if Theme.look.headers == .scoreLabels, let ctx = NSGraphicsContext.current?.cgContext {
+            // Atelier: the column's head as a plate's title, "Tracks" in the serif (on the gold band of the umber plate).
+            let head = CGRect(x: 0, y: 3, width: bounds.width - 46, height: Theme.rulerHeight - 7)
+            let band = !Theme.palette.light
+            if band { Atelier.gold.setFill(); head.fill() }
+            let t = (hiddenCount > 0 ? "Tracks · \(hiddenCount) hidden" : "Tracks") as NSString
+            t.draw(at: NSPoint(x: 12, y: head.midY - 9), withAttributes: [.font: Theme.title(14, .semibold), .foregroundColor: band ? Theme.window : Theme.text])
+            if !band {
+                Atelier.rule(ctx, CGPoint(x: 8, y: Theme.rulerHeight - 4.5), CGPoint(x: bounds.width - 8, y: Theme.rulerHeight - 4.5), weight: Atelier.medium)
+                Atelier.rule(ctx, CGPoint(x: 8, y: Theme.rulerHeight - 2), CGPoint(x: bounds.width - 8, y: Theme.rulerHeight - 2), weight: Atelier.hair)
+            }
+        } else {
+            let title = (hiddenCount > 0 ? "TRACKS · \(hiddenCount) HIDDEN" : "TRACKS") as NSString
+            title.draw(at: NSPoint(x: 16, y: 7), withAttributes: [.font: Theme.ui(10, .semibold), .foregroundColor: Theme.textDim, .kern: 0.8])
+        }
         Theme.separator.setFill()
         NSRect(x: 0, y: Theme.rulerHeight - 1, width: bounds.width, height: 1).fill()
         NSRect(x: bounds.width - 1, y: 0, width: 1, height: bounds.height).fill()
