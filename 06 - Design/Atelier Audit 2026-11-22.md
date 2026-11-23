@@ -1,6 +1,6 @@
 ---
 created: 2026-11-22
-status: plan (not started); owner answers recorded below
+status: mostly done 2026-11-22 (see "Done and open" at the end); owner answers recorded below
 related: "[[Atelier]]", "[[Theme System]]"
 ---
 # Atelier audit and update plan (2026-11-22)
@@ -93,3 +93,14 @@ Severity: **H** must fix, **M** should, **L** polish.
 2. A and C (theme breaks and cropping), all themes where shared (C applies to every theme).
 3. B1–B7, one control family at a time, each with gallery stills in light and dark.
 4. D, then the full self-test matrix, the a11y audit, perf, and gallery review.
+
+## Done and open (2026-11-22, late)
+- **Done:** A1–A8 (A6 by softer inks on the dark plate; A8 with an engraved microphone and keyboard on the start cards),
+  B1 (counter housing), B2 (fader blocks and screwed rails), B3 (turned dials), B5 partly (chips unchanged in shape),
+  B6 (signal figure in the mixer's spare room), B7 partly (plate numbers and figures as before), B8, C1, C2, C3, C7
+  partly (+ Bus), C8, C9, C10, C11 (notes under the title), D1, D2 (paper casing; red kept, as in the owner's mock-up),
+  D4 (by D1), D6 (read-outs in every theme). Two densities: View ▸ Illustrated Controls.
+- **Open:** A9 (toolbar glyphs are still SF Symbols), B4 (the control bar's master meter as a needle indicator), C4 is
+  scroll clipping (no change), C5 (a fade at the arrangement's lower edge), C6 (scroll bar gutter under the plates),
+  C7 (insert rows aligned across strips, selected wash to the divider), C12, D3 (record still shares red with the
+  playhead and accent), D5 (track inks separated by lightness).

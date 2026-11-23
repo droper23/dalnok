@@ -22,3 +22,23 @@ Prism Dark and Atelier Light, one for Prism Light.
 - Audio is unaffected by the theme: no overloads or missed blocks, worst render under 0.6 ms of a 10.67 ms period.
 - Conclusion: both new looks are within budget on this project; nothing to optimise now. Re-measure on a 128-track
   project with plug-ins if a theme change touches the device panel or mixer drawing.
+
+## Re-measure: the Codex, the side panels and the engraved controls (2026-11-22, late)
+Same command and generated `large` project, release build of `feat/inspector-library` (ab9d03e). One run each.
+
+| Look | Side panels | Main p50 | p99 | max | > 50 ms | Display tick p50 / p99 | Overloads | Missed | Worst render |
+|---|---|---|---|---|---|---|---|---|---|
+| Graphite | open | 0.20 ms | 7.91 | 18.6 | 0 | 0.31 / 1.09 | 0 | 0 | 0.30 ms |
+| Graphite | closed | 0.19 ms | 7.84 | 22.5 | 0 | 0.30 / 1.17 | 0 | 0 | 0.34 ms |
+| Prism Dark | open | 0.20 ms | 7.81 | 279 | 1 | 0.23 / 1.06 | 0 | 0 | 0.29 ms |
+| Atelier Light (Codex) | open | 0.20 ms | 7.99 | 17.8 | 0 | 0.25 / 1.19 | 0 | 0 | 0.28 ms |
+| Atelier Light (Codex) | closed | 0.15 ms | 8.03 | 21.2 | 0 | 0.22 / 0.97 | 0 | 0 | 0.32 ms |
+| Atelier Dark (Codex) | open | 0.02 ms | 8.57 | 12.1 | 0 | 0.22 / 0.99 | 0 | 0 | 0.33 ms |
+
+- The main-thread figures are much lower than this morning's table in every look, Graphite included (p50 0.2 ms vs
+  1.7 ms), so they are compared only within this run: the side panels add nothing measurable (Graphite 0.20 / 7.91 open
+  vs 0.19 / 7.84 closed), and the Codex with its engraved controls costs about 0.1 ms at p99 over Graphite (0.7 ms in
+  Dark). The cause of the overall drop is not established (the machine's load and the PerfProbe build are candidates).
+- Prism had one 279 ms main-thread pass (a single stall, not repeated); the panels don't touch Prism's drawing paths,
+  but it is worth a repeat run before the next release.
+- Audio: no overloads, no missed blocks, worst render ≤ 0.34 ms of a 11.6 ms budget in every look.
