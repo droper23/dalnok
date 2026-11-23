@@ -592,3 +592,37 @@ extension AtelierFigure {
         }
     }
 }
+
+/// A figure's draggable part for VoiceOver and keyboard users: an adjustable slider named after its parameter, whose
+/// increment and decrement move the value by a twentieth (the review: the parts weren't reachable without a mouse).
+/// Built fresh each time VoiceOver asks (as `AXItem` is).
+final class FigurePartElement: NSAccessibilityElement {
+    var onStep: ((Double) -> Bool)?
+    override func accessibilityPerformIncrement() -> Bool { onStep?(0.05) ?? false }
+    override func accessibilityPerformDecrement() -> Bool { onStep?(-0.05) ?? false }
+}
+
+extension FaceplateScreen {
+    /// The figure's parts as VoiceOver sliders (only the parts linked to a parameter).
+    func figureAccessibilityChildren() -> [Any]? {
+        guard let fig = atelierFigure, let link = figureLink else { return nil }
+        return fig.roles.compactMap { role -> FigurePartElement? in
+            guard let id = link.ids[role] else { return nil }
+            let e = FigurePartElement()
+            e.setAccessibilityRole(.slider)
+            e.setAccessibilityLabel(link.name(id) ?? role.rawValue.capitalized)
+            if let t = link.text(id) { e.setAccessibilityValue(t) }
+            e.setAccessibilityParent(self)
+            if let h = figureHandles.first(where: { $0.role == role }), let w = window {
+                e.setAccessibilityFrame(w.convertToScreen(convert(NSRect(x: h.point.x - 8, y: h.point.y - 8, width: 16, height: 16), to: nil)))
+            }
+            e.onStep = { [weak self] d in
+                guard let self, let link = self.figureLink, let v = link.value(id) else { return false }
+                link.begin(); link.set(id, max(0, min(1, v + d))); link.end()
+                self.needsDisplay = true
+                return true
+            }
+            return e
+        }
+    }
+}

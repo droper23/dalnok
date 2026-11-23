@@ -856,6 +856,13 @@ extension SelfTest {
                         let after = unit.current(id)?.value ?? -1
                         check(after > before + 0.05, "dragging the figure's threshold part raises the threshold (\(Theme.look.devices); \(before) → \(after))")
                         unit.set(id, before)
+                        // VoiceOver and keyboard: each part is a slider named after its parameter.
+                        let parts = (screen.accessibilityChildren() as? [FigurePartElement]) ?? []
+                        let thrPart = parts.first { $0.accessibilityLabel()?.lowercased().contains("threshold") == true }
+                        check(parts.count == 2 && thrPart?.accessibilityRole() == .slider && thrPart?.accessibilityPerformIncrement() == true
+                              && (unit.current(id)?.value ?? -1) > before + 0.02,
+                              "the figure's parts are VoiceOver sliders; incrementing Threshold raises it (\(parts.compactMap { $0.accessibilityLabel() }))")
+                        unit.set(id, before)
                         // Motion: the governor spins (it holds still under the pointer); its part and key row light together.
                         let a0 = screen.figureAngle
                         screen.advanceFigure(0.1)

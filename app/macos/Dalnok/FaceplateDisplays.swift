@@ -213,6 +213,7 @@ class FaceplateScreen: NSView {
         }
     }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    override func accessibilityChildren() -> [Any]? { figureAccessibilityChildren() ?? super.accessibilityChildren() }
     override func mouseDown(with event: NSEvent) { if !(atelierFigure != nil && figureMouseDown(event)) { super.mouseDown(with: event) } }
     override func mouseDragged(with event: NSEvent) { if figureDrag != nil { figureMouseDragged(event) } else { super.mouseDragged(with: event) } }
     override func mouseUp(with event: NSEvent) { if figureDrag != nil { figureMouseUp() } else { super.mouseUp(with: event) } }
