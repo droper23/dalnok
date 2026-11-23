@@ -1,13 +1,9 @@
-// The plug-in figures in Graphite and Prism (the owner, 2026-11-23: bring the other looks to Atelier's level, "more
-// visually impressive and distinct"). The same five families, parameters, handles, hover links and motion as
-// Atelier's engraved figures (AtelierFigures.swift), each drawn in its look's own idiom:
-//   Graphite, "telemetry": phosphor traces with an afterglow on a dot grid behind the unit's glass, amber handles.
-//     Dynamics: the gain computer's curve with the signal riding it; reverb: the decay field filling with
-//     reflections; delay: echo taps marching out; distortion: the transfer lens bending a sine; modulation: an LFO
-//     scope with its phase dot.
-//   Prism, "optics": light on the card's glass, coloured by the spectrum. Dynamics: an iris that closes as it
-//     reduces; reverb: caustic rings spreading in a pool; delay: light echoes, each a step further along the
-//     spectrum; distortion: a sine refracted by a prism into its harmonics; modulation: two waves interfering.
+// Prism's plug-in figures, "optics" (the owner, 2026-11-23: bring the other looks to Atelier's level; Graphite's
+// telemetry figures and Warm Analog's moving pedal circuits were tried the same day and went back). The same five
+// families, parameters, handles, hover links and motion as Atelier's engraved figures (AtelierFigures.swift), drawn as
+// light on the card's glass, coloured by the spectrum. Dynamics: an iris that closes as it reduces; reverb: caustic
+// rings spreading in a pool; delay: light echoes, each a step further along the spectrum; distortion: a sine refracted
+// by a prism into its harmonics; modulation: two waves interfering.
 // Drag a part (it lights, with its parameter's name and value); the figure holds still under the pointer.
 // SPDX-License-Identifier: GPL-3.0-or-later
 import AppKit
@@ -15,7 +11,7 @@ import AppKit
 extension FaceplateScreen {
     /// Graphite and Prism draw the figure in place of the display. Returns false where the look has none.
     func drawLookFigure(_ ctx: CGContext) -> Bool {
-        guard let fig = atelierFigure, Theme.look.devices == .rack || Theme.look.devices == .cards else { return false }
+        guard let fig = atelierFigure, Theme.look.devices == .cards else { return false }
         let prism = Theme.look.devices == .cards
         let live: Double = switch self {
         case let m as MovingCoilMeter: m.reductionDb
@@ -44,11 +40,11 @@ extension FaceplateScreen {
         let field = f.insetBy(dx: 6, dy: 5)
         var handles: [FigureHandle] = []
         switch fig {
-        case .governor: handles = prism ? pen.aperture(field, reductionDb: live) : pen.gainComputer(field, reductionDb: live)
-        case .chamber: handles = prism ? pen.caustics(field, energyDb: live) : pen.decayField(field, energyDb: live)
-        case .pendulum: handles = prism ? pen.lightEchoes(field) : pen.echoTaps(field)
-        case .clipping: handles = prism ? pen.refraction(field) : pen.transferLens(field)
-        case .crank: handles = prism ? pen.interference(field) : pen.lfoScope(field)
+        case .governor: handles = pen.aperture(field, reductionDb: live)
+        case .chamber: handles = pen.caustics(field, energyDb: live)
+        case .pendulum: handles = pen.lightEchoes(field)
+        case .clipping: handles = pen.refraction(field)
+        case .crank: handles = pen.interference(field)
         }
         figureHandles = handles
         for h in handles where link.ids[h.role] != nil { pen.handle(h, lit: isLit(h.role)) }
@@ -214,180 +210,10 @@ struct LookPen {
     }
     /// The figure's name in the screen's corner (Graphite in capitals like a readout, Prism quietly on the glass).
     func caption(_ fig: AtelierFigure, _ f: CGRect) {
-        let name = prism ? fig.prismTitle : fig.graphiteTitle
+        let name = fig.prismTitle
         text(prism ? name : name.uppercased(), CGPoint(x: f.minX, y: f.minY - 1), size: prism ? 8 : 7.5, color: ink.withAlphaComponent(0.5))
     }
     func note(_ s: String, _ f: CGRect) { text(s, CGPoint(x: f.maxX, y: f.minY - 1), size: 8, color: ink.withAlphaComponent(0.55), align: .right) }
-
-    // MARK: Graphite: telemetry
-
-    /// Dynamics: input level against output level. Below the threshold the line runs at 45°, above it bends by the
-    /// ratio; the signal is a dot riding the curve with its recent path glowing behind it, and a gain-reduction bar.
-    func gainComputer(_ f: CGRect, reductionDb: Double) -> [FigureHandle] {
-        let plot = CGRect(x: f.minX + 14, y: f.minY + 12, width: min(f.width - 46, f.height - 18), height: min(f.width - 46, f.height - 18))
-        let thr = link.v(.threshold, 0.6), ratio = link.v(.ratio, 0.4)
-        let tIn = 0.25 + 0.6 * CGFloat(thr)                     // threshold along the input axis (0…1)
-        let slope = 1 / (1 + 7 * CGFloat(ratio))                 // above the knee
-        func pt(_ x: CGFloat) -> CGPoint {
-            let y = x <= tIn ? x : tIn + (x - tIn) * slope
-            return CGPoint(x: plot.minX + x * plot.width, y: plot.maxY - y * plot.height)
-        }
-        rule(CGPoint(x: plot.minX, y: plot.maxY), CGPoint(x: plot.maxX, y: plot.maxY))
-        rule(CGPoint(x: plot.minX, y: plot.minY), CGPoint(x: plot.minX, y: plot.maxY))
-        rule(pt(0), CGPoint(x: plot.maxX, y: plot.minY), alpha: 0.6, dash: [2, 3]) // unity
-        let curve = CGMutablePath()
-        curve.move(to: pt(0)); for i in 1...40 { curve.addLine(to: pt(CGFloat(i) / 40)) }
-        trace(curve, width: 1.6)
-        // The signal: a level that breathes with the motion, faster while reducing; its last positions glow behind it.
-        let red = CGFloat(min(1, abs(reductionDb) / 18))
-        for k in stride(from: 6, through: 0, by: -1) {
-            let a = angle - CGFloat(k) * 0.09
-            let level = tIn * 0.7 + (0.25 + 0.5 * red) * (0.5 + 0.5 * sin(a * 1.7)) * 0.9
-            dot(pt(min(1, level)), r: k == 0 ? 3 : 1.6, alpha: k == 0 ? 1 : 0.5 - CGFloat(k) * 0.06)
-        }
-        // Gain reduction: a bar from the top, at the right.
-        let bar = CGRect(x: f.maxX - 14, y: plot.minY, width: 6, height: plot.height)
-        ctx.setStrokeColor(faint.cgColor); ctx.setLineWidth(0.6); ctx.stroke(bar)
-        let grH = bar.height * min(1, CGFloat(abs(reductionDb)) / 24)
-        ctx.saveGState(); ctx.setShadow(offset: .zero, blur: 4, color: Self.amber.cgColor)
-        ctx.setFillColor(Self.amber.cgColor); ctx.fill(CGRect(x: bar.minX + 1, y: bar.minY + 1, width: bar.width - 2, height: max(0, grH - 2)))
-        ctx.restoreGState()
-        text("GR", CGPoint(x: bar.midX, y: bar.maxY + 1), size: 7, color: faint, align: .center)
-        let knee = pt(tIn), top = pt(1)
-        tag(.threshold, at: CGPoint(x: knee.x + 10, y: knee.y + 8))
-        tag(.ratio, at: CGPoint(x: top.x - 20, y: top.y - 6), align: .right)
-        note(abs(reductionDb) < 0.05 ? "GR 0.0 dB" : String(format: "GR −%.1f dB", abs(reductionDb)), f)
-        return [FigureHandle(role: .threshold, point: knee, axis: CGVector(dx: 1, dy: -1), span: plot.width * 0.8),
-                FigureHandle(role: .ratio, point: top, axis: CGVector(dx: 0, dy: 1), span: plot.height * 0.6)]
-    }
-
-    /// Reverb: the energy decay on a dB scale, with the early reflections as stems in the first window and the late
-    /// field as a cloud of points thinning out along the tail; the cloud flickers as sound passes through.
-    func decayField(_ f: CGRect, energyDb: Double) -> [FigureHandle] {
-        let size = CGFloat(link.v(.size, 0.5)), decay = CGFloat(link.v(.decay, 0.5))
-        let plot = CGRect(x: f.minX + 4, y: f.minY + 12, width: f.width - 8, height: f.height - 18)
-        rule(CGPoint(x: plot.minX, y: plot.maxY), CGPoint(x: plot.maxX, y: plot.maxY))
-        let early = plot.width * (0.08 + 0.22 * size), tail = plot.width * (0.3 + 0.68 * decay)
-        let x0 = plot.minX + early
-        func env(_ x: CGFloat) -> CGFloat { // 0…1 height of the envelope at x
-            x < x0 ? 1 : max(0, exp(-3.2 * (x - x0) / max(10, tail)))
-        }
-        let curve = CGMutablePath()
-        curve.move(to: CGPoint(x: x0, y: plot.minY + 4))
-        var x = x0; while x <= plot.maxX { curve.addLine(to: CGPoint(x: x, y: plot.maxY - env(x) * (plot.height - 4))); x += 2 }
-        trace(curve, width: 1.3)
-        // Early reflections: a few stems.
-        for i in 0..<6 {
-            let ex = plot.minX + early * (0.15 + 0.85 * CGFloat((i * 37) % 11) / 10)
-            let h = (plot.height - 6) * (0.45 + 0.5 * CGFloat((i * 53) % 7) / 6)
-            let p = CGMutablePath(); p.move(to: CGPoint(x: ex, y: plot.maxY)); p.addLine(to: CGPoint(x: ex, y: plot.maxY - h))
-            trace(p, width: 1, alpha: 0.8)
-        }
-        // The late field: points under the envelope, re-seeded as the motion moves on.
-        let frame = Int(angle * 6)
-        var seed = UInt64(truncatingIfNeeded: frame &* 2654435761)
-        func rnd() -> CGFloat { seed = seed &* 6364136223846793005 &+ 1442695040888963407; return CGFloat(seed >> 33) / CGFloat(1 << 31) }
-        for _ in 0..<70 {
-            let px = x0 + rnd() * (plot.maxX - x0), e = env(px)
-            guard e > 0.03 else { continue }
-            dot(CGPoint(x: px, y: plot.maxY - rnd() * e * (plot.height - 6)), r: 0.9, alpha: 0.35 + 0.6 * e, glow: false)
-        }
-        let sizeP = CGPoint(x: x0, y: plot.maxY - 8), decayP = CGPoint(x: min(plot.maxX - 4, x0 + tail * 0.55), y: plot.maxY - env(x0 + tail * 0.55) * (plot.height - 4))
-        tag(.size, at: CGPoint(x: sizeP.x + 16, y: plot.maxY - 13))
-        tag(.decay, at: CGPoint(x: decayP.x + 8, y: decayP.y - 16))
-        if energyDb > -80 { note(String(format: "%.0f dB", energyDb), f) }
-        return [FigureHandle(role: .size, point: sizeP, axis: CGVector(dx: 1, dy: 0), span: plot.width * 0.22),
-                FigureHandle(role: .decay, point: decayP, axis: CGVector(dx: 1, dy: 0), span: plot.width * 0.68)]
-    }
-
-    /// Delay: the echo taps as stems marching out to the right, each the feedback's fraction of the one before; a
-    /// sweep line runs through them in time.
-    func echoTaps(_ f: CGRect) -> [FigureHandle] {
-        let time = CGFloat(link.v(.time, 0.4)), fb = CGFloat(link.v(.feedback, 0.5))
-        let plot = CGRect(x: f.minX + 4, y: f.minY + 12, width: f.width - 8, height: f.height - 18)
-        rule(CGPoint(x: plot.minX, y: plot.maxY), CGPoint(x: plot.maxX, y: plot.maxY))
-        let gap = max(4, plot.width * (0.08 + 0.3 * time)), g = 0.15 + 0.8 * fb
-        var x = plot.minX + 6, h = plot.height - 6, i = 0
-        var second = CGPoint.zero
-        while x < plot.maxX - 2 && h > 2 {
-            let p = CGMutablePath(); p.move(to: CGPoint(x: x, y: plot.maxY)); p.addLine(to: CGPoint(x: x, y: plot.maxY - h))
-            trace(p, width: i == 0 ? 2 : 1.5, alpha: i == 0 ? 1 : 0.9)
-            dot(CGPoint(x: x, y: plot.maxY - h), r: 1.8)
-            if i == 1 { second = CGPoint(x: x, y: plot.maxY - h) }
-            x += gap; h *= g; i += 1
-        }
-        // The sweep: where the sound is now in the pattern.
-        let sweep = plot.minX + 6 + (plot.width - 12) * ((angle / (2 * .pi)).truncatingRemainder(dividingBy: 1))
-        rule(CGPoint(x: sweep, y: plot.minY), CGPoint(x: sweep, y: plot.maxY), alpha: 1.6)
-        if second == .zero { second = CGPoint(x: plot.minX + 6 + gap, y: plot.maxY - (plot.height - 6) * g) }
-        let first = CGPoint(x: plot.minX + 6, y: plot.maxY - (plot.height - 6))
-        rule(CGPoint(x: first.x, y: plot.maxY + 3), CGPoint(x: second.x, y: plot.maxY + 3), alpha: 2)
-        tag(.time, at: CGPoint(x: second.x + 16, y: plot.maxY - 13))
-        tag(.feedback, at: CGPoint(x: second.x + 8, y: second.y - 4))
-        return [FigureHandle(role: .time, point: CGPoint(x: second.x, y: plot.maxY), axis: CGVector(dx: 1, dy: 0), span: plot.width * 0.3),
-                FigureHandle(role: .feedback, point: second, axis: CGVector(dx: 0, dy: -1), span: plot.height * 0.8)]
-    }
-
-    /// Distortion: the transfer curve (input across, output up) bending harder with the drive; a sine comes in below
-    /// and leaves clipped at the right, a dot tracing where the sample is now.
-    func transferLens(_ f: CGRect) -> [FigureHandle] {
-        let drive = CGFloat(link.v(.drive, 0.4)), k = 1 + 9 * drive
-        let side = min(f.height - 14, f.width * 0.42)
-        let plot = CGRect(x: f.minX + 6, y: f.minY + 12, width: side, height: side)
-        func shape(_ x: CGFloat) -> CGFloat { tanh(k * x) / tanh(k) }
-        rule(CGPoint(x: plot.minX, y: plot.midY), CGPoint(x: plot.maxX, y: plot.midY))
-        rule(CGPoint(x: plot.midX, y: plot.minY), CGPoint(x: plot.midX, y: plot.maxY))
-        let curve = CGMutablePath()
-        for i in 0...40 { let x = CGFloat(i) / 20 - 1; let p = CGPoint(x: plot.midX + x * side / 2, y: plot.midY - shape(x) * side / 2); i == 0 ? curve.move(to: p) : curve.addLine(to: p) }
-        trace(curve, width: 1.6)
-        let now = sin(angle) * 0.95
-        dot(CGPoint(x: plot.midX + now * side / 2, y: plot.midY - shape(now) * side / 2), r: 2.6)
-        // Output wave to the right: the clipped sine scrolling.
-        let out = CGRect(x: plot.maxX + 12, y: plot.minY, width: f.maxX - plot.maxX - 20, height: side)
-        ctx.saveGState(); ctx.clip(to: out.insetBy(dx: -3, dy: -6)) // the output stays in its own window
-        let wave = CGMutablePath()
-        for i in 0...60 {
-            let t = CGFloat(i) / 60, ph = angle - t * 4 * .pi
-            let p = CGPoint(x: out.minX + t * out.width, y: out.midY - shape(sin(ph) * 0.95) * out.height / 2)
-            i == 0 ? wave.move(to: p) : wave.addLine(to: p)
-        }
-        trace(wave, width: 1.4)
-        rule(CGPoint(x: out.minX, y: out.midY), CGPoint(x: out.maxX, y: out.midY), alpha: 0.6)
-        ctx.restoreGState()
-        // The handle where the curve is still bending (half way up), not on its flat top.
-        let xh = min(0.95, atanh(min(0.999, 0.55 * tanh(k))) / k)
-        let h = CGPoint(x: plot.midX + xh * side / 2, y: plot.midY - shape(xh) * side / 2)
-        tag(.drive, at: CGPoint(x: plot.midX + 6, y: plot.maxY - 14))
-        return [FigureHandle(role: .drive, point: h, axis: CGVector(dx: -1, dy: -1), span: side * 0.7)]
-    }
-
-    /// Modulation: the LFO on a scope, scrolling, its rate the number of cycles across and its depth the height; a
-    /// phase dot rides the left edge where the modulation is now.
-    func lfoScope(_ f: CGRect) -> [FigureHandle] {
-        let rate = CGFloat(link.v(.rate, 0.4)), depth = CGFloat(link.v(.depth, 0.5))
-        let plot = CGRect(x: f.minX + 4, y: f.minY + 12, width: f.width - 8, height: f.height - 18)
-        rule(CGPoint(x: plot.minX, y: plot.midY), CGPoint(x: plot.maxX, y: plot.midY), dash: [2, 3])
-        let cycles = 0.6 + 4 * rate, amp = (plot.height / 2 - 4) * (0.12 + 0.88 * depth)
-        let wave = CGMutablePath()
-        for i in 0...80 {
-            let t = CGFloat(i) / 80
-            let p = CGPoint(x: plot.minX + t * plot.width, y: plot.midY - sin(angle - t * cycles * 2 * .pi) * amp)
-            i == 0 ? wave.move(to: p) : wave.addLine(to: p)
-        }
-        trace(wave, width: 1.6)
-        dot(CGPoint(x: plot.minX, y: plot.midY - sin(angle) * amp), r: 3)
-        // Handles: one wavelength along (rate), the crest (depth).
-        let wl = plot.width / cycles
-        let crestT = ((angle / (2 * .pi)).truncatingRemainder(dividingBy: 1) + 0.25)
-        _ = crestT
-        let rateP = CGPoint(x: min(plot.maxX - 4, plot.minX + wl), y: plot.midY)
-        let depthP = CGPoint(x: plot.minX + plot.width * 0.5, y: plot.midY - amp)
-        rule(CGPoint(x: plot.minX, y: plot.maxY - 2), CGPoint(x: rateP.x, y: plot.maxY - 2), alpha: 2)
-        tag(.rate, at: CGPoint(x: rateP.x + 8, y: plot.maxY - 14))
-        tag(.depth, at: CGPoint(x: depthP.x + 8, y: max(plot.minY, depthP.y - 14)))
-        return [FigureHandle(role: .rate, point: rateP, axis: CGVector(dx: -1, dy: 0), span: plot.width * 0.6),
-                FigureHandle(role: .depth, point: depthP, axis: CGVector(dx: 0, dy: -1), span: plot.height * 0.4)]
-    }
 
     // MARK: Prism: optics
 
@@ -585,15 +411,6 @@ struct LookPen {
 }
 
 extension AtelierFigure {
-    var graphiteTitle: String {
-        switch self {
-        case .governor: "Gain computer"
-        case .chamber: "Decay field"
-        case .pendulum: "Echo taps"
-        case .clipping: "Transfer"
-        case .crank: "LFO"
-        }
-    }
     var prismTitle: String {
         switch self {
         case .governor: "Aperture"

@@ -642,10 +642,7 @@ extension SelfTest {
                   && pedal.screen.frame.maxY < pedal.footswitch.frame.minY - 14 && pedal.screen.frame.width > 60,
                   "the pedal has a readout window under its controls (\(pedal.screen.frame))")
             delay.pollMeters(); delay.pollMeters()
-            check(pedal.screen.mode == .tape && pedal.screen.animates, "AUDelay's window draws its tape loop, moving (\(pedal.screen.mode))")
-            let phase0 = pedal.screen.phase
-            pedal.screen.advanceFigure(0.1)
-            check(pedal.screen.phase > phase0, "the tape loop turns (\(phase0) → \(pedal.screen.phase))")
+            check(pedal.screen.mode == .scope, "AUDelay's window shows its output trace (\(pedal.screen.mode))")
             if let knob = pedal.controls.first {
                 knob.onChange?(0.3)
                 check(pedal.screen.showingValue && pedal.screen.text.lowercased().contains("dry/wet") && pedal.screen.text.contains("30"),
@@ -843,8 +840,8 @@ extension SelfTest {
             if let unit = panel.devices.first(where: { $0.slot == comp }) {
                 check(unit.automaticKind() == .gainReduction, "Dalnok Compressor gets a gain-reduction display (\(unit.automaticKind()))")
                 // Atelier: the governor's collar is the threshold; dragging it up raises the threshold.
-                // Graphite (gain computer) and Prism (aperture) draw the same figure in their idiom, with the same parts.
-                if Theme.look.devices != .pedalboard, let screen = unit.display as? FaceplateScreen {
+                // Prism (aperture) draws the same figure in its idiom, with the same parts.
+                if Theme.look.devices == .schematic || Theme.look.devices == .cards, let screen = unit.display as? FaceplateScreen {
                     if let rep = screen.bitmapImageRepForCachingDisplay(in: screen.bounds) { screen.cacheDisplay(in: screen.bounds, to: rep) } // draws: places the parts
                     if screen.atelierFigure == .governor, let h = screen.figureHandles.first(where: { $0.role == .threshold }),
                        let id = screen.figureLink?.ids[.threshold] {

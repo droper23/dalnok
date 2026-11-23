@@ -151,7 +151,7 @@ extension SelfTest {
         click(lv.slotRect(row: row, slot: 0))
         check(s.slotClip(track.id, 0) != nil && s.track(track.id)?.clips.count == track.clips.count,
               "clicking an empty slot copies the selected clip there (the arrangement keeps it)")
-        e.seek(0); await wait(0.1)
+        e.seek(0); await settle(e, 0)
         click(lv.slotRect(row: row, slot: 0))
         check(e.isPlaying, "clicking a slot clip launches it (starting the transport)")
         await wait(0.3)
@@ -163,9 +163,9 @@ extension SelfTest {
         e.pause()
         await launcherDragsAndRecording(row: row, track: track.id, clip: clip.id)
         if (Theme.activeStyle == .warmAnalog) { // tape reels: the take-up pack follows the playhead
-            e.seek(0); await wait(0.15)
+            e.seek(0); await settle(e, 0); await waitUntil { w.transport.reels.tapeFraction < 0.01 } // the reels follow on the UI tick
             let start = w.transport.reels.tapeFraction
-            e.seek(Int64(e.sampleRate * 20)); await wait(0.15)
+            e.seek(Int64(e.sampleRate * 20)); await settle(e, Int64(e.sampleRate * 20)); await waitUntil { w.transport.reels.tapeFraction > 0.05 }
             check(w.transport.reels.superview != nil && start < 0.01 && w.transport.reels.tapeFraction > 0.05,
                   "the tape reels wind with the playhead (\(start) → \(w.transport.reels.tapeFraction))")
             e.seek(0)
@@ -391,7 +391,7 @@ extension SelfTest {
         // Touch writing: hold the header gain knob while playing; the moves become the lane.
         if let row = w.headers.row(src) {
             check(perform("Automation: Touch") && AutomationWriter.mode == .touch, "Track > Automation: Touch")
-            s.engine.seek(0); await wait(0.1)
+            s.engine.seek(0); await settle(s.engine, 0)
             s.engine.play(); await wait(0.25)
             let g = row.gain
             let a = g.convert(CGPoint(x: g.bounds.midX, y: g.bounds.midY), to: nil)
@@ -492,7 +492,7 @@ extension SelfTest {
         let e = s.engine, tl = w.timeline
         _ = s.setCycle(false, 0, 0) // start without a region
         tl.selectedClip = nil // with clips selected, Cycle uses their span instead
-        e.seek(0); await wait(0.1)
+        e.seek(0); await settle(e, 0)
         check(perform("Cycle", exact: true) && s.cycle.on && s.cycle.end > s.cycle.start, "Transport > Cycle turns on a 4-bar cycle at the playhead")
         check(abs(Double(s.cycle.end) - s.beatToFrame(s.barToBeat(4))) < 1, "the default cycle is 4 bars (\(s.cycle.start)–\(s.cycle.end))")
         check(perform("Cycle", exact: true) && !s.cycle.on, "Cycle toggles off and keeps the region")
@@ -513,7 +513,7 @@ extension SelfTest {
         tl.mouseUp(with: mouse(.leftMouseUp, right))
         check(abs(s.cycle.start - bar2) <= 1 && s.cycle.end - s.cycle.start == bar2 - bar1, "dragging the band moves the cycle by a bar")
         // Playback loops inside it.
-        e.seek(s.cycle.start); await wait(0.1)
+        e.seek(s.cycle.start); await settle(e, s.cycle.start)
         e.play()
         await wait(Double(s.cycle.end - s.cycle.start) / e.sampleRate * 1.6)
         let pos = e.position

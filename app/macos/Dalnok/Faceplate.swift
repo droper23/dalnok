@@ -152,7 +152,7 @@ enum Faceplate {
             // marks at its corners and the track's ink at its foot; a bypassed station is spanned by a dashed shunt.
             Theme.panel.setFill(); rect.fill()
             let r = rect.insetBy(dx: 6, dy: 6)
-            Atelier.cropMarks(ctx, r, length: 9, gap: 2, color: Theme.ink(dimmed ? 0.35 : 0.65), weight: Atelier.fine)
+            // (Crop marks at the corners came out: the owner found them odd between units.)
             Atelier.rule(ctx, CGPoint(x: r.minX + 14, y: r.minY + 1), CGPoint(x: r.minX + 54, y: r.minY + 1), weight: Atelier.heavy, color: accent.withAlphaComponent(dimmed ? 0.4 : 0.9))
             return
         case .rack, .pedalboard: break
@@ -1144,6 +1144,8 @@ final class PlateButton: NSButton {
     override var intrinsicContentSize: NSSize {
         switch style {
         case .system: super.intrinsicContentSize
+        case .key where Theme.look.devices == .cards || Theme.look.devices == .schematic: // room round the drawn label
+            NSSize(width: ceil((label as NSString).size(withAttributes: [.font: Theme.mono(8, .medium)]).width) + 22, height: 19)
         case .key: NSSize(width: ceil(Faceplate.glyphs(label, font: labelFont, kern: 0.9).width) + 18, height: 17)
         case .power: NSSize(width: 20, height: 20)
         case .powerIcon: NSSize(width: 24, height: 24) // the glowing symbol is 12 pt; the whole square takes the press
@@ -1172,8 +1174,10 @@ final class PlateButton: NSButton {
         let enabled = isEnabled
         if isFlipped { ctx.translateBy(x: 0, y: bounds.height); ctx.scaleBy(x: 1, y: -1) } // draw y-up
         if style == .key && (Theme.look.devices == .cards || Theme.look.devices == .schematic) {
-            // A glass capsule (Prism) or a boxed label (Atelier).
-            let r = bounds.insetBy(dx: 1, dy: 2)
+            // A glass capsule (Prism) or a boxed label (Atelier), sized round its label (never smaller than the text).
+            let labelSize = (label as NSString).size(withAttributes: [.font: Theme.mono(8, .medium)])
+            let r = CGRect(x: bounds.midX - min(bounds.width - 2, labelSize.width + 16) / 2, y: bounds.midY - min(bounds.height, labelSize.height + 5) / 2,
+                           width: min(bounds.width - 2, labelSize.width + 16), height: min(bounds.height, labelSize.height + 5))
             if Theme.look.devices == .cards {
                 Prism.slab(ctx, r, radius: r.height / 2, tint: Theme.hex(0xA8B8FF), body: pressed ? 0.2 : 0.09, flipped: false)
             } else {

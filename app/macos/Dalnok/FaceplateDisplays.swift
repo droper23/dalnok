@@ -208,8 +208,8 @@ class FaceplateScreen: NSView {
     /// The family's figure (Atelier engraves it; Graphite and Prism draw it in their own idiom, LookFigures.swift).
     var atelierFigure: AtelierFigure? {
         switch Theme.look.devices {
-        case .schematic, .rack, .cards: AtelierFigure.of(kind: codexKind, subject: codexSubject)
-        case .pedalboard: nil
+        case .schematic, .cards: AtelierFigure.of(kind: codexKind, subject: codexSubject)
+        case .rack, .pedalboard: nil // Graphite keeps its screens (owner, 2026-11-23: the telemetry figures went back)
         }
     }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
