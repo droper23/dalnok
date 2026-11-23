@@ -77,6 +77,7 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
     let selectionGlow = SettingsController.checkbox("Outline the selected plug-in")
     let gainRings = SettingsController.checkbox("Gain knobs light up with their track's level")
     let plainDials = NSPopUpButton(frame: .zero, pullsDown: false)
+    let figureMotion = NSPopUpButton(frame: .zero, pullsDown: false)
     /// The device panel's height above its smallest (the same as dragging its top edge).
     let panelHeight = NSSlider(value: 0, minValue: Double(DevicePanel.extraRange.lowerBound), maxValue: Double(DevicePanel.extraRange.upperBound), target: nil, action: nil)
     // Files and Library
@@ -413,6 +414,9 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
         plainDials.addItems(withTitles: ["Drawn instruments", "Plain dials"])
         plainDials.target = self; plainDials.action = #selector(plainDialsChanged(_:))
         plainDials.setAccessibilityLabel("Plug-in controls")
+        figureMotion.addItems(withTitles: ["Moving, still under the pointer", "Always moving", "Still until pointed at"])
+        figureMotion.target = self; figureMotion.action = #selector(figureMotionChanged(_:))
+        figureMotion.setAccessibilityLabel("Figure motion")
         let pct: (Double) -> String = { String(format: "%.0f%%", $0 * 100) }, secs: (Double) -> String = { String(format: "%.1f s", $0) }
         let rack = { Theme.look.devices == .rack } // the faceplate rows: Graphite's rack units only
         paneViews[.appearance] = pane(.appearance, "Appearance", "The look of Dalnok and how the arrangement and plug-ins are laid out.", [
@@ -429,6 +433,7 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
             ("Device panel", slider(panelHeight, #selector(panelHeightChanged(_:)), { "+\(Int($0)) pt" }, from: "Compact", to: "Tall"),
              "Also by dragging the panel's top edge. Taller panels show more of each plug-in's parameters at once."),
             ("Plug-in controls", plainDials, "Atelier draws each parameter as an instrument (a sextant, a ruler, an inclined plane…); plain dials are quicker to read at a glance."),
+            ("Figure motion", figureMotion, "Whether a plug-in's drawing keeps moving while you point at it, or moves only then."),
             ("Selection", selectionGlow, nil),
             ("Plug-in meters", deviceMeters, nil),
             ("Peak hold", slider(peakHold, #selector(peakHoldChanged(_:)), secs), "How long the IN/OUT meters hold their highest LED."),
@@ -437,7 +442,7 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
              "Scratches and grime on the metal; dust, smudges and an aged VU face behind the glass."),
             ("Displays", smallButton("Reset Display Choices", #selector(resetDisplays)), "Back to the display Dalnok picks for each plug-in (right-click a unit ▸ Display to choose one)."),
             ("Motion", note("Animations follow System Settings ▸ Accessibility ▸ Display ▸ Reduce motion."), nil),
-        ], onlyFor: ["Plug-in controls": { Theme.look.devices == .schematic }, "Plug-in meters": rack, "Peak hold": rack, "VU needle": rack, "Wear": rack, "Displays": { Theme.look.devices != .schematic }])
+        ], onlyFor: ["Plug-in controls": { Theme.look.devices == .schematic }, "Figure motion": { [.schematic, .cards].contains(Theme.look.devices) }, "Plug-in meters": rack, "Peak hold": rack, "VU needle": rack, "Wear": rack, "Displays": { Theme.look.devices != .schematic }])
         // Audio
         for p in [outputPopup, inputPopup] { p.menu?.delegate = self; p.widthAnchor.constraint(equalToConstant: 320).isActive = true }
         outputPopup.menu?.title = "Output Device"
@@ -562,6 +567,7 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
         gainRings.state = GainKnob.showsLevel ? .on : .off
         panelHeight.doubleValue = Double(DevicePanel.extra)
         plainDials.selectItem(at: Faceplate.plainDials ? 1 : 0)
+        figureMotion.selectItem(at: Faceplate.figureMotion.rawValue)
         libraryPreview.state = LibraryPreview.enabled ? .on : .off
         refreshLibraryFolders()
         for (rows, when) in rowsOnlyFor { let on = when(); rows.forEach { $0.isHidden = !on } }
@@ -680,6 +686,9 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
     }
     @objc private func openPlugins() { main?.showPlugins(nil) }
     @objc private func showFirstLaunch() { main?.shortcutChooser.show() }
+    @objc func figureMotionChanged(_ sender: Any?) {
+        Faceplate.figureMotion = Faceplate.FigureMotion(rawValue: figureMotion.indexOfSelectedItem) ?? .holdUnderPointer
+    }
     @objc func plainDialsChanged(_ sender: Any?) {
         Faceplate.plainDials = plainDials.indexOfSelectedItem == 1
         main?.devicePanel.rebuildAll()

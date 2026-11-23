@@ -65,14 +65,24 @@ final class FoldStrip: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
-        if Theme.look.pedalboard, let look { drawPedalEdge(ctx, look) } else { drawRackBlank(ctx) }
+        if Theme.look.pedalboard, let look { drawPedalEdge(ctx, look) }
+        else if Theme.look.devices == .schematic { drawPlateEdge(ctx) }
+        else { drawRackBlank(ctx) }
     }
 
-    /// The name set upright along the strip, reading bottom to top, truncated to fit.
+    /// The name as the strip prints it: built-ins without the "Dalnok" maker's name (as the insert lists write them).
+    private var shownName: String { name.hasPrefix("Dalnok ") ? String(name.dropFirst(7)) : name }
+
+    /// The name set upright along the strip, reading bottom to top: set smaller (to 8.5 pt) before it is truncated.
     private func drawUpright(_ ctx: CGContext, text: String, attrs: [NSAttributedString.Key: Any], centerX: CGFloat, from y0: CGFloat, to y1: CGFloat) {
-        var s = text
+        var s = text, attrs = attrs
         var str = NSAttributedString(string: s, attributes: attrs)
         let room = max(0, y1 - y0)
+        if let font = attrs[.font] as? NSFont, str.size().width > room {
+            let size = max(8.5, (font.pointSize * room / str.size().width).rounded(.down))
+            attrs[.font] = NSFontManager.shared.convert(font, toSize: size)
+            str = NSAttributedString(string: s, attributes: attrs)
+        }
         while str.size().width > room, s.count > 1 {
             s = String(s.dropLast(2)) + "…"
             str = NSAttributedString(string: s, attributes: attrs)
@@ -127,7 +137,38 @@ final class FoldStrip: NSView {
         let attrs: [NSAttributedString.Key: Any] = [.font: Theme.ui(11, .semibold),
                                                     .foregroundColor: loaded ? (lit ? Faceplate.engraving : Theme.textFaint) : Theme.textFaint,
                                                     .shadow: shadow]
-        drawUpright(ctx, text: name, attrs: attrs, centerX: r.midX, from: column.maxY + 8, to: lamp.minY - 8)
+        drawUpright(ctx, text: shownName, attrs: attrs, centerX: r.midX, from: column.maxY + 8, to: lamp.minY - 8)
+    }
+
+    /// Atelier: the plate seen on its edge, as an engraving: a double-ruled slip of paper with the name set upright,
+    /// an engraved on/off mark (gold while it plays), and the output as a hatched column on a small dB scale.
+    private func drawPlateEdge(_ ctx: CGContext) {
+        let r = bounds.insetBy(dx: 2.5, dy: 2.5)
+        let lit = engaged && loaded
+        Atelier.box(ctx, r, weight: Atelier.fine, color: Theme.ink(0.6))
+        Atelier.box(ctx, r.insetBy(dx: 2.5, dy: 2.5), weight: Atelier.hair, color: Theme.ink(0.3))
+        // The on/off mark: a ring with its stem, gold while the unit plays.
+        let key = powerRect.insetBy(dx: 4, dy: 4)
+        let ink = lit ? Atelier.gold : Theme.ink(0.45)
+        Atelier.loop(ctx, key, weight: Atelier.fine, color: ink)
+        let c = CGPoint(x: key.midX, y: key.midY), rad = key.width * 0.24
+        ctx.setStrokeColor(ink.cgColor); ctx.setLineWidth(Atelier.fine)
+        ctx.addArc(center: c, radius: rad, startAngle: .pi * 0.62, endAngle: .pi * 0.38, clockwise: false)
+        ctx.move(to: CGPoint(x: c.x, y: c.y + rad * 0.15)); ctx.addLine(to: CGPoint(x: c.x, y: c.y + rad * 1.25))
+        ctx.strokePath()
+        // The output: a hatched column rising on a ruled scale (−48 … 0 dB), ticks every 12 dB.
+        let column = CGRect(x: r.midX - 2.5, y: r.minY + 10, width: 5, height: 34)
+        Atelier.rule(ctx, CGPoint(x: column.maxX + 2, y: column.minY), CGPoint(x: column.maxX + 2, y: column.maxY), weight: Atelier.hair, color: Theme.ink(0.45))
+        for k in 0...4 {
+            let y = column.minY + column.height * CGFloat(k) / 4
+            Atelier.rule(ctx, CGPoint(x: column.maxX + 2, y: y), CGPoint(x: column.maxX + 4.5, y: y), weight: Atelier.hair, color: Theme.ink(0.45))
+        }
+        if lit, level > 0.01 {
+            let filled = CGRect(x: column.minX, y: column.minY, width: column.width, height: column.height * min(1, level))
+            Atelier.hatch(ctx, filled, spacing: 2, color: level > 0.92 ? Atelier.vermilion : Atelier.gold, weight: 0.7, angle: 0)
+        }
+        let attrs: [NSAttributedString.Key: Any] = [.font: Theme.ui(12, .semibold), .foregroundColor: loaded ? (lit ? Theme.text : Theme.textDim) : Theme.textFaint]
+        drawUpright(ctx, text: shownName, attrs: attrs, centerX: r.midX, from: column.maxY + 8, to: key.minY - 8)
     }
 
     private func drawPedalEdge(_ ctx: CGContext, _ look: PedalLook) {
@@ -193,6 +234,6 @@ final class FoldStrip: NSView {
         }
         let attrs: [NSAttributedString.Key: Any] = [.font: look.letterFont(12), .foregroundColor: loaded ? look.ink : look.ink.withAlphaComponent(0.4),
                                                     .kern: 1.2]
-        drawUpright(ctx, text: name.uppercased(), attrs: attrs, centerX: r.midX, from: r.minY + 28, to: cap.minY - 6)
+        drawUpright(ctx, text: shownName.uppercased(), attrs: attrs, centerX: r.midX, from: r.minY + 28, to: cap.minY - 6)
     }
 }

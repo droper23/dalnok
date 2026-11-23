@@ -8,7 +8,7 @@ import AppKit
 import DalnokEngine
 
 @MainActor
-final class DevicePanel: NSView {
+final class DevicePanel: NSView, KeyOwner {
     /// The panel's least height (Warm Analog: upright stomp boxes; Graphite: two rows of faceplate controls), and the
     /// height the owner dragged it to above that (its top edge resizes it in every theme; remembered).
     static var baseHeight: CGFloat { Theme.look.pedalboard ? 268 : 226 }
@@ -60,7 +60,7 @@ final class DevicePanel: NSView {
     var onShowControls: ((DalnokTrackId, Int32) -> Void)?
     var onAdd: (() -> Void)?
     /// A plug-in dropped from the browser: (add path, track, chain position).
-    var onDropPlugin: ((String, DalnokTrackId, Int) -> Void)?
+    var onDropPlugin: (([String], DalnokTrackId, Int) -> Void)?
     private let dropLine = CALayer()
 
     /// The chain position for a drop at this window point (between the units).
@@ -91,7 +91,8 @@ final class DevicePanel: NSView {
         showDropLine(nil)
         guard let t = track else { return false }
         let index = chainIndex(atWindow: sender.draggingLocation)
-        if let path = sender.draggingPasteboard.string(forType: .dalnokPlugin) { onDropPlugin?(path, t, index); return true }
+        let paths = sender.draggingPasteboard.dalnokPluginPaths
+        if !paths.isEmpty { onDropPlugin?(paths, t, index); return true }
         if let s = sender.draggingPasteboard.string(forType: .dalnokSlot), let slot = Int32(s) { return move(slot, toDropIndex: index) }
         return false
     }
@@ -118,6 +119,11 @@ final class DevicePanel: NSView {
         wantsLayer = true
         layer?.backgroundColor = Theme.look.devices == .cards ? nil : Theme.panel.cgColor
         registerForDraggedTypes([.dalnokPlugin, .dalnokSlot])
+        // A click anywhere outside the units (the panel's floor, the arrangement, the side panels) lets them go.
+        clickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] e in
+            MainActor.assumeIsolated { self?.deselectIfOutside(e) }
+            return e
+        }
         stack.orientation = .horizontal
         stack.alignment = .top
         stack.spacing = Theme.look.pedalboard ? 40 : 10 // analog: room for the patch cables between units
@@ -244,7 +250,9 @@ final class DevicePanel: NSView {
                 let d = DeviceView(session: session, track: t!.id, slot: p.id, name: p.name, loaded: p.loaded, color: t!.color, vendor: p.vendor, instrument: p.instrument, error: p.error, path: p.path)
                 d.onOpen = { [weak self] in self?.onOpen?(t!.id, p.id) }
                 d.onShowControls = { [weak self] in self?.onShowControls?(t!.id, p.id) }
-                d.onSelect = { [weak self] in self?.selectedSlot = p.id }
+                d.onSelect = { [weak self] flags, right in self?.select(p.id, flags, contextClick: right) }
+                d.selectionCount = { [weak self] in self?.selectedSlots.count ?? 0 }
+                d.onRemoveSelected = { [weak self] in self?.removeSelected() }
                 d.onMove = { [weak self] delta in
                     guard let self, let from = self.devices.firstIndex(where: { $0.slot == p.id }) else { return }
                     self.move(p.id, toDropIndex: delta > 0 ? from + 2 : from - 1)
@@ -270,7 +278,8 @@ final class DevicePanel: NSView {
             devices = next
             leaving = departed
             if let s = selectedSlot, !devices.contains(where: { $0.slot == s }) { selectedSlot = nil }
-            devices.forEach { $0.isSelected = $0.slot == selectedSlot }
+            selectedSlots = selectedSlots.filter { s in devices.contains { $0.slot == s } }
+            showSelection()
             if let last = arranged.last {
                 stack.addArrangedSubview(addTile)
                 stack.setCustomSpacing(Theme.look.pedalboard ? 96 : 10, after: last) // analog: past the OUT jack
@@ -315,8 +324,65 @@ final class DevicePanel: NSView {
     func pollMeters() { devices.forEach { $0.pollMeters() } }
     private var metersObserver: NSObjectProtocol?, wearObserver: NSObjectProtocol?
 
-    /// The unit last clicked (white outline glow); nil when none is.
-    var selectedSlot: Int32? { didSet { devices.forEach { $0.isSelected = $0.slot == selectedSlot }; reportViewing() } }
+    /// The unit last clicked (white outline glow); nil when none is. Setting it selects that unit alone.
+    var selectedSlot: Int32? { didSet { selectedSlots = selectedSlot.map { [$0] } ?? []; showSelection(); reportViewing() } }
+    /// Every selected unit (⌘-click adds or takes one away, ⇧-click selects a run of the chain); ⌫ removes them.
+    private(set) var selectedSlots: Set<Int32> = []
+    private var anchorSlot: Int32?
+    private var clickMonitor: Any?
+    private func showSelection() { devices.forEach { $0.isSelected = selectedSlots.contains($0.slot) } }
+    /// A unit clicked: alone, ⌘ toggles it in the selection, ⇧ extends from the last unit clicked. A right-click on a
+    /// selected unit keeps the selection (its menu acts on all of them).
+    func select(_ slot: Int32, _ flags: NSEvent.ModifierFlags, contextClick: Bool = false) {
+        defer { if window?.firstResponder !== self, !(window?.firstResponder is NSTextView) { window?.makeFirstResponder(self) } }
+        if contextClick, selectedSlots.contains(slot) { return }
+        let order = devices.map(\.slot)
+        if flags.contains(.shift), let a = anchorSlot, let i = order.firstIndex(of: a), let j = order.firstIndex(of: slot) {
+            let run = Set(order[min(i, j)...max(i, j)])
+            selectedSlot = slot
+            selectedSlots = flags.contains(.command) ? selectedSlots.union(run) : run
+        } else if flags.contains(.command) {
+            var set = selectedSlots
+            if set.contains(slot) { set.remove(slot) } else { set.insert(slot) }
+            selectedSlot = set.contains(slot) ? slot : order.first { set.contains($0) }
+            selectedSlots = set
+            anchorSlot = slot
+        } else {
+            selectedSlot = slot
+            anchorSlot = slot
+        }
+        showSelection()
+    }
+    func deselectAll() {
+        guard !selectedSlots.isEmpty || selectedSlot != nil else { return }
+        selectedSlot = nil
+        anchorSlot = nil
+    }
+    /// Removes every selected unit (one undo step).
+    func removeSelected() {
+        guard let t = track, !selectedSlots.isEmpty else { return }
+        let slots = devices.map(\.slot).filter { selectedSlots.contains($0) }
+        session.engine.beginGroup(slots.count > 1 ? "Remove \(slots.count) Plug-ins" : "Remove Plug-in")
+        slots.forEach { session.removePlugin(t, $0) }
+        session.engine.endGroup()
+        selectedSlot = nil
+        session.refresh()
+    }
+    func deselectIfOutside(_ e: NSEvent) {
+        guard !selectedSlots.isEmpty, let w = window, e.window === w else { return }
+        let hit = w.contentView?.hitTest(w.contentView!.convert(e.locationInWindow, from: nil))
+        var v = hit
+        while let x = v { if x is DeviceView { return }; v = x.superview }
+        deselectAll()
+    }
+    override var acceptsFirstResponder: Bool { !selectedSlots.isEmpty }
+    func ownsKey(_ event: NSEvent) -> Bool { [51, 117].contains(event.keyCode) && !selectedSlots.isEmpty }
+    override func keyDown(with event: NSEvent) {
+        if [51, 117].contains(event.keyCode), event.modifierFlags.intersection([.command, .control, .option]).isEmpty, !selectedSlots.isEmpty {
+            removeSelected()
+        } else if event.keyCode == 53, !selectedSlots.isEmpty { deselectAll() } // Esc
+        else { super.keyDown(with: event) }
+    }
 
     // MARK: Patch cables (Warm Analog)
 
@@ -495,16 +561,16 @@ final class DevicePanel: NSView {
 
 /// Reports every primary press in its view (including on controls inside it) without taking the event.
 final class PressRecognizer: NSGestureRecognizer {
-    private let onPress: () -> Void
-    init(_ onPress: @escaping () -> Void) {
+    private let onPress: (NSEvent.ModifierFlags, Bool, NSPoint) -> Void
+    init(_ onPress: @escaping (NSEvent.ModifierFlags, Bool, NSPoint) -> Void) {
         self.onPress = onPress
         super.init(target: nil, action: nil)
         delaysPrimaryMouseButtonEvents = false
         delaysSecondaryMouseButtonEvents = false
     }
     required init?(coder: NSCoder) { fatalError() }
-    override func mouseDown(with event: NSEvent) { onPress(); state = .failed }
-    override func rightMouseDown(with event: NSEvent) { onPress(); state = .failed }
+    override func mouseDown(with event: NSEvent) { onPress(event.modifierFlags, event.modifierFlags.contains(.control), event.locationInWindow); state = .failed }
+    override func rightMouseDown(with event: NSEvent) { onPress(event.modifierFlags, true, event.locationInWindow); state = .failed }
 }
 
 @MainActor
@@ -559,7 +625,10 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
     /// Dalnok's controls window for this plug-in (every parameter).
     var onShowControls: (() -> Void)?
     /// A press anywhere on the unit (its surface or any control) selects it.
-    var onSelect: (() -> Void)?
+    var onSelect: ((NSEvent.ModifierFlags, Bool) -> Void)?
+    /// How many units are selected, and removing them all (the menu of a unit in a multiple selection).
+    var selectionCount: (() -> Int)?
+    var onRemoveSelected: (() -> Void)?
     var isSelected = false { didSet { if isSelected != oldValue { applySelection() } } }
     /// Bypassed in Graphite: the unit sits back slightly (drawn at this scale about its centre).
     private var recessed = false
@@ -680,6 +749,9 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         sectionsRow.orientation = .horizontal
         sectionsRow.alignment = .top
         sectionsRow.spacing = 6
+        if FaceplateControl.legendRows { // Atelier: the key starts at the figure's top, however few its rows
+            sectionsRow.heightAnchor.constraint(greaterThanOrEqualToConstant: FaceplateSection.legendHeight).isActive = true
+        }
         self.instrument = instrument
         if !Theme.look.pedalboard && loaded {
             loadParameters()
@@ -725,7 +797,14 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         refreshControls()
         setAccessibilityElement(true)
         setAccessibilityLabel("\(name) device")
-        let press = PressRecognizer { [weak self] in self?.onSelect?() }
+        let press = PressRecognizer { [weak self] flags, right, at in
+            guard let self else { return }
+            // ⇧ and ⌘ on a control are its own (fine adjustment, reset): they select only on the unit's body.
+            var v = self.hitTest(self.superview?.convert(at, from: nil) ?? .zero)
+            var onControl = false
+            while let x = v, x !== self { if x is NSControl || x is FaceplateControl || x is FaceplateScreen { onControl = true; break }; v = x.superview }
+            self.onSelect?(onControl && !right ? flags.subtracting([.shift, .command]) : flags, right)
+        }
         addGestureRecognizer(press)
     }
 
@@ -845,7 +924,10 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
                 Prism.liquidPane(self, bounds.insetBy(dx: 2, dy: 2), radius: 12, tint: off ? nil : color, prominence: off ? 0 : 0.25)
                 return
             }
-            Faceplate.plate(ctx, bounds, accent: color, dimmed: !loaded || bypassed, seed: Faceplate.seed(title.stringValue), wear: Faceplate.wear)
+            // Atelier's folded strip is its own engraving: no plate (and no track-colour foot) behind it.
+            if !(folded && Theme.look.devices == .schematic) {
+                Faceplate.plate(ctx, bounds, accent: color, dimmed: !loaded || bypassed, seed: Faceplate.seed(title.stringValue), wear: Faceplate.wear)
+            }
             if Theme.look.devices == .schematic { drawSignalCourse(ctx) }
             return
         }
@@ -997,8 +1079,20 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
             NSLayoutConstraint.activate(displaySize)
         }
         let groups = Faceplate.sections(params.map { (id: $0.id, title: fixedString($0.p.title)) })
-        var views: [FaceplateSection] = []
+        // Atelier: consecutive short sections share a column while their rows fit beside the figure; a column's
+        // sections share one names' column so their instruments line up.
+        var stackOf: [Int] = [], stacks = 0, used: CGFloat = .infinity
         for g in groups {
+            let h = FaceplateControl.legendRows ? FaceplateSection.stackedHeight(count: g.items.count, titled: !g.title.isEmpty) : nil
+            if let h, used + Self.stackGap + h <= FaceplateSection.legendHeight { used += Self.stackGap + h }
+            else { stacks += 1; used = h ?? .infinity }
+            stackOf.append(stacks - 1)
+        }
+        let stackColumn = (0..<stacks).map { k in
+            FaceplateSection.nameColumn(groups.indices.filter { stackOf[$0] == k }.flatMap { groups[$0].items.map(\.label) })
+        }
+        var views: [FaceplateSection] = []
+        for (gi, g) in groups.enumerated() {
             var controls: [FaceplateControl] = []
             for item in g.items {
                 guard let p = current(item.id) else { continue }
@@ -1018,14 +1112,40 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
                 controls.append(c)
                 knobs.append((c, label(fixedString(p.title), dim: false), label(display(p), dim: true), id))
             }
-            let section = FaceplateSection(title: g.title, controls: controls, rows: g.items.count > 1 ? rows : 1)
+            let section = FaceplateSection(title: g.title, controls: controls, rows: g.items.count > 1 ? rows : 1,
+                                           nameColumn: FaceplateControl.legendRows ? stackColumn[stackOf[gi]] : 0)
             views.append(section)
         }
-        views.last?.groove = false
-        views.forEach { sectionsRow.addArrangedSubview($0) }
+        if FaceplateControl.legendRows {
+            var columns: [FaceplateColumn] = []
+            for k in 0..<stacks {
+                let members = views.indices.filter { stackOf[$0] == k }.map { views[$0] }
+                members.forEach { $0.groove = false }
+                if members.count > 1 { // each section exactly its rows' height, so none stretches
+                    for m in members {
+                        let g = groups[views.firstIndex { $0 === m }!]
+                        if let h = FaceplateSection.stackedHeight(count: g.items.count, titled: !g.title.isEmpty) {
+                            m.heightAnchor.constraint(equalToConstant: h).isActive = true
+                        }
+                    }
+                }
+                let col = FaceplateColumn(views: members)
+                col.orientation = .vertical; col.alignment = .leading; col.spacing = Self.stackGap; col.distribution = .gravityAreas
+                col.setHuggingPriority(.required, for: .vertical)
+                columns.append(col)
+            }
+            columns.last?.groove = false
+            columns.forEach { sectionsRow.addArrangedSubview($0) }
+        } else {
+            views.last?.groove = false
+            views.forEach { sectionsRow.addArrangedSubview($0) }
+        }
         hookRowHover()
         refreshBypass()
     }
+
+    /// Atelier: the space between sections stacked in one column of the key.
+    static let stackGap: CGFloat = 8
 
     /// Printed scale legends: the plug-in's own text at the ends of the travel (every position for short selectors).
     private func legends(_ id: UInt32, _ p: DalnokPluginParameter) -> [String] {
@@ -1545,6 +1665,7 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         folded = f
         foldButton.setAccessibilityLabel(f ? "Unfold" : "Fold")
         if Theme.look.devices == .schematic { labelFoldButton() }
+        needsDisplay = true
         let animate = animated && !Motion.reduced && window != nil
         let from = bounds.width
         // Warm Analog: the pedal tips onto its side like the box it is (see tipPedal).
@@ -1841,7 +1962,11 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         m.addItem(.separator())
         m.addItem(item("Move Left (Earlier in Chain)", { [weak self] in self?.onMove?(-1) }, enabled: i > 0))
         m.addItem(item("Move Right (Later in Chain)", { [weak self] in self?.onMove?(1) }, enabled: i < chain.count - 1))
-        m.addItem(item("Remove Plug-in", { [weak self] in guard let self else { return }; self.session.removePlugin(self.trackId, self.slot) }))
+        if isSelected, let n = selectionCount?(), n > 1 { // the menu of one of several selected units acts on all of them
+            m.addItem(item("Remove \(n) Plug-ins", { [weak self] in self?.onRemoveSelected?() }))
+        } else {
+            m.addItem(item("Remove Plug-in", { [weak self] in guard let self else { return }; self.session.removePlugin(self.trackId, self.slot) }))
+        }
         if pedal != nil { m.addItem(.separator()); pedalLookItems(m) }
         if display != nil {
             m.addItem(.separator())

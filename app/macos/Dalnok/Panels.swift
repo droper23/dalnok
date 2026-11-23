@@ -502,6 +502,29 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
     /// Input source: "IN 1" for audio tracks, "MIDI" for instrument tracks. Click to choose.
     let inputButton = NSButton(title: "IN 1", target: nil, action: nil)
     var onInputMenu: ((TrackHeaderRow) -> Void)?
+    /// The input label's two parts: the source ("IN 1", a bus, the instrument's name) and its counts ("2 FX", the group).
+    /// When both don't fit on one line the counts take a second line, so a long name never hides them.
+    private(set) var inputSource = "", inputCounts = ""
+    func setInput(source: String, counts: String) {
+        inputSource = source; inputCounts = counts
+        applyInputTitle()
+    }
+    private func applyInputTitle() {
+        let font = inputButton.font ?? Theme.mono(10, .medium)
+        func width(_ t: String) -> CGFloat { (t as NSString).size(withAttributes: [.font: font]).width + 6 }
+        let avail = pan.frame.maxX > 0 ? solo.frame.maxX - pan.frame.maxX - 8 : .greatestFiniteMagnitude
+        let one = inputSource + (inputCounts.isEmpty ? "" : " · " + inputCounts)
+        var title = one
+        if !inputCounts.isEmpty, width(one) > avail {
+            var src = inputSource
+            while width(src) > avail, src.count > 2 { src = String(src.dropLast(2)) + "…" }
+            title = src + "\n" + inputCounts
+        }
+        let two = title.contains("\n")
+        (inputButton.cell as? NSButtonCell)?.lineBreakMode = two ? .byClipping : .byTruncatingTail
+        inputButton.alignment = .right
+        if inputButton.title != title { inputButton.title = title }
+    }
     let gain = GainKnob()
     private let gainLabel = NSTextField(labelWithString: "GAIN")
     private let panLabel = NSTextField(labelWithString: "PAN")
@@ -698,7 +721,8 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
         let fx = t.effects.count
         let instrument = t.instrumentName ?? "Dalnok Poly"
         let group = t.group != 0 ? session.groupName(t.group).map { " · " + $0 } ?? "" : ""
-        inputButton.title = (t.isBus ? "BUS" : t.isInstrument ? String(instrument.prefix(12)) : "IN \(t.inputChannel + 1)") + (fx > 0 ? " · \(fx) FX" : "") + group
+        setInput(source: t.isBus ? "BUS" : t.isInstrument ? instrument : "IN \(t.inputChannel + 1)",
+                 counts: [fx > 0 ? "\(fx) FX" : "", group.isEmpty ? "" : String(group.dropFirst(3))].filter { !$0.isEmpty }.joined(separator: " · "))
         arm.isHidden = t.isBus
         let missing = t.plugins.filter { !$0.loaded }.map(\.name)
         inputButton.toolTip = (t.isBus ? "A bus mixes what tracks route or send to it (View ▸ Mixer)"
@@ -735,6 +759,7 @@ final class TrackHeaderRow: NSView, NSTextFieldDelegate {
         // Short tracks show their name and buttons only; the knobs and input return when there is room.
         let compact = bounds.height < 76
         for v in [gain, pan, gainLabel, panLabel, inputButton] as [NSView] where v.isHidden != compact { v.isHidden = compact }
+        if !compact { applyInputTitle() }
         strip.frame = Theme.look.headers == .glass ? CGRect(x: 5, y: 10, width: isSelected ? 3.5 : 2.5, height: bounds.height - 20)
                                                   : CGRect(x: 0, y: 0, width: isSelected ? 5 : 3, height: bounds.height - 1)
         CATransaction.commit()
@@ -872,7 +897,7 @@ final class TrackHeaderColumn: NSView, TrackScrollHost {
     func scrollTracks(with event: NSEvent) { onScroll?(event) }
     override func scrollWheel(with event: NSEvent) { scrollTracks(with: event) }
     /// A plug-in dragged from the browser onto a track header is inserted on that track.
-    var onDropPlugin: ((String, DalnokTrackId) -> Void)?
+    var onDropPlugin: (([String], DalnokTrackId) -> Void)?
     private var dropRow: TrackHeaderRow? { didSet { oldValue?.layer?.borderWidth = 0; dropRow?.layer?.borderWidth = 2; dropRow?.layer?.borderColor = Theme.selection.cgColor } }
     private func row(atWindow p: NSPoint) -> TrackHeaderRow? { rows.first { $0.convert($0.bounds, to: nil).contains(p) } }
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation { draggingUpdated(sender) }
@@ -885,8 +910,9 @@ final class TrackHeaderColumn: NSView, TrackScrollHost {
     override func draggingExited(_ sender: NSDraggingInfo?) { dropRow = nil }
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
         defer { dropRow = nil }
-        guard let path = sender.draggingPasteboard.string(forType: .dalnokPlugin), let r = row(atWindow: sender.draggingLocation) else { return false }
-        onDropPlugin?(path, r.trackId)
+        let paths = sender.draggingPasteboard.dalnokPluginPaths
+        guard !paths.isEmpty, let r = row(atWindow: sender.draggingLocation) else { return false }
+        onDropPlugin?(paths, r.trackId)
         return true
     }
     var onToggleStack: ((DalnokTrackId, Bool) -> Void)?

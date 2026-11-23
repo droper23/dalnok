@@ -22,7 +22,7 @@ final class InspectorPanel: SidePanelView {
     var onOpenPlugin: ((DalnokTrackId, Int32) -> Void)?
     var onAddPlugin: ((DalnokTrackId) -> Void)?
     /// A plug-in dragged from the Library or the browser and dropped anywhere on the Inspector: insert it last.
-    var onDropPlugin: ((String, DalnokTrackId) -> Void)?
+    var onDropPlugin: (([String], DalnokTrackId) -> Void)?
     /// The recording device's inputs ("Input 1 — Scarlett Solo"…); empty when there is none.
     var inputNames: () -> [String] = { [] }
     let resizeEdge = PanelResizeEdge(direction: -1)
@@ -75,8 +75,9 @@ final class InspectorPanel: SidePanelView {
         track != nil && sender.draggingPasteboard.string(forType: .dalnokPlugin) != nil ? .copy : []
     }
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
-        guard let t = track, let path = sender.draggingPasteboard.string(forType: .dalnokPlugin) else { return false }
-        onDropPlugin?(path, t)
+        let paths = sender.draggingPasteboard.dalnokPluginPaths
+        guard let t = track, !paths.isEmpty else { return false }
+        onDropPlugin?(paths, t)
         return true
     }
 

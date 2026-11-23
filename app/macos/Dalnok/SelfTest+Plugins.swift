@@ -446,6 +446,22 @@ extension SelfTest {
         pm.formatControl.selectedSegment = 2; pm.filtersChanged()
         check(!pm.rows.isEmpty && pm.rows.allSatisfy { $0.format == "AU" }, "the format filter shows only Audio Units")
         pm.formatControl.selectedSegment = 0; pm.filtersChanged()
+        // Several rows selected insert together, in list order, as one undo step.
+        if let audio = s.tracks.first(where: { !$0.isInstrument && !$0.isBus })?.id,
+           let i = pm.rows.firstIndex(where: { $0.name == "AUDelay" }), let j = pm.rows.firstIndex(where: { $0.name == "AUDistortion" }) {
+            w.headers.select(audio)
+            pm.table.selectRowIndexes([i, j], byExtendingSelection: false); pm.updateAddButton()
+            let before = s.track(audio)?.plugins.count ?? 0
+            let title = pm.addButton.title
+            pm.addSelected(nil)
+            let names: [String] = s.track(audio)?.plugins.suffix(2).map(\.name) ?? []
+            let expected: [String] = [pm.rows[min(i, j)].name, pm.rows[max(i, j)].name]
+            check(title.hasPrefix("Insert 2 on") && s.track(audio)?.plugins.count == before + 2 && names == expected
+                  && s.engine.undoName == "Add 2 Plug-ins", "two selected rows insert both in list order as one step (\(title); \(names))")
+            _ = perform("Undo")
+            check(s.track(audio)?.plugins.count == before, "one undo takes both out")
+            check(w.library.outline.allowsMultipleSelection, "the Library's plug-in list takes several rows too")
+        } else { check(false, "AUDelay and AUDistortion are listed") }
         pm.window?.orderOut(nil)
     }
 
@@ -692,7 +708,7 @@ extension SelfTest {
             check(faces.allSatisfy { !$0.dimmed && $0.light == 1 } && !delay.inMeter.poweredOff && (delay.layer?.affineTransform().a ?? 0) == 1,
                   "turning it on lights them again")
             // Selection: pressing a unit selects it (white outline); the others are not selected.
-            delay.onSelect?()
+            delay.onSelect?([], false)
             check(panel.selectedSlot == delay.slot && delay.isSelected && (delay.layer?.borderWidth ?? 0) > 0
                   && panel.devices.filter(\.isSelected).count == 1, "pressing a unit selects it with a white outline")
             // Wear: a setting, remembered, drawn into the plate and glass.
@@ -807,12 +823,54 @@ extension SelfTest {
         _ = perform("Undo"); panel.rebuild()
         check(s.track(track)?.plugins.map(\.id) == order0, "undo restores the order")
         check(delay.deviceMenu().items.contains { $0.title.hasPrefix("Move Left") && !$0.isEnabled }, "the first unit can't move left")
-        panel.onDropPlugin?("au:aufx:dist:appl", track, 1)
+        panel.onDropPlugin?(["au:aufx:dist:appl"], track, 1)
         let afterDrop = s.track(track)?.plugins ?? []
         check(afterDrop.count == 3 && afterDrop[1].name == "AUDistortion" && s.engine.undoName == "Add Plug-in",
               "dropping a plug-in between two units inserts it there (\(afterDrop.map(\.name)))")
         _ = perform("Undo"); panel.rebuild()
         check(s.track(track)?.plugins.map(\.id) == order0, "undo removes the dropped plug-in")
+        // Several plug-ins dropped at once land in order, one undo step; several units selected (⌘, ⇧) go with ⌫.
+        panel.onDropPlugin?(["au:aufx:dist:appl", "au:aufx:dely:appl"], track, 1)
+        let multi = s.track(track)?.plugins ?? []
+        check(multi.count == 4 && multi[1].name == "AUDistortion" && multi[2].name == "AUDelay" && s.engine.undoName == "Add 2 Plug-ins",
+              "dropping two plug-ins inserts both in order as one step (\(multi.map(\.name)), \(s.engine.undoName))")
+        panel.rebuild(); panel.layoutSubtreeIfNeeded()
+        if panel.devices.count == 4 {
+            let d = panel.devices
+            d[0].onSelect?([], false); d[2].onSelect?(.command, false)
+            let two: Set<Int32> = [d[0].slot, d[2].slot]
+            check(panel.selectedSlots == two && d[0].isSelected && !d[1].isSelected && d[2].isSelected,
+                  "⌘-click adds a unit to the selection")
+            d[3].onSelect?(.shift, false)
+            let run: Set<Int32> = [d[2].slot, d[3].slot]
+            check(panel.selectedSlots == run, "⇧-click selects the run from the last unit clicked")
+            d[2].onSelect?([], true)
+            check(panel.selectedSlots.count == 2 && d[2].deviceMenu().items.contains { $0.title == "Remove 2 Plug-ins" },
+                  "a right-click keeps the selection and its menu removes them all")
+            let backspace: NSEvent? = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: 0,
+                                                       context: nil, characters: "\u{7f}", charactersIgnoringModifiers: "\u{7f}",
+                                                       isARepeat: false, keyCode: 51)
+            if let backspace {
+                check(panel.ownsKey(backspace), "the panel takes ⌫ while units are selected")
+                panel.keyDown(with: backspace)
+            }
+            let left: [String] = s.track(track)?.plugins.map(\.name) ?? []
+            let kept: [String] = multi.prefix(2).map(\.name)
+            check(left == kept && s.engine.undoName == "Remove 2 Plug-ins", "⌫ removes the selected units as one step (\(left))")
+            _ = perform("Undo"); panel.rebuild(); panel.layoutSubtreeIfNeeded()
+            check(s.track(track)?.plugins.count == 4, "undo brings them back")
+            panel.devices.first?.onSelect?([], false)
+            if let w = panel.window {
+                let inside: CGPoint = panel.devices[0].convert(CGPoint(x: panel.devices[0].bounds.midX, y: 6), to: nil)
+                panel.deselectIfOutside(mouse(.leftMouseDown, inside))
+                let kept = panel.selectedSlots.count == 1
+                let outside: CGPoint = w.contentView.map { $0.convert(CGPoint(x: 2, y: $0.bounds.maxY - 2), to: nil) } ?? .zero
+                panel.deselectIfOutside(mouse(.leftMouseDown, outside))
+                check(kept && panel.selectedSlots.isEmpty, "a click on a unit keeps the selection; a click outside the units deselects them")
+            }
+        } else { check(false, "four units after the double drop") }
+        _ = perform("Undo"); panel.rebuild()
+        check(s.track(track)?.plugins.map(\.id) == order0, "undo removes the two dropped plug-ins")
         // EQ screen: a band handle drags its band (Dalnok Channel EQ, with real mouse events on the screen).
         if !(Theme.activeStyle == .warmAnalog), let eqSlot = try? s.addPlugin(track, path: "dalnok:channel-eq") {
             panel.rebuild(); panel.layoutSubtreeIfNeeded()
@@ -874,6 +932,21 @@ extension SelfTest {
                         row?.onHover?(true)
                         check(screen.highlightRole == .threshold, "pointing at the Threshold row lights the collar")
                         row?.onHover?(false)
+                        // Settings ▸ Appearance ▸ Figure motion: always moving, or still until pointed at.
+                        let savedMotion = Faceplate.figureMotion
+                        Faceplate.figureMotion = .always; screen.hoverRole = .threshold
+                        let m0 = screen.figureAngle; screen.advanceFigure(0.1)
+                        let movesUnderPointer = screen.figureAngle > m0
+                        screen.hoverRole = nil
+                        Faceplate.figureMotion = .onlyUnderPointer; screen.pointerInFigure = false
+                        let m1 = screen.figureAngle; screen.advanceFigure(0.1)
+                        let stillAway = screen.figureAngle == m1
+                        screen.pointerInFigure = true; screen.advanceFigure(0.1)
+                        let movesPointed = screen.figureAngle > m1
+                        screen.pointerInFigure = false
+                        Faceplate.figureMotion = savedMotion
+                        check(movesUnderPointer && stillAway && movesPointed,
+                              "figure motion settings: always moving keeps turning under the pointer; still-until-pointed holds until the pointer is over it")
                         screen.figureAngle = 0
                         if Theme.look.devices == .schematic, let r = row {
                             let saved = Faceplate.plainDials

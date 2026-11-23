@@ -20,7 +20,7 @@ final class LibraryPanel: SidePanelView, NSOutlineViewDataSource, NSOutlineViewD
     enum Place: Equatable { case all, favorites, recent, projects, files, collection(String) }
 
     /// Inserts the plug-in at an add path on the selected track; returns an error message on failure.
-    var onInsert: ((String) -> String?)?
+    var onInsert: (([String]) -> String?)?
     var onOpenProject: ((URL) -> Void)?
     /// A file from the Files place, taken by double-click or Return: imported (audio, foreign projects) or opened.
     var onTakeFile: ((URL) -> Void)?
@@ -119,6 +119,7 @@ final class LibraryPanel: SidePanelView, NSOutlineViewDataSource, NSOutlineViewD
         outline.delegate = self
         outline.target = self
         outline.doubleAction = #selector(activateRow)
+        outline.allowsMultipleSelection = true // several plug-ins inserted (or dragged) at once
         outline.setDraggingSourceOperationMask(.copy, forLocal: false)
         outline.setAccessibilityLabel("Library items")
         outline.menu = NSMenu()
@@ -470,7 +471,10 @@ final class LibraryPanel: SidePanelView, NSOutlineViewDataSource, NSOutlineViewD
         if n.action != nil { return addFolder() }
         if let u = n.file { LibraryPreview.shared.stop(); onTakeFile?(u); return }
         if let p = n.plugin {
-            if let err = onInsert?(p.addPath) { onMessage?("Couldn’t add \(p.name): \(err)") }
+            // Several plug-in rows selected (⌘- or ⇧-click) and one of them activated: all of them, in list order.
+            let chosen = outline.selectedRowIndexes.contains(row)
+                ? outline.selectedRowIndexes.compactMap { (outline.item(atRow: $0) as? LibraryNode)?.plugin } : [p]
+            if let err = onInsert?(chosen.map(\.addPath)) { onMessage?("Couldn’t add \(chosen.count > 1 ? "the plug-ins" : p.name): \(err)") }
         } else if let u = n.project {
             onOpenProject?(u)
         } else if outline.isItemExpanded(n) { outline.collapseItem(n) } else { outline.expandItem(n) }

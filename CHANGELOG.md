@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+- Plug-ins: select several units in the device chain (⌘-click, ⇧-click for a run) and press ⌫ to remove them in one undo step; a right-click on one of them removes them all; a click anywhere outside the units deselects them.
+- Plug-ins: select several in the Library or the Plug-ins window and insert them together (double-click, Return, or "Insert N on …"), or drag them onto a track, the device panel or the Inspector; they land in order and undo as one step.
+- Settings ▸ Appearance ▸ Figure motion (Atelier and Prism): moving but still under the pointer (as before), always moving, or still until pointed at.
+- Atelier: short sections of a plug-in's key share a column (a column fills before the next starts) and sit at the top of the plate; the seismograph's strip starts below both of its margin notes.
+- Folded plug-ins: Atelier's are a double-ruled slip with the name upright, an engraved on/off mark and a hatched level column (no longer Graphite's rack blank); names in every look are set smaller before they are cut off, without "Dalnok".
+- Track headers: when the input or instrument name is long, the plug-in count (and group) take a second line instead of being cut off.
 - Atelier: a plug-in's key writes every parameter's name out in full (the name column fits the longest name) and fills one column before starting the next; the figures' labels never sit on their drawings (the seismograph's values in their own column, a lit tag above the strip).
 - Atelier: amounts are read on a small sextant; Settings ▸ Appearance ▸ Plug-in controls can show plain dials instead of the drawn instruments.
 - Atelier: the compressor is drawn as a seismograph. A strip of paper runs under two pens; the faint one writes what comes in, the bold one what goes out, and wherever the sound rises past the threshold rails the out-pen is held back and the difference is hatched in gold. Drag the rails for the threshold and the inclined plane beside it for the ratio.

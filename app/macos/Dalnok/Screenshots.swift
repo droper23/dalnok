@@ -185,6 +185,11 @@ enum Screenshots {
             app.engine.play()
             try? await Task.sleep(for: .seconds(1.2))
             shot("06-devices")
+            // Every unit folded (the strips must hold their names and lights in every look).
+            w.devicePanel.devices.forEach { $0.setFolded(true, animated: false) }
+            try? await Task.sleep(for: .seconds(0.4))
+            shot("06-folded")
+            w.devicePanel.devices.forEach { $0.setFolded(false, animated: false) }
             // DALNOK_GALLERY_MOTION: the device panel's figures stepped through their motion, a frame each quarter second
             // of motion time, to review every animation's drawing frame by frame (the clock is tested by the self-test).
             if ProcessInfo.processInfo.environment["DALNOK_GALLERY_MOTION"] != nil {
