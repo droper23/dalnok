@@ -1492,7 +1492,7 @@ extension FaceplateScreen {
         case let s as ResponseScreen: s.codex(ctx, f)
         case let s as MovingCoilMeter: s.codex(ctx, f)
         case let s as TransferScreen: s.codex(ctx, f)
-        case let s as HistoryScreen: codexSubject == .chamber ? s.chamber(ctx, f) : s.codex(ctx, f)
+        case let s as HistoryScreen: if codexSubject == .chamber { s.chamber(ctx, f) } else { s.codex(ctx, f) }
         case let s as GoniometerScreen: s.codex(ctx, f)
         case let s as LedAnalyzer: s.codex(ctx, f)
         case let s as ScopeScreen: s.codex(ctx, f)
@@ -1637,7 +1637,8 @@ extension HistoryScreen {
 
     /// Reverbs: a vaulted hall in one-point perspective (an arcade of columns down each side, a coffered floor), with
     /// sound rays from the source reflecting to the listener; the rays darken with the output level.
-    func chamber(_ ctx: CGContext, _ f: CGRect) {
+    @discardableResult
+    func chamber(_ ctx: CGContext, _ f: CGRect, letters: (source: String?, vault: String?, listener: String?) = ("A", "B", "C")) -> (vault: CGPoint, listener: CGPoint) {
         let lvl = CGFloat(max(0, min(1, (latest.output + 60) / 60)))
         let ink = Theme.ink(0.7), faint = Theme.ink(0.3)
         let outer = CGRect(x: f.minX + 6, y: f.minY + 10, width: f.width - 12, height: f.height - 14)
@@ -1713,10 +1714,12 @@ extension HistoryScreen {
         ctx.fillEllipse(in: CGRect(x: src.x - 2, y: src.y - 2, width: 4, height: 4))
         Atelier.rule(ctx, CGPoint(x: src.x, y: src.y + 2), CGPoint(x: src.x, y: src.y + 8), weight: 0.7, color: Theme.text)
         Atelier.loop(ctx, CGRect(x: lis.x - 2.5, y: lis.y - 2.5, width: 5, height: 5), weight: 0.7, color: Theme.text)
-        Atelier.callout(ctx, "A", from: src, to: CGPoint(x: src.x - 10, y: src.y - 6))
+        if let l = letters.source { Atelier.callout(ctx, l, from: src, to: CGPoint(x: src.x - 10, y: src.y - 6)) }
         let crown = archPoint(frontArch, rise: frontRise, 1.5 * .pi)
-        Atelier.callout(ctx, "B", from: CGPoint(x: crown.x + 30, y: crown.y + 6), to: CGPoint(x: crown.x + 44, y: crown.y + 2))
-        Atelier.callout(ctx, "C", from: lis, to: CGPoint(x: lis.x + 10, y: lis.y - 6))
+        let vault = CGPoint(x: crown.x + 30, y: crown.y + 6)
+        if let l = letters.vault { Atelier.callout(ctx, l, from: vault, to: CGPoint(x: crown.x + 44, y: crown.y + 2)) }
+        if let l = letters.listener { Atelier.callout(ctx, l, from: lis, to: CGPoint(x: lis.x + 10, y: lis.y - 6)) }
+        return (vault, lis)
     }
 }
 

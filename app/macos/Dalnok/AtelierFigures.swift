@@ -190,57 +190,21 @@ extension FaceplateScreen {
                 FigureHandle(role: .ratio, point: ballR, axis: CGVector(dx: sin(theta), dy: cos(theta)), span: 22)]
     }
 
-    /// The vaulted chamber in one-point perspective: the back arch shrinks as the room grows (A, drag the back wall),
-    /// and sound rays from the source A reach further and fainter with the decay (B, drag the longest ray's end).
+    /// The vaulted chamber, as first drawn for the Codex (the owner wanted it back): the hall in one-point perspective on
+    /// its dark field, rays from the source to the listener by way of the walls, brighter with the live sound. Its own
+    /// points are the parts: the vault is the room's size (drag it up or down), the listener the decay (drag it along
+    /// the floor). They carry the key's letters; the source keeps its plain mark.
     private func chamberFigure(_ ctx: CGContext, _ f: CGRect, _ link: FigureLink, energyDb: Double) -> [FigureHandle] {
-        let size = link.v(.size, 0.5), decay = link.v(.decay, 0.5)
-        let front = CGRect(x: f.minX + 6, y: f.minY + 8, width: f.width * 0.78, height: f.height - 28)
-        let depth = 0.28 + 0.42 * CGFloat(size)
-        let back = front.insetBy(dx: front.width * depth / 2, dy: front.height * depth / 2).offsetBy(dx: 0, dy: front.height * depth * 0.08)
-        func arch(_ r: CGRect) -> CGPath {
-            let p = CGMutablePath(), spring = r.minY + r.width / 2
-            p.move(to: CGPoint(x: r.minX, y: r.maxY)); p.addLine(to: CGPoint(x: r.minX, y: max(r.minY + 2, spring)))
-            p.addArc(center: CGPoint(x: r.midX, y: max(r.minY + 2, spring)), radius: r.width / 2, startAngle: .pi, endAngle: 0, clockwise: false)
-            p.addLine(to: CGPoint(x: r.maxX, y: r.maxY)); return p
-        }
-        let ink = Theme.text
-        // Floor, hatched in perspective; the receding edges; both arches; voussoir lines on the vault.
-        let floor = CGMutablePath()
-        floor.addLines(between: [CGPoint(x: front.minX, y: front.maxY), CGPoint(x: back.minX, y: back.maxY), CGPoint(x: back.maxX, y: back.maxY), CGPoint(x: front.maxX, y: front.maxY)]); floor.closeSubpath()
-        ctx.saveGState(); ctx.addPath(floor); ctx.clip(); Atelier.hatch(ctx, floor.boundingBox, spacing: 2.2, color: Theme.ink(0.3), weight: 0.4, angle: 0); ctx.restoreGState()
-        for (a, b) in [(CGPoint(x: front.minX, y: front.maxY), CGPoint(x: back.minX, y: back.maxY)), (CGPoint(x: front.maxX, y: front.maxY), CGPoint(x: back.maxX, y: back.maxY))] {
-            Atelier.rule(ctx, a, b, weight: Atelier.fine, color: ink)
-        }
-        for i in 1...5 {
-            let a = CGFloat.pi + CGFloat.pi * CGFloat(i) / 6
-            let fr = front.width / 2, br = back.width / 2
-            let fc = CGPoint(x: front.midX, y: front.minY + fr), bc = CGPoint(x: back.midX, y: back.minY + br)
-            Atelier.rule(ctx, CGPoint(x: fc.x + cos(a) * fr, y: fc.y + sin(a) * fr), CGPoint(x: bc.x + cos(a) * br, y: bc.y + sin(a) * br), weight: Atelier.hair, color: Theme.ink(0.45))
-        }
-        for (r, w) in [(front, Atelier.medium), (back, Atelier.fine)] {
-            ctx.addPath(arch(r)); ctx.setStrokeColor(ink.cgColor); ctx.setLineWidth(w); ctx.strokePath()
-        }
-        // Rays from the source: more and longer with decay, fading with each bounce; live energy brightens them.
-        let src = CGPoint(x: front.minX + front.width * 0.22, y: front.maxY - 10)
-        let live = CGFloat(max(0, min(1, (energyDb + 60) / 60)))
-        let count = 3 + Int(decay * 6)
-        var far = src
-        for i in 0..<count {
-            let a = -CGFloat.pi / 2 + (CGFloat(i) - CGFloat(count - 1) / 2) * 0.32
-            let reach = (34 + 50 * CGFloat(decay)) * (1 - CGFloat(i % 3) * 0.12)
-            let end = CGPoint(x: src.x + cos(a + 0.5) * reach, y: src.y + sin(a + 0.5) * reach * 0.8)
-            Atelier.rule(ctx, src, end, weight: 0.5, color: Theme.ink(0.35 + 0.4 * live), dash: i % 2 == 0 ? [] : [2, 1.5])
-            if hypot(end.x - src.x, end.y - src.y) > hypot(far.x - src.x, far.y - src.y) { far = end }
-        }
-        ctx.setFillColor(ink.cgColor); ctx.fillEllipse(in: CGRect(x: src.x - 2, y: src.y - 2, width: 4, height: 4))
-        letterCallout(ctx, link, .size, at: CGPoint(x: back.maxX, y: back.midY), to: CGPoint(x: front.maxX + 10, y: back.minY))
-        readout(ctx, link, .size, at: CGPoint(x: front.maxX + 6, y: back.minY + 4))
-        letterCallout(ctx, link, .decay, at: far, to: CGPoint(x: far.x + 10, y: far.y - 10))
-        readout(ctx, link, .decay, at: CGPoint(x: front.maxX + 6, y: back.minY + 28))
+        guard let hall = self as? HistoryScreen else { return [] }
+        ctx.setFillColor(Theme.lcd.cgColor); ctx.fill(f)
+        Atelier.screen(ctx, f)
+        let linked = link.ids[.size] != nil || link.ids[.decay] != nil
+        let p = hall.chamber(ctx, f.insetBy(dx: 1, dy: 1), letters: linked ? (nil, link.l(.size), link.l(.decay)) : ("A", "B", "C"))
+        readout(ctx, link, .size, at: CGPoint(x: p.vault.x + 4, y: p.vault.y + 4))
+        readout(ctx, link, .decay, at: CGPoint(x: min(f.maxX - 34, p.listener.x - 6), y: p.listener.y + 4))
         marginNotes = energyDb > -80 ? [String(format: "sound now %.0f dB", energyDb)] : []
-        let dir = CGVector(dx: far.x - src.x, dy: far.y - src.y), len = max(1, hypot(dir.dx, dir.dy))
-        return [FigureHandle(role: .size, point: CGPoint(x: back.maxX, y: back.midY), axis: CGVector(dx: -1, dy: 0), span: front.width * 0.21),
-                FigureHandle(role: .decay, point: far, axis: CGVector(dx: dir.dx / len, dy: dir.dy / len), span: 50)]
+        return [FigureHandle(role: .size, point: p.vault, axis: CGVector(dx: 0, dy: -1), span: 40),
+                FigureHandle(role: .decay, point: p.listener, axis: CGVector(dx: 1, dy: 0), span: 60)]
     }
 
     /// The pendulum: its swing is the delay time (A, drag the bob along its arc); each repeat is a fainter arc below,
