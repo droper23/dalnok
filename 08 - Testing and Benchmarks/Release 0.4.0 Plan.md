@@ -1,6 +1,6 @@
 ---
 created: 2026-11-22
-status: plan (not started); owner to confirm the scope
+status: in progress (2026-11-23): items 1 done or moved to the UI audit's open list; release built from feat/ui-audit-0.4
 related: "[[Release Checklist]]", "[[Atelier Audit 2026-11-22]]", "[[02 - Master Roadmap]]"
 ---
 # Release 0.4.0 plan
@@ -16,11 +16,11 @@ Proposed name: **0.4.0 "Looks and panels"**: the four themes, the Library and In
 ## What has to happen first (in order)
 
 ### 1. Finish what is half done
-- [ ] **Settings restructured** (owner, 2026-11-22). Today Settings is a flat list of sections that grew one feature at a
+- [x] **Settings restructured** (2026-11-23: nine pages and search; per-page self-test steps for the pages and search). Today Settings is a flat list of sections that grew one feature at a
       time. Group it into a sidebar of clear pages (General, Appearance, Audio, MIDI, Recording, Plug-ins, Shortcuts,
       Files and Library, Advanced), one control style per theme, search across settings, and a self-test step per page.
       Move Library preferences (Preview audio, added folders) and the device panel's height into it.
-- [ ] **Graphite, Warm Analog and Prism brought up to Atelier's level** (owner): each theme's plug-in family figures
+- [x] **Graphite, Warm Analog and Prism brought up to Atelier's level** (2026-11-23, rounds 1 and 2 of `06 - Design/UI Audit 2026-11-23.md`; round 3 items listed there): each theme's plug-in family figures
       (moving where it helps, linked to their parameter rows, drag directions shown), their own master-meter drawing,
       Library and Inspector drawn in the idiom, the first-launch cards. Atelier's audit is the template: write one audit
       note per theme (reviewers + owner answers), then fix in the audit's order.
@@ -48,7 +48,7 @@ Run as a checklist, each item with a self-test step, engine test or recorded man
       kill during each new feature, the fuzzers (`scripts/ci/fuzz.sh 120`).
 - [ ] **Sample rates and devices:** 44.1 / 48 / 96 kHz, device change mid-session, AirPods (Bluetooth) output.
 - [ ] **Accessibility:** the 42-check audit in all six looks with both panels open, plus VoiceOver by ear (owner).
-- [ ] **Performance:** `--perf 20` in every look on the large project (Prism's repeat is outstanding).
+- [x] **Performance:** `--perf 20` in every look on the large project (Prism Dark and Light repeated 2026-11-23: 0 overloads, 0 missed, main p99 8 ms).
 
 ### 3. Quality gate (Release Checklist §2), on the release commit
 - [ ] `scripts/gen-api.py --check`; `DALNOK_SANITIZE=1 scripts/check.sh`; plug-in host, isolation, recovery and scan

@@ -205,8 +205,15 @@ class FaceplateScreen: NSView {
     var onHoverRole: ((FigureRole?) -> Void)?
     /// The latest input/output pairs (transfer figures), normalised to the input's peak.
     var liveTransfer: [CGPoint] { [] }
-    var atelierFigure: AtelierFigure? { Theme.look.devices == .schematic ? AtelierFigure.of(kind: codexKind, subject: codexSubject) : nil }
+    /// The family's figure (Atelier engraves it; Graphite and Prism draw it in their own idiom, LookFigures.swift).
+    var atelierFigure: AtelierFigure? {
+        switch Theme.look.devices {
+        case .schematic, .rack, .cards: AtelierFigure.of(kind: codexKind, subject: codexSubject)
+        case .pedalboard: nil
+        }
+    }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    override func accessibilityChildren() -> [Any]? { figureAccessibilityChildren() ?? super.accessibilityChildren() }
     override func mouseDown(with event: NSEvent) { if !(atelierFigure != nil && figureMouseDown(event)) { super.mouseDown(with: event) } }
     override func mouseDragged(with event: NSEvent) { if figureDrag != nil { figureMouseDragged(event) } else { super.mouseDragged(with: event) } }
     override func mouseUp(with event: NSEvent) { if figureDrag != nil { figureMouseUp() } else { super.mouseUp(with: event) } }
@@ -234,6 +241,7 @@ class FaceplateScreen: NSView {
     var drawsOnGlass: Bool { false }
     final override func draw(_ dirtyRect: NSRect) {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+        if drawLookFigure(ctx) { return }
         if Theme.look.devices == .cards && !drawsOnGlass { drawOnGlass(ctx, dirtyRect); return }
         if Theme.look.devices == .schematic && drawCodex(ctx) { return }
         // The screen's contents fade with its backlight into dark glass (fully dark: only the glass is drawn).
@@ -301,6 +309,14 @@ class FaceplateScreen: NSView {
             // Light in smoky glass: the traces, then the same light again added on top so dim fills still glow.
             ctx.draw(image, in: bounds)
             ctx.setBlendMode(.plusLighter); ctx.setAlpha(alpha * 0.6); ctx.draw(image, in: bounds)
+        }
+        if self is ResponseScreen || self is LedAnalyzer {
+            // Dispersion: the response and spectrum take the spectrum's colour by frequency, lows red to highs violet.
+            ctx.setBlendMode(.color); ctx.setAlpha(alpha * (Theme.isLight ? 0.75 : 0.9))
+            let hues = (0...6).map { NSColor(calibratedHue: 0.78 * CGFloat($0) / 6, saturation: Theme.isLight ? 0.8 : 0.65, brightness: Theme.isLight ? 0.7 : 1, alpha: 1).cgColor } as CFArray
+            if let g = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: hues, locations: nil) {
+                ctx.drawLinearGradient(g, start: CGPoint(x: r.minX + 6, y: 0), end: CGPoint(x: r.maxX - 6, y: 0), options: [.drawsBeforeStartLocation, .drawsAfterEndLocation])
+            }
         }
         ctx.restoreGState()
     }

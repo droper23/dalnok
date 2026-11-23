@@ -5,7 +5,22 @@ milestone: 0.3.0, Phase 4 complete; recording I/O (separate devices, Input Monit
 ---
 # Current State
 
-## Latest (2026-11-23, past midnight): moving figures, Library ▸ Files, first-launch looks
+## Latest (2026-11-23): UI audit of every look, figures for Graphite, Prism and Warm Analog, Settings in nine pages
+Branch `feat/ui-audit-0.4` (from `main` ac85c86). Two review rounds, 12 reviewers in all, each finding checked against the
+stills; decisions and what is still open in `06 - Design/UI Audit 2026-11-23.md`. No engine or API change.
+- **Figures in every look** (`LookFigures.swift`: Graphite telemetry, Prism optics; `PedalScreen.swift`: Warm Analog
+  circuits), sharing Atelier's roles, links, handles and `FigureClock` (now any `FigureAnimating` view).
+- **Settings**: nine pages and search (`Settings.swift`). **Controls in the look** (`Theme.tintControls`,
+  `Theme.checkbox`, `ThemedCheckCell`). **Prism glass** for Settings and first launch (`PrismBackdropView`).
+- Solo fades silenced lanes (`Session.soloSilenced`), "muted" in every look, per-look meter ramps (`MeterView.ramp`),
+  playhead afterglow (flat arrangement), empty-chain figures, start page without mixer, pedal labels (`PedalLabel`),
+  Warm Analog sidechain cable, Prism EQ dispersion, recovery offer after first launch, `Motion.pageIn`.
+- **Gallery**: `DALNOK_GALLERY_MOTION=1` (06-motion frames), `DALNOK_GALLERY_SETTINGS=1` (every page); 15-figures for
+  Graphite and Prism. Live animation capture not done: the screen stayed locked.
+- **Perf**: Prism `--perf 20` (64 tracks) Dark and Light: 0 overloads, 0 missed, main p99 8 ms, max 20 ms.
+- **Next**: round 3 of the audit (list in the note), then the 0.4.0 release plan.
+
+## Earlier (2026-11-23, past midnight): moving figures, Library ▸ Files, first-launch looks
 Branch `feat/atelier-motion-library-files` (from `main` f19f0c0). The owner's fifth round; decisions in
 `06 - Design/Atelier Audit 2026-11-22.md`. No engine or API change (C API 46, format 14).
 - **Fixed: Space after the Library** (and any clicked list): bare shortcut keys go to the registry before the focused

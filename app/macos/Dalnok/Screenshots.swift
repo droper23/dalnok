@@ -185,6 +185,17 @@ enum Screenshots {
             app.engine.play()
             try? await Task.sleep(for: .seconds(1.2))
             shot("06-devices")
+            // DALNOK_GALLERY_MOTION: the device panel's figures stepped through their motion, a frame each quarter second
+            // of motion time, to review every animation's drawing frame by frame (the clock is tested by the self-test).
+            if ProcessInfo.processInfo.environment["DALNOK_GALLERY_MOTION"] != nil {
+                var all: [FigureAnimating] = [], stack: [NSView] = [w.devicePanel]
+                while let v = stack.popLast() { if let m = v as? FigureAnimating { all.append(m) } else { stack += v.subviews } }
+                for k in 1...8 {
+                    for m in all { m.advanceFigure(0.25) }
+                    w.devicePanel.layoutSubtreeIfNeeded()
+                    png(w.devicePanel, dir.appendingPathComponent(String(format: "06-motion-%02d.png", k)))
+                }
+            }
             // The README's hero frame: arrangement playing, mixer and device chain open.
             if !MainWindowController.showMixer { w.toggleMixer(nil) }
             try? await Task.sleep(for: .seconds(1.0))
@@ -249,7 +260,7 @@ enum Screenshots {
             w.pianoRoll.window?.orderOut(nil)
             // Atelier: the five instrument figures side by side, with sample values (the modulation figure has no
             // Apple plug-in to show it in a chain).
-            if Theme.look.devices == .schematic {
+            if Theme.look.devices != .pedalboard {
                 // Top row at rest (as in stills); bottom row mid-motion with its first part lit, as when pointed at.
                 let sheet = NSView(frame: NSRect(x: 0, y: 0, width: 5 * 250, height: 370))
                 sheet.wantsLayer = true; sheet.layer?.backgroundColor = Theme.panel.cgColor
@@ -263,7 +274,10 @@ enum Screenshots {
                     let roles = AtelierFigure.of(kind: kind, subject: subject)?.roles ?? []
                     for (k, r) in roles.enumerated() { link.ids[r] = UInt32(k + 1) }
                     link.value = { id in [0.62, 0.45][Int(id) - 1] }
-                    link.text = { id in ["value \(id)", "value \(id)"][Int(id) - 1] }
+                    // Values as the plug-ins print them (the audit: "value 1" read as a placeholder).
+                    let sample: [FigureRole: String] = [.threshold: "−18.0 dB", .ratio: "4.0 : 1", .size: "62 %", .decay: "2.4 s", .time: "375 ms",
+                                                        .feedback: "45 %", .drive: "12.0 dB", .rate: "0.8 Hz", .depth: "60 %"]
+                    link.text = { id in sample[roles[Int(id) - 1]] }
                     link.letter = { id in ["A", "B"][Int(id) - 1] }
                     link.name = { id in roles[Int(id) - 1].rawValue.capitalized }
                     screen.figureLink = link
@@ -283,6 +297,19 @@ enum Screenshots {
             w.settings.show(.general)
             try? await Task.sleep(for: .seconds(0.4))
             if let v = w.settings.window?.contentView { png(v, dir.appendingPathComponent("09-settings.png")) }
+            if ProcessInfo.processInfo.environment["DALNOK_GALLERY_SETTINGS"] != nil { // every page, and a search
+                for pane in SettingsController.Pane.allCases where pane != .general {
+                    w.settings.show(pane)
+                    try? await Task.sleep(for: .seconds(0.25))
+                    if let v = w.settings.window?.contentView { png(v, dir.appendingPathComponent("09-settings-\(pane).png")) }
+                }
+                w.settings.search.stringValue = "meter"
+                w.settings.searchChanged(nil)
+                try? await Task.sleep(for: .seconds(0.25))
+                if let v = w.settings.window?.contentView { png(v, dir.appendingPathComponent("09-settings-search.png")) }
+                w.settings.search.stringValue = ""
+                w.settings.searchChanged(nil)
+            }
             w.settings.window?.orderOut(nil)
             w.showCommandPalette(nil)
             w.palette.filter("mix")

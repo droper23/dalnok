@@ -356,6 +356,10 @@ final class SelfTest {
         check(perform("Solo Track"), "menu Track > Solo Track")
         s.refresh(onDisplayTick: true)
         check(s.track(t0)?.solo == true, "track soloed")
+        let quiet = s.soloSilenced()
+        let plain = s.allTracks.filter { t in t.id != t0 && t.output == 0 && t.stack == 0 && !s.allTracks.contains { $0.output == t.id || $0.stack == t.id } }
+        check(!quiet.contains(t0) && plain.allSatisfy { quiet.contains($0.id) },
+              "a solo silences the other tracks, and the arrangement fades their clips (\(quiet.count) silenced of \(s.allTracks.count))")
         _ = perform("Solo Track")
         s.refresh(onDisplayTick: true)
         check(s.track(t0)?.solo == false, "track unsoloed")
@@ -597,9 +601,15 @@ final class SelfTest {
             isolation.state = .on; _ = NSApp.sendAction(action, to: isolation.target, from: isolation)
             check(s.engine.pluginHost == Engine.pluginHostPath, "Safety back on")
         } else { check(false, "the Safety setting is available (dalnok-plughost next to the app)") }
-        for pane in SettingsController.Pane.allCases { w.settings.show(pane) }
-        check(w.settings.pane == .shortcuts && w.shortcutsEditor.table.window === w.settings.window,
-              "Settings has every pane, keyboard shortcuts included")
+        var shown: [SettingsController.Pane] = []
+        for pane in SettingsController.Pane.allCases { w.settings.show(pane); if w.settings.pane == pane { shown.append(pane) } }
+        w.settings.show(.shortcuts)
+        check(shown.count == 9 && w.settings.pane == .shortcuts && w.shortcutsEditor.table.window === w.settings.window,
+              "Settings has nine pages, keyboard shortcuts included (\(shown.count) shown)")
+        w.settings.search.stringValue = "monitoring"
+        w.settings.searchChanged(nil)
+        check(w.settings.matches == [.recording] && w.settings.pane == .recording, "searching Settings opens the page with the match (\(w.settings.matches))")
+        w.settings.search.stringValue = ""; w.settings.searchChanged(nil)
         w.settings.show(.general)
         if let view = w.settings.window?.contentView, let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
             view.cacheDisplay(in: view.bounds, to: bitmap)

@@ -273,6 +273,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         window.delegate = self
 
         let root = DropView()
+        root.onDragHover = { [weak self] on in self?.emptyState.dropTargeted = on }
         root.onDrop = { [weak self] urls in
             guard let self else { return }
             if let project = urls.first(where: { Self.foreignExtensions.contains($0.pathExtension.lowercased()) || $0.hasDirectoryPath }) {
@@ -466,6 +467,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             self?.timeline.highlightedTrack = id
             self?.devicePanel.track = id
             self?.inspector.track = id
+            if let self, !self.mixer.isHidden { self.mixer.select(id) } // the mixer marks the same track (audit round 3)
         }
         palette.onOpenGuide = { [weak self] c in self?.conceptGuide.show(daw: c.daw, query: c.term) }
         session.onChange = { [weak self] in self?.modelChanged() }
@@ -658,7 +660,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
     // MARK: Model → UI
 
+    private var tintPending = false
     private func modelChanged() {
+        if !tintPending { // rows rebuilt by this change (Inspector, start page) take the look's colour, once per pass
+            tintPending = true
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.tintPending = false
+                for v in [self.inspector, self.emptyState] as [NSView] where !v.isHidden { Theme.tintControls(in: v) }
+            }
+        }
         headers.sync()
         timeline.clampScrollY()
         // Show the empty state or the arrangement; crossfade only when that actually changes.
@@ -725,6 +736,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         for p in session.meterPoints { globals.combine(p.bar); globals.combine(p.numerator); globals.combine(p.denominator) }
         let c = session.cycle
         globals.combine(c.on); globals.combine(c.start); globals.combine(c.end)
+        for id in session.soloSilenced().sorted() { globals.combine(id) } // a solo (or re-routing under one) dims lanes
         let l = layout.finalize(), g = globals.finalize()
         if l != timelineLayout || g != timelineGlobals || session.rereadTracks.isEmpty {
             timeline.needsDisplay = true
@@ -1636,7 +1648,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             devicePanel.isHidden = !show
             return
         }
-        Motion.views(Motion.gentle, { devicePanelHeight.animator().constant = show ? DevicePanel.height : 0 }, completion: {
+        Motion.panels({ devicePanelHeight.animator().constant = show ? DevicePanel.height : 0 }, completion: {
             DispatchQueue.main.async { if !show { panel.isHidden = true } }
         })
     }
@@ -1653,13 +1665,23 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         transport.libraryButton.isEnabled = !empty
         transport.inspectorButton.isEnabled = !empty
         let lib = Self.showLibrary && !empty, insp = Self.showInspector && !empty
+        // The mixer too: an empty project has only the Master strip, which showed through beside the page.
+        let mix = Self.showMixer && !empty
+        if mix { mixer.isHidden = false; mixer.rebuild(); mixer.select(selectedTrack) }
+        if !animated || Motion.reduced { mixerHeight.constant = mix ? MixerPanel.height : 0; mixer.isHidden = !mix }
+        else {
+            let panel = mixer
+            Motion.panels({ self.mixerHeight.animator().constant = mix ? MixerPanel.height : 0 }, completion: {
+                DispatchQueue.main.async { MainActor.assumeIsolated { if self.sidePanelsSuppressed == empty && !mix { panel.isHidden = true } } }
+            })
+        }
         if lib { library.load() }
         if insp { inspector.track = selectedTrack; inspector.reload() }
         for (panel, width, open, stored) in [(library as NSView, libraryWidth!, lib, LibraryPanel.storedWidth),
                                               (inspector as NSView, inspectorWidth!, insp, InspectorPanel.storedWidth)] {
             if open { panel.isHidden = false }
             if !animated || Motion.reduced { width.constant = open ? stored : 0; panel.isHidden = !open; continue }
-            Motion.views(Motion.gentle, { width.animator().constant = open ? stored : 0 }, completion: {
+            Motion.panels({ width.animator().constant = open ? stored : 0 }, completion: {
                 DispatchQueue.main.async { MainActor.assumeIsolated { if self.sidePanelsSuppressed == empty && !open { panel.isHidden = true } } }
             })
         }
@@ -1688,7 +1710,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             panel.isHidden = !show
             return
         }
-        Motion.views(Motion.gentle, { width.animator().constant = w }, completion: {
+        Motion.panels({ width.animator().constant = w }, completion: {
             DispatchQueue.main.async { MainActor.assumeIsolated { if !show && stillHidden() { panel.isHidden = true } } }
         })
     }
@@ -1787,7 +1809,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             return
         }
         // Slides open from the track headers, as the mixer and device panel do from the bottom.
-        Motion.views(Motion.gentle, { launcherWidth.animator().constant = show ? launcher.width : 0 }, completion: {
+        Motion.panels({ launcherWidth.animator().constant = show ? launcher.width : 0 }, completion: {
             DispatchQueue.main.async { if !show && !MainWindowController.showLauncher { panel.isHidden = true } }
         })
     }
@@ -2057,6 +2079,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     @objc func toggleMixer(_ sender: Any?) {
         Self.showMixer.toggle()
         syncViewButtons()
+        guard !sidePanelsSuppressed else { return } // remembered; it opens with the first track
         let show = Self.showMixer
         if show { mixer.isHidden = false; mixer.rebuild(); mixer.select(selectedTrack) }
         let panel = mixer
@@ -2065,7 +2088,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             mixer.isHidden = !show
             return
         }
-        Motion.views(Motion.gentle, { mixerHeight.animator().constant = show ? MixerPanel.height : 0 }, completion: {
+        Motion.panels({ mixerHeight.animator().constant = show ? MixerPanel.height : 0 }, completion: {
             DispatchQueue.main.async { if !show { panel.isHidden = true } }
         })
     }
@@ -2516,11 +2539,18 @@ final class DropView: NSView {
         }
     }
 
+    /// Files are being dragged over the window (the start page draws its drop zone only then).
+    var onDragHover: ((Bool) -> Void)?
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-        audioURLs(sender).isEmpty ? [] : .copy
+        let ok = !audioURLs(sender).isEmpty
+        onDragHover?(ok)
+        return ok ? .copy : []
     }
+    override func draggingExited(_ sender: NSDraggingInfo?) { onDragHover?(false) }
+    override func draggingEnded(_ sender: NSDraggingInfo) { onDragHover?(false) }
 
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        onDragHover?(false)
         let urls = audioURLs(sender)
         guard !urls.isEmpty else { return false }
         onDrop?(urls)

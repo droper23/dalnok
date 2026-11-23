@@ -8,8 +8,11 @@
 import AppKit
 
 @MainActor
-final class ShortcutChooserController: NSObject {
+final class ShortcutChooserController: NSObject, NSWindowDelegate {
     static let shared = ShortcutChooserController()
+    /// Runs once when the questions are answered or the window is closed (the crash-recovery offer waits for it, so it
+    /// never opens over this window and hides it).
+    var onFinished: (() -> Void)?
     let window: NSWindow
     /// The presets offered, in the order people are most likely to come from (Dalnok's own is the quiet last choice).
     static let offered = ["logic", "ableton", "protools", "cubase", "studioone", "reaper"]
@@ -25,8 +28,14 @@ final class ShortcutChooserController: NSObject {
         super.init()
         window.title = "Welcome to Dalnok"
         window.isReleasedWhenClosed = false
+        window.delegate = self
         build()
     }
+
+    /// Closing the window answers the questions with what is chosen so far (asked again from Settings ▸ General, never
+    /// at every launch).
+    func windowWillClose(_ notification: Notification) { WelcomeController.hasCompleted = true; step = .look; finished() }
+    private func finished() { let f = onFinished; onFinished = nil; f?() }
 
     /// Opens on the look; `step` skips to a later question (Help ▸ Welcome reopens at the shortcuts).
     func show(at step: Step = .look) {
@@ -44,6 +53,14 @@ final class ShortcutChooserController: NSObject {
         let bg = NSView()
         bg.wantsLayer = true
         bg.layer?.backgroundColor = Theme.panel.cgColor
+        if Theme.activeStyle == .prism {
+            bg.layer?.backgroundColor = NSColor.clear.cgColor
+            let back = PrismBackdropView(frame: .zero)
+            back.translatesAutoresizingMaskIntoConstraints = false
+            bg.addSubview(back)
+            NSLayoutConstraint.activate([back.leadingAnchor.constraint(equalTo: bg.leadingAnchor), back.trailingAnchor.constraint(equalTo: bg.trailingAnchor),
+                                         back.topAnchor.constraint(equalTo: bg.topAnchor), back.bottomAnchor.constraint(equalTo: bg.bottomAnchor)])
+        }
         bg.appearance = Theme.appearance
         content.translatesAutoresizingMaskIntoConstraints = false
         bg.addSubview(content)
@@ -52,8 +69,10 @@ final class ShortcutChooserController: NSObject {
             content.topAnchor.constraint(equalTo: bg.topAnchor), content.bottomAnchor.constraint(lessThanOrEqualTo: bg.bottomAnchor),
         ])
         window.contentView = bg
+        if window.isVisible { Motion.pageIn(content) }
         window.setContentSize(step == .look ? NSSize(width: 990, height: 470) : NSSize(width: 660, height: 420))
         if Theme.activeStyle == .atelier { Atelier.unifyFonts(in: bg) }
+        Theme.tintControls(in: bg) // rebuilt while the window is key: tint now, not at the next key change
     }
 
     private func heading(_ title: String, _ sub: String) -> [NSView] {
@@ -163,6 +182,7 @@ final class ShortcutChooserController: NSObject {
         WelcomeController.hasCompleted = true
         window.orderOut(nil)
         step = .look
+        finished()
     }
 }
 

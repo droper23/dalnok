@@ -53,7 +53,11 @@ struct FigureLink {
     /// The parameter's name, for the part's tag.
     var name: (UInt32) -> String? = { _ in nil }
 
-    func v(_ r: FigureRole, _ fallback: Double = 0.5) -> Double { ids[r].flatMap(value) ?? fallback }
+    /// The part's value, 0…1 (never NaN or out of range: figures count and loop with it).
+    func v(_ r: FigureRole, _ fallback: Double = 0.5) -> Double {
+        let x = ids[r].flatMap(value) ?? fallback
+        return x.isFinite ? max(0, min(1, x)) : fallback
+    }
     func t(_ r: FigureRole) -> String? { ids[r].flatMap(text) }
     func l(_ r: FigureRole) -> String? { ids[r].flatMap(letter) }
 }
@@ -103,13 +107,18 @@ enum AtelierFigure {
 /// Drives the figures' motion (the owner: "the crank should actually rotate, the governor should spin, the pendulum
 /// should swing"). One 30 Hz timer for every figure on screen; a figure holds still while the pointer is on one of its
 /// parts or drags it, under Reduce Motion, in stills and tests (Motion off), and while its window is hidden.
+protocol FigureAnimating: NSView {
+    func advanceFigure(_ dt: Double)
+}
+extension FaceplateScreen: FigureAnimating {}
+
 @MainActor
 final class FigureClock {
     static let shared = FigureClock()
-    private let screens = NSHashTable<FaceplateScreen>.weakObjects()
+    private let screens = NSHashTable<NSView>.weakObjects()
     private var timer: Timer?
     private var last = CACurrentMediaTime()
-    func add(_ s: FaceplateScreen) {
+    func add(_ s: some FigureAnimating) {
         screens.add(s)
         guard timer == nil else { return }
         last = CACurrentMediaTime()
@@ -117,16 +126,19 @@ final class FigureClock {
         RunLoop.main.add(t, forMode: .common)
         timer = t
     }
-    func remove(_ s: FaceplateScreen) {
+    func remove(_ s: some FigureAnimating) {
         screens.remove(s)
         if screens.allObjects.isEmpty { timer?.invalidate(); timer = nil }
     }
     private func tick() {
         let now = CACurrentMediaTime(), dt = min(0.1, now - last)
         last = now
-        guard !Motion.reduced else { return }
-        for s in screens.allObjects {
-            guard let w = s.window, w.occlusionState.contains(.visible), !s.isHiddenOrHasHiddenAncestor else { continue }
+        // Held while Dalnok is in the background or under Reduce Motion; a figure moves only while some of it shows
+        // (scrolled out of the device panel, hidden, or in a minimised or covered window it costs nothing).
+        guard !Motion.reduced, NSApp.isActive else { return }
+        for case let s as FigureAnimating in screens.allObjects {
+            guard let w = s.window, w.isVisible, !w.isMiniaturized, w.occlusionState.contains(.visible),
+                  !s.isHiddenOrHasHiddenAncestor, !s.visibleRect.isEmpty else { continue }
             s.advanceFigure(dt)
         }
     }
@@ -380,7 +392,9 @@ extension FaceplateScreen {
             let t = Double(i) / 60
             return CGPoint(x: outLeft + CGFloat(t) * outW, y: sq.midY - CGFloat(curve(sample(t))) * side / 2)
         }
+        ctx.saveGState(); ctx.clip(to: CGRect(x: outLeft - 1, y: f.minY, width: outW + 2, height: f.height)) // inside the plate (audit V22)
         ctx.addPath(Codex.path(output)); ctx.setStrokeColor(ink.cgColor); ctx.setLineWidth(Atelier.fine); ctx.strokePath()
+        ctx.restoreGState()
         // Projection of the present sample: from the input, up to the curve, across to the output.
         let x0 = sample(0), px = sq.midX + CGFloat(x0) * side / 2, py = sq.midY - CGFloat(curve(x0)) * side / 2
         Codex.dotted(ctx, CGPoint(x: px, y: inTop), CGPoint(x: px, y: py), alpha: 0.5)
@@ -394,8 +408,8 @@ extension FaceplateScreen {
         let knee = CGPoint(x: sq.midX + side / 2 * CGFloat(0.35), y: sq.midY - CGFloat(curve(0.35)) * side / 2)
         letterCallout(ctx, link, .drive, at: CGPoint(x: knee.x + 3, y: knee.y - 3), to: CGPoint(x: knee.x + 14, y: sq.minY + 6))
         readout(ctx, link, .drive, at: CGPoint(x: outLeft + 2, y: sq.maxY + 8))
-        Atelier.note(ctx, "in", at: CGPoint(x: sq.midX + 4, y: f.maxY - 12), size: 8, color: Theme.textDim)
-        Atelier.note(ctx, "out", at: CGPoint(x: f.maxX - 2, y: sq.midY + 2), size: 8, color: Theme.textDim, align: .right)
+        Atelier.note(ctx, "in", at: CGPoint(x: sq.minX - 2, y: f.maxY - 12), size: 8, color: Theme.textDim, align: .right)
+        Atelier.note(ctx, "out", at: CGPoint(x: f.maxX - 2, y: sq.minY - 11), size: 8, color: Theme.textDim, align: .right)
         marginNotes = []
         return [FigureHandle(role: .drive, point: knee, axis: CGVector(dx: -0.707, dy: -0.707), span: side * 0.5)]
     }

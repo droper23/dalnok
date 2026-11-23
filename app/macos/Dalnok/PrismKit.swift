@@ -201,3 +201,16 @@ enum Prism {
         ctx.restoreGState()
     }
 }
+
+/// Prism: a secondary window's backdrop (Settings, first launch): the light field with a glass pane over each region
+/// the window names, so these windows are glass like the main one (the audit: flat navy and flat white).
+final class PrismBackdropView: NSView {
+    /// The glass panes, in this view's coordinates, worked out at each draw.
+    var panes: (NSRect) -> [NSRect] = { [$0.insetBy(dx: 10, dy: 10)] }
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    override func draw(_ dirtyRect: NSRect) {
+        Prism.drawField(in: self, frosted: false)
+        for r in panes(bounds) { Prism.liquidPane(self, r, radius: 14) }
+    }
+    override func setFrameSize(_ newSize: NSSize) { super.setFrameSize(newSize); needsDisplay = true }
+}

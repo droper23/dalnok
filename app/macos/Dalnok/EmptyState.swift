@@ -171,9 +171,9 @@ final class EmptyStateView: NSView, NSTextFieldDelegate {
         audio.widthAnchor.constraint(equalTo: basicsStack.widthAnchor, constant: -30).isActive = true
 
         cards = [
-            StartCard(title: "Audio Track", detail: "Record a microphone or an instrument", symbol: "waveform",
+            StartCard(title: "Audio Track", detail: "Record a voice or an instrument", symbol: "waveform",
                       target: self, action: #selector(newAudioTapped)),
-            StartCard(title: "Instrument Track", detail: "Play a synth from a MIDI keyboard", symbol: "pianokeys",
+            StartCard(title: "Instrument Track", detail: "Play a synth from a keyboard", symbol: "pianokeys",
                       target: self, action: #selector(newInstrumentTapped)),
         ]
         let choices = NSStackView(views: cards)
@@ -362,14 +362,19 @@ final class EmptyStateView: NSView, NSTextFieldDelegate {
         }
     }
 
+    /// Files are over the window: the drop zone shows (the audit: a dashed frame always round an empty page read as
+    /// a broken layout).
+    var dropTargeted = false { didSet { if dropTargeted != oldValue { needsDisplay = true } } }
+
     override func draw(_ dirtyRect: NSRect) {
-        // Dashed drop zone.
         let r = bounds.insetBy(dx: 28, dy: 28)
         if Theme.look.arrangement == .glass { Prism.drawField(in: self, frosted: false); Prism.liquidPane(self, r, radius: 18) }
-        let path = NSBezierPath(roundedRect: r, xRadius: 12, yRadius: 12)
+        guard dropTargeted else { return }
+        let path = NSBezierPath(roundedRect: r, xRadius: Theme.activeStyle == .atelier ? 0 : 12, yRadius: Theme.activeStyle == .atelier ? 0 : 12)
+        Theme.controlTint.withAlphaComponent(0.06).setFill(); path.fill()
         path.lineWidth = 1.5
         path.setLineDash([6, 5], count: 2, phase: 0)
-        Theme.ink(0.08).setStroke()
+        Theme.controlTint.withAlphaComponent(0.7).setStroke()
         path.stroke()
     }
 

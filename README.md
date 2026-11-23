@@ -8,7 +8,7 @@ recording, editing, and mixing in a fast, focused native app, in the look you wo
 
 > **Feature parity tracker:** https://droper23.github.io/dalnok-status/
 >
-> **Status: 0.3.0, preview release (pre-alpha).** Expect rough edges and save often.
+> **Status: 0.4.0, preview release (pre-alpha).** Expect rough edges and save often.
 > What works and what doesn't is in [CURRENT_STATE.md](CURRENT_STATE.md); changes are in [CHANGELOG.md](CHANGELOG.md).
 
 ![Dalnok in the Prism theme: the arrangement playing, with the mixer and a device chain of plug-ins open](assets/screenshots/prism-dark.png)
@@ -37,9 +37,16 @@ recording, editing, and mixing in a fast, focused native app, in the look you wo
   stems, and reports what came across. On first launch, pick the keyboard shortcuts you already know (Logic, Ableton,
   Pro Tools, Cubase, Studio One or REAPER).
 
-## New since 0.3.0 (unreleased)
+## New in 0.4.0
 - **Two new themes, Prism and Atelier**, each with a light and a dark version (View ▸ Theme, Settings ▸ Appearance;
-  Match System follows macOS).
+  Match System follows macOS). First launch asks which look you want, with a picture of each.
+- **Plug-ins you can see working, in every look:** each plug-in family is drawn as a moving figure you drag by its parts.
+  Graphite shows telemetry (a compressor's gain computer, a reverb's decay field, echo taps), Prism shows light (an iris
+  that closes as it compresses, caustics, light echoes, an EQ coloured by frequency), Warm Analog's pedals show their
+  circuit (a tape loop, a spring, a triode), and Atelier engraves instruments (a governor, a pendulum, a crank).
+- **The Library and Inspector:** plug-ins, projects and a file browser (click an audio file to hear it, drag it in),
+  and the selected track's settings and signal path beside the arrangement.
+- **Settings in nine pages, with search.**
 - **Dalnok Compressor**, a built-in compressor with a sidechain: key it from another track for ducking, with a
   side-chain filter, Listen and a gain-reduction meter.
 - **Composition Overview** (View ▸ Composition Overview, ⌥⌘O): the whole project as a roadmap of its sections, showing

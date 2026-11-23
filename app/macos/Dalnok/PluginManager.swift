@@ -340,7 +340,7 @@ final class PluginManagerController: NSWindowController, NSTableViewDataSource, 
     }
     func reloadSidebar() {
         var r: [SideRow] = [.header("LIBRARY")]
-        for (s, t) in [(Source.all, "All Plug-ins"), (.favorites, "Favorites"), (.recent, "Recently Used"), (.mostUsed, "Most Used")] {
+        for (s, t) in [(Source.all, "All Plug-ins"), (.favorites, "Favourites"), (.recent, "Recently Used"), (.mostUsed, "Most Used")] {
             r.append(.source(s, t, count(s)))
         }
         let cols = PluginLibrary.collections.keys.sorted()
@@ -498,7 +498,7 @@ final class PluginManagerController: NSWindowController, NSTableViewDataSource, 
             b.isBordered = false
             b.contentTintColor = fav ? Theme.hex(0xE8B64A) : Theme.textFaint
             b.tag = row
-            b.toolTip = fav ? "Remove from Favorites" : "Add to Favorites"
+            b.toolTip = fav ? "Remove from Favourites" : "Add to Favourites"
             return b
         }
         var color = Theme.text
@@ -508,8 +508,10 @@ final class PluginManagerController: NSWindowController, NSTableViewDataSource, 
         case "format": text = p.format; color = Theme.textDim
         case "vendor": text = p.vendor; color = Theme.textDim
         case "status":
-            text = p.status == "ok" ? "Installed" : p.status == "not scanned" ? "Not scanned" : "Failed: \(p.status)" + (p.error.isEmpty ? "" : " — \(p.error)")
-            color = p.status == "ok" ? Theme.hex(0x5FB39B) : p.status == "not scanned" ? Theme.textFaint : Theme.clipRed
+            // Built-in plug-ins are part of Dalnok: nothing to scan (the audit: "Not scanned" read as a problem).
+            let builtIn = p.format == "DALNOK"
+            text = builtIn ? "Built in" : p.status == "ok" ? "Installed" : p.status == "not scanned" ? "Not scanned" : "Failed: \(p.status)" + (p.error.isEmpty ? "" : " — \(p.error)")
+            color = builtIn || p.status == "ok" ? Theme.hex(0x5FB39B) : p.status == "not scanned" ? Theme.textFaint : Theme.clipRed
         default: text = p.name + (p.version.isEmpty ? "" : "  \(p.version)")
         }
         let l = NSTextField(labelWithString: text)

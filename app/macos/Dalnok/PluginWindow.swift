@@ -10,7 +10,7 @@ final class PluginWindowController: NSWindowController, NSWindowDelegate, NSTabl
     let slot: Int32
     /// In the title bar: the plug-in's own window (its GUI) or Controls (Dalnok's view of every parameter).
     let tabs = NSSegmentedControl(labels: ["Plug-in", "Controls"], trackingMode: .selectOne, target: nil, action: nil)
-    let editorHost = NSView()
+    let editorHost: NSView = { let v = NSView(); v.identifier = NSUserInterfaceItemIdentifier("stock"); return v }()
     let table = NSTableView()
     let search = NSSearchField()
     let note = NSTextField(labelWithString: "")

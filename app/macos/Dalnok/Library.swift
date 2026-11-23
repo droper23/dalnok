@@ -26,7 +26,7 @@ final class LibraryPanel: SidePanelView, NSOutlineViewDataSource, NSOutlineViewD
     var onTakeFile: ((URL) -> Void)?
     /// The saved project's folder, the Files place's first entry.
     var projectFolder: () -> URL? = { nil }
-    let previewToggle = NSButton(checkboxWithTitle: "Preview audio on click", target: nil, action: nil)
+    let previewToggle = Theme.checkbox("Preview audio on click")
     private var searchToken = 0
     var onMessage: ((String) -> Void)?
     let resizeEdge = PanelResizeEdge(direction: 1)
@@ -413,7 +413,19 @@ final class LibraryPanel: SidePanelView, NSOutlineViewDataSource, NSOutlineViewD
             t.textColor = Theme.text
             if let p = n.plugin {
                 cell.toolTip = "\(p.name) · \(p.vendor) · \(p.format). Drag onto a track or the device chain; double-click inserts on the selected track."
-                cell.setAccessibilityLabel("\(p.name), \(p.vendor)")
+                cell.setAccessibilityLabel("\(p.name), \(p.vendor), \(p.format)")
+                // The format at the row's end: the same plug-in as VST3 and AU otherwise read as a duplicate (audit W7).
+                if p.format != "DALNOK" {
+                    let badge = NSTextField(labelWithString: p.format == "VST3" ? "VST3" : p.format)
+                    badge.font = atelier ? Theme.note(11) : Theme.mono(9.5)
+                    badge.textColor = atelier ? Atelier.gold : Theme.textFaint
+                    badge.translatesAutoresizingMaskIntoConstraints = false
+                    badge.setAccessibilityElement(false)
+                    cell.addSubview(badge)
+                    NSLayoutConstraint.activate([badge.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -4),
+                                                 badge.centerYAnchor.constraint(equalTo: cell.centerYAnchor)])
+                    trailing = badge
+                }
             } else if let u = n.project { cell.toolTip = u.path; cell.setAccessibilityLabel("Project \(n.title)")
             } else if let u = n.file {
                 let kind = LibraryFiles.kind(u)

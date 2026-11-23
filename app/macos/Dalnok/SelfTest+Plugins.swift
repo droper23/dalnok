@@ -431,7 +431,7 @@ extension SelfTest {
         if let delay = pm.all.first(where: { $0.name == "AUDelay" }) {
             pm.toggleFavorite(delay)
             pm.select(source: .favorites)
-            check(pm.rows.map(\.name) == ["AUDelay"], "a starred plug-in appears in Favorites")
+            check(pm.rows.map(\.name) == ["AUDelay"], "a starred plug-in appears in Favourites")
             pm.toggleFavorite(delay)
             check(pm.rows.isEmpty, "unstarring removes it")
             var c = PluginLibrary.collections; c["Mix Bus"] = []; PluginLibrary.collections = c
@@ -617,7 +617,9 @@ extension SelfTest {
         delay.sidechain.isHidden = sidechainWasHidden
         s.removeTrack(namedNone); s.removeTrack(duplicate2); s.removeTrack(duplicate1)
         let names = delay.knobs.map { $0.label.stringValue }
-        check(delay.knobs.count == 4 && names.contains { $0.caseInsensitiveCompare("Dry/Wet Mix") == .orderedSame }, "controller shows AUDelay's parameters (\(names))")
+        // Warm Analog prints the short panel name (PedalLabel), the full one in its tooltip.
+        let fullNames = delay.knobs.map { $0.label.toolTip ?? $0.label.stringValue }
+        check(delay.knobs.count == 4 && (names + fullNames).contains { $0.caseInsensitiveCompare("Dry/Wet Mix") == .orderedSame }, "controller shows AUDelay's parameters (\(names))")
         if let lim = panel.devices.last {
             let limNames = lim.knobs.map { $0.label.stringValue }
             check(lim.knobs.count == lim.controlIds.count && !limNames.contains(""), "every limiter control has a named knob (\(limNames))")
@@ -640,7 +642,10 @@ extension SelfTest {
                   && pedal.screen.frame.maxY < pedal.footswitch.frame.minY - 14 && pedal.screen.frame.width > 60,
                   "the pedal has a readout window under its controls (\(pedal.screen.frame))")
             delay.pollMeters(); delay.pollMeters()
-            check(pedal.screen.mode == .scope, "AUDelay's window shows its output trace (\(pedal.screen.mode))")
+            check(pedal.screen.mode == .tape && pedal.screen.animates, "AUDelay's window draws its tape loop, moving (\(pedal.screen.mode))")
+            let phase0 = pedal.screen.phase
+            pedal.screen.advanceFigure(0.1)
+            check(pedal.screen.phase > phase0, "the tape loop turns (\(phase0) → \(pedal.screen.phase))")
             if let knob = pedal.controls.first {
                 knob.onChange?(0.3)
                 check(pedal.screen.showingValue && pedal.screen.text.lowercased().contains("dry/wet") && pedal.screen.text.contains("30"),
@@ -838,7 +843,8 @@ extension SelfTest {
             if let unit = panel.devices.first(where: { $0.slot == comp }) {
                 check(unit.automaticKind() == .gainReduction, "Dalnok Compressor gets a gain-reduction display (\(unit.automaticKind()))")
                 // Atelier: the governor's collar is the threshold; dragging it up raises the threshold.
-                if Theme.look.devices == .schematic, let screen = unit.display as? FaceplateScreen {
+                // Graphite (gain computer) and Prism (aperture) draw the same figure in their idiom, with the same parts.
+                if Theme.look.devices != .pedalboard, let screen = unit.display as? FaceplateScreen {
                     if let rep = screen.bitmapImageRepForCachingDisplay(in: screen.bounds) { screen.cacheDisplay(in: screen.bounds, to: rep) } // draws: places the parts
                     if screen.atelierFigure == .governor, let h = screen.figureHandles.first(where: { $0.role == .threshold }),
                        let id = screen.figureLink?.ids[.threshold] {
@@ -848,7 +854,14 @@ extension SelfTest {
                         screen.mouseDragged(with: mouse(.leftMouseDragged, screen.convert(to, to: nil)))
                         screen.mouseUp(with: mouse(.leftMouseUp, screen.convert(to, to: nil)))
                         let after = unit.current(id)?.value ?? -1
-                        check(after > before + 0.05, "dragging the governor's collar raises the threshold (\(before) → \(after))")
+                        check(after > before + 0.05, "dragging the figure's threshold part raises the threshold (\(Theme.look.devices); \(before) → \(after))")
+                        unit.set(id, before)
+                        // VoiceOver and keyboard: each part is a slider named after its parameter.
+                        let parts = (screen.accessibilityChildren() as? [FigurePartElement]) ?? []
+                        let thrPart = parts.first { $0.accessibilityLabel()?.lowercased().contains("threshold") == true }
+                        check(parts.count == 2 && thrPart?.accessibilityRole() == .slider && thrPart?.accessibilityPerformIncrement() == true
+                              && (unit.current(id)?.value ?? -1) > before + 0.02,
+                              "the figure's parts are VoiceOver sliders; incrementing Threshold raises it (\(parts.compactMap { $0.accessibilityLabel() }))")
                         unit.set(id, before)
                         // Motion: the governor spins (it holds still under the pointer); its part and key row light together.
                         let a0 = screen.figureAngle
@@ -865,7 +878,7 @@ extension SelfTest {
                         check(screen.highlightRole == .threshold, "pointing at the Threshold row lights the collar")
                         row?.onHover?(false)
                         screen.figureAngle = 0
-                    } else { check(false, "Atelier draws the compressor as a governor with a threshold collar (\(String(describing: screen.atelierFigure)))") }
+                    } else { check(false, "the compressor is drawn as its family's figure with a threshold part (\(String(describing: screen.atelierFigure)))") }
                 }
                 check(!unit.sidechain.isHidden && unit.sidechain.itemTitles.first == "SC: None" && unit.sidechain.indexOfItem(withTag: Int(other)) > 0,
                       "the compressor shows a sidechain menu with None and the other tracks (\(unit.sidechain.itemTitles))")
