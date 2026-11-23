@@ -620,7 +620,7 @@ final class SelfTest {
                 let faces = [Theme.title(12).fontName, Theme.title(12, .regular).fontName, Theme.display(20).fontName, Theme.note(10).fontName]
                 check(faces.allSatisfy { $0.hasPrefix("SourceSerif4") }, "Atelier sets titles, the clock and notes in Source Serif 4 (\(faces))")
             }
-            let wantFace = [Theme.Style.prism: "Sora", .atelier: "IBMPlexSansCond"][style], wantFigures = [Theme.Style.prism: "GeistMono", .atelier: "IBMPlexMono"][style]
+            let wantFace = [Theme.Style.prism: "Sora", .atelier: "SourceSerif4"][style], wantFigures = [Theme.Style.prism: "GeistMono", .atelier: "SourceSerif4"][style]
             check(Theme.activeStyle == style && Theme.preferredStyle == style && w.window?.isVisible == true
                   && s.tracks.map(\.id) == tracksBefore && w.timeline.framesPerPoint == zoomBefore
                   && (wantFace.map { fontFace.hasPrefix($0) } ?? true) && (wantFigures.map { w in figures.split(separator: "/").allSatisfy { $0.hasPrefix(w) } } ?? true)

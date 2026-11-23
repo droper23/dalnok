@@ -105,6 +105,14 @@ final class TransportBar: NSView {
     }
     static let clockChanged = Notification.Name("DalnokClockChanged")
     private var timeCenter: NSLayoutConstraint?, ghostCenter: NSLayoutConstraint?
+    private var lcdWidth: NSLayoutConstraint?, timeCenterX: NSLayoutConstraint?, subCenterX: NSLayoutConstraint?
+    private var subBottom: NSLayoutConstraint?, subCenterY: NSLayoutConstraint?
+    /// Atelier's counter: one drum window, or two side by side (position | the other readout) so neither is cut.
+    static func housingSize(split: Bool) -> CGSize {
+        CGSize(width: Illustrated.size(split ? 238 : 150, 1.2), height: Illustrated.size(34, 1.2))
+    }
+    /// The left window's share of a split housing.
+    static let splitFraction: CGFloat = 0.6
     /// Lays the display out for one or two readouts.
     func applyClockSetting() {
         let on = Self.showsSecondaryClock
@@ -113,6 +121,24 @@ final class TransportBar: NSView {
         ghost.font = timeLabel.font
         timeCenter?.constant = on ? -5 : 0
         ghostCenter?.constant = on ? -5 : 0
+        lcdWidth?.constant = Theme.look.transport == .typeset ? Self.housingSize(split: false).width : 150
+        timeCenterX?.constant = 0; subCenterX?.constant = 0
+        subBottom?.isActive = true; subCenterY?.isActive = false
+        if Theme.look.transport == .typeset {
+            // Two drums side by side: the position large on the left, the other readout on the right, both centred.
+            let size = Self.housingSize(split: on)
+            lcdWidth?.constant = size.width
+            timeLabel.font = Theme.display(Illustrated.size(on ? 18 : 20, 1.2))
+            subTimeLabel.font = Theme.display(Illustrated.size(13.5, 1.2))
+            timeCenter?.constant = 0
+            if on {
+                let split = size.width * Self.splitFraction
+                timeCenterX?.constant = split / 2 - size.width / 2
+                subCenterX?.constant = split + (size.width - split) / 2 - size.width / 2
+                subBottom?.isActive = false; subCenterY?.isActive = true
+            }
+            lcdWell.layer?.contents = Atelier.counterHousing(size: size, split: on ? Self.splitFraction : nil)
+        }
     }
     let lcdWell = NSView()
     /// Warm Analog: unlit display segments behind the digits, as on a vacuum-fluorescent display.
@@ -246,6 +272,9 @@ final class TransportBar: NSView {
         meterPopup.addItems(withTitles: ["2/4", "3/4", "4/4", "5/4", "6/8", "7/8", "12/8"])
         meterPopup.isBordered = false
         meterPopup.font = Theme.mono(12, .medium)
+        if Theme.activeStyle == .atelier { // the borderless pop-up draws its item in the system face unless told
+            for item in meterPopup.itemArray { item.attributedTitle = NSAttributedString(string: item.title, attributes: [.font: Theme.display(15), .foregroundColor: Theme.text]) }
+        }
         meterPopup.toolTip = "Time signature"
         meterPopup.setAccessibilityLabel("Time signature")
         let tempo = NSStackView(views: [tempoField, bpmLabel, meterPopup, metronomeButton, countInButton])
@@ -258,6 +287,7 @@ final class TransportBar: NSView {
         transport.spacing = 6
         transportCluster = transport
         styleDisplayForFamily(lcd)
+        Atelier.unifyFonts(in: self)
         titleGroup = titles
 
         masterMeter.toolTip = "Output level (click to reset the clip indicator)"
@@ -290,11 +320,9 @@ final class TransportBar: NSView {
             transport.centerXAnchor.constraint(equalTo: centerXAnchor).withPriority(.defaultHigh),
             tools.leadingAnchor.constraint(greaterThanOrEqualTo: transport.trailingAnchor, constant: 20),
             transport.centerYAnchor.constraint(equalTo: centerYAnchor),
-            lcd.widthAnchor.constraint(equalToConstant: Theme.look.transport == .typeset ? Illustrated.size(150, 1.2) : 150),
+
             lcd.heightAnchor.constraint(equalToConstant: Theme.look.transport == .typeset ? Illustrated.size(34, 1.2) : 34),
-            timeLabel.centerXAnchor.constraint(equalTo: lcd.centerXAnchor),
-            subTimeLabel.centerXAnchor.constraint(equalTo: lcd.centerXAnchor),
-            subTimeLabel.bottomAnchor.constraint(equalTo: lcd.bottomAnchor, constant: -1),
+
             tools.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
             tools.centerYAnchor.constraint(equalTo: centerYAnchor),
             masterMeter.widthAnchor.constraint(equalToConstant: 132),
@@ -302,6 +330,12 @@ final class TransportBar: NSView {
         ])
         timeCenter = timeLabel.centerYAnchor.constraint(equalTo: lcd.centerYAnchor)
         timeCenter?.isActive = true
+        lcdWidth = lcd.widthAnchor.constraint(equalToConstant: 150)
+        timeCenterX = timeLabel.centerXAnchor.constraint(equalTo: lcd.centerXAnchor)
+        subCenterX = subTimeLabel.centerXAnchor.constraint(equalTo: lcd.centerXAnchor)
+        subBottom = subTimeLabel.bottomAnchor.constraint(equalTo: lcd.bottomAnchor, constant: -1)
+        subCenterY = subTimeLabel.centerYAnchor.constraint(equalTo: lcd.centerYAnchor)
+        NSLayoutConstraint.activate([lcdWidth!, timeCenterX!, subCenterX!, subBottom!])
         applyClockSetting()
         titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         statusLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -329,11 +363,11 @@ final class TransportBar: NSView {
             lcd.layer?.backgroundColor = Theme.lcd.cgColor
             lcd.layer?.cornerRadius = 0
             // An engraved counter: a ruled housing screwed to the plate, the figures on a drum (shaded top and bottom).
-            let size = CGSize(width: Illustrated.size(150, 1.2), height: Illustrated.size(34, 1.2))
-            lcd.layer?.contents = Atelier.counterHousing(size: size)
+            lcd.layer?.contents = Atelier.counterHousing(size: Self.housingSize(split: Self.showsSecondaryClock),
+                                                         split: Self.showsSecondaryClock ? Self.splitFraction : nil)
             lcd.layer?.contentsScale = 2
             timeLabel.textColor = Theme.text
-            subTimeLabel.textColor = Theme.textDim
+            subTimeLabel.textColor = Theme.ink(0.85)
             tempoField.font = Theme.display(15)
         case .lcd, .tapeDeck: break
         }

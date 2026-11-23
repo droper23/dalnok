@@ -98,7 +98,7 @@ enum Theme {
         /// what must be seen.
         static let atelierDark = Palette(window: 0x231B10, panel: 0x2A2014, panelRaised: 0x322718, control: 0x46371F, controlHi: 0x5A4729,
                                          laneA: 0x281F13, laneB: 0x2C2216, laneHighlight: 0x3A2D1A, lcd: 0x20180E,
-                                         text: 0xF0E3C4, textDim: 0xCDB98E, textFaint: 0xA8946B, accent: 0xE0754E, playhead: 0xE0754E,
+                                         text: 0xF0E3C4, textDim: 0xCDB98E, textFaint: 0xA8946B, accent: 0xE2C27A, playhead: 0xF0E3C4,
                                          cycle: 0xD4A747, selectedHeader: 0x3E301B, knobHover: 0x5A4729, launcher: 0x261D11,
                                          ink: 0xF0E3C4, well: 0x1A130A, selection: 0xF0E3C4,
                                          muteOn: 0x7FA6B8, soloOn: 0xD4A747, monitorOn: 0xD98A45, recordOn: 0xE0754E, clipRed: 0xE0754E)
@@ -106,7 +106,7 @@ enum Theme {
         /// textDim ≥ 7:1 and the ochre numerals (cycle) ≥ 5:1 on the parchment (2026-11-22 audit).
         static let atelier = Palette(window: 0xE9DEC6, panel: 0xEDE3CE, panelRaised: 0xF4ECDB, control: 0xDCCDAE, controlHi: 0xC9B78F,
                                      laneA: 0xF5EEDE, laneB: 0xF0E7D3, laneHighlight: 0xE8D9B8, lcd: 0xF6F0E2,
-                                     text: 0x3A2916, textDim: 0x54432F, textFaint: 0x715E45, accent: 0xA8361F, playhead: 0xA8361F,
+                                     text: 0x3A2916, textDim: 0x54432F, textFaint: 0x715E45, accent: 0x7E5212, playhead: 0x3A2916,
                                      cycle: 0x74561A, selectedHeader: 0xE6D6B4, knobHover: 0xD8C7A2, launcher: 0xECE2CC,
                                      ink: 0x3A2916, shade: 0x3B2F1E, light: true, well: 0xE0D2B4, selection: 0x3A2916,
                                      muteOn: 0x33607E, soloOn: 0xB48728, monitorOn: 0xA9652A, recordOn: 0xA8361F, clipRed: 0xA8361F)
@@ -152,8 +152,8 @@ enum Theme {
     /// names, headings) and the large position display. Faces are bundled (Resources/Fonts) and fall back to the
     /// system's when missing.
     struct Typography {
-        enum Face { case system, sora, plexCondensed }
-        enum Figures { case system, geistMono, plexMono }
+        enum Face { case system, sora, plexCondensed, serif }
+        enum Figures { case system, geistMono, plexMono, serif }
         enum Titles { case asLabels, serif }
         var face: Face, figures: Figures, titles: Titles
         /// Labels set in spaced capitals (section heads, small legends).
@@ -162,7 +162,9 @@ enum Theme {
         var labelScale: CGFloat
         static let system = Typography(face: .system, figures: .system, titles: .asLabels, capsLabels: false, labelScale: 1)
         static let prism = Typography(face: .sora, figures: .geistMono, titles: .asLabels, capsLabels: false, labelScale: 0.93)
-        static let atelier = Typography(face: .plexCondensed, figures: .plexMono, titles: .serif, capsLabels: true, labelScale: 1.04)
+        // Atelier is one family (the owner: "fonts more unified"): Source Serif 4 for labels, titles, notes and figures
+        // (tabular lining numerals), as one engraver would letter a plate.
+        static let atelier = Typography(face: .serif, figures: .serif, titles: .serif, capsLabels: true, labelScale: 1.04)
     }
 
     static var palette: Palette { activeStyle.palette(activeVariant) }
@@ -260,6 +262,8 @@ enum Theme {
             if let f = BundledFonts.font(weight >= .medium ? "GeistMono-Medium" : weight <= .light ? "GeistMono-Light" : "GeistMono-Regular", size) { return f }
         case .plexMono:
             if let f = BundledFonts.font(weight >= .medium ? "IBMPlexMono-Medium" : "IBMPlexMono-Regular", size) { return f }
+        case .serif:
+            if let f = BundledFonts.font(weight >= .medium ? "SourceSerif4Roman-16ptSemiBold" : "SourceSerif4Roman-16pt", size * 1.08) { return lining(f) }
         }
         return .monospacedDigitSystemFont(ofSize: size, weight: weight)
     }
@@ -273,6 +277,8 @@ enum Theme {
         case .plexCondensed:
             let name = weight >= .semibold ? "IBMPlexSansCond-SemiBold" : weight >= .medium ? "IBMPlexSansCond-Medium" : "IBMPlexSansCond-Regular"
             if let f = BundledFonts.font(name, s) { return f }
+        case .serif:
+            if let f = BundledFonts.font(weight >= .medium ? "SourceSerif4Roman-16ptSemiBold" : "SourceSerif4Roman-16pt", s * 1.04) { return lining(f) }
         }
         return .systemFont(ofSize: size, weight: weight)
     }
@@ -330,7 +336,10 @@ enum Theme {
             // Atelier: drawing inks on ivory. Deep, slightly muted pigments (vermilion, ochre, teal, indigo, ...) at a
             // lightness that keeps dark waveforms and white-on-ink labels readable; warm and cool alternate.
             let hues: [Double] = [35, 230, 85, 165, 330, 255, 60, 195, 10, 140, 290, 110]
-            return OKLCH.color(l: (isLight ? 0.56 : 0.70) + (i % 2 == 1 ? 0.05 : 0), c: isLight ? 0.115 : 0.09, h: hues[i]) // the umber plate: softer, as pigment on dark paper
+            // Lightness separates inks of near hue (audit D5: the two blues and the two warms were too close): within
+            // each family (warms 35/60/10/85, blues 230/255/195/290, greens 165/140/110) the steps differ by ≥ 0.05.
+            let lift: [Double] = [0, 0.06, 0.03, 0, 0, -0.08, 0.09, -0.01, -0.08, 0.08, 0.1, -0.06]
+            return OKLCH.color(l: (isLight ? 0.56 : 0.70) + lift[i], c: isLight ? 0.115 : 0.09, h: hues[i]) // the umber plate: softer, as pigment on dark paper
         case .rainbow, .console: break
         }
         if look.consoleTrackColors {

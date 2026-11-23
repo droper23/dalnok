@@ -104,3 +104,24 @@ Severity: **H** must fix, **M** should, **L** polish.
   scroll clipping (no change), C5 (a fade at the arrangement's lower edge), C6 (scroll bar gutter under the plates),
   C7 (insert rows aligned across strips, selected wash to the divider), C12, D3 (record still shares red with the
   playhead and accent), D5 (track inks separated by lightness).
+
+## Owner review, third round (2026-11-22, night)
+Owner's notes on the PR #11 build: the record chip's R off centre; plug-in power keys off-theme; keep the mixer's
+fader boxes but make every 3D element share their direction and depth; an illustration at the Inspector's foot; Library
+names missing until clicked and too close to their icons; text still cut off (Library search); a weak clock, cramped by
+the second clock; fonts not unified; and plug-ins redesigned so they don't read as a Graphite reskin, with more of the
+Mathematics plate's drawing everywhere.
+Answers to the plug-in questions: **mix by plug-in type** (figure as the main drawing, parameters in the form that
+suits the family); drawing **a mix: easy to navigate, still drawn**; third-party plug-ins get a **generic legend plate**;
+iconography **everywhere with room** (data areas stay clean).
+
+Done in `feat/atelier-polish`:
+- One oblique for every solid (`Atelier.depth`, `recede`, `obliqueSide`): dials, fader blocks, plug-in cursors, glyph blocks.
+- Plug-in plates: lettered legend rows with slide-rule scales (`FaceplateControl.legendRows`), Off | On cells for
+  switches, knife-switch power key (`Atelier.knifeSwitch`). The family figure stays the plate's centre (EQ bands drag).
+- A9 done: engraved glyphs (`AtelierGlyphs.swift`) for the control bar, tools and Library places.
+- D3 done: red is record only (playhead ink, accent gold / burnt ochre). D5 done: inks separated by lightness per hue family.
+- Type: Source Serif 4 throughout (`Typography.atelier`), `Atelier.unifyFonts` for system controls.
+- Clock: split housing, two drums side by side when the second clock is on. Inspector Fig. 3 (signal path, live), sized
+  to the spare room only.
+- Still open: B4 (needle master meter), C5, C6, C7 (insert rows aligned), C12.

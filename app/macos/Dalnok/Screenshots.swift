@@ -191,6 +191,19 @@ enum Screenshots {
             shot("00-hero")
             if MainWindowController.showMixer { w.toggleMixer(nil) }
             app.engine.pause()
+            // The side panels with a library category open and a plug-in chosen.
+            if !w.library.isHidden {
+                // Closed and reopened, as the owner does with Y: names must draw at once (they once waited for a click).
+                let motion = Motion.override
+                Motion.override = true // the slide, as in use
+                w.toggleLibrary(nil); try? await Task.sleep(for: .seconds(0.8))
+                w.toggleLibrary(nil); try? await Task.sleep(for: .seconds(0.8))
+                Motion.override = motion
+                w.library.load()
+                if let eq = w.library.roots.first { w.library.outline.expandItem(eq) }
+                try? await Task.sleep(for: .seconds(0.4))
+                shot("13-panels")
+            }
             w.pluginManager.show()
             w.pluginManager.filter("Dalnok")
             try? await Task.sleep(for: .seconds(0.4))

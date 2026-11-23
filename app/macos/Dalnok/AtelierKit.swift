@@ -253,6 +253,8 @@ enum Atelier {
         let a0 = CGFloat.pi * 1.25, sweep = CGFloat.pi * 1.5
         func angle(_ v: CGFloat) -> CGFloat { a0 - sweep * v }
         ctx.saveGState()
+        let inner0 = r - 4.5
+        obliqueSide(ctx, circle: CGRect(x: c.x - inner0, y: c.y - inner0, width: 2 * inner0, height: 2 * inner0), yUp: true) // under the graduations
         for i in 0...30 {
             let a = angle(CGFloat(i) / 30), long = i % 5 == 0
             let p0 = CGPoint(x: c.x + cos(a) * (r - (long ? 3 : 1.6)), y: c.y + sin(a) * (r - (long ? 3 : 1.6)))
@@ -285,7 +287,7 @@ enum Atelier {
     /// Returns the front face (for the focus ring).
     @discardableResult
     static func slideBlock(_ ctx: CGContext, center c: CGPoint, width w: CGFloat, height h: CGFloat, ink: NSColor, active: Bool) -> CGRect {
-        let d = max(2, h * 0.22) // the depth shown on top and side
+        let d = depth // the shared oblique: the same as every dial's side
         let front = CGRect(x: c.x - w / 2, y: c.y - h / 2 + d / 2, width: w - d, height: h - d)
         let topFace = CGMutablePath()
         topFace.addLines(between: [CGPoint(x: front.minX, y: front.minY), CGPoint(x: front.minX + d, y: front.minY - d),
@@ -313,25 +315,38 @@ enum Atelier {
 
     /// The position display's housing (y down, drawn once per size): heavy and fine rules, a slotted screw in each
     /// corner, and the drum's curvature engraved as hatching that thickens toward the window's top and bottom edges.
-    static func counterHousing(size: CGSize) -> CGImage? {
+    static func counterHousing(size: CGSize, split: CGFloat? = nil) -> CGImage? {
         let w = Int(ceil(size.width * 2)), h = Int(ceil(size.height * 2))
         guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
                                   bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
         ctx.scaleBy(x: 2, y: 2)
         ctx.translateBy(x: 0, y: size.height); ctx.scaleBy(x: 1, y: -1)
         let r = CGRect(origin: .zero, size: size)
+        // The housing: a heavy outer rule and a fine inner one, like a plate's border.
         box(ctx, r.insetBy(dx: 0.75, dy: 0.75), weight: medium, color: ink)
-        let window = r.insetBy(dx: 10, dy: 4)
-        box(ctx, window, weight: hair, color: Theme.ink(0.6))
-        // Drum shading: rules closer and darker toward each edge of the window (the figures turn away from the eye).
-        for (edge, dir) in [(window.minY, CGFloat(1)), (window.maxY, -1)] {
-            for i in 0..<4 {
-                let y = edge + dir * (0.8 + CGFloat(i) * CGFloat(i + 1) * 0.55)
-                rule(ctx, CGPoint(x: window.minX + 1, y: y), CGPoint(x: window.maxX - 1, y: y), weight: 0.35, color: Theme.ink(0.42 - CGFloat(i) * 0.09))
+        box(ctx, r.insetBy(dx: 2.5, dy: 2.5), weight: hair, color: Theme.ink(0.5))
+        let inner = r.insetBy(dx: 11, dy: 4)
+        var windows = [inner]
+        if let split {
+            // Two drum windows with a double rule between: the position, and the other readout.
+            let x = (r.width * split).rounded() + 0.5
+            windows = [CGRect(x: inner.minX, y: inner.minY, width: x - 3 - inner.minX, height: inner.height),
+                       CGRect(x: x + 3, y: inner.minY, width: inner.maxX - x - 3, height: inner.height)]
+            rule(ctx, CGPoint(x: x - 0.8, y: 2.5), CGPoint(x: x - 0.8, y: r.maxY - 2.5), weight: hair, color: Theme.ink(0.6))
+            rule(ctx, CGPoint(x: x + 0.8, y: 2.5), CGPoint(x: x + 0.8, y: r.maxY - 2.5), weight: hair, color: Theme.ink(0.6))
+        }
+        for window in windows {
+            box(ctx, window, weight: hair, color: Theme.ink(0.6))
+            // Drum shading: three short rules near each edge, clear of the figures (data first).
+            for (edge, dir) in [(window.minY, CGFloat(1)), (window.maxY, -1)] {
+                for i in 0..<3 {
+                    let y = edge + dir * (0.9 + CGFloat(i) * 1.1)
+                    rule(ctx, CGPoint(x: window.minX + 1, y: y), CGPoint(x: window.maxX - 1, y: y), weight: 0.3, color: Theme.ink(0.36 - CGFloat(i) * 0.1))
+                }
             }
         }
-        for p in [CGPoint(x: 5, y: 5), CGPoint(x: r.maxX - 5, y: 5), CGPoint(x: 5, y: r.maxY - 5), CGPoint(x: r.maxX - 5, y: r.maxY - 5)] {
-            screwHead(ctx, p, radius: 2)
+        for p in [CGPoint(x: 6, y: r.midY - 6), CGPoint(x: 6, y: r.midY + 6), CGPoint(x: r.maxX - 6, y: r.midY - 6), CGPoint(x: r.maxX - 6, y: r.midY + 6)] {
+            screwHead(ctx, p, radius: 1.9)
         }
         return ctx.makeImage()
     }
@@ -347,9 +362,81 @@ enum Atelier {
         rule(ctx, CGPoint(x: c.x - r * 0.7, y: c.y - r * 0.35), CGPoint(x: c.x + r * 0.7, y: c.y + r * 0.35), weight: 0.6, color: Theme.ink(0.85))
     }
 
-    /// The side of a turned dial seen a little from above (y down): the top face's circle drops by `depth` to the base, and
-    /// the band between is knurled (fine vertical engraving, closer and darker toward the shadow side) and outlined. Drawn
-    /// once per size and plate (cached); the dial's own face covers the top. Decorative: no value is read from it.
+    /// The one oblique depth every drawn solid shares (fader blocks, dials, keys): receding up and to the right at 45°,
+    /// by the same amount, so the plate reads as a single drawing (the owner: "match the direction and width").
+    static var depth: CGFloat { Illustrated.on ? 3.4 : 2.6 }
+    /// The receding offset in y-down drawing space.
+    static var recede: CGVector { CGVector(dx: depth, dy: -depth) }
+
+    /// The side of a turned part in the shared oblique (y down): the circle's back edge recedes by `recede`, and the band
+    /// between is knurled along the axis (closer and darker toward the shadow side) and outlined. Draw it before the face.
+    static func obliqueSide(_ ctx: CGContext, circle top: CGRect, ink: NSColor = Theme.text, yUp: Bool = false) {
+        let v = yUp ? CGVector(dx: recede.dx, dy: -recede.dy) : recede, r = top.width / 2, c = CGPoint(x: top.midX, y: top.midY)
+        let len = hypot(v.dx, v.dy), n = CGPoint(x: -v.dy / len, y: v.dx / len) // perpendicular to the axis
+        let back = top.offsetBy(dx: v.dx, dy: v.dy)
+        let a = CGPoint(x: c.x + n.x * r, y: c.y + n.y * r), b = CGPoint(x: c.x - n.x * r, y: c.y - n.y * r)
+        let solid = CGMutablePath()
+        solid.addEllipse(in: back)
+        solid.addLines(between: [a, b, CGPoint(x: b.x + v.dx, y: b.y + v.dy), CGPoint(x: a.x + v.dx, y: a.y + v.dy)]); solid.closeSubpath()
+        ctx.saveGState()
+        ctx.addPath(solid); ctx.addEllipse(in: top); ctx.setFillColor(Theme.panelRaised.cgColor); ctx.fillPath()
+        // Knurls: rules along the axis from points on the receding half of the rim, denser toward the shadow (lower right).
+        let band = CGMutablePath(); band.addPath(solid); band.addEllipse(in: top)
+        ctx.addPath(band); ctx.clip(using: .evenOdd)
+        let axis = atan2(v.dy, v.dx), steps = max(12, Int(r * 1.6))
+        for i in 0...steps {
+            let t = CGFloat(i) / CGFloat(steps), th = axis - .pi / 2 + .pi * t
+            let p = CGPoint(x: c.x + cos(th) * r, y: c.y + sin(th) * r)
+            rule(ctx, p, CGPoint(x: p.x + v.dx * 1.2, y: p.y + v.dy * 1.2), weight: 0.35, color: ink.withAlphaComponent(0.25 + 0.45 * t))
+        }
+        ctx.restoreGState()
+        // Outline: the back rim's outer half and the two tangents.
+        let arc = CGMutablePath()
+        arc.addArc(center: CGPoint(x: back.midX, y: back.midY), radius: r, startAngle: axis - .pi / 2, endAngle: axis + .pi / 2, clockwise: false)
+        ctx.addPath(arc); ctx.setStrokeColor(ink.withAlphaComponent(0.75).cgColor); ctx.setLineWidth(0.6); ctx.strokePath()
+        rule(ctx, a, CGPoint(x: a.x + v.dx, y: a.y + v.dy), weight: 0.55, color: ink.withAlphaComponent(0.7))
+        rule(ctx, b, CGPoint(x: b.x + v.dx, y: b.y + v.dy), weight: 0.55, color: ink.withAlphaComponent(0.7))
+    }
+
+    /// A plug-in's on/off key as an engraved knife switch (y up): a hinge post on the left, a jaw on the right and the
+    /// blade between, closed in the jaw when the unit runs and raised clear of it when bypassed. The base and posts are
+    /// solids in the shared oblique. Gold marks the closed blade (red stays for record).
+    static func knifeSwitch(_ ctx: CGContext, _ bounds: CGRect, on: Bool, enabled: Bool, pressed: Bool) {
+        let ink = Theme.ink(enabled ? 0.95 : 0.4), dim = Theme.ink(enabled ? 0.6 : 0.3)
+        let base = CGRect(x: bounds.minX + 3, y: bounds.midY - 6, width: bounds.width - 7, height: 3)
+        let v = CGVector(dx: recede.dx * 0.6, dy: -recede.dy * 0.6) // y up: up and right
+        ctx.saveGState()
+        // The base: a slab with its top face receding.
+        let top = CGMutablePath()
+        top.addLines(between: [CGPoint(x: base.minX, y: base.maxY), CGPoint(x: base.minX + v.dx, y: base.maxY + v.dy),
+                               CGPoint(x: base.maxX + v.dx, y: base.maxY + v.dy), CGPoint(x: base.maxX, y: base.maxY)]); top.closeSubpath()
+        ctx.setFillColor(Theme.panelRaised.cgColor); ctx.fill(base); ctx.addPath(top); ctx.fillPath()
+        ctx.saveGState(); ctx.clip(to: base); hatch(ctx, base, spacing: 1.1, color: dim, weight: 0.35); ctx.restoreGState()
+        box(ctx, base, weight: 0.6, color: ink)
+        ctx.addPath(top); ctx.setStrokeColor(dim.cgColor); ctx.setLineWidth(0.5); ctx.strokePath()
+        // Hinge post and jaw.
+        let hinge = CGPoint(x: base.minX + 3.5, y: base.maxY + 4.5)
+        rule(ctx, CGPoint(x: hinge.x, y: base.maxY), hinge, weight: 1.1, color: ink)
+        let jawX = base.maxX - 3.5
+        for dx: CGFloat in [-1.2, 1.2] { rule(ctx, CGPoint(x: jawX + dx, y: base.maxY), CGPoint(x: jawX + dx, y: hinge.y + 2), weight: 0.7, color: ink) }
+        // The blade: closed into the jaw (on), or raised about 40 degrees (bypassed); a pressed key moves it halfway.
+        let length = jawX - hinge.x + 1.5
+        let angle: CGFloat = on ? (pressed ? 0.35 : 0) : (pressed ? 0.35 : 0.7)
+        let tip = CGPoint(x: hinge.x + cos(angle) * length, y: hinge.y + sin(angle) * length)
+        let blade = CGMutablePath(); blade.move(to: hinge); blade.addLine(to: tip)
+        ctx.addPath(blade); ctx.setLineCap(.round); ctx.setLineWidth(on ? 2.2 : 1.6)
+        ctx.setStrokeColor((on && enabled ? gold : ink).cgColor); ctx.strokePath()
+        // Handle: a small turned knob at the blade's end; the hinge pin.
+        let knob = CGRect(x: tip.x - 1.8 + cos(angle) * 1.5, y: tip.y - 1.8 + sin(angle) * 1.5, width: 3.6, height: 3.6)
+        ctx.setFillColor(Theme.panelRaised.cgColor); ctx.fillEllipse(in: knob)
+        loop(ctx, knob, weight: 0.6, color: ink)
+        let pin = CGRect(x: hinge.x - 1.4, y: hinge.y - 1.4, width: 2.8, height: 2.8)
+        ctx.fillEllipse(in: pin); loop(ctx, pin, weight: 0.6, color: ink)
+        ctx.restoreGState()
+    }
+
+    /// The side of a turned dial (y down), drawn once per size and plate (cached); the dial's own face covers the top.
+    /// Decorative: no value is read from it.
     private static var skirts: [String: CGImage] = [:]
     static func turnedSkirt(size: CGSize, radius r: CGFloat) -> CGImage? {
         guard r > 3, size.width > 0 else { return nil }
@@ -361,29 +448,7 @@ enum Atelier {
         ctx.scaleBy(x: 2, y: 2)
         ctx.translateBy(x: 0, y: size.height); ctx.scaleBy(x: 1, y: -1) // y down, as the knob draws
         let c = CGPoint(x: size.width / 2, y: size.height / 2)
-        let depth = max(1.6, r * (Illustrated.on ? 0.26 : 0.18))
-        let top = CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r), base = top.offsetBy(dx: 0, dy: depth)
-        // The solid: base circle, the band joining it to the top, and the top (filled so the face sits on paper).
-        let solid = CGMutablePath()
-        solid.addEllipse(in: base); solid.addRect(CGRect(x: top.minX, y: c.y, width: top.width, height: depth)); solid.addEllipse(in: top)
-        ctx.addPath(solid); ctx.setFillColor(Theme.panelRaised.cgColor); ctx.fillPath()
-        // Knurling on the band (everything of the solid outside the top face), denser toward the right, in shadow.
-        ctx.saveGState()
-        let band = CGMutablePath(); band.addPath(solid); band.addEllipse(in: top)
-        ctx.addPath(band); ctx.clip(using: .evenOdd)
-        var x = top.minX + 0.6
-        while x < top.maxX {
-            let t = (x - top.minX) / top.width
-            rule(ctx, CGPoint(x: x, y: c.y - 1), CGPoint(x: x, y: base.maxY + 1), weight: 0.35, color: ink.withAlphaComponent(0.28 + 0.4 * t))
-            x += 1.5 - 0.6 * t
-        }
-        ctx.restoreGState()
-        // Outline: the base's visible lower arc and the two sides.
-        let arc = CGMutablePath()
-        arc.addArc(center: CGPoint(x: c.x, y: c.y + depth), radius: r, startAngle: 0, endAngle: .pi, clockwise: false)
-        ctx.addPath(arc); ctx.setStrokeColor(ink.withAlphaComponent(0.75).cgColor); ctx.setLineWidth(0.7); ctx.strokePath()
-        rule(ctx, CGPoint(x: top.minX, y: c.y), CGPoint(x: top.minX, y: c.y + depth), weight: 0.6, color: ink.withAlphaComponent(0.7))
-        rule(ctx, CGPoint(x: top.maxX, y: c.y), CGPoint(x: top.maxX, y: c.y + depth), weight: 0.6, color: ink.withAlphaComponent(0.7))
+        obliqueSide(ctx, circle: CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r), ink: ink)
         let image = ctx.makeImage()
         skirts[key] = image
         return image
@@ -642,4 +707,23 @@ enum Illustrated {
     }
     /// Scales a control's size when illustrated.
     static func size(_ base: CGFloat, _ factor: CGFloat = 1.3) -> CGFloat { on ? (base * factor).rounded() : base }
+}
+
+extension Atelier {
+    /// One family on the plate (the owner: "fonts more unified"): any control still set in the system face (pop-ups,
+    /// segmented controls, buttons, fields, table headers) takes the theme's label face at the same size. No-op
+    /// outside Atelier. Safe to call again; text set deliberately in a bundled face is left alone.
+    static func unifyFonts(in view: NSView?) {
+        guard Theme.activeStyle == .atelier, let view else { return }
+        func replace(_ f: NSFont?) -> NSFont? {
+            guard let f, f.familyName?.hasPrefix(".") ?? true || f.fontName.hasPrefix(".") else { return nil }
+            let bold = f.fontDescriptor.symbolicTraits.contains(.bold)
+            return Theme.ui(f.pointSize, bold ? .semibold : .regular)
+        }
+        if let c = view as? NSControl, let f = replace(c.font) { c.font = f }
+        if let t = view as? NSTableView {
+            for col in t.tableColumns { if let f = replace(col.headerCell.font) { col.headerCell.font = f } }
+        }
+        for s in view.subviews { unifyFonts(in: s) }
+    }
 }

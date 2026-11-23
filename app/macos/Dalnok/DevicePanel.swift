@@ -895,6 +895,8 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
                 c.onChange = { [weak self] v in self?.set(id, v) }
                 c.toolTip = "\(fixedString(p.title)): drag up or down (⇧ fine), scroll or use the arrow keys; double-click for the default."
                 c.setAccessibilityLabel(fixedString(p.title))
+                c.letter = InspectorPanel.letter(knobs.count)
+                if FaceplateControl.legendRows { c.toolTip = "\(fixedString(p.title)): drag along the scale (⇧ fine), scroll or use the arrow keys; double-click for the default." }
                 controls.append(c)
                 knobs.append((c, label(fixedString(p.title), dim: false), label(display(p), dim: true), id))
             }

@@ -359,6 +359,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         inspector.isHidden = !Self.showInspector
         if Self.showLibrary { library.load() }
         wireSidePanels()
+        Atelier.unifyFonts(in: inspector)
         mixerHeight = mixer.heightAnchor.constraint(equalToConstant: Self.showMixer ? MixerPanel.height : 0)
         mixerHeight.isActive = true
         mixer.isHidden = !Self.showMixer

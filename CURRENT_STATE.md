@@ -5,7 +5,25 @@ milestone: 0.3.0, Phase 4 complete; recording I/O (separate devices, Input Monit
 ---
 # Current State
 
-## Latest (2026-11-22, late): Library and Inspector, phase invert, Atelier controls drawn as instruments
+## Latest (2026-11-22, night): Atelier, the owner's review round
+Branch `feat/atelier-polish` (from `main` fbc01ae). No engine or API change (C API 46, format 14).
+- **Plug-ins** (owner: "not a reskin"): Atelier plates keep their figure and show parameters as a lettered key with
+  slide-rule scales (`FaceplateControl.legendRows`); switches are Off | On cells; the power key is a knife switch.
+  Third-party plug-ins get the same legend plate with a category figure. Behaviour, keyboard and a11y unchanged.
+- **One oblique** for every drawn solid (`Atelier.depth`/`recede`/`obliqueSide`): dials, fader blocks, cursors, glyphs.
+- **Engraved glyphs** (`AtelierGlyphs.swift`) for the control bar, tools and Library places (audit A9).
+- **Type:** Atelier is Source Serif 4 throughout (labels and figures too); `Atelier.unifyFonts` re-sets system controls.
+- **Clock:** split counter housing, two drums side by side with the second clock. **Inspector:** Fig. 3, the live signal
+  path, only in spare room. **Colour:** red means record only (D3); inks separated by lightness (D5).
+- **Fixes:** Library place names blank after the panel slid closed and open (button cell cached a zero-width layout;
+  now drawn directly, fixed icon column); clipped Library search; descenders clipped in plate labels; R chip low.
+- Gallery has a new frame `13-panels` (Library closed and reopened with motion on, a category open).
+- Self-test matrix (explicit `DALNOK_SAMPLE_RATE`, under `caffeinate -du`), all PASS, 0 FAIL, 15 machine SKIPs each:
+Graphite 1025 / 1006, Warm Analog 1010 / 991, Prism Dark and Light 1025 / 1006, Atelier Dark and Light 1028 / 1009 (48 / 44.1 kHz).
+`swift test --disable-sandbox` 289 pass.
+- **Open:** audit B4, C5, C6, C7, C12; VoiceOver by ear; Prism `--perf 20` repeat; owner's review of the new plates.
+
+## Earlier (2026-11-22, late): Library and Inspector, phase invert, Atelier controls drawn as instruments
 Branch `feat/inspector-library` (from `main` 96faf9a). C API 46, project format 14.
 - **View ▸ Library (Y)** and **View ▸ Inspector (I)** (`06 - Design/Side Panels.md`): left sidebar (places, collections,
   Effects/Instruments/MIDI tabs, fuzzy search, `PluginTaxonomy` categories, drag or double-click to insert) and right

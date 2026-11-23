@@ -263,6 +263,13 @@ enum Faceplate {
         let font = natural > rect.width && rect.width > 0
             ? (NSFont(descriptor: font.fontDescriptor, size: max(font.pointSize * 0.75, font.pointSize * rect.width / natural)) ?? font) : font
         let para = NSMutableParagraphStyle(); para.alignment = align; para.lineBreakMode = .byTruncatingTail
+        // Never clip descenders: a box shorter than the face's line grows downward, keeping its top (the serif in Atelier
+        // is taller than the faces these boxes were measured for).
+        var rect = rect
+        let line = ceil(font.ascender - font.descender + font.leading)
+        if rect.height < line {
+            if NSGraphicsContext.current?.isFlipped ?? true { rect.size.height = line } else { rect.origin.y -= line - rect.height; rect.size.height = line }
+        }
         if Theme.look.devices == .cards || Theme.look.devices == .schematic { // printed, not cut into metal
             let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color, .paragraphStyle: para]
             (text as NSString).draw(with: rect, options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine], attributes: attrs)
@@ -431,6 +438,12 @@ final class FaceplateControl: NSControl, ParameterControl {
     private var glideTimer: Timer?
 
     static let size = NSSize(width: 64, height: 70)
+    /// Atelier: a parameter is a lettered line of the plate's legend, not a knob (the owner: plug-ins must not read as a
+    /// reskin of Graphite). "A · Threshold ···· a slide-rule scale with its cursor ···· −18.0 dB".
+    static var legendRows: Bool { Theme.look.devices == .schematic }
+    static let rowSize = NSSize(width: 252, height: 21)
+    /// The row's letter (A, B, …), shared with the plate's figure and the order of the legend.
+    var letter = "" { didSet { if letter != oldValue { needsDisplay = true } } }
 
     init(name: String, steps: Int32) {
         self.name = name
@@ -445,7 +458,7 @@ final class FaceplateControl: NSControl, ParameterControl {
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-    override var intrinsicContentSize: NSSize { Self.size }
+    override var intrinsicContentSize: NSSize { Self.legendRows ? Self.rowSize : Self.size }
 
     private func quantized(_ v: Double) -> Double {
         let v = max(0, min(1, v))
@@ -481,12 +494,23 @@ final class FaceplateControl: NSControl, ParameterControl {
         if event.clickCount == 2 { set(defaultValue); return }
         if kind == .toggle { set(value >= 0.5 ? 0 : 1); return }
         tracking = true
-        dragStart = (convert(event.locationInWindow, from: nil).y, value)
+        let p = convert(event.locationInWindow, from: nil)
+        dragStart = (p.y, value)
+        dragStartX = p.x
+        // A legend row's scale is a slide rule: a press on it sets the cursor there.
+        if Self.legendRows, kind == .knob, scaleRect.insetBy(dx: -3, dy: -4).contains(p) {
+            set(Double((p.x - scaleRect.minX) / scaleRect.width)); dragStart = (p.y, value)
+        }
+        needsDisplay = true
     }
+    private var dragStartX: CGFloat = 0
     override func mouseDragged(with event: NSEvent) {
         guard let s = dragStart else { return }
         let fine = event.modifierFlags.contains(.shift) ? 0.2 : 1.0
-        set(s.value + Double(s.y - convert(event.locationInWindow, from: nil).y) / 150 * fine)
+        let p = convert(event.locationInWindow, from: nil)
+        var d = Double(s.y - p.y) / 150
+        if Self.legendRows { d += Double(p.x - dragStartX) / Double(max(40, scaleRect.width)) } // along the rule, or up and down
+        set(s.value + d * fine)
     }
     override func mouseUp(with event: NSEvent) {
         if kind == .selector, dragStart.map({ abs($0.value - value) < 1e-9 }) == true, steps > 0 {
@@ -494,6 +518,7 @@ final class FaceplateControl: NSControl, ParameterControl {
         }
         tracking = false
         dragStart = nil
+        needsDisplay = true
     }
     override func scrollWheel(with event: NSEvent) {
         let d = Double(event.hasPreciseScrollingDeltas ? event.scrollingDeltaY / 300 : event.scrollingDeltaY / 30)
@@ -524,8 +549,71 @@ final class FaceplateControl: NSControl, ParameterControl {
     }
 
     // Drawing
+    /// A legend row's columns: letter, name, scale, value.
+    private var scaleRect: CGRect {
+        let x0: CGFloat = 108, x1 = bounds.width - 64
+        return CGRect(x: x0, y: bounds.midY - 4, width: max(30, x1 - x0), height: 8)
+    }
+    private func drawLegendRow(_ ctx: CGContext) {
+        let ink = Theme.ink(dimmed ? 0.45 : 1), mid = bounds.midY.rounded() + 0.5
+        let sr = scaleRect
+        // Letter (gold italic numerals and letters are ornament: guardrail 2) and name (upright serif).
+        Atelier.note(ctx, letter, at: CGPoint(x: 1, y: mid - 8), size: 10.5, color: Atelier.gold)
+        let nameFont = Theme.title(11, .regular)
+        let attrs: [NSAttributedString.Key: Any] = [.font: nameFont, .foregroundColor: dimmed ? Theme.textDim : Theme.text]
+        let nameRect = CGRect(x: 15, y: mid - nameFont.ascender + 3.5, width: sr.minX - 22, height: 15)
+        (name as NSString).draw(with: nameRect, options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine], attributes: attrs)
+        let nameW = min(nameRect.width, (name as NSString).size(withAttributes: attrs).width)
+        // A dotted leader from the name to the scale, as in a printed key.
+        var x = 15 + nameW + 4
+        while x < sr.minX - 6 { ctx.setFillColor(Theme.ink(0.4).cgColor); ctx.fill(CGRect(x: x, y: mid + 2, width: 0.9, height: 0.9)); x += 3 }
+        switch kind {
+        case .toggle:
+            // Two ruled cells, Off | On; the chosen one engraved (hatched) with its word upright.
+            let on = value >= 0.5
+            let cells = [CGRect(x: sr.minX, y: mid - 7, width: sr.width / 2, height: 14), CGRect(x: sr.midX, y: mid - 7, width: sr.width / 2, height: 14)]
+            for (i, c) in cells.enumerated() {
+                let chosen = (i == 1) == on
+                if chosen { ctx.saveGState(); ctx.clip(to: c); Atelier.hatch(ctx, c, spacing: 2, color: (i == 1 ? tint : Theme.ink(0.6)).withAlphaComponent(dimmed ? 0.3 : 0.6), weight: 0.5); ctx.restoreGState() }
+                Atelier.box(ctx, c, weight: Atelier.hair, color: Theme.ink(0.6))
+                let word = (legends.count >= 2 ? (i == 0 ? legends[0] : legends[legends.count - 1]) : (i == 0 ? "Off" : "On")) as NSString
+                let f = Theme.title(9.5, chosen ? .semibold : .regular)
+                let ws = word.size(withAttributes: [.font: f])
+                word.draw(at: CGPoint(x: c.midX - ws.width / 2, y: c.midY - ws.height / 2), withAttributes: [.font: f, .foregroundColor: chosen ? Theme.text : Theme.textDim])
+            }
+        case .knob, .selector:
+            // The rule with graduations (every step of a selector; tenths otherwise, longer at the ends and middle).
+            Atelier.rule(ctx, CGPoint(x: sr.minX, y: mid), CGPoint(x: sr.maxX, y: mid), weight: Atelier.fine, color: Theme.ink(0.6))
+            let ticks = kind == .selector ? Int(max(1, steps)) : 10
+            for i in 0...ticks {
+                let tx = (sr.minX + sr.width * CGFloat(i) / CGFloat(ticks)).rounded() + 0.5
+                let long = i == 0 || i == ticks || (kind == .knob && i == ticks / 2)
+                Atelier.rule(ctx, CGPoint(x: tx, y: mid + 1), CGPoint(x: tx, y: mid + (long ? 5 : 3)), weight: long ? 0.6 : Atelier.hair, color: Theme.ink(long ? 0.7 : 0.45))
+            }
+            // The value as a broad stroke in the plate's ink from its origin (the middle when bipolar).
+            let origin = sr.minX + sr.width * (bipolar ? 0.5 : 0), cx = sr.minX + sr.width * CGFloat(max(0, min(1, value)))
+            if abs(cx - origin) > 0.5 { Atelier.rule(ctx, CGPoint(x: origin, y: mid - 1), CGPoint(x: cx, y: mid - 1), weight: 2.2, color: tint.withAlphaComponent(dimmed ? 0.3 : 0.85)) }
+            // The cursor: a small block in the shared oblique, its index line at the value.
+            Atelier.slideBlock(ctx, center: CGPoint(x: cx.rounded() + 0.5, y: mid - 1), width: 9, height: 11, ink: ink, active: tracking)
+        }
+        // The value, upright serif figures, right-aligned on clean plate.
+        let readout: CGFloat = Faceplate.readoutsFade ? light : (dimmed ? 0 : 1)
+        if readout > 0.01, kind != .toggle { // a toggle's cells already say it
+            let vf = Theme.mono(10.5), text = format(value) as NSString
+            let vs = text.size(withAttributes: [.font: vf])
+            let maxW = bounds.width - sr.maxX - 8
+            let f = vs.width > maxW ? (NSFont(descriptor: vf.fontDescriptor, size: max(8, vf.pointSize * maxW / vs.width)) ?? vf) : vf
+            let s2 = text.size(withAttributes: [.font: f])
+            text.draw(at: CGPoint(x: bounds.width - 2 - s2.width, y: mid - s2.height / 2), withAttributes: [.font: f, .foregroundColor: Theme.text.withAlphaComponent(max(0.35, readout))])
+        }
+        if window?.firstResponder === self {
+            ctx.setStrokeColor(NSColor.keyboardFocusIndicatorColor.cgColor); ctx.setLineWidth(1); ctx.stroke(bounds.insetBy(dx: 0.5, dy: 0.5))
+        }
+    }
+
     override func draw(_ dirtyRect: NSRect) {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+        if Self.legendRows { return drawLegendRow(ctx) }
         // Bypassed: the metal stays as it is; only the lights go out (LED ring, switch lamp, readout).
         let w = bounds.width
         Faceplate.engrave(name, in: CGRect(x: 0, y: 0, width: w, height: 12), font: Self.nameFont(name, width: w))
@@ -584,6 +672,28 @@ final class FaceplateSection: NSView {
         let grid = NSGridView()
         grid.rowSpacing = 2
         grid.columnSpacing = 2
+        if FaceplateControl.legendRows { // Atelier: a ruled key, read down; a long section continues in a second column
+            grid.rowSpacing = 1; grid.columnSpacing = 14
+            let perColumn = FaceplateSection.legendRowsPerColumn
+            let cols = max(1, Int((Double(controls.count) / Double(perColumn)).rounded(.up)))
+            let n = Int((Double(controls.count) / Double(cols)).rounded(.up))
+            for r in 0..<n {
+                var cells: [NSView] = []
+                for c in 0..<cols { let i = c * n + r; cells.append(i < controls.count ? controls[i] : NSGridCell.emptyContentView) }
+                grid.addRow(with: cells)
+            }
+            for c in controls {
+                c.widthAnchor.constraint(equalToConstant: FaceplateControl.rowSize.width).isActive = true
+                c.heightAnchor.constraint(equalToConstant: FaceplateControl.rowSize.height).isActive = true
+            }
+            grid.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(grid)
+            NSLayoutConstraint.activate([
+                grid.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 2), grid.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+                grid.topAnchor.constraint(equalTo: topAnchor, constant: title.isEmpty ? 4 : 17), grid.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor),
+            ])
+            return
+        }
         let columns = max(1, Int((Double(controls.count) / Double(rows)).rounded(.up)))
         for row in stride(from: 0, to: controls.count, by: columns) {
             var cells: [NSView] = Array(controls[row..<min(row + columns, controls.count)])
@@ -605,8 +715,20 @@ final class FaceplateSection: NSView {
     }
     required init?(coder: NSCoder) { fatalError() }
     override var isFlipped: Bool { true }
+    /// Atelier legend rows that fit one column under the plate's figure.
+    static let legendRowsPerColumn = 7
     override func draw(_ dirtyRect: NSRect) {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+        if FaceplateControl.legendRows {
+            // A section of the key: its title in small capitals over a fine rule; a hairline between sections.
+            if !title.isEmpty {
+                let f = Theme.ui(9.5, .semibold)
+                (Theme.label(title) as NSString).draw(at: CGPoint(x: 2, y: 1), withAttributes: [.font: f, .foregroundColor: Theme.textDim, .kern: Theme.labelTracking])
+                Atelier.rule(ctx, CGPoint(x: 2, y: 15.5), CGPoint(x: bounds.width - 10, y: 15.5), weight: Atelier.hair, color: Theme.ink(0.45))
+            }
+            if groove { Atelier.rule(ctx, CGPoint(x: bounds.maxX - 3.5, y: 4), CGPoint(x: bounds.maxX - 3.5, y: bounds.height - 4), weight: Atelier.hair, color: Theme.ink(0.35)) }
+            return
+        }
         if !title.isEmpty {
             Faceplate.engrave(title.uppercased(), in: CGRect(x: 2, y: 0, width: bounds.width - 8, height: 11),
                               font: Theme.ui(8, .bold), color: Faceplate.legend)
@@ -926,6 +1048,11 @@ final class PlateButton: NSButton {
             NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: false)
             text.draw(at: CGPoint(x: r.midX - size.width / 2, y: r.midY - size.height / 2 + 0.5), withAttributes: [.font: f, .foregroundColor: enabled ? Theme.text : Theme.textFaint])
             NSGraphicsContext.restoreGraphicsState()
+            return
+        }
+        if style == .powerIcon && Theme.look.devices == .schematic {
+            Atelier.knifeSwitch(ctx, bounds, on: state == .on, enabled: enabled, pressed: pressed)
+            if window?.firstResponder === self { ctx.setStrokeColor(NSColor.keyboardFocusIndicatorColor.cgColor); ctx.setLineWidth(1); ctx.stroke(bounds.insetBy(dx: 1, dy: 1)) }
             return
         }
         if style == .powerIcon {
