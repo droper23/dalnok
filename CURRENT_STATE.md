@@ -5,7 +5,22 @@ milestone: 0.4.0 released 2026-11-23 (four themes in six looks with their own fi
 ---
 # Current State
 
-## Latest (2026-11-23): UI audit of every look, figures for Graphite, Prism and Warm Analog, Settings in nine pages
+## Latest (2026-11-23, afternoon): Atelier seismograph, clearer controls, plain dials, fast self-test
+PRs #18 (plug-in looks revert, fold, OPEN, matrix script) and #19 (seismograph) merged; `main` 3b8dadf. No engine change.
+- **Graphite and Warm Analog plug-in figures reverted** at the owner's request (Prism's optics and Atelier's stay; Warm
+  Analog keeps `PedalLabel` and the sidechain cable). Atelier: no crop marks between plug-ins, units fold.
+- **Atelier compressor = two-pen seismograph** (`AtelierFigures.seismograph`, enum case still `.governor`): dashed in-pen,
+  bold out-pen, gold hatching for the reduction, threshold rails and an inclined-plane ratio; live from
+  `MovingCoilMeter.traceHistory`, a synthetic rhythm in silence.
+- **Key controls by unit** (`FaceplateControl.rowInstrument`): knife switch, notched selector, inclined plane (ratio),
+  lettered octave rule (Hz), stopwatch (time), vernier (dB), comparison slate (mix), traveller (pan), sextant (%), rule.
+  Names written in full; columns fill one at a time; no label overlaps a drawing (gallery stills, both variants).
+- **Settings ▸ Appearance ▸ Plug-in controls: Plain dials** (`Faceplate.plainDials`, Atelier only), with a self-test check.
+- **Self-test matrix** `scripts/dev/selftest-matrix.sh`: 12 runs in parallel, ~85–115 s instead of ~14 min; each run a
+  renamed copy with its own preferences domain, `DALNOK_BACKGROUND=1` keeps them out of the Dock. Last run 12/12 PASS.
+- **Not done:** pan traveller checked only by the self-test (no still); Scarlett hardware tests (ask the owner); fuzz.
+
+## Earlier (2026-11-23): UI audit of every look, figures for Graphite, Prism and Warm Analog, Settings in nine pages
 Branch `feat/ui-audit-0.4` (from `main` ac85c86). Two review rounds, 12 reviewers in all, each finding checked against the
 stills; decisions and what is still open in `06 - Design/UI Audit 2026-11-23.md`. No engine or API change.
 - **Figures in every look** (`LookFigures.swift`: Graphite telemetry, Prism optics; `PedalScreen.swift`: Warm Analog
