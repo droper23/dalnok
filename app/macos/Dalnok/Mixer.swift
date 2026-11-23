@@ -166,6 +166,7 @@ final class MixerPanel: NSView {
                 stack.addArrangedSubview(s)
             }
             stack.addArrangedSubview(addBusButton)
+            if let last = strips.last { stack.setCustomSpacing(12, after: last) } // audit C12: "+ Bus" kept off the last strip
         }
         // A strip is rebuilt only when something it shows besides its scalars changed (a clip edit changes nothing
         // here); the rest update their faders and buttons in place. The send menus list every bus, so the
