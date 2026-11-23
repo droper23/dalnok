@@ -40,10 +40,10 @@ recording, editing, and mixing in a fast, focused native app, in the look you wo
 ## New in 0.4.0
 - **Two new themes, Prism and Atelier**, each with a light and a dark version (View ▸ Theme, Settings ▸ Appearance;
   Match System follows macOS). First launch asks which look you want, with a picture of each.
-- **Plug-ins you can see working, in every look:** each plug-in family is drawn as a moving figure you drag by its parts.
-  Graphite shows telemetry (a compressor's gain computer, a reverb's decay field, echo taps), Prism shows light (an iris
-  that closes as it compresses, caustics, light echoes, an EQ coloured by frequency), Warm Analog's pedals show their
-  circuit (a tape loop, a spring, a triode), and Atelier engraves instruments (a governor, a pendulum, a crank).
+- **Plug-ins you can see working:** Graphite gives each plug-in a hardware faceplate with a display that suits it (a VU
+  meter, an EQ screen with draggable bands), Warm Analog a pedal with its readout window, and in Prism and Atelier each
+  plug-in family is a moving figure you drag by its parts: light in Prism (an iris that closes as it compresses,
+  caustics, light echoes, an EQ coloured by frequency), engraved instruments in Atelier (a governor, a pendulum, a crank).
 - **The Library and Inspector:** plug-ins, projects and a file browser (click an audio file to hear it, drag it in),
   and the selected track's settings and signal path beside the arrangement.
 - **Settings in nine pages, with search.**

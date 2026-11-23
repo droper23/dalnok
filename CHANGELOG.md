@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+- Graphite's plug-ins show their faceplate displays again (VU meter, EQ screen, transfer curve) and Warm Analog's pedals their readout windows (gain-reduction ladder, response, trace), as before 0.4.0; the moving figures stay in Prism and Atelier. Warm Analog keeps the shorter knob labels and the sidechain patch cable.
+- Atelier: the corner marks between plug-ins are gone; each plug-in has a "‹ fold" control in its caption; the Open box fits its label.
+- README: tours and plug-in clips re-recorded for every look.
+
 ## [0.4.0] - 2026-11-23
 
 Four themes in six looks, each with its own moving plug-in figures; the Library and Inspector; Settings in nine pages. Project format 14: 0.3.0 can't open projects that use phase invert. Known gaps: MIDI files can't be imported yet; files from the Library land at the start of new tracks, not at the pointer; the app is ad-hoc signed, not notarized.
