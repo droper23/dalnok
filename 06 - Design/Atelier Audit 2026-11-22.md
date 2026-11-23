@@ -125,3 +125,20 @@ Done in `feat/atelier-polish`:
 - Clock: split housing, two drums side by side when the second clock is on. Inspector Fig. 3 (signal path, live), sized
   to the spare room only.
 - Still open: B4 (needle master meter), C5, C6, C7 (insert rows aligned), C12.
+
+## Plug-ins, fourth round (owner, 2026-11-22, night)
+"Still not different enough from Graphite." Decisions:
+- **Core: both** — one large draggable figure per family (lettered parts are the controls) plus unit-specific
+  instruments in the key: log slide rule (Hz), chronograph dial (time), vernier (dB), protractor (ratio), balance beam
+  (mix/%), rotary selector (choices), knife switch (on/off).
+- **Shape: one continuous diagram** — the chain is a single engraving, each plate a station on the signal line.
+- **Rack parts replaced:** meters as needle/mercury columns; plate number and name as a caption, power/fold/open as
+  small engraved marks; live margin notes ("reduction now −4 dB", "latency 2 ms").
+- **Figures:** dynamics a **flyball governor** (collar = threshold, arm = ratio, balls swing with reduction); reverb the
+  **chamber** (drag walls = size, rays = decay); delay a **pendulum** (swing = time, repeat arcs = feedback);
+  distortion a sine through its **clipping curve** (drive); modulation a **crank and disc** tracing the LFO (rate,
+  depth); EQ the Frequency Atlas; others a category construction.
+- **Inspector with many inserts:** Fig. 3 becomes a **vertical signal path** (one lettered block per insert), and the
+  insert list shows the first 6, then "Show all N".
+- After merge: README stills, tours and plug-in clips for every theme, and the status-site screenshots (ask before
+  publishing the site).

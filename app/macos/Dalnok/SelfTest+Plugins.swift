@@ -837,6 +837,21 @@ extension SelfTest {
             panel.rebuild(); panel.layoutSubtreeIfNeeded()
             if let unit = panel.devices.first(where: { $0.slot == comp }) {
                 check(unit.automaticKind() == .gainReduction, "Dalnok Compressor gets a gain-reduction display (\(unit.automaticKind()))")
+                // Atelier: the governor's collar is the threshold; dragging it up raises the threshold.
+                if Theme.look.devices == .schematic, let screen = unit.display as? FaceplateScreen {
+                    if let rep = screen.bitmapImageRepForCachingDisplay(in: screen.bounds) { screen.cacheDisplay(in: screen.bounds, to: rep) } // draws: places the parts
+                    if screen.atelierFigure == .governor, let h = screen.figureHandles.first(where: { $0.role == .threshold }),
+                       let id = screen.figureLink?.ids[.threshold] {
+                        let before = unit.current(id)?.value ?? -1
+                        let to = CGPoint(x: h.point.x, y: h.point.y - 20)
+                        screen.mouseDown(with: mouse(.leftMouseDown, screen.convert(h.point, to: nil)))
+                        screen.mouseDragged(with: mouse(.leftMouseDragged, screen.convert(to, to: nil)))
+                        screen.mouseUp(with: mouse(.leftMouseUp, screen.convert(to, to: nil)))
+                        let after = unit.current(id)?.value ?? -1
+                        check(after > before + 0.05, "dragging the governor's collar raises the threshold (\(before) → \(after))")
+                        unit.set(id, before)
+                    } else { check(false, "Atelier draws the compressor as a governor with a threshold collar (\(String(describing: screen.atelierFigure)))") }
+                }
                 check(!unit.sidechain.isHidden && unit.sidechain.itemTitles.first == "SC: None" && unit.sidechain.indexOfItem(withTag: Int(other)) > 0,
                       "the compressor shows a sidechain menu with None and the other tracks (\(unit.sidechain.itemTitles))")
                 unit.sidechain.selectItem(withTag: Int(other))

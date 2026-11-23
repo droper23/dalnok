@@ -480,6 +480,31 @@ enum Atelier {
         ctx.restoreGState()
     }
 
+    /// A level as a mercury column (y up): a glass tube with a bulb at its foot, the column filled in ink to the level,
+    /// the peak a short rule across the tube; past full scale the bulb is filled in the record red.
+    static func mercury(_ ctx: CGContext, _ rect: CGRect, level: CGFloat, peak: CGFloat, clipped: Bool) {
+        let bulbR = min(rect.width / 2 + 1, 3.6)
+        let bulb = CGRect(x: rect.midX - bulbR, y: rect.minY, width: 2 * bulbR, height: 2 * bulbR)
+        let tw = max(2.2, rect.width - 2)
+        let tube = CGRect(x: rect.midX - tw / 2, y: bulb.midY, width: tw, height: rect.maxY - bulb.midY - tw / 2)
+        let glass = CGMutablePath()
+        glass.addRoundedRect(in: CGRect(x: tube.minX, y: tube.minY, width: tube.width, height: tube.height + tw / 2), cornerWidth: tw / 2, cornerHeight: tw / 2)
+        glass.addEllipse(in: bulb)
+        ctx.saveGState()
+        ctx.setFillColor(Theme.panelRaised.cgColor); ctx.addPath(glass); ctx.fillPath()
+        // The mercury: bulb always full, the column to the level.
+        let ink = Theme.text.withAlphaComponent(0.85)
+        ctx.setFillColor((clipped ? Theme.recordOn : ink).cgColor); ctx.fillEllipse(in: bulb.insetBy(dx: 0.9, dy: 0.9))
+        let h = (tube.height - 1) * max(0, min(1, level))
+        if h > 0.3 { ctx.setFillColor(ink.cgColor); ctx.fill(CGRect(x: tube.midX - tw / 2 + 0.7, y: tube.minY, width: tw - 1.4, height: h)) }
+        ctx.addPath(glass); ctx.setStrokeColor(Theme.ink(0.75).cgColor); ctx.setLineWidth(0.55); ctx.strokePath()
+        if peak > 0.01 {
+            let y = tube.minY + (tube.height - 1) * min(1, peak)
+            rule(ctx, CGPoint(x: tube.minX - 1, y: y), CGPoint(x: tube.maxX + 1, y: y), weight: 0.7, color: Theme.text)
+        }
+        ctx.restoreGState()
+    }
+
     /// A ruled column: the level engraved in fine rules, red ochre above -3 dB, a short rule for the peak.
     static func meter(_ ctx: CGContext, _ rect: CGRect, level: CGFloat, peak: CGFloat, clipped: Bool) {
         let vertical = rect.height > rect.width

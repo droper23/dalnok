@@ -203,6 +203,15 @@ enum Screenshots {
                 if let eq = w.library.roots.first { w.library.outline.expandItem(eq) }
                 try? await Task.sleep(for: .seconds(0.4))
                 shot("13-panels")
+                // A long chain in the Inspector: the list's "Show all" and the folded signal path.
+                if tracks.count > 1 {
+                    for _ in 0..<9 { _ = try? s.addPlugin(tracks[1].id, path: "dalnok:channel-eq") }
+                    w.headers.selectedTrack = tracks[1].id
+                    s.refresh()
+                    try? await Task.sleep(for: .seconds(0.4))
+                    shot("14-inspector-long-chain")
+                    w.headers.selectedTrack = tracks.first?.id
+                }
             }
             w.pluginManager.show()
             w.pluginManager.filter("Dalnok")
@@ -229,6 +238,31 @@ enum Screenshots {
             try? await Task.sleep(for: .seconds(0.5))
             if let v = w.pianoRoll.window?.contentView { png(v, dir.appendingPathComponent("08-piano-roll.png")) }
             w.pianoRoll.window?.orderOut(nil)
+            // Atelier: the five instrument figures side by side, with sample values (the modulation figure has no
+            // Apple plug-in to show it in a chain).
+            if Theme.look.devices == .schematic {
+                let sheet = NSView(frame: NSRect(x: 0, y: 0, width: 5 * 250, height: 190))
+                sheet.wantsLayer = true; sheet.layer?.backgroundColor = Theme.panel.cgColor
+                let figs: [(FaceplateDisplay.Kind, Codex.Subject)] = [(.gainReduction, .plain), (.history, .chamber), (.history, .echo), (.transfer, .plain), (.goniometer, .modulation)]
+                for (i, (kind, subject)) in figs.enumerated() {
+                    let screen: FaceplateScreen = kind == .gainReduction ? MovingCoilMeter(mode: .gainReduction) : kind == .transfer ? TransferScreen() : kind == .goniometer ? GoniometerScreen() : HistoryScreen()
+                    screen.frame = NSRect(x: CGFloat(i) * 250 + 7, y: 10, width: 236, height: 170)
+                    screen.codexKind = kind; screen.codexSubject = subject; screen.figureNumber = i + 1
+                    var link = FigureLink()
+                    let roles = AtelierFigure.of(kind: kind, subject: subject)?.roles ?? []
+                    for (k, r) in roles.enumerated() { link.ids[r] = UInt32(k + 1) }
+                    link.value = { id in [0.62, 0.45][Int(id) - 1] }
+                    link.text = { id in ["value \(id)", "value \(id)"][Int(id) - 1] }
+                    link.letter = { id in ["A", "B"][Int(id) - 1] }
+                    screen.figureLink = link
+                    sheet.addSubview(screen)
+                }
+                let holder = NSWindow(contentRect: sheet.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+                holder.contentView = sheet
+                sheet.layoutSubtreeIfNeeded()
+                png(sheet, dir.appendingPathComponent("15-figures.png"))
+                holder.contentView = nil
+            }
             w.settings.show(.general)
             try? await Task.sleep(for: .seconds(0.4))
             if let v = w.settings.window?.contentView { png(v, dir.appendingPathComponent("09-settings.png")) }
