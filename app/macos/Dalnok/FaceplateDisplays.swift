@@ -516,7 +516,13 @@ final class MovingCoilMeter: FaceplateScreen {
     static func reductionPosition(_ db: Double) -> Double { position(-max(0, db)) }
 
     /// Gain-reduction mode: the plug-in's reported reduction (dB, positive), else input/output RMS (linear).
+    /// Atelier's seismograph: the last levels in (dBFS RMS) and the reduction applied, oldest first.
+    private(set) var traceHistory: [(input: Double, reduction: Double)] = []
     func update(reported: Double?, inRms: Float, outRms: Float) {
+        defer {
+            traceHistory.append((inRms > 0 ? 20 * log10(Double(inRms)) : -120, reductionDb))
+            if traceHistory.count > 160 { traceHistory.removeFirst(traceHistory.count - 160) }
+        }
         if let r = reported {
             reductionDb = abs(r)
         } else if inRms > 0.003 && outRms > 0 {

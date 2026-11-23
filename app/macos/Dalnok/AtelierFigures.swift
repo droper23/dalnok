@@ -95,7 +95,7 @@ enum AtelierFigure {
     }
     var title: String {
         switch self {
-        case .governor: "The Governor"
+        case .governor: "The Seismograph"
         case .chamber: "Acoustic Chamber"
         case .pendulum: "Pendulum of Echoes"
         case .clipping: "Construction of the Clipped Wave"
@@ -167,7 +167,7 @@ extension FaceplateScreen {
         var handles: [FigureHandle] = []
         let link = figureLink ?? FigureLink()
         switch fig {
-        case .governor: handles = governor(ctx, f, link, reductionDb: live)
+        case .governor: handles = seismograph(ctx, f, link, reductionDb: live)
         case .chamber: handles = chamberFigure(ctx, f, link, energyDb: live)
         case .pendulum: handles = pendulum(ctx, f, link, energyDb: live)
         case .clipping: handles = clipping(ctx, f, link)
@@ -233,61 +233,120 @@ extension FaceplateScreen {
         ctx.saveGState(); ctx.setAlpha(alpha); ctx.addEllipse(in: disc); ctx.clip(); Atelier.globeShade(ctx, disc); ctx.restoreGState()
         Atelier.loop(ctx, disc, weight: Atelier.fine, color: Theme.ink(alpha))
     }
+    /// A number from a parameter's printed value ("−20.00 dB" → −20, "4.00 : 1" → 4).
+    private func number(_ text: String?) -> Double? {
+        guard let t = text?.replacingOccurrences(of: "−", with: "-") else { return nil }
+        let scanner = Scanner(string: t)
+        scanner.charactersToBeSkipped = CharacterSet(charactersIn: " ")
+        return scanner.scanDouble()
+    }
 
-    /// The flyball governor: a spindle on a base, two arms hinged at its head carrying turned balls, links to a collar.
-    /// The collar's height is the threshold (A), the arms' reach the ratio (B); the balls swing out with the live gain
-    /// reduction, and the whole head spins about the spindle, faster as it works.
-    private func governor(_ ctx: CGContext, _ f: CGRect, _ link: FigureLink, reductionDb: Double) -> [FigureHandle] {
-        let ink = Theme.text, cx = f.minX + f.width * 0.42
-        let top = f.minY + 12, baseY = f.maxY - 14
-        let thr = link.v(.threshold, 0.6), ratio = link.v(.ratio, 0.4)
-        let red = min(1, abs(reductionDb) / 18)
-        let theta = (28 + 36 * red) * .pi / 180
-        let L = 30 + 24 * CGFloat(ratio), spin = CGFloat(figureAngle)
-        let base = CGRect(x: cx - 26, y: baseY, width: 52, height: 7)
-        solid(ctx, base)
-        Atelier.rule(ctx, CGPoint(x: cx - 1.2, y: top), CGPoint(x: cx - 1.2, y: baseY), weight: Atelier.fine, color: ink)
-        Atelier.rule(ctx, CGPoint(x: cx + 1.2, y: top), CGPoint(x: cx + 1.2, y: baseY), weight: Atelier.fine, color: ink)
-        let head = CGRect(x: cx - 5, y: top - 6, width: 10, height: 6)
-        solid(ctx, head)
-        // A mark on the head turns with the spindle, so the spin reads even with the balls behind.
-        Atelier.rule(ctx, CGPoint(x: cx + 4.5 * cos(spin), y: top - 6), CGPoint(x: cx + 4.5 * cos(spin), y: top), weight: Atelier.fine, color: Atelier.gold)
-        let pivot = CGPoint(x: cx, y: top + 2)
-        let travel = (top + 20)...(baseY - 12)
-        let cy = travel.upperBound - CGFloat(thr) * (travel.upperBound - travel.lowerBound)
-        for i in 0...8 {
-            let gy = travel.lowerBound + (travel.upperBound - travel.lowerBound) * CGFloat(i) / 8
-            Atelier.rule(ctx, CGPoint(x: cx - 14, y: gy), CGPoint(x: cx - (i % 4 == 0 ? 20 : 17), y: gy), weight: Atelier.hair, color: Theme.ink(0.55))
+    /// Fig. 2, the seismograph (owner, 2026-11-23): a paper strip runs left under two pens. The faint pen writes the
+    /// input, the bold pen the output; where the signal rises past the threshold rails (A, drag up or down) the output
+    /// pen is held back by the ratio, set on the inclined plane at the left (B, drag down for a flatter slope, a higher
+    /// ratio), and the difference between the two traces is hatched: what the compressor took off. With sound playing
+    /// the traces are the real levels and reduction; at rest they draw a sample rhythm through the current settings.
+    private func seismograph(_ ctx: CGContext, _ f: CGRect, _ link: FigureLink, reductionDb: Double) -> [FigureHandle] {
+        let ink = Theme.text, faint = Theme.ink(0.42)
+        // Parameters, in decibels and as a ratio when the plug-in prints them; otherwise from the normalised values.
+        let thrDb = number(link.t(.threshold)) ?? (-48 + 48 * link.v(.threshold, 0.6))
+        let ratio = max(1, number(link.t(.ratio)) ?? (1 + 9 * link.v(.ratio, 0.4)))
+        // The plane at the left (ratio), the strip to its right.
+        let plane = CGRect(x: f.minX + 4, y: f.minY + 16, width: 30, height: 30)
+        // The strip starts below the margin note (which is written at the field's top, right-aligned).
+        let strip = CGRect(x: plane.maxX + 26, y: f.minY + 15, width: f.maxX - plane.maxX - 40, height: f.height - 24)
+        let mid = strip.midY, half = strip.height / 2 - 4
+        func amp(_ db: Double) -> CGFloat { CGFloat(max(0, min(1, (db + 48) / 48))) * half } // −48…0 dBFS
+        // The paper: a ruled strip with time marks scrolling with it.
+        Atelier.box(ctx, strip, weight: Atelier.fine, color: Theme.ink(0.6))
+        Atelier.rule(ctx, CGPoint(x: strip.minX, y: mid), CGPoint(x: strip.maxX, y: mid), weight: Atelier.hair, color: Theme.ink(0.25), dash: [1, 3])
+        let scroll = CGFloat(figureAngle) * 6
+        var tx = strip.maxX - scroll.truncatingRemainder(dividingBy: 24)
+        while tx > strip.minX { Atelier.rule(ctx, CGPoint(x: tx, y: strip.maxY - 3), CGPoint(x: tx, y: strip.maxY), weight: Atelier.hair, color: Theme.ink(0.4)); tx -= 24 }
+        // The levels: live when there is sound, else a sample rhythm (a beat and a quieter off-beat) through the settings.
+        let columns = Int(strip.width / 2)
+        let meter = self as? MovingCoilMeter
+        let live = (meter?.traceHistory ?? []).suffix(columns)
+        let hasSound = live.contains { $0.input > -60 }
+        func curve(_ inDb: Double) -> Double { inDb <= thrDb ? inDb : thrDb + (inDb - thrDb) / ratio }
+        var levels: [(input: Double, output: Double)] = []
+        if hasSound { // eased over a few columns, so a sudden change bends the pen rather than jumping it
+            var e: (Double, Double)?
+            levels = live.map { lv in
+                let now = (max(-60, lv.input), max(-60, lv.input - lv.reduction))
+                let eased = e.map { ($0.0 + (now.0 - $0.0) * 0.35, $0.1 + (now.1 - $0.1) * 0.35) } ?? now
+                e = eased
+                return (eased.0, eased.1)
+            }
+        } else {
+            for i in 0..<columns {
+                let t = Double(i) * 0.022 + Double(figureAngle) * 0.25
+                let beat = exp(-4 * t.truncatingRemainder(dividingBy: 1.0)), off = 0.55 * exp(-6 * (t + 0.5).truncatingRemainder(dividingBy: 1.0))
+                let inDb = -36 + 34 * max(beat, off)
+                levels.append((inDb, curve(inDb)))
+            }
         }
-        // The swing's reach, dotted, both sides (where the balls pass when they face us).
-        for s in [CGFloat(-1), 1] {
-            let arc = CGMutablePath()
-            let mid = CGFloat.pi / 2 - s * theta
-            arc.addArc(center: pivot, radius: L, startAngle: mid - 0.5, endAngle: mid + 0.5, clockwise: false)
-            ctx.addPath(arc); ctx.setStrokeColor(Theme.ink(0.35).cgColor); ctx.setLineWidth(0.5); ctx.setLineDash(phase: 0, lengths: [1, 2]); ctx.strokePath(); ctx.setLineDash(phase: 0, lengths: [])
+        // The traces, written right to left (newest at the needle): a pen swing whose height is the level.
+        let x0 = strip.maxX - CGFloat(levels.count) * 2
+        func trace(_ level: (Int) -> CGFloat) -> CGMutablePath {
+            let p = CGMutablePath()
+            for i in levels.indices {
+                let x = x0 + CGFloat(i) * 2, y = mid - sin(Double(i) * 0.42 + Double(scroll) * 0.07) * Double(level(i))
+                i == 0 ? p.move(to: CGPoint(x: x, y: y)) : p.addLine(to: CGPoint(x: x, y: y))
+            }
+            return p
         }
-        // Arms, balls and links: the pair turns about the spindle (x foreshortened by cos, the far ball drawn first, fainter).
-        let reach = sin(theta) * L, drop = cos(theta) * L
-        let pair = [(spin, CGFloat(1)), (spin + .pi, CGFloat(1))].map { (a, _) in (x: reach * cos(a), z: sin(a)) }.sorted { $0.z < $1.z }
-        for b in pair {
-            let alpha = b.z < 0 ? 0.55 + 0.45 * (1 + b.z) : 1
-            let ballC = CGPoint(x: pivot.x + b.x, y: pivot.y + drop)
-            let mid = CGPoint(x: pivot.x + b.x * 0.5, y: pivot.y + drop * 0.5)
-            Atelier.rule(ctx, pivot, ballC, weight: Atelier.medium, color: Theme.ink(alpha))
-            Atelier.rule(ctx, mid, CGPoint(x: cx + 4 * (b.x / max(1, reach)), y: cy), weight: Atelier.fine, color: Theme.ink(alpha))
-            ball(ctx, ballC, r: 9.5 * (1 + 0.08 * b.z), alpha: alpha)
+        ctx.saveGState(); ctx.clip(to: strip.insetBy(dx: 1, dy: 1))
+        // What was taken off: hatched between the input's and the output's reach, above and below the line.
+        for i in levels.indices where levels[i].input - levels[i].output > 0.3 { // between the two pens, nowhere else
+            let x = x0 + CGFloat(i) * 2, swing = sin(Double(i) * 0.42 + Double(scroll) * 0.07)
+            let yIn = mid - CGFloat(swing) * amp(levels[i].input), yOut = mid - CGFloat(swing) * amp(levels[i].output)
+            Atelier.rule(ctx, CGPoint(x: x, y: yOut), CGPoint(x: x, y: yIn), weight: 0.9, color: Atelier.gold.withAlphaComponent(0.7))
         }
-        let collar = CGRect(x: cx - 6, y: cy - 3, width: 12, height: 6)
-        solid(ctx, collar)
-        let reachPoint = CGPoint(x: pivot.x + reach, y: pivot.y + drop)
-        letterCallout(ctx, link, .threshold, at: CGPoint(x: cx - 6, y: cy), to: CGPoint(x: cx - 24, y: cy + 12))
-        readout(ctx, link, .threshold, at: CGPoint(x: cx - 22, y: cy + 14), align: .right)
-        letterCallout(ctx, link, .ratio, at: CGPoint(x: reachPoint.x + 7, y: reachPoint.y - 3), to: CGPoint(x: reachPoint.x + 18, y: reachPoint.y - 14))
-        readout(ctx, link, .ratio, at: CGPoint(x: min(f.maxX - 2, reachPoint.x + 14), y: reachPoint.y + 6))
-        marginNotes = [abs(reductionDb) < 0.05 ? "no reduction now" : String(format: "reduction now −%.1f dB", abs(reductionDb))]
-        _ = ink
-        return [FigureHandle(role: .threshold, point: CGPoint(x: cx + 9, y: cy), axis: CGVector(dx: 0, dy: -1), span: travel.upperBound - travel.lowerBound),
-                FigureHandle(role: .ratio, point: reachPoint, axis: CGVector(dx: sin(theta), dy: cos(theta)), span: 22)]
+        let input = trace { amp(levels[$0].input) }, output = trace { amp(levels[$0].output) }
+        ctx.saveGState(); ctx.setLineDash(phase: 0, lengths: [1.5, 1.5])
+        ctx.addPath(input); ctx.setStrokeColor(Theme.ink(0.55).cgColor); ctx.setLineWidth(0.7); ctx.strokePath(); ctx.restoreGState()
+        ctx.addPath(output); ctx.setStrokeColor(ink.cgColor); ctx.setLineWidth(1.3); ctx.setLineJoin(.round); ctx.strokePath()
+        ctx.restoreGState()
+        // The threshold rails, above and below the line.
+        let railY = mid - amp(thrDb), railY2 = mid + amp(thrDb)
+        for y in [railY, railY2] {
+            Atelier.rule(ctx, CGPoint(x: strip.minX - 4, y: y), CGPoint(x: strip.maxX + 4, y: y), weight: Atelier.medium, color: ink)
+            Atelier.rule(ctx, CGPoint(x: strip.minX - 4, y: y + (y < mid ? -2 : 2)), CGPoint(x: strip.maxX + 4, y: y + (y < mid ? -2 : 2)), weight: Atelier.hair, color: Theme.ink(0.5))
+        }
+        // The needle at the right edge, its arm pivoted beyond the strip.
+        let tipY = levels.last.map { mid - CGFloat(sin(Double(levels.count - 1) * 0.42 + Double(scroll) * 0.07)) * amp($0.output) } ?? mid
+        let pivot = CGPoint(x: f.maxX - 4, y: mid)
+        Atelier.rule(ctx, pivot, CGPoint(x: strip.maxX, y: tipY), weight: Atelier.fine, color: ink)
+        Atelier.loop(ctx, CGRect(x: pivot.x - 2.5, y: pivot.y - 2.5, width: 5, height: 5), weight: Atelier.fine, color: ink)
+        // The inclined plane: input along, output up; its slope is 1 : ratio above the knee.
+        let base = CGPoint(x: plane.minX, y: plane.maxY), knee = CGPoint(x: plane.minX + plane.width * 0.45, y: plane.maxY - plane.height * 0.45)
+        let top = CGPoint(x: plane.maxX, y: knee.y - (plane.maxX - knee.x) / CGFloat(ratio))
+        Atelier.rule(ctx, base, CGPoint(x: plane.maxX, y: plane.maxY), weight: Atelier.fine, color: ink)
+        Atelier.rule(ctx, base, CGPoint(x: plane.maxX, y: plane.minY), weight: Atelier.hair, color: faint, dash: [1, 2]) // 1 : 1
+        let slope = CGMutablePath(); slope.addLines(between: [base, knee, top, CGPoint(x: plane.maxX, y: plane.maxY)]); slope.closeSubpath()
+        ctx.saveGState(); ctx.addPath(slope); ctx.clip(); Atelier.hatch(ctx, plane, spacing: 2.2, color: Theme.ink(0.3), weight: 0.45); ctx.restoreGState()
+        Atelier.rule(ctx, base, knee, weight: Atelier.medium, color: ink)
+        Atelier.rule(ctx, knee, top, weight: Atelier.medium, color: ink)
+        // Lettering and readouts.
+        // Letters by their parts; the values in the left column, under the plane, clear of the strip.
+        letterCallout(ctx, link, .threshold, at: CGPoint(x: strip.maxX + 4, y: railY), to: CGPoint(x: strip.maxX + 9, y: railY - 9))
+        letterCallout(ctx, link, .ratio, at: top, to: CGPoint(x: top.x + 7, y: top.y - 7))
+        // A lit part's tag (name and value) is wider than the column: it goes in the band above the strip, where the
+        // margin note gives way to it.
+        let litRole: FigureRole? = [FigureRole.ratio, .threshold].first { figureDrag?.role == $0 || hoverRole == $0 || highlightRole == $0 }
+        for (role, y) in [(FigureRole.ratio, plane.maxY + 4), (FigureRole.threshold, plane.maxY + 19)] where role != litRole {
+            readout(ctx, link, role, at: CGPoint(x: plane.minX, y: y))
+        }
+        if let shown = litRole {
+            readout(ctx, link, shown, at: CGPoint(x: strip.minX, y: f.minY - 1))
+            marginNotes = []
+            return [FigureHandle(role: .threshold, point: CGPoint(x: strip.maxX - 10, y: railY), axis: CGVector(dx: 0, dy: -1), span: half),
+                    FigureHandle(role: .ratio, point: top, axis: CGVector(dx: 0, dy: 1), span: 24)]
+        }
+        marginNotes = [reductionDb < 0.05 ? "no reduction now" : String(format: "taken off now −%.1f dB", reductionDb)]
+        return [FigureHandle(role: .threshold, point: CGPoint(x: strip.maxX - 10, y: railY), axis: CGVector(dx: 0, dy: -1), span: half),
+                FigureHandle(role: .ratio, point: top, axis: CGVector(dx: 0, dy: 1), span: 24)]
     }
 
     /// The vaulted chamber, as first drawn for the Codex (the owner wanted it back): the hall in one-point perspective on
@@ -352,7 +411,7 @@ extension FaceplateScreen {
         ctx.setFillColor(ink.cgColor); ctx.fillEllipse(in: CGRect(x: pivot.x - 1.8, y: pivot.y - 1.8, width: 3.6, height: 3.6))
         let reach = mark(1)
         letterCallout(ctx, link, .time, at: CGPoint(x: reach.x + 8, y: reach.y), to: CGPoint(x: reach.x + 20, y: reach.y - 12))
-        readout(ctx, link, .time, at: CGPoint(x: min(f.maxX - 40, reach.x + 14), y: reach.y + 4))
+        readout(ctx, link, .time, at: CGPoint(x: min(f.maxX - 40, reach.x + 22), y: reach.y + 10)) // clear of the arc's end
         letterCallout(ctx, link, .feedback, at: CGPoint(x: pivot.x - 4, y: lastY), to: CGPoint(x: f.minX + 8, y: lastY - 6))
         readout(ctx, link, .feedback, at: CGPoint(x: f.minX + 2, y: lastY - 2))
         marginNotes = energyDb > -80 ? [String(format: "echoes now %.0f dB", energyDb)] : []
