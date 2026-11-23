@@ -147,7 +147,12 @@ final class FigureClock {
 extension FaceplateScreen {
     /// One step of the figure's motion; its speed comes from its parameters and live data.
     func advanceFigure(_ dt: Double) {
-        guard let fig = atelierFigure, figureDrag == nil, hoverRole == nil else { return }
+        guard let fig = atelierFigure, figureDrag == nil else { return }
+        switch Faceplate.figureMotion { // Settings ▸ Appearance ▸ Figure motion
+        case .holdUnderPointer: guard hoverRole == nil else { return }
+        case .always: break
+        case .onlyUnderPointer: guard pointerInFigure else { return }
+        }
         let link = figureLink ?? FigureLink()
         let speed: Double = switch fig {
         case .governor: 2 * .pi * (0.22 + 1.6 * min(1, abs(figureLive) / 18)) // spins up as it reduces
@@ -253,8 +258,10 @@ extension FaceplateScreen {
         let ratio = max(1, number(link.t(.ratio)) ?? (1 + 9 * link.v(.ratio, 0.4)))
         // The plane at the left (ratio), the strip to its right.
         let plane = CGRect(x: f.minX + 4, y: f.minY + 16, width: 30, height: 30)
-        // The strip starts below the margin note (which is written at the field's top, right-aligned).
-        let strip = CGRect(x: plane.maxX + 26, y: f.minY + 15, width: f.maxX - plane.maxX - 40, height: f.height - 24)
+        // The strip starts below the margin notes (written at the field's top, right-aligned, 11 pt a line: the
+        // reading, and the unit's latency or sidechain when it has one).
+        let lines = CGFloat(min(2, 1 + link.notes().count))
+        let strip = CGRect(x: plane.maxX + 26, y: f.minY + 4 + 11 * lines, width: f.maxX - plane.maxX - 40, height: f.height - 13 - 11 * lines)
         let mid = strip.midY, half = strip.height / 2 - 4
         func amp(_ db: Double) -> CGFloat { CGFloat(max(0, min(1, (db + 48) / 48))) * half } // −48…0 dBFS
         // The paper: a ruled strip with time marks scrolling with it.

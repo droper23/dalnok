@@ -48,6 +48,13 @@ enum Faceplate {
     static var readoutsFade: Bool { get { UserDefaults.standard.bool(forKey: "readoutsFade") } set { store("readoutsFade", newValue) } }
     /// Atelier: plain dials in a plug-in's key instead of the drawn instruments (owner, 2026-11-23: a Settings choice).
     static var plainDials: Bool { get { UserDefaults.standard.bool(forKey: "faceplatePlainDials") } set { store("faceplatePlainDials", newValue) } }
+    /// How plug-in figures move (owner, 2026-11-23): 0 moving but holding still under the pointer, 1 always moving,
+    /// 2 still until the pointer is over the figure.
+    enum FigureMotion: Int { case holdUnderPointer, always, onlyUnderPointer }
+    static var figureMotion: FigureMotion {
+        get { FigureMotion(rawValue: UserDefaults.standard.integer(forKey: "figureMotion")) ?? .holdUnderPointer }
+        set { store("figureMotion", newValue.rawValue) }
+    }
     /// White outline around the selected unit.
     static var selectionGlow: Bool { get { UserDefaults.standard.object(forKey: "selectionGlow") as? Bool ?? true } set { store("selectionGlow", newValue) } }
     /// Seconds the IN/OUT meters hold their peak (0 … 3).
@@ -878,7 +885,19 @@ final class FaceplateControl: NSControl, ParameterControl {
 final class FaceplateSection: NSView {
     let title: String
     var groove = true
-    init(title: String, controls: [FaceplateControl], rows: Int) {
+    /// Atelier: the names' column for these names (the longest plus its leader), at least 108 pt.
+    static func nameColumn(_ names: [String]) -> CGFloat {
+        let longest = names.map { ($0 as NSString).size(withAttributes: [.font: FaceplateControl.nameFont]).width }.max() ?? 0
+        return max(108, ceil(15 + longest + 12))
+    }
+    /// Atelier: the height a section of `count` rows takes when it fits in one column (nil when it needs more).
+    static func stackedHeight(count: Int, titled: Bool) -> CGFloat? {
+        let room = legendHeight - (titled ? 17 : 4)
+        let roomy = max(1, Int(room / (FaceplateControl.rowSize.height + 1)))
+        guard count <= roomy else { return nil }
+        return (titled ? 17 : 4) + CGFloat(count) * FaceplateControl.rowSize.height + CGFloat(max(0, count - 1))
+    }
+    init(title: String, controls: [FaceplateControl], rows: Int, nameColumn sharedColumn: CGFloat = 0) {
         self.title = title
         super.init(frame: .zero)
         let grid = NSGridView()
@@ -902,8 +921,7 @@ final class FaceplateSection: NSView {
                 grid.addRow(with: cells)
             }
             // The names' column: the longest name plus its leader, the instrument at least 80 pt, the value 64.
-            let longest = controls.map { ($0.name as NSString).size(withAttributes: [.font: FaceplateControl.nameFont]).width }.max() ?? 0
-            let nameColumn = max(108, ceil(15 + longest + 12))
+            let nameColumn = max(sharedColumn, Self.nameColumn(controls.map(\.name)))
             let rowWidth = max(FaceplateControl.rowSize.width, nameColumn + 80 + 64)
             for c in controls {
                 c.nameColumn = nameColumn
@@ -916,6 +934,7 @@ final class FaceplateSection: NSView {
                 grid.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 2), grid.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
                 grid.topAnchor.constraint(equalTo: topAnchor, constant: title.isEmpty ? 4 : 17), grid.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor),
             ])
+            let fit = grid.bottomAnchor.constraint(equalTo: bottomAnchor); fit.priority = .defaultHigh; fit.isActive = true
             return
         }
         let columns = max(1, Int((Double(controls.count) / Double(rows)).rounded(.up)))
@@ -964,6 +983,18 @@ final class FaceplateSection: NSView {
         ctx.move(to: CGPoint(x: x, y: 4)); ctx.addLine(to: CGPoint(x: x, y: bounds.height - 4)); ctx.strokePath()
         ctx.setStrokeColor(NSColor.white.withAlphaComponent(0.08).cgColor)
         ctx.move(to: CGPoint(x: x + 1, y: 4)); ctx.addLine(to: CGPoint(x: x + 1, y: bounds.height - 4)); ctx.strokePath()
+    }
+}
+
+/// Atelier: short sections of the key stacked down one column (so a column fills before the next starts), with the
+/// hairline between columns on the stack's trailing edge.
+@MainActor
+final class FaceplateColumn: NSStackView {
+    var groove = true
+    override var isFlipped: Bool { true }
+    override func draw(_ dirtyRect: NSRect) {
+        guard groove, let ctx = NSGraphicsContext.current?.cgContext else { return }
+        Atelier.rule(ctx, CGPoint(x: bounds.maxX - 3.5, y: 4), CGPoint(x: bounds.maxX - 3.5, y: bounds.height - 4), weight: Atelier.hair, color: Theme.ink(0.35))
     }
 }
 

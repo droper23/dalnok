@@ -157,7 +157,7 @@ extension SelfTest {
         ins.monitor.selectItem(at: 0); ins.monitor.sendAction(ins.monitor.action, to: ins.monitor.target)
         check(s.track(t.id)?.inputMonitor == false, "Monitor: Off turns it off")
         // Inserts: a plug-in dropped on the inspector, its row numbered, the lamp bypasses it (one undo step).
-        ins.onDropPlugin?("dalnok:channel-eq", t.id)
+        ins.onDropPlugin?(["dalnok:channel-eq"], t.id)
         s.refresh(onDisplayTick: true)
         ins.reload()
         check(s.track(t.id)?.effects.count == 1 && ins.insertRows.count == 1 && e.undoName == "Add Plug-in",
@@ -172,7 +172,7 @@ extension SelfTest {
         undo("Add Plug-in") // the insert
         check(s.track(t.id)?.effects.isEmpty == true && ins.insertRows.isEmpty, "undo removes the insert from the inspector")
         // A long chain: the list shows 6 and offers the rest; Atelier's figure folds the middle into one lettered range.
-        for _ in 0..<9 { ins.onDropPlugin?("dalnok:channel-eq", t.id) }
+        for _ in 0..<9 { ins.onDropPlugin?(["dalnok:channel-eq"], t.id) }
         s.refresh(onDisplayTick: true)
         ins.reload()
         check(s.track(t.id)?.effects.count == 9 && ins.insertRows.count == InspectorPanel.insertsShown, "nine inserts: the list shows \(InspectorPanel.insertsShown) (\(ins.insertRows.count))")
@@ -263,7 +263,7 @@ extension SelfTest {
         guard let node = lib.roots.first?.children.first, let item = lib.outlineView(lib.outline, pasteboardWriterForItem: node) as? NSPasteboardItem,
               let path = item.string(forType: .dalnokPlugin) else { return check(false, "the library offers a plug-in to drag") }
         let n0 = s.track(t.id)?.plugins.count ?? 0
-        w.headers.onDropPlugin?(path, t.id)
+        w.headers.onDropPlugin?([path], t.id)
         check((s.track(t.id)?.plugins.count ?? 0) == n0 + 1 && s.track(t.id)?.plugins.last?.name == "Dalnok Channel EQ" && s.engine.undoName == "Add Plug-in",
               "dragging a plug-in from the library onto a track adds it (one undo step)")
         undo("Add Plug-in")

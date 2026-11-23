@@ -203,6 +203,8 @@ class FaceplateScreen: NSView {
     var hoverRole: FigureRole? { didSet { if hoverRole != oldValue { needsDisplay = true; onHoverRole?(hoverRole) } } }
     var highlightRole: FigureRole? { didSet { if highlightRole != oldValue { needsDisplay = true } } }
     var onHoverRole: ((FigureRole?) -> Void)?
+    /// The pointer is over the figure (Settings ▸ Appearance ▸ Figure motion: still until pointed at).
+    var pointerInFigure = false
     /// The latest input/output pairs (transfer figures), normalised to the input's peak.
     var liveTransfer: [CGPoint] { [] }
     /// The family's figure (Atelier engraves it; Graphite and Prism draw it in their own idiom, LookFigures.swift).
@@ -225,9 +227,11 @@ class FaceplateScreen: NSView {
     }
     override func mouseMoved(with event: NSEvent) {
         guard atelierFigure != nil, figureDrag == nil else { return super.mouseMoved(with: event) }
+        pointerInFigure = true
         hoverRole = figureHandle(at: convert(event.locationInWindow, from: nil))?.role
     }
-    override func mouseExited(with event: NSEvent) { if figureDrag == nil { hoverRole = nil } }
+    override func mouseEntered(with event: NSEvent) { pointerInFigure = true }
+    override func mouseExited(with event: NSEvent) { pointerInFigure = false; if figureDrag == nil { hoverRole = nil } }
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         if window != nil && atelierFigure != nil { FigureClock.shared.add(self) } else { FigureClock.shared.remove(self) }

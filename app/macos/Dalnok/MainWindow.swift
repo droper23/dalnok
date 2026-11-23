@@ -131,11 +131,23 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             return nil
         } catch { return "\(error)" }
     }
+    /// Several plug-ins inserted in order (rows selected or dragged together), undone as one step.
+    @discardableResult func insertPlugins(_ paths: [String], on track: DalnokTrackId, at index: Int? = nil) -> String? {
+        session.engine.beginGroup(paths.count > 1 ? "Add \(paths.count) Plug-ins" : "Add Plug-in")
+        defer { session.engine.endGroup(); session.refresh() }
+        var firstError: String?
+        for (k, path) in paths.enumerated() {
+            if let err = insertPlugin(path, on: track, at: index.map { $0 + k }) { firstError = firstError ?? err }
+        }
+        return firstError
+    }
     @objc func showPlugins(_ sender: Any?) {
         pluginManager.onAdd = { [weak self] path in
             guard let self, let track = self.selectedTrack else { return "no track selected" }
             do { _ = try self.session.addPlugin(track, path: path); return nil } catch { return "\(error)" }
         }
+        pluginManager.onBeginGroup = { [weak self] name in self?.session.engine.beginGroup(name) }
+        pluginManager.onEndGroup = { [weak self] in self?.session.engine.endGroup(); self?.session.refresh() }
         pluginManager.selectedTrackName = { [weak self] in self?.selectedTrack.flatMap { self?.session.track($0)?.name } }
         pluginManager.show()
         pluginManager.updateAddButton()
@@ -390,11 +402,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         }
         devicePanel.onShowControls = { [weak self] track, slot in self?.openPluginControls(track: track, slot: slot) }
         devicePanel.onAdd = { [weak self] in self?.showPlugins(nil) }
-        devicePanel.onDropPlugin = { [weak self] path, track, index in
-            if let err = self?.insertPlugin(path, on: track, at: index) { self?.flash("Couldn’t add the plug-in: \(err)") }
+        devicePanel.onDropPlugin = { [weak self] paths, track, index in
+            if let err = self?.insertPlugins(paths, on: track, at: index) { self?.flash("Couldn’t add the plug-in: \(err)") }
         }
-        headers.onDropPlugin = { [weak self] path, track in
-            if let err = self?.insertPlugin(path, on: track) { self?.flash("Couldn’t add the plug-in: \(err)") }
+        headers.onDropPlugin = { [weak self] paths, track in
+            if let err = self?.insertPlugins(paths, on: track) { self?.flash("Couldn’t add the plug-in: \(err)") }
         }
         emptyState.onImportAudio = { [weak self] in self?.importAudio() }
         emptyState.onOpen = { [weak self] in self?.openDocument(nil) }
@@ -1743,9 +1755,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         edge.onEnd = { [weak self] in self?.devicePanel.rebuildAll() }
     }
     private func wireSidePanels() {
-        library.onInsert = { [weak self] path in
+        library.onInsert = { [weak self] paths in
             guard let self, let track = self.selectedTrack else { return "select a track first" }
-            return self.insertPlugin(path, on: track)
+            return self.insertPlugins(paths, on: track)
         }
         library.onOpenProject = { [weak self] url in self?.openSelectedProject(url) }
         library.projectFolder = { [weak self] in self?.session.projectURL?.deletingLastPathComponent() }
@@ -1767,8 +1779,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         library.resizeEdge.onEnd = { [weak self] in self?.fitSidePanels() }
         inspector.onOpenPlugin = { [weak self] t, slot in self?.openPluginWindow(track: t, slot: slot) }
         inspector.onAddPlugin = { [weak self] t in self?.headers.select(t); self?.showPlugins(nil) }
-        inspector.onDropPlugin = { [weak self] path, t in
-            if let err = self?.insertPlugin(path, on: t) { self?.flash("Couldn’t add the plug-in: \(err)") }
+        inspector.onDropPlugin = { [weak self] paths, t in
+            if let err = self?.insertPlugins(paths, on: t) { self?.flash("Couldn’t add the plug-in: \(err)") }
         }
         inspector.inputNames = { [weak self] in
             guard let d = self?.recordingDevice else { return [] }

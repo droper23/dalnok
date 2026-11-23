@@ -80,6 +80,8 @@ final class PluginManagerController: NSWindowController, NSTableViewDataSource, 
     let addButton = NSButton(title: "Insert on Track", target: nil, action: nil)
     /// Adds the plug-in at an add path to the selected track; returns an error message on failure.
     var onAdd: ((String) -> String?)?
+    /// Brackets several adds into one undo step.
+    var onBeginGroup: ((String) -> Void)?, onEndGroup: (() -> Void)?
     var selectedTrackName: (() -> String?)?
     let spinner = NSProgressIndicator()
     private(set) var scanning = false
@@ -144,6 +146,7 @@ final class PluginManagerController: NSWindowController, NSTableViewDataSource, 
         table.rowHeight = 22
         table.columnAutoresizingStyle = .uniformColumnAutoresizingStyle // every column fits: no clipped Status
         table.doubleAction = #selector(addSelected(_:))
+        table.allowsMultipleSelection = true // several plug-ins inserted at once, in list order
         table.target = self
         table.setDraggingSourceOperationMask(.copy, forLocal: false)
         table.setAccessibilityLabel("Plug-ins")
@@ -539,11 +542,14 @@ final class PluginManagerController: NSWindowController, NSTableViewDataSource, 
     }
 
     var selected: Plugin? { table.selectedRow >= 0 && table.selectedRow < rows.count ? rows[table.selectedRow] : nil }
+    /// Every selected row, in list order.
+    var selectedPlugins: [Plugin] { table.selectedRowIndexes.filter { $0 < rows.count }.map { rows[$0] } }
     func updateAddButton() {
         let row = selected
         let track = selectedTrackName?()
-        addButton.isEnabled = row != nil && !row!.failed && track != nil
-        addButton.title = track.map { "Insert on \($0)" } ?? "Insert on Track"
+        let n = selectedPlugins.filter { !$0.failed }.count
+        addButton.isEnabled = n > 0 && track != nil
+        addButton.title = (n > 1 ? "Insert \(n) on " : "Insert on ") + (track ?? "Track")
         addButton.toolTip = row == nil ? "Select a plug-in" : row!.failed ? "\(row!.name) failed validation, so Dalnok won't load it"
             : track == nil ? "Select a track in the arrangement first" : "Add \(row!.name) to \(track!)"
         tagsField.isEnabled = row != nil
@@ -560,6 +566,18 @@ final class PluginManagerController: NSWindowController, NSTableViewDataSource, 
         all.filter { $0.name == p.name && $0.vendor == p.vendor && $0.format != p.format }.map(\.format)
     }
     @objc func addSelected(_ sender: Any?) {
+        let many = selectedPlugins.filter { !$0.failed }
+        if many.count > 1 { // one undo step for the lot (the add callback's own groups nest inside it)
+            onBeginGroup?("Add \(many.count) Plug-ins")
+            let errors = many.compactMap { p in onAdd?(p.addPath).map { "\(p.name): \($0)" } }
+            onEndGroup?()
+            many.forEach { PluginLibrary.used($0.addPath) }
+            summary.stringValue = errors.isEmpty ? "Added \(many.count) plug-ins to \(selectedTrackName?() ?? "the track")."
+                                                 : "Couldn’t add " + errors.joined(separator: "; ")
+            if !errors.isEmpty { NSSound.beep() }
+            reloadSidebar()
+            return
+        }
         guard let p = selected else { return }
         if p.failed { summary.stringValue = "\(p.name) failed validation (\(p.status)); rescan after updating it."; return }
         if let error = onAdd?(p.addPath) { summary.stringValue = "Couldn’t add \(p.name): \(error)"; NSSound.beep() }
@@ -643,4 +661,9 @@ final class PluginManagerController: NSWindowController, NSTableViewDataSource, 
         var c = PluginLibrary.collections; c[name]?.removeAll { $0 == rows[r].addPath }; PluginLibrary.collections = c
         reloadSidebar(); apply()
     }
+}
+
+extension NSPasteboard {
+    /// Every plug-in on the pasteboard, in order (several rows of the Library or the Plug-ins window dragged at once).
+    var dalnokPluginPaths: [String] { (pasteboardItems ?? []).compactMap { $0.string(forType: .dalnokPlugin) } }
 }

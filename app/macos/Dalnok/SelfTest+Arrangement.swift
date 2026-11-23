@@ -221,13 +221,17 @@ extension SelfTest {
             check(Theme.trackHeight > before + 5, "⌥-scroll makes every track taller (\(before) → \(Theme.trackHeight))")
             w.setTrackHeight(before); w.window?.layoutIfNeeded()
         }
-        // A long instrument name never runs over the pan knob.
+        // A long instrument name never runs over the pan knob, and never hides the plug-in count (it takes a second line).
         if let row = w.headers.rows.first {
-            let saved = row.inputButton.title
-            row.inputButton.title = "A Very Long Instrument Name · 3 FX"
+            let (src, counts) = (row.inputSource, row.inputCounts)
+            row.setInput(source: "A Very Long Instrument Name", counts: "3 FX")
             row.layoutSubtreeIfNeeded()
             check(row.inputButton.frame.minX >= row.pan.frame.maxX + 7, "the input label stops before the pan knob (truncating)")
-            row.inputButton.title = saved
+            let lines = row.inputButton.title.components(separatedBy: "\n")
+            check(lines.count == 2 && lines[1] == "3 FX", "a long input name puts the plug-in count on its own line (\(lines))")
+            row.setInput(source: "IN 1", counts: "3 FX")
+            check(row.inputButton.title == "IN 1 · 3 FX", "a short one keeps it on one line (\(row.inputButton.title))")
+            row.setInput(source: src, counts: counts)
         }
         // The small second clock.
         TransportBar.showsSecondaryClock = true

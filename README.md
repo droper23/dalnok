@@ -114,12 +114,20 @@ theme, while a 4-bar loop plays:
 </table>
 
 In Atelier the chain is one engraving: each plug-in is a station on the drawn signal line, and its figure is an
-instrument you drag by its lettered parts: a flyball governor for dynamics, the vaulted acoustic chamber for reverbs,
+instrument you drag by its lettered parts: a two-pen seismograph for dynamics (the faint pen writes what comes in,
+the bold one what goes out, and gold hatching shows what was taken off), the vaulted acoustic chamber for reverbs,
 a pendulum for delays, a sine through its clipping curve for distortion, a crank and disc for modulation. Every
-parameter in the key is drawn as the instrument for its unit (slide rule, vernier, stopwatch, protractor, balance).
+parameter in the key is drawn as the instrument for its unit (a sextant for amounts, an octave rule for frequency, a
+stopwatch for time, a vernier for decibels, an inclined plane for ratio); Settings ▸ Appearance ▸ Plug-in controls
+swaps them for plain dials, and Figure motion chooses whether the figures keep moving under the pointer, or move only
+then.
 
-<p align="center"><img src="assets/screenshots/figures-atelier-dark.png" alt="Atelier's plug-in figures: governor, acoustic chamber, pendulum, clipped wave, crank and disc (Atelier Dark)" width="100%"><br>
+<p align="center"><img src="assets/screenshots/figures-atelier-dark.png" alt="Atelier's plug-in figures: seismograph, acoustic chamber, pendulum, clipped wave, crank and disc (Atelier Dark)" width="100%"><br>
 <img src="assets/screenshots/figures-atelier-light.png" alt="The same figures in Atelier Light" width="100%"><br><sub>Atelier's plug-in figures, dark and light</sub></p>
+
+Select several plug-ins in the Library or the browser and they go in together, in order; in the chain, ⌘-click or
+⇧-click several units and ⌫ removes them (each one undo step). A folded unit keeps its name, on/off switch and level
+in a narrow strip.
 
 Third-party plug-ins get the same treatment. The display is chosen from what a plug-in declares, its name and its
 parameters, and any unit can be switched to another display. Settings ▸ Plug-ins ▸ Safety runs each third-party
