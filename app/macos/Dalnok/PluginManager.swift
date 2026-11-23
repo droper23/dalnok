@@ -207,12 +207,15 @@ final class PluginManagerController: NSWindowController, NSTableViewDataSource, 
         window?.makeFirstResponder(search)
     }
 
-    /// Fast: metadata and the AU registry only, merged with any cached scan results.
-    func loadMetadata() {
+    /// Fast: metadata and the AU registry only, merged with any cached scan results (the browser and the Library).
+    static func metadata() -> [Plugin] {
         let n = dalnok_plugins_scan(nil, true, nil, 0)
         var buf = [CChar](repeating: 0, count: n + 1)
         dalnok_plugins_scan(nil, true, &buf, buf.count)
-        all = Self.parse(cString(buf), cache: Self.cachedStatuses())
+        return parse(cString(buf), cache: cachedStatuses())
+    }
+    func loadMetadata() {
+        all = Self.metadata()
         reloadSidebar()
         apply()
     }
@@ -374,7 +377,8 @@ final class PluginManagerController: NSWindowController, NSTableViewDataSource, 
 
     /// Fuzzy score: every word of the query must appear in the plug-in's text, as a substring (best) or, for the
     /// name, as letters in order ("vtl" finds "Vital"). Nil = no match.
-    func score(_ p: Plugin, _ query: String) -> Int? {
+    func score(_ p: Plugin, _ query: String) -> Int? { Self.score(p, query) }
+    static func score(_ p: Plugin, _ query: String) -> Int? {
         let q = query.lowercased().split(separator: " ").map(String.init)
         guard !q.isEmpty else { return 0 }
         let name = p.name.lowercased()

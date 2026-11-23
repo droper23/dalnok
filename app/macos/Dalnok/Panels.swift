@@ -140,6 +140,10 @@ final class TransportBar: NSView {
     let mixerButton = IconButton("slider.vertical.3", help: "Mixer (X)")
     let devicesButton = IconButton("rectangle.3.group", help: "Device Panel (⌥⌘D): the selected track's plug-ins")
     var onLauncher: (() -> Void)?, onAutomation: (() -> Void)?, onMixer: (() -> Void)?, onDevices: (() -> Void)?
+    /// The side panels, just left of the transport (as Logic's control bar has them).
+    let libraryButton = IconButton("sidebar.left", help: "Library (Y): plug-ins, collections and projects")
+    let inspectorButton = IconButton("sidebar.right", help: "Inspector (I): the selected track's channel")
+    var onLibrary: (() -> Void)?, onInspector: (() -> Void)?
     var onPlayPause: (() -> Void)?
     var onRecord: (() -> Void)?
     /// Project tempo (type and press Return) and meter.
@@ -259,7 +263,8 @@ final class TransportBar: NSView {
         masterMeter.toolTip = "Output level (click to reset the clip indicator)"
         masterMeter.setAccessibilityLabel("Master level meter")
         for (b, sel) in [(launcherButton, #selector(launcherTapped)), (automationButton, #selector(automationTapped)),
-                         (mixerButton, #selector(mixerTapped)), (devicesButton, #selector(devicesTapped))] {
+                         (mixerButton, #selector(mixerTapped)), (devicesButton, #selector(devicesTapped)),
+                         (libraryButton, #selector(libraryTapped)), (inspectorButton, #selector(inspectorTapped))] {
             b.target = self; b.action = sel
         }
         let views = NSStackView(views: [launcherButton, automationButton, mixerButton, devicesButton])
@@ -269,14 +274,18 @@ final class TransportBar: NSView {
         toolsGroup = tools
         tools.setCustomSpacing(16, after: views)
 
-        for v in [titles, transport, tools] as [NSView] {
+        let panes = NSStackView(views: [libraryButton, inspectorButton])
+        panes.spacing = 2
+        for v in [titles, panes, transport, tools] as [NSView] {
             v.translatesAutoresizingMaskIntoConstraints = false
             addSubview(v)
         }
         NSLayoutConstraint.activate([
             titles.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Theme.trafficLightInset + 8),
             titles.centerYAnchor.constraint(equalTo: centerYAnchor),
-            titles.trailingAnchor.constraint(lessThanOrEqualTo: transport.leadingAnchor, constant: -16),
+            titles.trailingAnchor.constraint(lessThanOrEqualTo: panes.leadingAnchor, constant: -12),
+            panes.trailingAnchor.constraint(equalTo: transport.leadingAnchor, constant: -14),
+            panes.centerYAnchor.constraint(equalTo: centerYAnchor),
             // Centred while there is room; in a narrow window the transport moves left rather than under the tools.
             transport.centerXAnchor.constraint(equalTo: centerXAnchor).withPriority(.defaultHigh),
             tools.leadingAnchor.constraint(greaterThanOrEqualTo: transport.trailingAnchor, constant: 20),
@@ -410,6 +419,8 @@ final class TransportBar: NSView {
     @objc private func automationTapped() { onAutomation?() }
     @objc private func mixerTapped() { onMixer?() }
     @objc private func devicesTapped() { onDevices?() }
+    @objc private func libraryTapped() { onLibrary?() }
+    @objc private func inspectorTapped() { onInspector?() }
 }
 
 // MARK: - Track header

@@ -191,6 +191,19 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         set { UserDefaults.standard.set(newValue, forKey: "showLauncher") }
     }
     private var mixerHeight: NSLayoutConstraint!
+    let library = LibraryPanel()
+    let inspector: InspectorPanel
+    private var libraryWidth: NSLayoutConstraint!, inspectorWidth: NSLayoutConstraint!
+    static var showLibrary: Bool {
+        get { UserDefaults.standard.bool(forKey: "showLibrary") }
+        set { UserDefaults.standard.set(newValue, forKey: "showLibrary") }
+    }
+    static var showInspector: Bool {
+        get { UserDefaults.standard.bool(forKey: "showInspector") }
+        set { UserDefaults.standard.set(newValue, forKey: "showInspector") }
+    }
+    /// The narrowest the window may be with no side panel open; each open panel adds its width.
+    static let baseMinWidth: CGFloat = 720
     static var showMixer: Bool {
         get { UserDefaults.standard.bool(forKey: "showMixer") }
         set { UserDefaults.standard.set(newValue, forKey: "showMixer") }
@@ -228,6 +241,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         devicePanel = DevicePanel(session: session)
         mixer = MixerPanel(session: session)
         launcher = LauncherView(session: session)
+        inspector = InspectorPanel(session: session)
 
         let window = CommittingWindow(contentRect: NSRect(x: 0, y: 0, width: 1280, height: 760),
                               styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
@@ -252,7 +266,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             }
         }
         window.contentView = root
-        for v in [transport, headers, launcher, timeline, mixer, devicePanel, emptyState, overview, countInOverlay, toast] as [NSView] {
+        for v in [transport, library, inspector, headers, launcher, timeline, mixer, devicePanel, emptyState, overview, countInOverlay, toast] as [NSView] {
             v.translatesAutoresizingMaskIntoConstraints = false
             root.addSubview(v)
         }
@@ -267,7 +281,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             transport.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             transport.heightAnchor.constraint(equalToConstant: Theme.transportHeight),
             headers.topAnchor.constraint(equalTo: transport.bottomAnchor),
-            headers.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            library.topAnchor.constraint(equalTo: transport.bottomAnchor),
+            library.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            library.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            inspector.topAnchor.constraint(equalTo: transport.bottomAnchor),
+            inspector.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            inspector.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            headers.leadingAnchor.constraint(equalTo: library.trailingAnchor),
             headers.bottomAnchor.constraint(equalTo: mixer.topAnchor),
             headers.widthAnchor.constraint(equalToConstant: Theme.headerWidth),
             timeline.topAnchor.constraint(equalTo: transport.bottomAnchor),
@@ -275,20 +295,20 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             launcher.leadingAnchor.constraint(equalTo: headers.trailingAnchor),
             launcher.bottomAnchor.constraint(equalTo: mixer.topAnchor),
             timeline.leadingAnchor.constraint(equalTo: launcher.trailingAnchor),
-            timeline.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            timeline.trailingAnchor.constraint(equalTo: inspector.leadingAnchor),
             timeline.bottomAnchor.constraint(equalTo: mixer.topAnchor),
-            mixer.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            mixer.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            mixer.leadingAnchor.constraint(equalTo: library.trailingAnchor),
+            mixer.trailingAnchor.constraint(equalTo: inspector.leadingAnchor),
             mixer.bottomAnchor.constraint(equalTo: devicePanel.topAnchor),
-            devicePanel.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            devicePanel.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            devicePanel.leadingAnchor.constraint(equalTo: library.trailingAnchor),
+            devicePanel.trailingAnchor.constraint(equalTo: inspector.leadingAnchor),
             devicePanel.bottomAnchor.constraint(equalTo: root.bottomAnchor),
             emptyState.topAnchor.constraint(equalTo: transport.bottomAnchor),
             emptyState.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             emptyState.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             emptyState.bottomAnchor.constraint(equalTo: root.bottomAnchor),
-            overview.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            overview.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            overview.leadingAnchor.constraint(equalTo: library.trailingAnchor),
+            overview.trailingAnchor.constraint(equalTo: inspector.leadingAnchor),
             overview.topAnchor.constraint(equalTo: transport.bottomAnchor),
             overview.bottomAnchor.constraint(equalTo: mixer.topAnchor),
             countInOverlay.leadingAnchor.constraint(equalTo: timeline.leadingAnchor),
@@ -331,6 +351,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             self.launcher.needsDisplay = true
             return true
         }
+        libraryWidth = library.widthAnchor.constraint(equalToConstant: Self.showLibrary ? LibraryPanel.storedWidth : 0)
+        libraryWidth.isActive = true
+        library.isHidden = !Self.showLibrary
+        inspectorWidth = inspector.widthAnchor.constraint(equalToConstant: Self.showInspector ? InspectorPanel.storedWidth : 0)
+        inspectorWidth.isActive = true
+        inspector.isHidden = !Self.showInspector
+        if Self.showLibrary { library.load() }
+        wireSidePanels()
         mixerHeight = mixer.heightAnchor.constraint(equalToConstant: Self.showMixer ? MixerPanel.height : 0)
         mixerHeight.isActive = true
         mixer.isHidden = !Self.showMixer
@@ -394,6 +422,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         transport.onAutomation = { [weak self] in self?.toggleAutomation(nil) }
         transport.onMixer = { [weak self] in self?.toggleMixer(nil) }
         transport.onDevices = { [weak self] in self?.toggleDevicePanel(nil) }
+        transport.onLibrary = { [weak self] in self?.toggleLibrary(nil) }
+        transport.onInspector = { [weak self] in self?.toggleInspector(nil) }
         syncViewButtons()
         installHints()
         headers.onAddTrack = { [weak self] in self?.newTrack(nil) }
@@ -414,6 +444,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         headers.onSelect = { [weak self] id in
             self?.timeline.highlightedTrack = id
             self?.devicePanel.track = id
+            self?.inspector.track = id
         }
         palette.onOpenGuide = { [weak self] c in self?.conceptGuide.show(daw: c.daw, query: c.term) }
         session.onChange = { [weak self] in self?.modelChanged() }
@@ -429,6 +460,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             guard let self else { return }
             self.headers.sync()
             if !self.mixer.isHidden { self.mixer.updateParameters() }
+            if !self.inspector.isHidden { self.inspector.updateParameters() }
             if muteChanged { self.timeline.needsDisplay = true } // muted tracks change clip tint
             self.updateTitle()
         }
@@ -652,6 +684,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         if devicePanel.track == nil, let first = session.tracks.first?.id { headers.select(first) }
         devicePanel.rebuild()
         if !mixer.isHidden { mixer.rebuild(); mixer.select(selectedTrack) }
+        if !inspector.isHidden { inspector.track = selectedTrack; inspector.reload() }
         if !launcher.isHidden { launcher.needsDisplay = true }
         if transientMessageUntil < Date() { updateStatus() }
     }
@@ -847,6 +880,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             row.gain.updateMeter(max(row.meter.levelDb.0, row.meter.levelDb.1))
         }
         if !mixer.isHidden { mixer.pushMeters { levels[$0] ?? (0, 0) }; mixer.master.meter.push(ml0, mr0); if Theme.look.consoleMixer { mixer.master.needle.push(ml0, mr0) } }
+        if !inspector.isHidden, let id = inspector.track { let (l, r) = levels[id] ?? (0, 0); inspector.meter.push(l, r) }
         // Automated tracks: knobs and faders show the automated value at the playhead.
         for t in session.tracks where !t.volumeAuto.isEmpty || !t.panAuto.isEmpty {
             let v = session.automationValue(t, 0, at: e.position), p = session.automationValue(t, 1, at: e.position)
@@ -854,6 +888,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
                 if let v, !row.gain.tracking { row.gain.db = v }
                 if let p, !row.pan.tracking { row.pan.pan = p }
             }
+            if !inspector.isHidden, inspector.track == t.id { inspector.showAutomated(volume: v, pan: p) }
             if !mixer.isHidden, let strip = mixer.strips.first(where: { $0.trackId == t.id }) {
                 if let v, !strip.fader.tracking { strip.fader.db = v; strip.dbLabel.stringValue = FaderControl.format(v) }
                 if let p, !strip.pan.tracking { strip.pan.pan = p }
@@ -1584,12 +1619,86 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         })
     }
 
+    /// View ▸ Library (Y) and View ▸ Inspector (I): the side panels. Each slides open like the mixer (instantly under
+    /// Reduce Motion), remembers whether it is open and its width, and widens the window's minimum so the arrangement
+    /// keeps room for its headers and some timeline.
+    @objc func toggleLibrary(_ sender: Any?) {
+        Self.showLibrary.toggle()
+        let show = Self.showLibrary
+        if show { library.load(); library.isHidden = false }
+        slide(library, libraryWidth, to: show ? LibraryPanel.storedWidth : 0, show: show) { !MainWindowController.showLibrary }
+    }
+    @objc func toggleInspector(_ sender: Any?) {
+        Self.showInspector.toggle()
+        let show = Self.showInspector
+        if show { inspector.isHidden = false; inspector.track = selectedTrack; inspector.reload() }
+        slide(inspector, inspectorWidth, to: show ? InspectorPanel.storedWidth : 0, show: show) { !MainWindowController.showInspector }
+    }
+    private func slide(_ panel: NSView, _ width: NSLayoutConstraint, to w: CGFloat, show: Bool, stillHidden: @escaping @MainActor () -> Bool) {
+        syncViewButtons()
+        fitSidePanels(adding: show ? w : 0)
+        if Motion.reduced {
+            width.constant = w
+            panel.isHidden = !show
+            return
+        }
+        Motion.views(Motion.gentle, { width.animator().constant = w }, completion: {
+            DispatchQueue.main.async { MainActor.assumeIsolated { if !show && stillHidden() { panel.isHidden = true } } }
+        })
+    }
+    /// The window's minimum width with the open panels; grows the window (within the screen) when a panel opens and
+    /// there is no room for it, so the arrangement never gets narrower than its headers and a strip of timeline.
+    func fitSidePanels(adding: CGFloat = 0) {
+        guard let window else { return }
+        let panels = (Self.showLibrary ? LibraryPanel.storedWidth : 0) + (Self.showInspector ? InspectorPanel.storedWidth : 0)
+        window.minSize = NSSize(width: Self.baseMinWidth + panels, height: window.minSize.height)
+        if window.frame.width < window.minSize.width, !window.styleMask.contains(.fullScreen) {
+            var f = window.frame
+            let room = window.screen?.visibleFrame ?? f
+            f.size.width = min(window.minSize.width, room.width)
+            if f.maxX > room.maxX { f.origin.x = max(room.minX, room.maxX - f.width) }
+            window.setFrame(f, display: true, animate: !Motion.reduced && adding > 0)
+        }
+    }
+    private func wireSidePanels() {
+        library.onInsert = { [weak self] path in
+            guard let self, let track = self.selectedTrack else { return "select a track first" }
+            return self.insertPlugin(path, on: track)
+        }
+        library.onOpenProject = { [weak self] url in self?.openSelectedProject(url) }
+        library.onMessage = { [weak self] m in self?.flash(m) }
+        library.resizeEdge.onDrag = { [weak self] w in
+            guard let self else { return }
+            let c = min(max(w, LibraryPanel.widthRange.lowerBound), LibraryPanel.widthRange.upperBound)
+            self.libraryWidth.constant = c; LibraryPanel.storedWidth = c
+        }
+        library.resizeEdge.onEnd = { [weak self] in self?.fitSidePanels() }
+        inspector.onOpenPlugin = { [weak self] t, slot in self?.openPluginWindow(track: t, slot: slot) }
+        inspector.onAddPlugin = { [weak self] t in self?.headers.select(t); self?.showPlugins(nil) }
+        inspector.onDropPlugin = { [weak self] path, t in
+            if let err = self?.insertPlugin(path, on: t) { self?.flash("Couldn’t add the plug-in: \(err)") }
+        }
+        inspector.inputNames = { [weak self] in
+            guard let d = self?.recordingDevice else { return [] }
+            return (0..<max(d.channels, 1)).map { "Input \($0 + 1) — \(d.name)" }
+        }
+        inspector.resizeEdge.onDrag = { [weak self] w in
+            guard let self else { return }
+            let c = min(max(w, InspectorPanel.widthRange.lowerBound), InspectorPanel.widthRange.upperBound)
+            self.inspectorWidth.constant = c; InspectorPanel.storedWidth = c
+        }
+        inspector.resizeEdge.onEnd = { [weak self] in self?.fitSidePanels() }
+        fitSidePanels()
+    }
+
     /// View ▸ Clip Launcher (⌘L): launcher slots beside each track's lane.
     /// Lights the control bar's view buttons for the views that are open.
     func syncViewButtons() {
         transport.launcherButton.isActive = Self.showLauncher
         transport.mixerButton.isActive = Self.showMixer
         transport.devicesButton.isActive = Self.showDevicePanel
+        transport.libraryButton.isActive = Self.showLibrary
+        transport.inspectorButton.isActive = Self.showInspector
         transport.automationButton.isActive = timeline.showAutomation
         transport.countInButton.isActive = Self.countIn
     }
@@ -2171,6 +2280,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             return true
         case #selector(toggleMixer(_:)):
             item.state = Self.showMixer ? .on : .off
+            return true
+        case #selector(toggleLibrary(_:)):
+            item.state = Self.showLibrary ? .on : .off
+            return true
+        case #selector(toggleInspector(_:)):
+            item.state = Self.showInspector ? .on : .off
             return true
         case #selector(copy(_:)), #selector(cut(_:)), #selector(duplicateClips(_:)):
             return !pianoRollIsKey && !timeline.selectedClips.isEmpty

@@ -13,7 +13,7 @@ final class SelfTest {
     let workdir: URL
     var failures = 0
     /// Preferences the test changes; all are restored at the end so a run never alters the owner's settings.
-    static let restoredKeys = ["copyAudioOnSave", "comingFrom", "onboardingDone", "recordingInputUID", "latencyOffsets", "latencyChecks", "rulerBarsAndBeats", "metronome", "showDevicePanel", "countIn", "showMixer", "showLauncher", "automationMode", "pedal.AUDelay", "shortcuts.preset", "shortcuts.overrides", "shortcuts.userPresets"] + PluginLibrary.keys + ["tapeSpeed", "trackHeight", "secondaryClock", "gainRingLevel", "isolatePlugins", "clipBounce"] + Faceplate.preferenceKeys
+    static let restoredKeys = ["copyAudioOnSave", "comingFrom", "onboardingDone", "recordingInputUID", "latencyOffsets", "latencyChecks", "rulerBarsAndBeats", "metronome", "showDevicePanel", "countIn", "showMixer", "showLauncher", "showLibrary", "showInspector", "libraryWidth", "inspectorWidth", "automationMode", "pedal.AUDelay", "shortcuts.preset", "shortcuts.overrides", "shortcuts.userPresets"] + PluginLibrary.keys + ["tapeSpeed", "trackHeight", "secondaryClock", "gainRingLevel", "isolatePlugins", "clipBounce"] + Faceplate.preferenceKeys
     let previousPreferences: [String: Any]
     var w: MainWindowController { app.main }
     var s: Session { app.session }
@@ -102,6 +102,8 @@ final class SelfTest {
         // A known layout whatever the owner left open (the mixer would squeeze the tracks to a sliver); restored at the end.
         if MainWindowController.showMixer { w.toggleMixer(nil) }
         if MainWindowController.showLauncher { w.toggleLauncher(nil) }
+        if MainWindowController.showLibrary { w.toggleLibrary(nil) }
+        if MainWindowController.showInspector { w.toggleInspector(nil) }
         UserDefaults.standard.removeObject(forKey: "secondaryClock")
         try? FileManager.default.createDirectory(at: workdir, withIntermediateDirectories: true)
         s.importFiles(files) { [self] in Task { await steps() } }
@@ -536,6 +538,7 @@ final class SelfTest {
         if ProcessInfo.processInfo.environment["DALNOK_SKIP_SHORTCUT_TEST"] == nil { await shortcutSystem() }
         await clipEditing()
         deadControls()
+        await sidePanels()
         await tapeMachine()
         await markersAndTrackTools()
         await partialTimelineRedraw()

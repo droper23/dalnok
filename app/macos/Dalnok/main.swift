@@ -484,6 +484,8 @@ func buildMenu(target: MainWindowController) -> NSMenu {
         item("Bars and Beats Ruler", #selector(W.toggleBarsAndBeats(_:)), "b", [.command, .option]),
         item("Secondary Clock", #selector(W.toggleSecondaryClock(_:)), "", []),
         item("Device Panel", #selector(W.toggleDevicePanel(_:)), "d", [.command, .option]),
+        item("Library", #selector(W.toggleLibrary(_:)), "y", []),
+        item("Inspector", #selector(W.toggleInspector(_:)), "i", []),
         item("Mixer", #selector(W.toggleMixer(_:)), "x", []),
         item("Clip Launcher", #selector(W.toggleLauncher(_:)), "l", [.command]),
         item("Stop All Clips", #selector(W.stopAllClips(_:)), ""),

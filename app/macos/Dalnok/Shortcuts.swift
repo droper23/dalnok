@@ -259,6 +259,8 @@ private let specs: [String: Spec] = [
     "zoomToFit": Spec(id: "view.zoom_to_fit", category: "Timeline and Navigation", detail: "Fit the whole project in the window.", keywords: ["fit project"]),
     "toggleMixer:": Spec(id: "mixer.toggle", category: "Mixer", detail: "Show or hide the mixer.", keywords: ["console"]),
     "toggleDevicePanel:": Spec(id: "view.device_panel", category: "Plug-ins", detail: "Show or hide the selected track's plug-ins.", keywords: ["effects", "pedalboard", "inserts"]),
+    "toggleLibrary:": Spec(id: "view.library", category: "Views and Windows", detail: "Show or hide the Library: plug-ins, favourites, collections and recent projects.", keywords: ["browser", "sidebar", "plug-ins", "places"]),
+    "toggleInspector:": Spec(id: "view.inspector", category: "Views and Windows", detail: "Show or hide the Inspector: the selected track's channel.", keywords: ["channel strip", "track settings", "sends", "inserts"]),
     "toggleLauncher:": Spec(id: "view.clip_launcher", category: "Views and Windows", detail: "Show or hide the clip launcher.", keywords: ["session"]),
     "showPlugins:": Spec(id: "plugin.open_browser", category: "Plug-ins", detail: "Browse and insert plug-ins.", keywords: ["insert", "effect", "instrument"]),
     "toggleTrackBypass:": Spec(id: "plugin.bypass_track", category: "Plug-ins", detail: "Bypass (or turn back on) every plug-in on the selected track.", keywords: ["bypass", "disable", "footswitch"]),
@@ -304,7 +306,7 @@ struct ShortcutPreset {
         ShortcutPreset(id: "logic", title: "Logic Pro", note: approximate, bindings: b([
             ("track.create_audio", ["opt+cmd+a"]), ("track.create_midi", ["opt+cmd+s"]), ("project.import_audio", ["shift+cmd+i"]),
             ("midi.quantize_clip", []), ("view.zoom_in", ["cmd+right"]), ("view.zoom_out", ["cmd+left"]),
-        ]), unavailable: ["Smart Controls (B)", "Library (Y)", "Loop Browser (O)", "Flex View (⌘F)", "Toggle Region Mute (M)"]),
+        ]), unavailable: ["Smart Controls (B)", "Loop Browser (O)", "Flex View (⌘F)", "Toggle Region Mute (M)"]),
         ShortcutPreset(id: "ableton", title: "Ableton Live", note: approximate, bindings: b([
             ("edit.split_at_playhead", ["cmd+e"]), ("project.export_mix", ["shift+cmd+r"]), ("track.create_audio", ["cmd+t"]),
             ("track.create_midi", ["shift+cmd+t"]), ("track.mute", ["0"]), ("transport.record", ["f9"]),
