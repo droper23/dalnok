@@ -121,6 +121,13 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
         }
         let atelier = Theme.look.mixer == .instrument
         // Sidebar.
+        if Theme.activeStyle == .prism { // glass over the light field: one pane for the pages, one for the sidebar
+            content.layer?.backgroundColor = NSColor.clear.cgColor
+            let back = PrismBackdropView(frame: content.bounds)
+            back.autoresizingMask = [.width, .height]
+            back.panes = { b in [NSRect(x: 8, y: 8, width: 174, height: b.height - 16), NSRect(x: 190, y: 8, width: b.width - 198, height: b.height - 16)] }
+            content.addSubview(back)
+        }
         let sidebar = NSStackView()
         sidebarView = sidebar
         sidebar.orientation = .vertical
@@ -128,7 +135,7 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
         sidebar.spacing = 2
         sidebar.edgeInsets = NSEdgeInsets(top: 16, left: 10, bottom: 10, right: 10)
         sidebar.wantsLayer = true
-        sidebar.layer?.backgroundColor = Theme.window.cgColor
+        sidebar.layer?.backgroundColor = (Theme.activeStyle == .prism ? NSColor.clear : Theme.window).cgColor
         search.placeholderString = "Search Settings"
         search.sendsSearchStringImmediately = true
         search.target = self; search.action = #selector(searchChanged(_:))

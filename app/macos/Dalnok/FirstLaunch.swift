@@ -53,6 +53,14 @@ final class ShortcutChooserController: NSObject, NSWindowDelegate {
         let bg = NSView()
         bg.wantsLayer = true
         bg.layer?.backgroundColor = Theme.panel.cgColor
+        if Theme.activeStyle == .prism {
+            bg.layer?.backgroundColor = NSColor.clear.cgColor
+            let back = PrismBackdropView(frame: .zero)
+            back.translatesAutoresizingMaskIntoConstraints = false
+            bg.addSubview(back)
+            NSLayoutConstraint.activate([back.leadingAnchor.constraint(equalTo: bg.leadingAnchor), back.trailingAnchor.constraint(equalTo: bg.trailingAnchor),
+                                         back.topAnchor.constraint(equalTo: bg.topAnchor), back.bottomAnchor.constraint(equalTo: bg.bottomAnchor)])
+        }
         bg.appearance = Theme.appearance
         content.translatesAutoresizingMaskIntoConstraints = false
         bg.addSubview(content)
