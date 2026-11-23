@@ -315,7 +315,7 @@ final class DevicePanel: NSView {
     private var metersObserver: NSObjectProtocol?, wearObserver: NSObjectProtocol?
 
     /// The unit last clicked (white outline glow); nil when none is.
-    var selectedSlot: Int32? { didSet { devices.forEach { $0.isSelected = $0.slot == selectedSlot } } }
+    var selectedSlot: Int32? { didSet { devices.forEach { $0.isSelected = $0.slot == selectedSlot }; reportViewing() } }
 
     // MARK: Patch cables (Warm Analog)
 
@@ -347,7 +347,26 @@ final class DevicePanel: NSView {
             MainActor.assumeIsolated { self?.updateEdgeFade() }
         }
     }
+    /// The units at least half in view and the one last clicked, reported when they change (the Inspector's Fig. 3
+    /// marks the plug-ins you are looking at).
+    var onViewing: ((Set<Int32>, Int32?) -> Void)?
+    private var lastViewing: (Set<Int32>, Int32?)?
+    var viewingSlots: Set<Int32> {
+        let visible = scroll.contentView.bounds
+        guard let doc = scroll.documentView, !isHidden else { return [] }
+        return Set(devices.filter { d in
+            let f = d.convert(d.bounds, to: doc)
+            return f.width > 0 && f.intersection(visible).width >= min(f.width, visible.width) * 0.5
+        }.map(\.slot))
+    }
+    func reportViewing() {
+        let now = (viewingSlots, selectedSlot)
+        if let last = lastViewing, last.0 == now.0, last.1 == now.1 { return }
+        lastViewing = now
+        onViewing?(now.0, now.1)
+    }
     func updateEdgeFade() {
+        reportViewing()
         let docWidth = scroll.documentView?.frame.width ?? 0
         let frame = CGRect(x: bounds.width - 36, y: 0, width: 36, height: bounds.height)
         if edgeFade.frame != frame { edgeFade.frame = frame }

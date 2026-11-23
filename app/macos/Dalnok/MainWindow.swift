@@ -383,6 +383,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         mixer.onOpenPlugin = { [weak self] t, slot in self?.openPluginWindow(track: t, slot: slot) }
         mixer.onAddPlugin = { [weak self] t in self?.headers.select(t); self?.showPlugins(nil) }
         devicePanel.onOpen = { [weak self] track, slot in self?.openPluginWindow(track: track, slot: slot) }
+        devicePanel.onViewing = { [weak self] slots, focused in
+            self?.inspector.setViewing(slots, focused: focused) // matched by slot against the inspector's own track
+        }
         devicePanel.onShowControls = { [weak self] track, slot in self?.openPluginControls(track: track, slot: slot) }
         devicePanel.onAdd = { [weak self] in self?.showPlugins(nil) }
         devicePanel.onDropPlugin = { [weak self] path, track, index in

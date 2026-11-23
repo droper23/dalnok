@@ -884,6 +884,15 @@ extension SelfTest {
         // The panel's top edge resizes it (every theme): taller units, remembered, and back.
         if let comp = try? s.addPlugin(track, path: "dalnok:compressor") {
             panel.rebuild(); w.window?.contentView?.layoutSubtreeIfNeeded()
+            // The Inspector marks the plug-ins in view in the device panel (its list, and Atelier's Fig. 3), and the one clicked.
+            w.inspector.track = track; w.inspector.reload()
+            if let unit = panel.devices.first(where: { $0.slot == comp }) { unit.scrollToVisible(unit.bounds) }
+            panel.selectedSlot = comp; panel.reportViewing()
+            let mark = w.inspector.insertRows.first { $0.slot == comp }
+            let index = s.track(track)?.effects.firstIndex { $0.id == comp }
+            check(mark?.inView == true && index.map { w.inspector.figure.inView.contains($0) && w.inspector.figure.focused == $0 } == true,
+                  "the Inspector marks the plug-in shown and clicked in the device panel (view \(panel.viewingSlots), comp \(comp), rows \(w.inspector.insertRows.map(\.slot)), fig \(w.inspector.figure.inView), index \(String(describing: index)), hidden \(panel.isHidden))")
+            panel.selectedSlot = nil
             let was = DevicePanel.extra, edge = panel.resizeEdge, h0 = panel.frame.height
             edge.onDrag?(edge.currentHeight() + 90); edge.onEnd?()
             w.window?.contentView?.layoutSubtreeIfNeeded()
