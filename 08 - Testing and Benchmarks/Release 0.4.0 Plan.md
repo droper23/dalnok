@@ -1,6 +1,6 @@
 ---
 created: 2026-11-22
-status: in progress (2026-11-23): items 1 done or moved to the UI audit's open list; release built from feat/ui-audit-0.4
+status: released 2026-11-23 (v0.4.0); open items below were stated in the release notes or moved to the UI audit's open list
 related: "[[Release Checklist]]", "[[Atelier Audit 2026-11-22]]", "[[02 - Master Roadmap]]"
 ---
 # Release 0.4.0 plan

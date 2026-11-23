@@ -1,7 +1,7 @@
 ---
 updated: 2026-11-23
 phase: Phases 1, 3 and 4 complete; 2 (power-loss test) and 5 in progress
-milestone: 0.3.0, Phase 4 complete; recording I/O (separate devices, Input Monitoring, measured latency) verified on a Scarlett
+milestone: 0.4.0 released 2026-11-23 (four themes in six looks with their own figures, Library and Inspector, Settings in nine pages)
 ---
 # Current State
 
@@ -18,7 +18,15 @@ stills; decisions and what is still open in `06 - Design/UI Audit 2026-11-23.md`
 - **Gallery**: `DALNOK_GALLERY_MOTION=1` (06-motion frames), `DALNOK_GALLERY_SETTINGS=1` (every page); 15-figures for
   Graphite and Prism. Live animation capture not done: the screen stayed locked.
 - **Perf**: Prism `--perf 20` (64 tracks) Dark and Light: 0 overloads, 0 missed, main p99 8 ms, max 20 ms.
-- **Next**: round 3 of the audit (list in the note), then the 0.4.0 release plan.
+- **Released 0.4.0** (2026-11-23): PR #16 merged (857d40e), tag `v0.4.0`, GitHub release with `Dalnok-0.4.0.zip`
+  (SHA-256 7fc9deb3…ae3f7). Round 3 done (code review + three reviewers). Final self-test matrix on the PR head: 12/12
+  PASS, 0 FAIL; CI 6/6 green (incl. ASan/TSan).
+- **Not done (needs the owner or an unlocked screen):** README tours and plug-in clips re-recorded (screen was locked);
+  live animation capture; hardware loopback and input self-test on the Scarlett; fuzz 120 s (no parser changed);
+  site screenshots and `publish-site.sh` (owner's go-ahead).
+- **Next:** the "Still open" list in `06 - Design/UI Audit 2026-11-23.md` (Graphite flat telemetry cards, Warm Analog
+  console furniture and twin VUs, Prism spectral master meter and glass browser/palette, Atelier drawn sliders and
+  neatline, per-look motion for remaining transitions, producer toolbar: snap/zoom/follow, CPU readout).
 
 ## Earlier (2026-11-23, past midnight): moving figures, Library ▸ Files, first-launch looks
 Branch `feat/atelier-motion-library-files` (from `main` f19f0c0). The owner's fifth round; decisions in
