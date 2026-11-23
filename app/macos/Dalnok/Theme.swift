@@ -450,3 +450,107 @@ enum OKLCH {
         return (L, C, H)
     }
 }
+
+// MARK: Stock controls in the look's colour
+extension Theme {
+    /// The colour stock controls take instead of the system's blue (the 2026-11-23 audit: blue check boxes, sliders,
+    /// popups, default buttons and text selection in every look).
+    static var controlTint: NSColor { activeStyle == .atelier ? cycle : accent }
+
+    /// Tints the stock controls under `view`: check boxes and radios, slider fills, segmented selections, the default
+    /// button. Cheap enough to run each time a window becomes key.
+    static func tintControls(in view: NSView?) {
+        guard let view else { return }
+        let tint = controlTint
+        switch view {
+        // Only when different, so a pass over an already tinted window redraws nothing.
+        case let s as NSSlider: if s.trackFillColor != tint { s.trackFillColor = tint }
+        case let s as NSSegmentedControl: if s.selectedSegmentBezelColor != tint { s.selectedSegmentBezelColor = tint }
+        case let b as NSButton:
+            if isCheckOrRadio(b) { /* drawn by ThemedCheckCell where made with Theme.checkbox */ }
+            else if b.keyEquivalent == "\r" && b.isBordered && b.bezelColor != tint { b.bezelColor = tint }
+        default: break
+        }
+        for s in view.subviews { tintControls(in: s) }
+    }
+    /// A check box or radio button (NSSwitchButton / NSRadioButton cells show and highlight their state by their image).
+    static func isCheckOrRadio(_ b: NSButton) -> Bool {
+        guard let c = b.cell as? NSButtonCell else { return false }
+        return c.showsStateBy.contains(.contentsCellMask) && c.highlightsBy.contains(.contentsCellMask)
+    }
+
+    /// Every window: its stock controls and its text selection in the look's colour, each time it becomes key.
+    static func installControlTint() {
+        for name in [NSWindow.didBecomeKeyNotification, NSWindow.didBecomeMainNotification] {
+            NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { n in
+                let window = n.object as? NSWindow
+                MainActor.assumeIsolated {
+                    guard let w = window else { return }
+                    tintControls(in: w.contentView)
+                    if let fe = w.fieldEditor(true, for: nil) as? NSTextView {
+                        fe.selectedTextAttributes = [.backgroundColor: controlTint.withAlphaComponent(0.38), .foregroundColor: text]
+                        fe.insertionPointColor = controlTint
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// A check box drawn in the look (`Theme.checkbox`): Atelier's ruled square with a saltire, elsewhere a rounded box filled with the look's colour and a tick.
+final class ThemedCheckCell: NSButtonCell {
+    override func drawImage(_ image: NSImage, withFrame frame: NSRect, in controlView: NSView) {
+        guard let ctx = NSGraphicsContext.current?.cgContext else { return super.drawImage(image, withFrame: frame, in: controlView) }
+        let side: CGFloat = min(14, min(frame.width, frame.height))
+        let r = NSRect(x: frame.midX - side / 2, y: frame.midY - side / 2, width: side, height: side).integral.insetBy(dx: 0.5, dy: 0.5)
+        let on = state == .on, mixed = state == .mixed
+        MainActor.assumeIsolated {
+            if Theme.activeStyle == .atelier {
+                Atelier.checkbox(ctx, r, on: on, enabled: isEnabled, flipped: controlView.isFlipped)
+                return
+            }
+            let tint = Theme.controlTint
+            let box = NSBezierPath(roundedRect: r, xRadius: 3.5, yRadius: 3.5)
+            ctx.saveGState()
+            if !isEnabled { ctx.setAlpha(0.45) }
+            if on || mixed {
+                (isHighlighted ? tint.blended(withFraction: 0.25, of: .black) ?? tint : tint).setFill(); box.fill()
+                let mark = NSBezierPath()
+                if mixed { mark.move(to: NSPoint(x: r.minX + 3.5, y: r.midY)); mark.line(to: NSPoint(x: r.maxX - 3.5, y: r.midY)) }
+                else {
+                    let f = controlView.isFlipped
+                    func p(_ x: CGFloat, _ y: CGFloat) -> NSPoint { NSPoint(x: r.minX + x * r.width, y: f ? r.minY + y * r.height : r.maxY - y * r.height) }
+                    mark.move(to: p(0.25, 0.52)); mark.line(to: p(0.43, 0.70)); mark.line(to: p(0.76, 0.30))
+                }
+                mark.lineWidth = 1.8; mark.lineCapStyle = .round; mark.lineJoinStyle = .round
+                (Theme.isLight(tint) ? NSColor.black.withAlphaComponent(0.8) : NSColor.white).setStroke(); mark.stroke()
+            } else {
+                Theme.ink(isHighlighted ? 0.14 : 0.06).setFill(); box.fill()
+                Theme.ink(0.42).setStroke(); box.lineWidth = 1; box.stroke()
+            }
+            ctx.restoreGState()
+        }
+    }
+}
+
+extension Theme {
+    /// A light colour wants dark marks on it (relative luminance above about 0.5).
+    nonisolated static func isLight(_ c: NSColor) -> Bool {
+        guard let s = c.usingColorSpace(.sRGB) else { return false }
+        return 0.2126 * s.redComponent + 0.7152 * s.greenComponent + 0.0722 * s.blueComponent > 0.55
+    }
+}
+
+extension Theme {
+    /// A check box drawn in the look rather than in the system's blue.
+    static func checkbox(_ title: String, target: AnyObject? = nil, action: Selector? = nil) -> NSButton {
+        let b = NSButton(checkboxWithTitle: title, target: nil, action: nil)
+        let font = b.font
+        let cell = ThemedCheckCell(textCell: title)
+        cell.setButtonType(.switch)
+        cell.font = font
+        b.cell = cell
+        b.target = target; b.action = action
+        return b
+    }
+}

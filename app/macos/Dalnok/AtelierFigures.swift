@@ -124,9 +124,12 @@ final class FigureClock {
     private func tick() {
         let now = CACurrentMediaTime(), dt = min(0.1, now - last)
         last = now
-        guard !Motion.reduced else { return }
+        // Held while Dalnok is in the background or under Reduce Motion; a figure moves only while some of it shows
+        // (scrolled out of the device panel, hidden, or in a minimised or covered window it costs nothing).
+        guard !Motion.reduced, NSApp.isActive else { return }
         for s in screens.allObjects {
-            guard let w = s.window, w.occlusionState.contains(.visible), !s.isHiddenOrHasHiddenAncestor else { continue }
+            guard let w = s.window, w.isVisible, !w.isMiniaturized, w.occlusionState.contains(.visible),
+                  !s.isHiddenOrHasHiddenAncestor, !s.visibleRect.isEmpty else { continue }
             s.advanceFigure(dt)
         }
     }

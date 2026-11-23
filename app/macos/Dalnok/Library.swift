@@ -26,7 +26,7 @@ final class LibraryPanel: SidePanelView, NSOutlineViewDataSource, NSOutlineViewD
     var onTakeFile: ((URL) -> Void)?
     /// The saved project's folder, the Files place's first entry.
     var projectFolder: () -> URL? = { nil }
-    let previewToggle = NSButton(checkboxWithTitle: "Preview audio on click", target: nil, action: nil)
+    let previewToggle = Theme.checkbox("Preview audio on click")
     private var searchToken = 0
     var onMessage: ((String) -> Void)?
     let resizeEdge = PanelResizeEdge(direction: 1)

@@ -14,6 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var main: MainWindowController!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        Theme.installControlTint()
         let args0 = CommandLine.arguments
         // Match System: Prism and Atelier follow macOS between light and dark.
         DistributedNotificationCenter.default().addObserver(forName: Notification.Name("AppleInterfaceThemeChangedNotification"), object: nil, queue: .main) { _ in
@@ -109,11 +110,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let audio = files.filter { $0.pathExtension != "dalnok" && !foreign.contains($0) }
 
         if let f = foreign.first { main.importProject(f, confirm: false) }
-        if interactiveLaunch { DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in self?.main.offerCrashRecovery(previousRecovery) } }
+        let offerRecovery = { [weak self] in
+            guard let self, interactiveLaunch, !previousRecovery.isEmpty else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in self?.main.offerCrashRecovery(previousRecovery) }
+        }
         if interactiveLaunch && Theme.look.tapeDeck && !Motion.reduced { main.vfdTestUntil = Date().addingTimeInterval(0.6) }
         if files.isEmpty && snapshot == nil && !args.contains("--no-welcome") && !WelcomeController.hasCompleted {
+            // First launch asks its questions first; a recovery offer waits until they are answered or closed.
+            main.shortcutChooser.onFinished = offerRecovery
             main.shortcutChooser.show()
-        }
+        } else { offerRecovery() }
         let finish = { [weak self] in
             guard let self else { return }
             if let dir = value("--uiwalk") {

@@ -273,6 +273,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         window.delegate = self
 
         let root = DropView()
+        root.onDragHover = { [weak self] on in self?.emptyState.dropTargeted = on }
         root.onDrop = { [weak self] urls in
             guard let self else { return }
             if let project = urls.first(where: { Self.foreignExtensions.contains($0.pathExtension.lowercased()) || $0.hasDirectoryPath }) {
@@ -658,7 +659,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
     // MARK: Model → UI
 
+    private var tintPending = false
     private func modelChanged() {
+        if !tintPending { // rows rebuilt by this change (Inspector, start page) take the look's colour, once per pass
+            tintPending = true
+            DispatchQueue.main.async { [weak self] in self?.tintPending = false; Theme.tintControls(in: self?.window?.contentView) }
+        }
         headers.sync()
         timeline.clampScrollY()
         // Show the empty state or the arrangement; crossfade only when that actually changes.
@@ -1653,6 +1659,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         transport.libraryButton.isEnabled = !empty
         transport.inspectorButton.isEnabled = !empty
         let lib = Self.showLibrary && !empty, insp = Self.showInspector && !empty
+        // The mixer too: an empty project has only the Master strip, which showed through beside the page.
+        let mix = Self.showMixer && !empty
+        if mix { mixer.isHidden = false; mixer.rebuild() }
+        if !animated || Motion.reduced { mixerHeight.constant = mix ? MixerPanel.height : 0; mixer.isHidden = !mix }
+        else {
+            let panel = mixer
+            Motion.views(Motion.gentle, { self.mixerHeight.animator().constant = mix ? MixerPanel.height : 0 }, completion: {
+                DispatchQueue.main.async { MainActor.assumeIsolated { if self.sidePanelsSuppressed == empty && !mix { panel.isHidden = true } } }
+            })
+        }
         if lib { library.load() }
         if insp { inspector.track = selectedTrack; inspector.reload() }
         for (panel, width, open, stored) in [(library as NSView, libraryWidth!, lib, LibraryPanel.storedWidth),
@@ -2057,6 +2073,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     @objc func toggleMixer(_ sender: Any?) {
         Self.showMixer.toggle()
         syncViewButtons()
+        guard !sidePanelsSuppressed else { return } // remembered; it opens with the first track
         let show = Self.showMixer
         if show { mixer.isHidden = false; mixer.rebuild(); mixer.select(selectedTrack) }
         let panel = mixer
@@ -2516,11 +2533,18 @@ final class DropView: NSView {
         }
     }
 
+    /// Files are being dragged over the window (the start page draws its drop zone only then).
+    var onDragHover: ((Bool) -> Void)?
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-        audioURLs(sender).isEmpty ? [] : .copy
+        let ok = !audioURLs(sender).isEmpty
+        onDragHover?(ok)
+        return ok ? .copy : []
     }
+    override func draggingExited(_ sender: NSDraggingInfo?) { onDragHover?(false) }
+    override func draggingEnded(_ sender: NSDraggingInfo) { onDragHover?(false) }
 
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        onDragHover?(false)
         let urls = audioURLs(sender)
         guard !urls.isEmpty else { return false }
         onDrop?(urls)

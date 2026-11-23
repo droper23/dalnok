@@ -283,6 +283,19 @@ enum Screenshots {
             w.settings.show(.general)
             try? await Task.sleep(for: .seconds(0.4))
             if let v = w.settings.window?.contentView { png(v, dir.appendingPathComponent("09-settings.png")) }
+            if ProcessInfo.processInfo.environment["DALNOK_GALLERY_SETTINGS"] != nil { // every page, and a search
+                for pane in SettingsController.Pane.allCases where pane != .general {
+                    w.settings.show(pane)
+                    try? await Task.sleep(for: .seconds(0.25))
+                    if let v = w.settings.window?.contentView { png(v, dir.appendingPathComponent("09-settings-\(pane).png")) }
+                }
+                w.settings.search.stringValue = "meter"
+                w.settings.searchChanged(nil)
+                try? await Task.sleep(for: .seconds(0.25))
+                if let v = w.settings.window?.contentView { png(v, dir.appendingPathComponent("09-settings-search.png")) }
+                w.settings.search.stringValue = ""
+                w.settings.searchChanged(nil)
+            }
             w.settings.window?.orderOut(nil)
             w.showCommandPalette(nil)
             w.palette.filter("mix")

@@ -530,7 +530,11 @@ extension SelfTest {
         w.shortcutChooser.continueTapped()
         await wait(0.1)
         check(w.shortcutChooser.step == .shortcuts && centered(w.shortcutChooser.window) && w.shortcutChooser.cards.count == 6, "then it asks which shortcuts you know (6 apps; \(w.shortcutChooser.cards.count) cards, frame \(w.shortcutChooser.window.frame), screen \(String(describing: (w.window?.screen ?? NSScreen.main)?.visibleFrame)))")
+        var recoveryOffered = 0
+        w.shortcutChooser.onFinished = { recoveryOffered += 1 }
+        check(recoveryOffered == 0, "a crash-recovery offer waits while the first-launch questions are open")
         w.shortcutChooser.choose("protools")
+        check(recoveryOffered == 1, "and is made once they are answered (\(recoveryOffered) offers)")
         check(ShortcutRegistry.shared.presetId == "protools" && !w.shortcutChooser.window.isVisible && WelcomeController.hasCompleted,
               "choosing Pro Tools applies its shortcuts and closes the window (preset \(ShortcutRegistry.shared.presetId))")
         w.shortcutChooser.choose("logic")

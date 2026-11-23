@@ -151,6 +151,7 @@ final class DevicePanel: NSView {
         empty.lineBreakMode = .byTruncatingTail
         addButton.target = self
         addButton.action = #selector(addTapped)
+        emptyCard.onAdd = { [weak self] in self?.addTapped() }
         for v in [scroll, emptyCard] as [NSView] { v.translatesAutoresizingMaskIntoConstraints = false; addSubview(v) }
         for v in [emptyTitle, empty, addButton] as [NSView] { v.translatesAutoresizingMaskIntoConstraints = false; emptyCard.addSubview(v) }
         NSLayoutConstraint.activate([
@@ -162,11 +163,11 @@ final class DevicePanel: NSView {
             doc.widthAnchor.constraint(greaterThanOrEqualTo: scroll.contentView.widthAnchor),
             emptyCard.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Theme.look.pedalboard ? 64 : 12),
             emptyCard.centerYAnchor.constraint(equalTo: centerYAnchor),
-            emptyCard.widthAnchor.constraint(equalToConstant: schematic ? 560 : 360), emptyCard.heightAnchor.constraint(equalToConstant: schematic ? 150 : 132),
+            emptyCard.widthAnchor.constraint(equalToConstant: 560), emptyCard.heightAnchor.constraint(equalToConstant: schematic ? 150 : 132),
             emptyTitle.leadingAnchor.constraint(equalTo: emptyCard.leadingAnchor, constant: schematic ? 20 : 16),
             emptyTitle.topAnchor.constraint(equalTo: emptyCard.topAnchor, constant: schematic ? 18 : 14),
             empty.leadingAnchor.constraint(equalTo: emptyTitle.leadingAnchor),
-            empty.trailingAnchor.constraint(equalTo: emptyCard.leadingAnchor, constant: schematic ? 250 : 344),
+            empty.trailingAnchor.constraint(equalTo: emptyCard.leadingAnchor, constant: 250),
             empty.topAnchor.constraint(equalTo: emptyTitle.bottomAnchor, constant: 10),
             addButton.leadingAnchor.constraint(equalTo: emptyTitle.leadingAnchor),
             addButton.topAnchor.constraint(equalTo: empty.bottomAnchor, constant: 10),
@@ -1920,7 +1921,7 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
     func numberOfRows(in tableView: NSTableView) -> Int { pickerRows.count }
     func tableView(_ tableView: NSTableView, viewFor col: NSTableColumn?, row: Int) -> NSView? {
         let p = pickerRows[row]
-        let b = NSButton(checkboxWithTitle: fixedString(p.title), target: self, action: #selector(checkToggled(_:)))
+        let b = Theme.checkbox(fixedString(p.title), target: self, action: #selector(checkToggled(_:)))
         b.tag = row
         b.state = controlIds.contains(p.id) ? .on : .off
         b.isEnabled = !p.read_only
@@ -1933,8 +1934,124 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
 @MainActor
 final class EmptyChainCard: NSView {
     override var isFlipped: Bool { true }
+    /// A click on the empty slot adds a plug-in (as the button beside it does).
+    var onAdd: (() -> Void)?
+    private let pulse = CALayer()
+    /// The figure's area: the right part of the card, beside the words and the button.
+    private var figureRect: CGRect { CGRect(x: 262, y: 14, width: bounds.width - 274, height: bounds.height - 28) }
+    private var slotRect: CGRect { let f = figureRect; return CGRect(x: f.midX - 46, y: f.minY + 8, width: 92, height: f.height - 16) }
+
+    override func mouseDown(with event: NSEvent) {
+        if slotRect.insetBy(dx: -6, dy: -6).contains(convert(event.locationInWindow, from: nil)) { onAdd?() } else { super.mouseDown(with: event) }
+    }
+    override func resetCursorRects() { addCursorRect(slotRect, cursor: .pointingHand) }
+    override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); startPulse() }
+    override var isHidden: Bool { didSet { startPulse() } }
+    override func layout() { super.layout(); startPulse() }
+
+    /// The signal's path through the empty slot, in this view's (flipped) coordinates.
+    private func signalPath() -> CGPath {
+        let f = figureRect, y = f.midY, p = CGMutablePath()
+        p.move(to: CGPoint(x: f.minX + 22, y: y))
+        if Theme.look.pedalboard { // a patch cable sagging between the jacks
+            p.addCurve(to: CGPoint(x: f.maxX - 22, y: y), control1: CGPoint(x: f.minX + f.width * 0.3, y: f.maxY + 6),
+                       control2: CGPoint(x: f.minX + f.width * 0.7, y: f.maxY + 6))
+        } else { p.addLine(to: CGPoint(x: f.maxX - 22, y: y)) }
+        return p
+    }
+
+    /// A point of light travels the signal's path (each look's own: a phosphor dot, a lamp glint, a spectral bead).
+    private func startPulse() {
+        pulse.removeAllAnimations()
+        guard window != nil, !isHidden, Theme.look.devices != .schematic, bounds.width > 400, !Motion.reduced, !SelfTest.running else { pulse.isHidden = true; return }
+        wantsLayer = true
+        if pulse.superlayer == nil { layer?.addSublayer(pulse) }
+        pulse.isHidden = false
+        let size: CGFloat = Theme.look.devices == .cards ? 7 : 5
+        pulse.bounds = CGRect(x: 0, y: 0, width: size, height: size)
+        pulse.cornerRadius = size / 2
+        let c = Theme.look.devices == .cards ? Theme.hex(0x9FE8FF) : Theme.look.pedalboard ? Theme.hex(0xFFB866) : Theme.controlTint
+        pulse.backgroundColor = c.cgColor
+        pulse.shadowColor = c.cgColor; pulse.shadowRadius = 5; pulse.shadowOpacity = 0.9; pulse.shadowOffset = .zero
+        // The layer's own coordinates are not flipped: mirror the path.
+        var flip = CGAffineTransform(a: 1, b: 0, c: 0, d: -1, tx: 0, ty: bounds.height)
+        let path = isFlipped ? (signalPath().copy(using: &flip) ?? signalPath()) : signalPath()
+        let move = CAKeyframeAnimation(keyPath: "position")
+        move.path = path
+        move.calculationMode = .paced
+        let fade = CAKeyframeAnimation(keyPath: "opacity")
+        fade.values = [0, 1, 1, 0]; fade.keyTimes = [0, 0.12, 0.85, 1]
+        let group = CAAnimationGroup()
+        group.animations = [move, fade]
+        group.duration = 2.4
+        group.repeatCount = .infinity
+        group.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        pulse.add(group, forKey: "signal")
+    }
+
     override func draw(_ dirtyRect: NSRect) {
-        guard Theme.look.devices == .schematic, let ctx = NSGraphicsContext.current?.cgContext else { return }
+        guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+        if Theme.look.devices == .schematic { return drawPlate(ctx) }
+        let f = figureRect, slot = slotRect, y = f.midY
+        guard f.width > 120 else { return }
+        let path = signalPath()
+        switch Theme.look.devices {
+        case .pedalboard: // Warm Analog: a cable from IN to OUT with nothing patched, and the outline of a pedal to come
+            ctx.saveGState()
+            ctx.addPath(path); ctx.setStrokeColor(NSColor.black.withAlphaComponent(0.55).cgColor); ctx.setLineWidth(5); ctx.setLineCap(.round); ctx.strokePath()
+            ctx.addPath(path); ctx.setStrokeColor(Theme.hex(0x3A4A5C).cgColor); ctx.setLineWidth(3.4); ctx.strokePath()
+            ctx.addPath(path); ctx.setStrokeColor(NSColor.white.withAlphaComponent(0.18).cgColor); ctx.setLineWidth(0.8); ctx.strokePath()
+            ctx.restoreGState()
+            Analog.jack(ctx, at: CGPoint(x: f.minX + 16, y: y), radius: 6)
+            Analog.jack(ctx, at: CGPoint(x: f.maxX - 16, y: y), radius: 6)
+            let pedal = NSBezierPath(roundedRect: slot, xRadius: 7, yRadius: 7)
+            Theme.hex(0x2A211B).withAlphaComponent(0.85).setFill(); pedal.fill()
+            pedal.lineWidth = 1.2; pedal.setLineDash([5, 4], count: 2, phase: 0)
+            Theme.hex(0xC9A36B).withAlphaComponent(0.55).setStroke(); pedal.stroke()
+            let foot = NSRect(x: slot.midX - 9, y: slot.maxY - 26, width: 18, height: 18)
+            let fs = NSBezierPath(ovalIn: foot); fs.lineWidth = 1; fs.setLineDash([3, 3], count: 2, phase: 0); fs.stroke()
+            label("IN", CGPoint(x: f.minX + 16, y: y - 22), Theme.hex(0xC9A36B))
+            label("OUT", CGPoint(x: f.maxX - 16, y: y - 22), Theme.hex(0xC9A36B))
+        case .cards: // Prism: a beam of light entering an empty glass card and leaving it unchanged
+            ctx.saveGState()
+            ctx.addPath(path); ctx.setLineWidth(2.2); ctx.replacePathWithStrokedPath(); ctx.clip()
+            ctx.drawLinearGradient(Prism.spectrumGradient, start: CGPoint(x: f.minX, y: y), end: CGPoint(x: f.maxX, y: y), options: [])
+            ctx.restoreGState()
+            let card = NSBezierPath(roundedRect: slot, xRadius: 12, yRadius: 12)
+            Theme.ink(0.05).setFill(); card.fill()
+            card.lineWidth = 1.2; card.setLineDash([5, 4], count: 2, phase: 0)
+            Theme.ink(0.35).setStroke(); card.stroke()
+            label("in", CGPoint(x: f.minX + 22, y: y - 20), Theme.textDim)
+            label("out", CGPoint(x: f.maxX - 22, y: y - 20), Theme.textDim)
+        default: // Graphite: an empty rack slot on a trace line, on a faint dot grid
+            Theme.ink(0.07).setFill()
+            var gx = f.minX; while gx <= f.maxX { var gy = f.minY; while gy <= f.maxY { NSRect(x: gx, y: gy, width: 1, height: 1).fill(); gy += 8 }; gx += 8 }
+            ctx.addPath(path); ctx.setStrokeColor(Theme.controlTint.withAlphaComponent(0.7).cgColor); ctx.setLineWidth(1.5); ctx.strokePath()
+            for x in [f.minX + 22, f.maxX - 22] { Theme.controlTint.setFill(); NSBezierPath(ovalIn: NSRect(x: x - 3, y: y - 3, width: 6, height: 6)).fill() }
+            let rack = NSBezierPath(roundedRect: slot, xRadius: 4, yRadius: 4)
+            Theme.hex(0x16181D).setFill(); rack.fill()
+            rack.lineWidth = 1; rack.setLineDash([4, 3], count: 2, phase: 0)
+            Theme.ink(0.35).setStroke(); rack.stroke()
+            for dy in [slot.minY + 8, slot.maxY - 12] { for dx in [slot.minX + 6, slot.maxX - 10] {
+                Theme.ink(0.18).setStroke(); NSBezierPath(ovalIn: NSRect(x: dx, y: dy, width: 4, height: 4)).stroke() } }
+            label("IN", CGPoint(x: f.minX + 22, y: y - 20), Theme.textDim)
+            label("OUT", CGPoint(x: f.maxX - 22, y: y - 20), Theme.textDim)
+        }
+        // The slot's plus, which is also a button.
+        let plus = NSBezierPath(), c = CGPoint(x: slot.midX, y: Theme.look.pedalboard ? slot.minY + 26 : slot.midY), k: CGFloat = 8
+        plus.move(to: CGPoint(x: c.x - k, y: c.y)); plus.line(to: CGPoint(x: c.x + k, y: c.y))
+        plus.move(to: CGPoint(x: c.x, y: c.y - k)); plus.line(to: CGPoint(x: c.x, y: c.y + k))
+        plus.lineWidth = 1.6; plus.lineCapStyle = .round
+        Theme.text.withAlphaComponent(0.7).setStroke(); plus.stroke()
+    }
+    private func label(_ s: String, _ center: CGPoint, _ color: NSColor) {
+        let a: [NSAttributedString.Key: Any] = [.font: Theme.ui(9, .semibold), .foregroundColor: color, .kern: 0.8]
+        let z = (s as NSString).size(withAttributes: a)
+        (s as NSString).draw(at: CGPoint(x: center.x - z.width / 2, y: center.y - z.height / 2), withAttributes: a)
+    }
+
+    /// Atelier: the empty plate with the signal's course drawn through an empty slot.
+    private func drawPlate(_ ctx: CGContext) {
         let inner = Atelier.hardware(ctx, bounds, accent: Atelier.vermilion, dimmed: false, seed: 33)
         // The figure, in the right part of the plate.
         let fig = CGRect(x: inner.minX + 262, y: inner.minY + 12, width: inner.maxX - inner.minX - 274, height: inner.height - 40)

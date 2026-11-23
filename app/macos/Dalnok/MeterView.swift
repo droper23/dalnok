@@ -23,11 +23,15 @@ final class MeterView: NSView {
         last = now
         func db(_ x: Float) -> Float { x > 0 ? 20 * log10(x) : -120 }
         func step(_ cur: Float, _ peak: Float) -> Float { max(peak, cur - 24 * dt) }
+        let before = (levelDb, holdDb, clipped)
         levelDb = (step(levelDb.0, db(l)), step(levelDb.1, db(r)))
         if levelDb.0 >= holdDb.0 || now - holdTime.0 > 1.5 { holdDb.0 = levelDb.0; holdTime.0 = now }
         if levelDb.1 >= holdDb.1 || now - holdTime.1 > 1.5 { holdDb.1 = levelDb.1; holdTime.1 = now }
         if l >= 1 || r >= 1 { clipped = true }
-        needsDisplay = true
+        // Silence and a settled meter draw nothing new (the review: 60 redraws a second of an unchanged meter).
+        func shown(_ d: Float) -> Float { max(Self.floorDb - 1, d) }
+        if shown(before.0.0) != shown(levelDb.0) || shown(before.0.1) != shown(levelDb.1) || shown(before.1.0) != shown(holdDb.0)
+            || shown(before.1.1) != shown(holdDb.1) || before.2 != clipped { needsDisplay = true }
     }
 
     func resetClip() { clipped = false; needsDisplay = true }

@@ -1,20 +1,24 @@
-// Settings: every preference in one window, grouped by what it affects (General, Appearance, Audio & MIDI,
-// Recording, Plug-ins, Keyboard Shortcuts). Changes apply at once; the theme switches live.
+// Settings: every preference in one window, a page per thing it affects (General, Appearance, Audio, MIDI, Recording,
+// Plug-ins, Keyboard Shortcuts, Files and Library, Advanced), with a search across every page. Changes apply at once;
+// the theme switches live. Rows that only one look draws (a rack unit's wear and meters) show only in that look.
 // SPDX-License-Identifier: GPL-3.0-or-later
 import AppKit
 
 @MainActor
 final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDelegate {
     enum Pane: Int, CaseIterable {
-        case general, appearance, audio, recording, plugins, shortcuts
+        case general, appearance, audio, midi, recording, plugins, shortcuts, files, advanced
         var title: String {
             switch self {
             case .general: "General"
             case .appearance: "Appearance"
-            case .audio: "Audio & MIDI"
+            case .audio: "Audio"
+            case .midi: "MIDI"
             case .recording: "Recording"
             case .plugins: "Plug-ins"
             case .shortcuts: "Keyboard Shortcuts"
+            case .files: "Files and Library"
+            case .advanced: "Advanced"
             }
         }
         var symbol: String {
@@ -22,9 +26,12 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
             case .general: "gearshape"
             case .appearance: "paintbrush"
             case .audio: "hifispeaker"
+            case .midi: "pianokeys"
             case .recording: "record.circle"
             case .plugins: "puzzlepiece.extension"
             case .shortcuts: "keyboard"
+            case .files: "folder"
+            case .advanced: "wrench.and.screwdriver"
             }
         }
     }
@@ -69,6 +76,16 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
     let readoutsFade = SettingsController.checkbox("Readouts fade with the other lights (otherwise they switch off at once)")
     let selectionGlow = SettingsController.checkbox("Outline the selected plug-in")
     let gainRings = SettingsController.checkbox("Gain knobs light up with their track's level")
+    /// The device panel's height above its smallest (the same as dragging its top edge).
+    let panelHeight = NSSlider(value: 0, minValue: Double(DevicePanel.extraRange.lowerBound), maxValue: Double(DevicePanel.extraRange.upperBound), target: nil, action: nil)
+    // Files and Library
+    let libraryPreview = SettingsController.checkbox("Play an audio file when it is clicked in Library ▸ Files")
+    private let libraryFolders = NSStackView()
+    /// Search across every page: the words of each row, by page.
+    let search = NSSearchField()
+    private var searchIndex: [(pane: Pane, text: String, label: NSTextField?)] = []
+    private var rowsOnlyFor: [(rows: [NSGridRow], when: () -> Bool)] = []
+    private(set) var matches: [Pane] = []
     private var sliderValues: [NSSlider: (NSTextField, (Double) -> String)] = [:]
     /// The keyboard-shortcut editor, shown in its own pane.
     let shortcuts = ShortcutEditorController()
@@ -108,6 +125,15 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
         sidebar.edgeInsets = NSEdgeInsets(top: 16, left: 10, bottom: 10, right: 10)
         sidebar.wantsLayer = true
         sidebar.layer?.backgroundColor = Theme.window.cgColor
+        search.placeholderString = "Search Settings"
+        search.sendsSearchStringImmediately = true
+        search.target = self; search.action = #selector(searchChanged(_:))
+        search.controlSize = .small
+        search.translatesAutoresizingMaskIntoConstraints = false
+        search.widthAnchor.constraint(equalToConstant: 170).isActive = true
+        search.setAccessibilityLabel("Search Settings")
+        sidebar.addArrangedSubview(search)
+        sidebar.setCustomSpacing(10, after: search)
         for p in Pane.allCases {
             // Symbols centred in one fixed-width box, so every title starts at the same x (the audit: ragged labels).
             let b = NSButton(title: "  " + p.title, image: Self.fixedSymbol(p.symbol, width: 20),
@@ -129,7 +155,7 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
                 b.layer?.addSublayer(rule)
             }
             b.translatesAutoresizingMaskIntoConstraints = false
-            b.heightAnchor.constraint(equalToConstant: 30).isActive = true
+            b.heightAnchor.constraint(equalToConstant: 28).isActive = true
             b.widthAnchor.constraint(equalToConstant: 170).isActive = true
             b.setAccessibilityLabel(p.title)
             sidebarButtons.append(b)
@@ -171,6 +197,7 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
         pane = p
         paneHost.subviews.forEach { $0.removeFromSuperview() }
         guard let v = paneViews[p] else { return }
+        Theme.tintControls(in: v)
         v.translatesAutoresizingMaskIntoConstraints = false
         paneHost.addSubview(v)
         NSLayoutConstraint.activate([
@@ -190,7 +217,7 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
 
     /// A check box in the sheet's label style (the audit: two were set larger, in another face).
     static func checkbox(_ title: String) -> NSButton {
-        let b = NSButton(checkboxWithTitle: title, target: nil, action: nil)
+        let b = Theme.checkbox(title)
         b.font = Theme.look.mixer == .instrument ? Theme.title(13) : Theme.ui(12)
         return b
     }
@@ -234,7 +261,8 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
         return s
     }
     /// A pane: a title, then rows of (label, control, optional explanation) in a form grid.
-    private func pane(_ title: String, _ intro: String, _ rows: [(String, NSView, String?)]) -> NSView {
+    private func pane(_ id: Pane, _ title: String, _ intro: String, _ rows: [(String, NSView, String?)],
+                      onlyFor: [String: () -> Bool] = [:]) -> NSView {
         let v = FlippedView()
         let heading = NSTextField(labelWithString: title)
         heading.font = Theme.ui(20, .semibold)
@@ -243,13 +271,20 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
         let grid = NSGridView()
         grid.rowSpacing = 6
         grid.columnSpacing = 14
+        searchIndex.append((id, title + " " + intro, nil))
         for (name, control, explain) in rows {
             let l = label(name)
             // VoiceOver names the control by its row label (unless it already has its own name).
             if (control.accessibilityLabel() ?? "").isEmpty { control.setAccessibilityTitleUIElement(l) }
+            let first = grid.numberOfRows
             grid.addRow(with: [l, control])
-            if let explain { grid.addRow(with: [NSGridCell.emptyContentView, note(explain)]) }
+            let e = explain.map(note)
+            if let e { grid.addRow(with: [NSGridCell.emptyContentView, e]) }
             if let r = grid.row(at: grid.numberOfRows - 1) as NSGridRow? { r.bottomPadding = 10 }
+            let words = [name, (control as? NSButton)?.title ?? "", control.toolTip ?? "", explain ?? "",
+                         (control as? NSPopUpButton)?.itemTitles.joined(separator: " ") ?? ""].joined(separator: " ")
+            searchIndex.append((id, words, l))
+            if let when = onlyFor[name] { rowsOnlyFor.append(((first..<grid.numberOfRows).map { grid.row(at: $0) }, when)) }
         }
         grid.column(at: 0).xPlacement = .trailing
         grid.column(at: 0).width = 150
@@ -305,11 +340,15 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
         copyAudio.toolTip = "Keeps saved projects easier to move between computers."
         automationMode.addItems(withTitles: ["Read", "Touch", "Latch"])
         automationMode.target = self; automationMode.action = #selector(automationChanged(_:))
-        paneViews[.general] = pane("General", "How Dalnok saves, writes automation and speaks your old DAW's language.", [
+        for (b, sel) in [(readoutsFade, #selector(readoutsChanged(_:))), (selectionGlow, #selector(selectionChanged(_:))),
+                         (gainRings, #selector(gainRingsChanged(_:))), (showHints, #selector(showHintsChanged(_:))),
+                         (libraryPreview, #selector(libraryPreviewChanged(_:)))] { b.target = self; b.action = sel }
+        paneViews[.general] = pane(.general, "General", "How Dalnok writes automation, explains itself and speaks your old DAW's language.", [
             ("Coming from", comingFrom, "The command palette and Concept Guide also answer to that DAW's words for things."),
-            ("Projects", copyAudio, nil),
             ("Automation", automationMode, "Read plays automation. Touch writes while you hold a control during playback; Latch keeps writing until the transport stops."),
+            ("Hints", showHints, "Like a hover tooltip without the wait: every button, knob and clip edge says what it does."),
             ("Welcome", smallButton("Show the Welcome Guide", #selector(showWelcome)), nil),
+            ("First launch", smallButton("Choose Look and Shortcuts Again…", #selector(showFirstLaunch)), nil),
         ])
         // Appearance
         for s in Theme.Style.allCases { themePicker.addItem(withTitle: s.title) }
@@ -328,7 +367,17 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
         trackHeight.target = self; trackHeight.action = #selector(trackHeightChanged(_:))
         trackHeight.widthAnchor.constraint(equalToConstant: 200).isActive = true
         trackHeightValue.font = Theme.mono(11); trackHeightValue.textColor = Theme.textDim
-        paneViews[.appearance] = pane("Appearance", "The look of Dalnok and how the arrangement is laid out.", [
+        deviceMeters.target = self; deviceMeters.action = #selector(metersChanged(_:))
+        deviceMeters.title = "Show input and output meters on each unit"
+        deviceMeters.toolTip = "Thin level meters on each plug-in's faceplate in the device panel"
+        wear.toolTip = "Scratches and grime on the metal, dust and smudges on the displays' glass"
+        wear.setAccessibilityLabel("Plug-in wear")
+        vuBallistics.addItems(withTitles: ["Standard VU (300 ms)", "Fast (100 ms)"])
+        vuBallistics.target = self; vuBallistics.action = #selector(vuChanged(_:))
+        panelHeight.setAccessibilityLabel("Device panel height")
+        let pct: (Double) -> String = { String(format: "%.0f%%", $0 * 100) }, secs: (Double) -> String = { String(format: "%.1f s", $0) }
+        let rack = { Theme.look.devices == .rack } // the faceplate rows: Graphite's rack units only
+        paneViews[.appearance] = pane(.appearance, "Appearance", "The look of Dalnok and how the arrangement and plug-ins are laid out.", [
             ("Theme", themePicker, nil),
             ("Light or dark", variantPicker, "Prism and Atelier come in light and dark versions; Graphite and Warm Analog are dark."),
             ("", row([appearanceNote, relaunch]), nil),
@@ -339,58 +388,94 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
              "Drag a track header's bottom edge to size one track (double-click it for the default), or ⌥-scroll over the tracks to size them all."),
             ("Clip bounce", slider(clipBounce, #selector(clipBounceChanged(_:)), { String(format: "%.0f%%", $0 * 100) }, from: "Calm", to: "Bouncy"),
              "How lively dragged, dropped, new and deleted clips move: the lift, the spring between grid steps, the lean and the settle."),
-            ("Hints", showHints, "Like a hover tooltip without the wait: every button, knob and clip edge says what it does."),
+            ("Device panel", slider(panelHeight, #selector(panelHeightChanged(_:)), { "+\(Int($0)) pt" }, from: "Compact", to: "Tall"),
+             "Also by dragging the panel's top edge. Taller panels show more of each plug-in's parameters at once."),
+            ("Selection", selectionGlow, nil),
+            ("Plug-in meters", deviceMeters, nil),
+            ("Peak hold", slider(peakHold, #selector(peakHoldChanged(_:)), secs), "How long the IN/OUT meters hold their highest LED."),
+            ("VU needle", vuBallistics, "The standard movement settles in about 300 ms; the fast one follows transients more closely."),
+            ("Wear", slider(wear, #selector(wearChanged(_:)), pct, from: "New", to: "Well used"),
+             "Scratches and grime on the metal; dust, smudges and an aged VU face behind the glass."),
+            ("Displays", smallButton("Reset Display Choices", #selector(resetDisplays)), "Back to the display Dalnok picks for each plug-in (right-click a unit ▸ Display to choose one)."),
             ("Motion", note("Animations follow System Settings ▸ Accessibility ▸ Display ▸ Reduce motion."), nil),
-        ])
-        // Audio & MIDI
+        ], onlyFor: ["Plug-in meters": rack, "Peak hold": rack, "VU needle": rack, "Wear": rack, "Displays": { Theme.look.devices != .schematic }])
+        // Audio
         for p in [outputPopup, inputPopup] { p.menu?.delegate = self; p.widthAnchor.constraint(equalToConstant: 320).isActive = true }
         outputPopup.menu?.title = "Output Device"
         inputPopup.menu?.title = "Recording Input"
+        paneViews[.audio] = pane(.audio, "Audio", "Where Dalnok plays to and records from.", [
+            ("Output", outputPopup, "The sample rate follows the device."),
+            ("Recording input", inputPopup, "A device with inputs and outputs; Dalnok compensates for the latency it reports."),
+        ])
+        // MIDI
         midiInputs.font = Theme.ui(12); midiInputs.textColor = Theme.text
         midiInputs.preferredMaxLayoutWidth = 380
-        paneViews[.audio] = pane("Audio & MIDI", "Where Dalnok plays to and records from.", [
-            ("Output", outputPopup, nil),
-            ("Recording input", inputPopup, "A device with inputs and outputs; Dalnok compensates for the latency it reports."),
-            ("MIDI inputs", midiInputs, "Every connected MIDI input plays the armed instrument track."),
+        paneViews[.midi] = pane(.midi, "MIDI", "Keyboards and controllers.", [
+            ("MIDI inputs", midiInputs, "Every connected MIDI input plays the armed instrument track. Devices appear here as they are connected."),
         ])
         // Recording
         countIn.target = self; countIn.action = #selector(countInChanged(_:))
         metronome.target = self; metronome.action = #selector(metronomeChanged(_:))
         inputMonitoring.target = self; inputMonitoring.action = #selector(monitoringChanged(_:))
-        paneViews[.recording] = pane("Recording", "What happens when you press Record.", [
+        paneViews[.recording] = pane(.recording, "Recording", "What happens when you press Record.", [
             ("Before recording", countIn, nil),
             ("Click", metronome, "Also on the control bar (K)."),
             ("Monitoring", inputMonitoring, "Use headphones to avoid feedback."),
+            ("Takes", smallButton("Show Recordings in Finder", #selector(showRecordings)), "Every take is written as it records, so a crash or power cut keeps what was played."),
         ])
         // Plug-ins
-        deviceMeters.target = self; deviceMeters.action = #selector(metersChanged(_:))
         isolatePlugins.target = self; isolatePlugins.action = #selector(isolationChanged(_:))
         isolatePlugins.toolTip = "Each third-party plug-in runs in its own process, so a crash or hang can't take Dalnok down"
-        deviceMeters.toolTip = "Thin level meters on each plug-in's faceplate in the device panel"
-        wear.toolTip = "Scratches and grime on the metal, dust and smudges on the displays' glass"
-        wear.setAccessibilityLabel("Plug-in wear")
-        vuBallistics.addItems(withTitles: ["Standard VU (300 ms)", "Fast (100 ms)"])
-        vuBallistics.target = self; vuBallistics.action = #selector(vuChanged(_:))
-        for (b, sel) in [(readoutsFade, #selector(readoutsChanged(_:))), (selectionGlow, #selector(selectionChanged(_:))),
-                         (gainRings, #selector(gainRingsChanged(_:))), (showHints, #selector(showHintsChanged(_:)))] { b.target = self; b.action = sel }
-        let pct: (Double) -> String = { String(format: "%.0f%%", $0 * 100) }, secs: (Double) -> String = { String(format: "%.1f s", $0) }
-        paneViews[.plugins] = pane("Plug-ins", "How plug-ins look and behave in the device panel, and where they come from.", [
-            ("Meters", deviceMeters, nil),
-            ("Peak hold", slider(peakHold, #selector(peakHoldChanged(_:)), secs), "How long the IN/OUT meters hold their highest LED."),
-            ("VU needle", vuBallistics, "The standard movement settles in about 300 ms; the fast one follows transients more closely."),
-            ("Wear", slider(wear, #selector(wearChanged(_:)), pct, from: "New", to: "Well used"),
-             "Scratches and grime on the metal; dust, smudges and an aged VU face behind the glass."),
+        paneViews[.plugins] = pane(.plugins, "Plug-ins", "Where plug-ins come from and how safely they run.", [
+            ("Library", smallButton("Open Plug-in Manager…", #selector(openPlugins)), "Scan, validate, favourite and tag your VST3, CLAP and Audio Unit plug-ins."),
+            ("Safety", isolatePlugins, "A plug-in that crashes or stops responding is switched off and reported instead of stopping Dalnok; Load restarts it. Applies to plug-ins loaded from now on. Each plug-in's editor opens in its own window beside the plug-in window."),
+        ])
+        // Files and Library
+        libraryFolders.orientation = .vertical
+        libraryFolders.alignment = .leading
+        libraryFolders.spacing = 4
+        paneViews[.files] = pane(.files, "Files and Library", "Where projects keep their audio and which folders the Library browses.", [
+            ("Projects", copyAudio, nil),
+            ("Preview", libraryPreview, "Also on the Files place in the Library."),
+            ("Library folders", libraryFolders, "Music, Desktop, Downloads and Home are always listed; add your sample folders here or with Library ▸ Files ▸ Add Folder."),
+            ("Recovery", smallButton("Show Recovery Snapshots in Finder", #selector(showRecovery)), "Dalnok saves a copy of your work every few minutes; after a crash it offers the latest."),
+        ])
+        // Advanced: fine-tuning nobody needs to touch.
+        paneViews[.advanced] = pane(.advanced, "Advanced", "Fine-tuning for how plug-ins move and light. You shouldn't need these.", [
             ("Bypassed: shrink", slider(bypassShrink, #selector(bypassChanged(_:)), pct), "How far a turned-off unit sits back."),
             ("Bypassed: dim", slider(bypassDim, #selector(bypassChanged(_:)), pct), "How much darker a turned-off unit looks."),
             ("Bypass motion", slider(bypassMotion, #selector(bypassChanged(_:)), secs), "How long the unit takes to sit back or come forward."),
             ("Lights fade", slider(lightFade, #selector(bypassChanged(_:)), secs), "How long LEDs, screens and lamps take to go out or warm up (0 s: at once)."),
             ("Readouts", readoutsFade, nil),
-            ("Selection", selectionGlow, nil),
-            ("Displays", smallButton("Reset Display Choices", #selector(resetDisplays)), "Back to the display Dalnok picks for each plug-in (right-click a unit ▸ Display to choose one)."),
-            ("Library", smallButton("Open Plug-in Manager…", #selector(openPlugins)), "Scan, validate, favourite and tag your VST3, CLAP and Audio Unit plug-ins."),
-            ("Safety", isolatePlugins, "A plug-in that crashes or stops responding is switched off and reported instead of stopping Dalnok; Load restarts it. Applies to plug-ins loaded from now on. Each plug-in's editor opens in its own window beside the plug-in window."),
             ("", smallButton("Restore Plug-in Defaults", #selector(restorePluginDefaults)), nil),
         ])
+        searchIndex.append((.shortcuts, "Keyboard Shortcuts keys preset Logic Ableton Pro Tools Cubase Studio One REAPER", nil))
+    }
+
+    /// The Library's added folders, each with a Remove button, then Add Folder.
+    private func refreshLibraryFolders() {
+        libraryFolders.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        for (i, u) in LibraryFiles.userFolders.enumerated() {
+            let name = NSTextField(labelWithString: u.path.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
+            name.font = Theme.ui(12); name.textColor = Theme.text; name.lineBreakMode = .byTruncatingMiddle
+            name.widthAnchor.constraint(lessThanOrEqualToConstant: 300).isActive = true
+            let remove = smallButton("Remove", #selector(removeLibraryFolder(_:)))
+            remove.tag = i
+            remove.setAccessibilityLabel("Remove \(u.lastPathComponent) from the Library")
+            libraryFolders.addArrangedSubview(row([name, remove]))
+        }
+        if LibraryFiles.userFolders.isEmpty { libraryFolders.addArrangedSubview(note("No folders added.")) }
+        libraryFolders.addArrangedSubview(smallButton("Add Folder…", #selector(addLibraryFolder)))
+    }
+
+    /// Search: the pages with a match stay lit in the sidebar, the first one opens, and matching row names light up.
+    @objc func searchChanged(_ sender: Any?) {
+        let q = search.stringValue.trimmingCharacters(in: .whitespaces)
+        let hits = q.isEmpty ? [] : searchIndex.filter { $0.text.range(of: q, options: [.caseInsensitive, .diacriticInsensitive]) != nil }
+        matches = Pane.allCases.filter { p in hits.contains { $0.pane == p } }
+        for b in sidebarButtons { b.alphaValue = q.isEmpty || matches.contains { $0.rawValue == b.tag } ? 1 : 0.35 }
+        for e in searchIndex { e.label?.textColor = hits.contains { $0.label === e.label && e.label != nil } ? Theme.accent : Theme.text }
+        if let first = matches.first, !matches.contains(pane) { select(first) }
     }
 
     // MARK: State
@@ -432,6 +517,10 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
         readoutsFade.state = Faceplate.readoutsFade ? .on : .off
         selectionGlow.state = Faceplate.selectionGlow ? .on : .off
         gainRings.state = GainKnob.showsLevel ? .on : .off
+        panelHeight.doubleValue = Double(DevicePanel.extra)
+        libraryPreview.state = LibraryPreview.enabled ? .on : .off
+        refreshLibraryFolders()
+        for (rows, when) in rowsOnlyFor { let on = when(); rows.forEach { $0.isHidden = !on } }
         showSliderValues()
     }
 
@@ -546,4 +635,40 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
         main?.devicePanel.rebuildAll()
     }
     @objc private func openPlugins() { main?.showPlugins(nil) }
+    @objc private func showFirstLaunch() { main?.shortcutChooser.show() }
+    @objc func panelHeightChanged(_ sender: Any?) {
+        DevicePanel.extra = CGFloat(panelHeight.doubleValue.rounded())
+        showSliderValues()
+        guard let main else { return }
+        main.devicePanel.applyHeight()
+        if NSApp.currentEvent?.type != .leftMouseDragged { main.devicePanel.rebuildAll() } // rebuilt once, when let go
+    }
+    @objc func libraryPreviewChanged(_ sender: Any?) {
+        LibraryPreview.enabled = libraryPreview.state == .on
+        main?.library.previewToggle.state = libraryPreview.state
+    }
+    @objc private func addLibraryFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.allowsMultipleSelection = true
+        panel.prompt = "Add to Library"
+        guard let window else { return }
+        panel.beginSheetModal(for: window) { [weak self] r in
+            guard r == .OK else { return }
+            for u in panel.urls { self?.main?.library.addFolder(u) }
+            self?.refresh()
+        }
+    }
+    @objc private func removeLibraryFolder(_ sender: NSButton) {
+        var folders = LibraryFiles.userFolders
+        guard folders.indices.contains(sender.tag) else { return }
+        folders.remove(at: sender.tag)
+        LibraryFiles.userFolders = folders
+        main?.library.reload()
+        refresh()
+    }
+    @objc private func showRecordings() {
+        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Dalnok/Recordings")
+        NSWorkspace.shared.activateFileViewerSelecting([dir])
+    }
+    @objc private func showRecovery() { if let d = main?.recoveryDirectory { NSWorkspace.shared.activateFileViewerSelecting([d]) } }
 }

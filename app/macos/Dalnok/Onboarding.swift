@@ -36,6 +36,7 @@ private func backed(_ content: NSView) -> NSView {
 /// never stays at its creation origin (the screen's bottom-left corner) or drifts there as its content grows.
 @MainActor
 func showCentered(_ w: NSWindow) {
+    Theme.tintControls(in: w.contentView)
     func place() {
         let screen = (NSApp.delegate as? AppDelegate)?.main?.window?.screen ?? NSScreen.main ?? w.screen
         guard let vf = screen?.visibleFrame else { w.center(); return }
