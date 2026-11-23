@@ -64,8 +64,8 @@ device chain follows the selected track.
 <td align="center"><img src="assets/screenshots/tour-warm-analog.gif" alt="Warm Analog tour" width="100%"><br><sub>Warm Analog · <a href="assets/videos/tour-warm-analog.mp4">video</a></sub></td></tr>
 <tr><td align="center"><img src="assets/screenshots/tour-prism-dark.gif" alt="Prism Dark tour" width="100%"><br><sub>Prism Dark · <a href="assets/videos/tour-prism-dark.mp4">video</a></sub></td>
 <td align="center"><img src="assets/screenshots/tour-prism-light.gif" alt="Prism Light tour" width="100%"><br><sub>Prism Light · <a href="assets/videos/tour-prism-light.mp4">video</a></sub></td></tr>
-<tr><td align="center"><img src="assets/screenshots/tour-atelier-light.gif" alt="Atelier Light tour" width="100%"><br><sub>Atelier Light (before the Codex redesign) · <a href="assets/videos/tour-atelier-light.mp4">video</a></sub></td>
-<td align="center"><img src="assets/screenshots/tour-atelier-dark.gif" alt="Atelier Dark tour" width="100%"><br><sub>Atelier Dark (before the Codex redesign) · <a href="assets/videos/tour-atelier-dark.mp4">video</a></sub></td></tr>
+<tr><td align="center"><img src="assets/screenshots/tour-atelier-light.gif" alt="Atelier Light tour" width="100%"><br><sub>Atelier Light · <a href="assets/videos/tour-atelier-light.mp4">video</a></sub></td>
+<td align="center"><img src="assets/screenshots/tour-atelier-dark.gif" alt="Atelier Dark tour" width="100%"><br><sub>Atelier Dark · <a href="assets/videos/tour-atelier-dark.mp4">video</a></sub></td></tr>
 </table>
 
 ### What makes each theme
@@ -102,8 +102,8 @@ theme, while a 4-bar loop plays:
 <tr><td align="center"><img src="assets/screenshots/plugins-warm-analog.gif" alt="Warm Analog: the same steps with pedals and patch cables" width="100%"><br><sub>Warm Analog: pedals and patch cables · <a href="assets/videos/plugins-warm-analog.mp4">video</a></sub></td></tr>
 <tr><td align="center"><img src="assets/screenshots/plugins-prism-dark.gif" alt="Prism Dark: glass cards on a beam of light" width="100%"><br><sub>Prism Dark: glass cards on a beam of light · <a href="assets/videos/plugins-prism-dark.mp4">video</a></sub></td></tr>
 <tr><td align="center"><img src="assets/screenshots/plugins-prism-light.gif" alt="Prism Light: the same steps on milky glass" width="100%"><br><sub>Prism Light · <a href="assets/videos/plugins-prism-light.mp4">video</a></sub></td></tr>
-<tr><td align="center"><img src="assets/screenshots/plugins-atelier-light.gif" alt="Atelier Light plug-ins, before the Codex redesign" width="100%"><br><sub>Atelier Light (recorded before the Codex redesign; retaken at the next release) · <a href="assets/videos/plugins-atelier-light.mp4">video</a></sub></td></tr>
-<tr><td align="center"><img src="assets/screenshots/plugins-atelier-dark.gif" alt="Atelier Dark plug-ins, before the Codex redesign" width="100%"><br><sub>Atelier Dark (before the Codex redesign) · <a href="assets/videos/plugins-atelier-dark.mp4">video</a></sub></td></tr>
+<tr><td align="center"><img src="assets/screenshots/plugins-atelier-light.gif" alt="Atelier Light: plug-ins as stations on one engraved signal line" width="100%"><br><sub>Atelier Light: stations on one engraved line · <a href="assets/videos/plugins-atelier-light.mp4">video</a></sub></td></tr>
+<tr><td align="center"><img src="assets/screenshots/plugins-atelier-dark.gif" alt="Atelier Dark: the same steps, cream and gold on umber" width="100%"><br><sub>Atelier Dark · <a href="assets/videos/plugins-atelier-dark.mp4">video</a></sub></td></tr>
 </table>
 
 In Atelier the chain is one engraving: each plug-in is a station on the drawn signal line, and its figure is an
