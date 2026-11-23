@@ -5,7 +5,20 @@ milestone: 0.3.0, Phase 4 complete; recording I/O (separate devices, Input Monit
 ---
 # Current State
 
-## Latest (2026-11-22, night): Atelier, the owner's review round
+## Latest (2026-11-22, late night): Atelier plug-ins as one engraving
+Same branch `feat/atelier-polish` (PR #12). The owner found the legend plates still too close to Graphite; decisions
+in `06 - Design/Atelier Audit 2026-11-22.md` (fourth round), design in `06 - Design/Atelier.md`.
+- The chain is one diagram: stations on the signal line, caption at the foot, mercury columns, margin notes, bypass shunt.
+- Figures are instruments dragged by lettered parts (`AtelierFigures.swift`): governor, chamber, pendulum, clipped wave,
+  crank and disc; EQ keeps the Frequency Atlas. Key rows are unit instruments (`FaceplateControl.rowInstrument`).
+- Inspector: insert list "Show all N" past six; Atelier's Fig. 3 runs down the panel and folds long chains.
+- New self-test checks: governor drag raises the threshold; nine inserts list six, Show all lists nine, the figure folds D–H.
+- Gallery frames `14-inspector-long-chain`, `15-figures` (all five figures with sample values).
+- Self-test matrix (explicit rate, `caffeinate -du`), all PASS, 0 FAIL, 15 machine SKIPs each: Graphite 1028 / 1009, Warm Analog 1013 / 994, Prism Dark and Light 1028 / 1009, Atelier Dark and Light 1033 / 1014 (48 / 44.1 kHz). `swift test` 289 pass.
+- **Next:** README media for every theme (scripts/dev/readme-media.sh, screen recording), site screenshots (ask before
+  publishing), then the audit's B4, C5, C6, C7, C12.
+
+## Earlier (2026-11-22, night): Atelier, the owner's review round
 Branch `feat/atelier-polish` (from `main` fbc01ae). No engine or API change (C API 46, format 14).
 - **Plug-ins** (owner: "not a reskin"): Atelier plates keep their figure and show parameters as a lettered key with
   slide-rule scales (`FaceplateControl.legendRows`); switches are Off | On cells; the power key is a knife switch.
