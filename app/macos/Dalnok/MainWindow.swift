@@ -467,6 +467,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             self?.timeline.highlightedTrack = id
             self?.devicePanel.track = id
             self?.inspector.track = id
+            if let self, !self.mixer.isHidden { self.mixer.select(id) } // the mixer marks the same track (audit round 3)
         }
         palette.onOpenGuide = { [weak self] c in self?.conceptGuide.show(daw: c.daw, query: c.term) }
         session.onChange = { [weak self] in self?.modelChanged() }
@@ -1666,7 +1667,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         let lib = Self.showLibrary && !empty, insp = Self.showInspector && !empty
         // The mixer too: an empty project has only the Master strip, which showed through beside the page.
         let mix = Self.showMixer && !empty
-        if mix { mixer.isHidden = false; mixer.rebuild() }
+        if mix { mixer.isHidden = false; mixer.rebuild(); mixer.select(selectedTrack) }
         if !animated || Motion.reduced { mixerHeight.constant = mix ? MixerPanel.height : 0; mixer.isHidden = !mix }
         else {
             let panel = mixer

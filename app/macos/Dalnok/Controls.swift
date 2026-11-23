@@ -145,7 +145,7 @@ final class FaderControl: NSControl {
         ctx.addPath(CGPath(roundedRect: CGRect(x: g.minX, y: capY, width: g.width, height: max(0, g.maxY - capY)),
                            cornerWidth: 2, cornerHeight: 2, transform: nil)); ctx.fillPath()
         // Printed scale: ticks with dB legends (0 longer and brighter), so the fader is calibrated, not decorative.
-        let legend: [NSAttributedString.Key: Any] = [.font: Theme.mono(7.5, .medium), .foregroundColor: Theme.textFaint]
+        let legend: [NSAttributedString.Key: Any] = [.font: Theme.mono(7.5, .medium), .foregroundColor: Theme.textDim]
         for d: Float in [6, 0, -6, -12, -24, -48] {
             let ty = y(for: Self.position(for: d)).rounded()
             let w: CGFloat = d == 0 ? 6 : 3
@@ -184,7 +184,7 @@ final class FaderControl: NSControl {
         ctx.addPath(CGPath(roundedRect: CGRect(x: track.minX, y: capY, width: track.width, height: max(0, track.maxY - capY)), cornerWidth: 1.5, cornerHeight: 1.5, transform: nil))
         ctx.setFillColor(tint.cgColor); ctx.fillPath()
         ctx.restoreGState()
-        let legend: [NSAttributedString.Key: Any] = [.font: Theme.mono(7.5), .foregroundColor: Theme.textFaint]
+        let legend: [NSAttributedString.Key: Any] = [.font: Theme.mono(7.5), .foregroundColor: Theme.textDim] // ≥ 4.5:1 (audit A3)
         for d: Float in [6, 0, -6, -12, -24, -48] {
             let ty = y(for: Self.position(for: d)).rounded()
             ctx.setFillColor(Theme.ink(d == 0 ? 0.5 : 0.2).cgColor)

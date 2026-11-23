@@ -88,10 +88,10 @@ final class CompositionOverview: NSView {
 
     // MARK: Layout
     private let titleH: CGFloat = 50, headerH: CGFloat = 64, nameW: CGFloat = 170, pad: CGFloat = 16
-    /// Rows share the height there is (the audit: with the mixer open only three of eight tracks showed), 18…30 pt.
+    /// Rows share the height there is (the audit: with the mixer open only three of eight tracks showed), 13…30 pt.
     private var rowH: CGFloat {
         let n = max(1, session.tracks.filter { !$0.isStack }.count)
-        return max(18, min(30, (bounds.height - 2 * pad - titleH - headerH - 8) / CGFloat(n)))
+        return max(13, min(30, (bounds.height - 2 * pad - titleH - headerH - 8) / CGFloat(n)))
     }
     private var columns: [CGRect] {
         let total = Double(max(1, (sections.last?.end ?? 1) - (sections.first?.start ?? 0)))
@@ -148,18 +148,20 @@ final class CompositionOverview: NSView {
             let y = pad + titleH + headerH + 8 + CGFloat(k) * rowH
             guard y + rowH <= bounds.height - pad else {
                 let more = tracks.count - k
-                ("+ \(more) more track\(more == 1 ? "" : "s") below: make the window taller or close the mixer" as NSString)
-                    .draw(at: CGPoint(x: pad + 12, y: y - 2), withAttributes: [.font: noteFont, .foregroundColor: Theme.textDim])
+                // Beside the title, clear of the rows and the section cards.
+                let note = "+ \(more) more track\(more == 1 ? "" : "s"): make the window taller or close the mixer" as NSString
+                let attrs: [NSAttributedString.Key: Any] = [.font: noteFont, .foregroundColor: Theme.textDim]
+                note.draw(at: CGPoint(x: bounds.width - pad - 4 - note.size(withAttributes: attrs).width, y: pad + 26), withAttributes: attrs)
                 break
             }
             if family == .manuscript {
                 Atelier.pen(ctx, Atelier.handPoints(CGPoint(x: pad + 3.5, y: y + 6), CGPoint(x: pad + 3.5, y: y + rowH - 6), seed: Int(truncatingIfNeeded: t.id)), weight: 3, color: t.color, seed: 1)
             } else { ctx.setFillColor(t.color.cgColor); ctx.fill(CGRect(x: pad + 2, y: y + 6, width: 3, height: rowH - 12)) }
-            (t.name as NSString).draw(at: CGPoint(x: pad + 12, y: y + (rowH - 16) / 2), withAttributes: [.font: Theme.title(11.5, .semibold), .foregroundColor: t.muted ? Theme.textFaint : Theme.text])
+            (t.name as NSString).draw(at: CGPoint(x: pad + 12, y: y + (rowH - (rowH < 20 ? 13 : 16)) / 2), withAttributes: [.font: Theme.title(rowH < 20 ? 10 : 11.5, .semibold), .foregroundColor: t.muted ? Theme.textFaint : Theme.text])
             ctx.setFillColor(Theme.ink(0.06).cgColor); ctx.fill(CGRect(x: pad, y: y + rowH - 0.5, width: bounds.width - 2 * pad, height: 0.5))
             for (sec, r) in zip(sections, cols) {
                 let cov = Self.coverage(t, sec)
-                let bar = CGRect(x: r.minX + 6, y: y + 9, width: max(0, (r.width - 12) * CGFloat(cov)), height: rowH - 18)
+                let bar = CGRect(x: r.minX + 6, y: y + min(9, rowH * 0.28), width: max(0, (r.width - 12) * CGFloat(cov)), height: max(4, rowH - 2 * min(9, rowH * 0.28)))
                 if cov > 0 {
                     switch family {
                     case .glass: Prism.slab(ctx, bar, radius: bar.height / 2, tint: t.color, body: 0.25)

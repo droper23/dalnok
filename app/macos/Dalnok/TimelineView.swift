@@ -1929,7 +1929,8 @@ extension TimelineView {
         if clip.gainDb != 0 { tags.append(clip.gainDb.isFinite ? String(format: "%+.1f dB", clip.gainDb) : "−∞ dB") }
         let name = clip.isMidi && clip.name == "MIDI" ? track.name : clip.name
         if glass {
-            drawTitle(ctx, name, tags: tags.isEmpty ? "" : "   " + tags.joined(separator: "   "), fg: OKLCH.adjust(tint.base, dl: Theme.isLight ? -0.32 : 0.2, chromaScale: Theme.isLight ? 0.9 : 0.5),
+            drawTitle(ctx, name, tags: tags.isEmpty ? "" : "   " + tags.joined(separator: "   "), fg: Theme.isLight ? (Theme.text.blended(withFraction: 0.3, of: tint.base) ?? Theme.text) // dark ink on pale glass (audit: low contrast)
+                                                                                     : OKLCH.adjust(tint.base, dl: 0.2, chromaScale: 0.5),
                       at: CGPoint(x: max(rect.minX, 0) + 7, y: rect.minY + 2))
         } else {
             // A typeset label on the paper: the name in the track's ink, a fine rule under it, notes in italic.

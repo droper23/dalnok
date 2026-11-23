@@ -72,6 +72,7 @@ final class ShortcutChooserController: NSObject, NSWindowDelegate {
         if window.isVisible { Motion.pageIn(content) }
         window.setContentSize(step == .look ? NSSize(width: 990, height: 470) : NSSize(width: 660, height: 420))
         if Theme.activeStyle == .atelier { Atelier.unifyFonts(in: bg) }
+        Theme.tintControls(in: bg) // rebuilt while the window is key: tint now, not at the next key change
     }
 
     private func heading(_ title: String, _ sub: String) -> [NSView] {

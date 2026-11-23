@@ -144,10 +144,9 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
         sidebar.edgeInsets = NSEdgeInsets(top: 16, left: 10, bottom: 10, right: 10)
         sidebar.wantsLayer = true
         sidebar.layer?.backgroundColor = (Theme.activeStyle == .prism ? NSColor.clear : Theme.window).cgColor
-        search.placeholderString = "Search Settings"
+        search.placeholderAttributedString = NSAttributedString(string: "Search Settings", attributes: [.foregroundColor: Theme.textDim, .font: Theme.ui(11.5)])
         search.sendsSearchStringImmediately = true
         search.target = self; search.action = #selector(searchChanged(_:))
-        search.controlSize = .small
         search.translatesAutoresizingMaskIntoConstraints = false
         search.widthAnchor.constraint(equalToConstant: 170).isActive = true
         search.setAccessibilityLabel("Search Settings")

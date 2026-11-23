@@ -437,7 +437,9 @@ final class ChannelStrip: NSView {
             shownInserts = ids
             insertsStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
             for p in t.plugins {
-                let b = slotButton((p.instrument ? "♪ " : "") + p.name, dim: !p.loaded)
+                // "Dalnok Compressor" reads "Compressor" in a narrow slot (the full name is in the tooltip).
+                let shown = p.name.hasPrefix("Dalnok ") ? String(p.name.dropFirst(7)) : p.name
+                let b = slotButton((p.instrument ? "♪ " : "") + shown, dim: !p.loaded)
                 b.tag = Int(p.id)
                 b.action = #selector(openInsert(_:))
                 b.toolTip = p.loaded ? "Open \(p.name)" : p.loading ? "\(p.name) is loading" : "\(p.name) isn't loaded: bypassed, settings kept"
