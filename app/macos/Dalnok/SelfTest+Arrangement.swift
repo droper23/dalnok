@@ -515,11 +515,21 @@ extension SelfTest {
             check(centered(w.settings.window), "settings window opens centered (frame \(String(describing: w.settings.window?.frame)))")
             w.settings.window?.orderOut(nil)
         }
-        // First launch: one question (which shortcuts do you know?), then out of the way.
+        // First launch: the look (applied as it is picked), then which shortcuts you know, then out of the way.
         let savedPreset = ShortcutRegistry.shared.presetId
+        let savedLook = (Theme.preferredStyle, Theme.variantPreference)
         w.shortcutChooser.show()
         await wait(0.1)
-        check(centered(w.shortcutChooser.window) && w.shortcutChooser.cards.count == 6, "first launch asks which shortcuts you know (6 apps; \(w.shortcutChooser.cards.count) cards, frame \(w.shortcutChooser.window.frame), screen \(String(describing: (w.window?.screen ?? NSScreen.main)?.visibleFrame)))")
+        let looks = w.shortcutChooser.lookCards
+        check(w.shortcutChooser.step == .look && looks.map(\.style) == Theme.Style.allCases && looks.allSatisfy { LookCard.image($0.style, $0.variant) != nil }
+              && looks.filter { $0.versions != nil }.map(\.style) == [.prism, .atelier] && looks.first { $0.isSelected }?.style == Theme.activeStyle,
+              "first launch opens on the look: a card with a picture per theme, Light | Dark where there are both, the current one marked")
+        w.shortcutChooser.chooseLook(Theme.activeStyle, Theme.activeVariant) // the look in use: kept, no rebuild
+        check(Theme.preferredStyle == Theme.activeStyle && w.shortcutChooser.window.isVisible, "picking a look remembers it and keeps the window")
+        Theme.preferredStyle = savedLook.0; Theme.variantPreference = savedLook.1
+        w.shortcutChooser.continueTapped()
+        await wait(0.1)
+        check(w.shortcutChooser.step == .shortcuts && centered(w.shortcutChooser.window) && w.shortcutChooser.cards.count == 6, "then it asks which shortcuts you know (6 apps; \(w.shortcutChooser.cards.count) cards, frame \(w.shortcutChooser.window.frame), screen \(String(describing: (w.window?.screen ?? NSScreen.main)?.visibleFrame)))")
         w.shortcutChooser.choose("protools")
         check(ShortcutRegistry.shared.presetId == "protools" && !w.shortcutChooser.window.isVisible && WelcomeController.hasCompleted,
               "choosing Pro Tools applies its shortcuts and closes the window (preset \(ShortcutRegistry.shared.presetId))")

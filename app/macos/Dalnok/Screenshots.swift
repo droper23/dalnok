@@ -275,6 +275,11 @@ enum Screenshots {
                 png(sheet, dir.appendingPathComponent("15-figures.png"))
                 holder.contentView = nil
             }
+            // First launch: the look step (the current look marked).
+            w.shortcutChooser.show()
+            try? await Task.sleep(for: .seconds(0.4))
+            if let v = w.shortcutChooser.window.contentView { png(v, dir.appendingPathComponent("17-first-launch.png")) }
+            w.shortcutChooser.window.orderOut(nil)
             w.settings.show(.general)
             try? await Task.sleep(for: .seconds(0.4))
             if let v = w.settings.window?.contentView { png(v, dir.appendingPathComponent("09-settings.png")) }

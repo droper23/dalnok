@@ -189,7 +189,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     lazy var conceptGuide = ConceptGuideController()
     lazy var welcome = WelcomeController(main: self)
     /// First launch: which app's shortcuts the person knows.
-    lazy var shortcutChooser = ShortcutChooserController()
+    /// First launch (look, then shortcuts): one for the app, so it survives the window rebuild a look change makes.
+    var shortcutChooser: ShortcutChooserController { ShortcutChooserController.shared }
     private(set) var lastImportReport: ImportReport?
     static let foreignExtensions: Set<String> = ["rpp", "als", "logicx", "fcpxml", "fcpxmld", "dawproject"]
     private var tickCount = 0

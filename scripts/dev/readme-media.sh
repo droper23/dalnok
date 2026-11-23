@@ -58,6 +58,7 @@ for v in "${VARIANTS[@]}"; do
   g="$W/gallery-$stem"; rm -rf "${g:?}"
   DALNOK_RECOVERY_DIR="$W/recovery" DALNOK_THEME=$theme DALNOK_VARIANT=$variant timeout 150 .build/debug/Dalnok "$(fresh_copy "gallery-$stem")" --gallery "$g" >/dev/null 2>&1
   sips -s format png -Z 1800 "$g/00-hero.png" --out "$S/$stem.png" >/dev/null
+  sips -s format jpeg -s formatOptions 80 -Z 480 "$S/$stem.png" --out "$ROOT/app/macos/Dalnok/Resources/Looks/$stem.jpg" >/dev/null # first-launch look cards
   sips -Z 1400 "$g/08-piano-roll.png" --out "$S/piano-roll-$stem.png" >/dev/null
   sips -Z 1400 "$g/12-composition-overview.png" --out "$S/overview-$stem.png" >/dev/null
   sips -Z 1400 "$g/05-mixer.png" --out "$S/mixer-$stem.png" >/dev/null

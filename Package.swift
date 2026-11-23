@@ -57,7 +57,7 @@ let package = Package(
             name: "Dalnok",
             dependencies: ["DalnokEngine"],
             path: "app/macos/Dalnok",
-            resources: [.copy("Resources/Fonts")] // theme typefaces (SIL OFL; 04 - Research/Licensing.md)
+            resources: [.copy("Resources/Fonts"), .copy("Resources/Looks")] // theme typefaces (SIL OFL; 04 - Research/Licensing.md)
         ),
         // Headless driver for smoke tests and benchmarks.
         .executableTarget(
