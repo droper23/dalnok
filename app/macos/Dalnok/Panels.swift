@@ -990,8 +990,21 @@ final class TrackHeaderColumn: NSView, TrackScrollHost {
         Theme.panel.setFill()
         bounds.fill()
         let hiddenCount = session.hiddenCount
-        let title = (hiddenCount > 0 ? "TRACKS · \(hiddenCount) HIDDEN" : "TRACKS") as NSString
-        title.draw(at: NSPoint(x: 16, y: 7), withAttributes: [.font: Theme.ui(10, .semibold), .foregroundColor: Theme.textDim, .kern: 0.8])
+        if Theme.look.headers == .scoreLabels, let ctx = NSGraphicsContext.current?.cgContext {
+            // Atelier: the column's head as a plate's title, "Tracks" in the serif (on the gold band of the umber plate).
+            let head = CGRect(x: 0, y: 3, width: bounds.width - 46, height: Theme.rulerHeight - 7)
+            let band = !Theme.palette.light
+            if band { Atelier.gold.setFill(); head.fill() }
+            let t = (hiddenCount > 0 ? "Tracks · \(hiddenCount) hidden" : "Tracks") as NSString
+            t.draw(at: NSPoint(x: 12, y: head.midY - 9), withAttributes: [.font: Theme.title(14, .semibold), .foregroundColor: band ? Theme.window : Theme.text])
+            if !band {
+                Atelier.rule(ctx, CGPoint(x: 8, y: Theme.rulerHeight - 4.5), CGPoint(x: bounds.width - 8, y: Theme.rulerHeight - 4.5), weight: Atelier.medium)
+                Atelier.rule(ctx, CGPoint(x: 8, y: Theme.rulerHeight - 2), CGPoint(x: bounds.width - 8, y: Theme.rulerHeight - 2), weight: Atelier.hair)
+            }
+        } else {
+            let title = (hiddenCount > 0 ? "TRACKS · \(hiddenCount) HIDDEN" : "TRACKS") as NSString
+            title.draw(at: NSPoint(x: 16, y: 7), withAttributes: [.font: Theme.ui(10, .semibold), .foregroundColor: Theme.textDim, .kern: 0.8])
+        }
         Theme.separator.setFill()
         NSRect(x: 0, y: Theme.rulerHeight - 1, width: bounds.width, height: 1).fill()
         NSRect(x: bounds.width - 1, y: 0, width: 1, height: bounds.height).fill()

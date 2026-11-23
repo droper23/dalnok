@@ -26,7 +26,7 @@ final class LibraryPanel: SidePanelView, NSOutlineViewDataSource, NSOutlineViewD
     let resizeEdge = PanelResizeEdge(direction: 1)
 
     let search = NSSearchField()
-    let tabs = NSSegmentedControl(labels: ["Effects", "Instruments", "MIDI"], trackingMode: .selectOne, target: nil, action: nil)
+    let tabs = RuledTabs(labels: ["Effects", "Instruments", "MIDI"], trackingMode: .selectOne, target: nil, action: nil)
     let outline = NSOutlineView()
     private let scroll = NSScrollView()
     private let placesStack = NSStackView()
@@ -95,6 +95,7 @@ final class LibraryPanel: SidePanelView, NSOutlineViewDataSource, NSOutlineViewD
         search.controlSize = .small
         search.sendsSearchStringImmediately = true
         search.setAccessibilityLabel("Search the library")
+        if Theme.look.mixer == .instrument { search.font = Theme.title(12.5) }
 
         let col = NSTableColumn(identifier: .init("item"))
         outline.addTableColumn(col)
@@ -487,5 +488,31 @@ final class LibraryFigure: NSView {
         guard bounds.height > 40, let ctx = NSGraphicsContext.current?.cgContext else { return }
         Atelier.rule(ctx, CGPoint(x: 0, y: 0.5), CGPoint(x: bounds.width, y: 0.5), weight: Atelier.hair, color: Theme.ink(0.45))
         Atelier.diapason(ctx, bounds.insetBy(dx: 4, dy: 8), figure: "Fig. 1")
+    }
+}
+
+/// Tabs drawn as ruled cells in Atelier: the choices set in the serif, the chosen one on a wash with a red rule under
+/// it (the audit: the system's segmented control broke the page). Elsewhere the system's control. Behaviour unchanged.
+@MainActor
+final class RuledTabs: NSSegmentedControl {
+    override func draw(_ dirtyRect: NSRect) {
+        guard Theme.look.mixer == .instrument, let ctx = NSGraphicsContext.current?.cgContext else { return super.draw(dirtyRect) }
+        let r = bounds.insetBy(dx: 0.5, dy: 1.5)
+        let w = r.width / CGFloat(max(1, segmentCount))
+        for i in 0..<segmentCount {
+            let cell = CGRect(x: r.minX + CGFloat(i) * w, y: r.minY, width: w, height: r.height)
+            let on = selectedSegment == i
+            if on { Theme.laneHighlight.setFill(); cell.fill() }
+            let attrs: [NSAttributedString.Key: Any] = [.font: Theme.title(12, on ? .semibold : .regular), .foregroundColor: Theme.text]
+            let label = (self.label(forSegment: i) ?? "") as NSString, s = label.size(withAttributes: attrs)
+            label.draw(at: CGPoint(x: cell.midX - s.width / 2, y: cell.midY - s.height / 2), withAttributes: attrs)
+            if on {
+                let y = isFlipped ? cell.maxY - 1.5 : cell.minY + 1.5
+                Atelier.rule(ctx, CGPoint(x: cell.minX + 6, y: y), CGPoint(x: cell.maxX - 6, y: y), weight: Atelier.heavy, color: Atelier.vermilion)
+            }
+            if i > 0 { Atelier.rule(ctx, CGPoint(x: cell.minX, y: cell.minY + 3), CGPoint(x: cell.minX, y: cell.maxY - 3), weight: Atelier.hair, color: Theme.ink(0.5)) }
+        }
+        Atelier.box(ctx, r, weight: Atelier.hair, color: Theme.ink(0.7))
+        if window?.firstResponder === self { ctx.setStrokeColor(NSColor.keyboardFocusIndicatorColor.cgColor); ctx.setLineWidth(1); ctx.stroke(r.insetBy(dx: -1.5, dy: -1.5)) }
     }
 }

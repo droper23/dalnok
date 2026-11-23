@@ -40,4 +40,4 @@ sidechains, automation, delay compensation, **comping and take folders**, track 
 (Signalsmith Stretch). Modulation system, racks, scripting API, macros, workspaces.
 
 ## Phase 6: Refinement ⬜
-Performance, accessibility (automated VoiceOver-name and Tab audit of every window in every look, 2026-11-22; a listening pass with VoiceOver still to do), theme system (including analog; four themes with light/dark versions done 2026-11-22; Atelier redrawn as a hand-drawn sketchbook), DAWproject interchange, Windows and Linux front ends, local AI assistance.
+Performance, accessibility (automated VoiceOver-name and Tab audit of every window in every look, 2026-11-22; a listening pass with VoiceOver still to do), theme system (including analog; four themes with light/dark versions done 2026-11-22; Atelier redrawn as the engraved Codex, its controls drawn as instruments after a five-reviewer audit), Library sidebar and track Inspector (2026-11-22, every theme; phase invert in the engine), DAWproject interchange, Windows and Linux front ends, local AI assistance.
