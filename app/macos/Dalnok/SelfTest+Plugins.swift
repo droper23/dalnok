@@ -448,7 +448,7 @@ extension SelfTest {
         pm.formatControl.selectedSegment = 0; pm.filtersChanged()
         // Several rows selected insert together, in list order, as one undo step.
         if let audio = s.tracks.first(where: { !$0.isInstrument && !$0.isBus })?.id,
-           let i = pm.rows.firstIndex(where: { $0.name == "AUDelay" }), let j = pm.rows.firstIndex(where: { $0.name == "AUDistortion" }) {
+           let i = pm.rows.firstIndex(where: { $0.addPath == "dalnok:channel-eq" }), let j = pm.rows.firstIndex(where: { $0.addPath == "dalnok:compressor" }) {
             w.headers.select(audio)
             pm.table.selectRowIndexes([i, j], byExtendingSelection: false); pm.updateAddButton()
             let before = s.track(audio)?.plugins.count ?? 0
@@ -461,7 +461,7 @@ extension SelfTest {
             _ = perform("Undo")
             check(s.track(audio)?.plugins.count == before, "one undo takes both out")
             check(w.library.outline.allowsMultipleSelection, "the Library's plug-in list takes several rows too")
-        } else { check(false, "AUDelay and AUDistortion are listed") }
+        } else { check(false, "Dalnok Channel EQ and Dalnok Compressor are listed (built in, on every machine)") }
         pm.window?.orderOut(nil)
     }
 
