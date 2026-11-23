@@ -22,6 +22,24 @@ enum Motion {
         CATransaction.commit()
     }
 
+    /// Panels opening and closing (side panels, mixer, device panel, launcher) in the look's character (the motion review:
+    /// every look used one 0.24 s ease-out): Graphite quick and exact, Warm Analog a heavier mechanical travel, Prism a
+    /// soft glide, Atelier a sheet slid across the table.
+    static func panels(_ body: () -> Void, completion: (@Sendable () -> Void)? = nil) {
+        let (d, curve): (Double, CAMediaTimingFunction) = switch Theme.look.motion {
+        case .glass: (0.32, CAMediaTimingFunction(controlPoints: 0.2, 0.8, 0.2, 1))
+        case .lamp: (0.28, CAMediaTimingFunction(controlPoints: 0.45, 0, 0.2, 1))
+        case .drafting: (0.28, CAMediaTimingFunction(name: .easeInEaseOut))
+        default: (0.18, CAMediaTimingFunction(name: .easeOut))
+        }
+        NSAnimationContext.runAnimationGroup({ ctx in
+            ctx.duration = reduced ? 0 : d
+            ctx.allowsImplicitAnimation = !reduced
+            ctx.timingFunction = curve
+            body()
+        }, completionHandler: completion)
+    }
+
     /// NSView animator changes (alpha, frames) inside `body`.
     static func views(_ duration: Double = standard, _ body: () -> Void, completion: (@Sendable () -> Void)? = nil) {
         NSAnimationContext.runAnimationGroup({ ctx in

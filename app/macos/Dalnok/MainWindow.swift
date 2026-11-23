@@ -1643,7 +1643,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             devicePanel.isHidden = !show
             return
         }
-        Motion.views(Motion.gentle, { devicePanelHeight.animator().constant = show ? DevicePanel.height : 0 }, completion: {
+        Motion.panels({ devicePanelHeight.animator().constant = show ? DevicePanel.height : 0 }, completion: {
             DispatchQueue.main.async { if !show { panel.isHidden = true } }
         })
     }
@@ -1666,7 +1666,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         if !animated || Motion.reduced { mixerHeight.constant = mix ? MixerPanel.height : 0; mixer.isHidden = !mix }
         else {
             let panel = mixer
-            Motion.views(Motion.gentle, { self.mixerHeight.animator().constant = mix ? MixerPanel.height : 0 }, completion: {
+            Motion.panels({ self.mixerHeight.animator().constant = mix ? MixerPanel.height : 0 }, completion: {
                 DispatchQueue.main.async { MainActor.assumeIsolated { if self.sidePanelsSuppressed == empty && !mix { panel.isHidden = true } } }
             })
         }
@@ -1676,7 +1676,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
                                               (inspector as NSView, inspectorWidth!, insp, InspectorPanel.storedWidth)] {
             if open { panel.isHidden = false }
             if !animated || Motion.reduced { width.constant = open ? stored : 0; panel.isHidden = !open; continue }
-            Motion.views(Motion.gentle, { width.animator().constant = open ? stored : 0 }, completion: {
+            Motion.panels({ width.animator().constant = open ? stored : 0 }, completion: {
                 DispatchQueue.main.async { MainActor.assumeIsolated { if self.sidePanelsSuppressed == empty && !open { panel.isHidden = true } } }
             })
         }
@@ -1705,7 +1705,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             panel.isHidden = !show
             return
         }
-        Motion.views(Motion.gentle, { width.animator().constant = w }, completion: {
+        Motion.panels({ width.animator().constant = w }, completion: {
             DispatchQueue.main.async { MainActor.assumeIsolated { if !show && stillHidden() { panel.isHidden = true } } }
         })
     }
@@ -1804,7 +1804,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             return
         }
         // Slides open from the track headers, as the mixer and device panel do from the bottom.
-        Motion.views(Motion.gentle, { launcherWidth.animator().constant = show ? launcher.width : 0 }, completion: {
+        Motion.panels({ launcherWidth.animator().constant = show ? launcher.width : 0 }, completion: {
             DispatchQueue.main.async { if !show && !MainWindowController.showLauncher { panel.isHidden = true } }
         })
     }
@@ -2083,7 +2083,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             mixer.isHidden = !show
             return
         }
-        Motion.views(Motion.gentle, { mixerHeight.animator().constant = show ? MixerPanel.height : 0 }, completion: {
+        Motion.panels({ mixerHeight.animator().constant = show ? MixerPanel.height : 0 }, completion: {
             DispatchQueue.main.async { if !show { panel.isHidden = true } }
         })
     }
