@@ -447,7 +447,8 @@ extension SelfTest {
         check(!pm.rows.isEmpty && pm.rows.allSatisfy { $0.format == "AU" }, "the format filter shows only Audio Units")
         pm.formatControl.selectedSegment = 0; pm.filtersChanged()
         // Several rows selected insert together, in list order, as one undo step.
-        if let audio = s.tracks.first(where: { !$0.isInstrument && !$0.isBus })?.id,
+        pm.select(source: .all); pm.filter("")
+        if let audio = s.tracks.first(where: { !$0.isBus })?.id, // inserts go on any track (an instrument's after its synth)
            let i = pm.rows.firstIndex(where: { $0.addPath == "dalnok:channel-eq" }), let j = pm.rows.firstIndex(where: { $0.addPath == "dalnok:compressor" }) {
             w.headers.select(audio)
             pm.table.selectRowIndexes([i, j], byExtendingSelection: false); pm.updateAddButton()
@@ -461,7 +462,10 @@ extension SelfTest {
             _ = perform("Undo")
             check(s.track(audio)?.plugins.count == before, "one undo takes both out")
             check(w.library.outline.allowsMultipleSelection, "the Library's plug-in list takes several rows too")
-        } else { check(false, "Dalnok Channel EQ and Dalnok Compressor are listed (built in, on every machine)") }
+        } else {
+            check(false, "Dalnok Channel EQ and Dalnok Compressor are listed (built in, on every machine; \(pm.rows.count) rows, "
+                  + "\(pm.all.filter { $0.format == "DALNOK" }.map(\.addPath)), tracks \(s.tracks.map { ($0.isInstrument, $0.isBus) }), eq row \(String(describing: pm.rows.firstIndex { $0.addPath == "dalnok:channel-eq" })), comp row \(String(describing: pm.rows.firstIndex { $0.addPath == "dalnok:compressor" })))")
+        }
         pm.window?.orderOut(nil)
     }
 
