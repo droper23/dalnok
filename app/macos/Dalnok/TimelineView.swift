@@ -98,6 +98,9 @@ final class TimelineView: NSView {
     private var landing = false
     /// The clips last drawn, for pop-in and poof (`noteClipChanges`).
     private var knownClips: [DalnokClipId: (clip: ClipView, track: TrackView, laneIndex: Int)] = [:]
+    /// The tracks a solo silenced at the last model change (their clips fade back in, or out, when it changes).
+    private var knownQuiet: Set<DalnokTrackId> = []
+    static let soloSilencedAlpha: CGFloat = 0.38
     private struct Marquee { let start: CGPoint; var end: CGPoint; let initial: Set<DalnokClipId>; var moved = false }
     private var marquee: Marquee?
     /// Ruler gesture: a click seeks; a drag draws, moves or resizes the cycle region.
@@ -582,6 +585,7 @@ final class TimelineView: NSView {
         let glassClip = Theme.look.arrangement == .glass
         if glassClip { ctx.saveGState(); ctx.addPath(CGPath(roundedRect: glassLanesRect, cornerWidth: 14, cornerHeight: 14, transform: nil)); ctx.clip() }
         drawGrid(ctx, scale: scale)
+        let quiet = session.soloSilenced() // a solo elsewhere silences these: their clips recede (the audit: W4)
         for (i, track) in session.tracks.enumerated() {
             let y = laneY(i)
             guard y + session.laneHeight(i) > Theme.rulerHeight, y < bounds.height else { continue }
@@ -589,10 +593,13 @@ final class TimelineView: NSView {
             guard dirtyRect.intersects(CGRect(x: 0, y: y, width: bounds.width, height: session.laneHeight(i))) else { continue }
             lanesDrawn += 1
             if track.isStack { drawStackSummary(ctx, track, laneY: y) }
+            let silenced = quiet.contains(track.id)
+            if silenced { ctx.saveGState(); ctx.setAlpha(Self.soloSilencedAlpha) }
             for clip in track.clips {
                 if lifted.contains(clip.id) { if !landing { drawGhost(ctx, clipRect(clip, laneY: y), color: track.color) }; continue }
                 drawClip(ctx, clip, track: track, laneY: y, scale: scale)
             }
+            if silenced { ctx.restoreGState() }
             if let rec = recording, rec.tracks.contains(track.id) { drawRecording(ctx, rec, laneY: y, track: track.id) }
         }
         if let m = marquee, m.moved {
@@ -763,10 +770,12 @@ final class TimelineView: NSView {
 
     /// Muting a track or clip hatches and greys its clips: the old look fades out over the new one instead of
     /// switching in one frame.
-    private func crossfadeMuteChanges(_ now: [DalnokClipId: (clip: ClipView, track: TrackView, laneIndex: Int)], in host: CALayer) {
+    private func crossfadeMuteChanges(_ now: [DalnokClipId: (clip: ClipView, track: TrackView, laneIndex: Int)], quiet: Set<DalnokTrackId>,
+                                      in host: CALayer) {
         let changed = now.compactMap { id, n -> (ClipView, TrackView, Int)? in
             guard let old = knownClips[id], old.laneIndex == n.laneIndex,
-                  old.track.muted != n.track.muted || old.clip.muted != n.clip.muted else { return nil }
+                  old.track.muted != n.track.muted || old.clip.muted != n.clip.muted
+                    || knownQuiet.contains(n.track.id) != quiet.contains(n.track.id) else { return nil }
             return (old.clip, old.track, n.laneIndex)
         }
         guard !changed.isEmpty, changed.count <= 64 else { return }
@@ -774,7 +783,11 @@ final class TimelineView: NSView {
         for (clip, track, lane) in changed {
             let y = laneY(lane)
             let area = clipRect(clip, laneY: y).intersection(visibleRect)
-            guard !area.isEmpty, let image = render(area, scale: scale, { ctx in self.drawClip(ctx, clip, track: track, laneY: y, scale: scale) }) else { continue }
+            let wasQuiet = knownQuiet.contains(track.id)
+            guard !area.isEmpty, let image = render(area, scale: scale, { ctx in
+                if wasQuiet { ctx.setAlpha(Self.soloSilencedAlpha) }
+                self.drawClip(ctx, clip, track: track, laneY: y, scale: scale)
+            }) else { continue }
             let l = CALayer()
             l.contents = image
             l.contentsScale = scale
@@ -1156,10 +1169,11 @@ final class TimelineView: NSView {
     func noteClipChanges() {
         var now: [DalnokClipId: (clip: ClipView, track: TrackView, laneIndex: Int)] = [:]
         for (i, t) in session.tracks.enumerated() { for c in t.clips { now[c.id] = (c, t, i) } }
-        defer { knownClips = now }
+        let quietNow = session.soloSilenced()
+        defer { knownClips = now; knownQuiet = quietNow }
         noteTrackChanges()
         guard !Motion.reduced, drag == nil, let host = layer else { return }
-        crossfadeMuteChanges(now, in: host)
+        crossfadeMuteChanges(now, quiet: quietNow, in: host)
         guard !knownClips.isEmpty else { return }
         let added = now.keys.filter { knownClips[$0] == nil }, removed = knownClips.keys.filter { now[$0] == nil }
         guard !(added.isEmpty && removed.isEmpty), added.count + removed.count <= 16,
@@ -1221,7 +1235,7 @@ final class TimelineView: NSView {
         let fg = TrackTint.textColor(on: titleBg)
         var tags: [String] = []
         if clip.offline { tags.append("offline") }
-        if clip.muted { tags.append("muted") }
+        if clip.muted || track.muted { tags.append("muted") } // in words as well as hatching, in every look (audit L1)
         if clip.isMidi { tags.append(clip.notes.count == 1 ? "1 note" : "\(clip.notes.count) notes") }
         if clip.folder != 0 { tags.append("⧉ takes \(session.takes(clip.folder).count)") }
         if abs(clip.rate - 1) > 1e-9 { tags.append(String(format: "%.0f%% speed", clip.rate * 100)) }

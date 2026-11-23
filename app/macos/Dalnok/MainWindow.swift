@@ -731,6 +731,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         for p in session.meterPoints { globals.combine(p.bar); globals.combine(p.numerator); globals.combine(p.denominator) }
         let c = session.cycle
         globals.combine(c.on); globals.combine(c.start); globals.combine(c.end)
+        for t in session.allTracks where t.solo { globals.combine(t.id) } // a solo dims every other lane
         let l = layout.finalize(), g = globals.finalize()
         if l != timelineLayout || g != timelineGlobals || session.rereadTracks.isEmpty {
             timeline.needsDisplay = true

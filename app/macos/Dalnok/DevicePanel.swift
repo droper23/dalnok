@@ -1744,7 +1744,7 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
             c.onKindChange = { [weak pedal] k in if let pedal { PedalStore.setKind(pedal.name, id, k) } }
             c.setAccessibilityLabel(fixedString(p.title))
             c.toolTip = "\(fixedString(p.title)): \(display(p)). Drag up or down (⇧ fine), double-click for the default; right-click to change the control."
-            let name = NSTextField(labelWithString: fixedString(p.title).uppercased())
+            let name = NSTextField(labelWithString: PedalLabel.short(fixedString(p.title)))
             name.font = Theme.ui(6.8, .bold)
             name.alignment = .center
             name.lineBreakMode = .byTruncatingTail
@@ -2107,4 +2107,29 @@ final class HeightResizeEdge: NSView {
     }
     override func mouseUp(with event: NSEvent) { if start != nil { start = nil; onEnd?() } }
     override func hitTest(_ point: NSPoint) -> NSView? { isHidden ? nil : super.hitTest(point) }
+}
+
+/// A pedal's silkscreen names are a few letters under each knob (the audit: "LOW CU…" four times on the EQ, each knob
+/// unreadable): the parameter's group as initials, then its own word in the short form a hardware panel uses.
+enum PedalLabel {
+    static let words: [String: String] = [
+        "frequency": "FREQ", "freq": "FREQ", "gain": "GAIN", "q-factor": "Q", "q": "Q", "resonance": "RES", "threshold": "THRESH",
+        "attack": "ATK", "release": "REL", "ratio": "RATIO", "detection": "DETECT", "makeup": "MAKEUP", "slope": "SLOPE",
+        "enable": "ON", "enabled": "ON", "on": "ON", "bypass": "BYP", "mix": "MIX", "dry/wet": "MIX", "feedback": "FDBK",
+        "time": "TIME", "delay": "DELAY", "width": "WIDTH", "depth": "DEPTH", "rate": "RATE", "decay": "DECAY", "drive": "DRIVE",
+        "output": "OUT", "input": "IN", "level": "LEVEL", "volume": "VOL", "tone": "TONE", "knee": "KNEE", "lookahead": "LOOK",
+        "pre-delay": "PRE", "predelay": "PRE", "damping": "DAMP", "size": "SIZE", "sidechain": "SC", "filter": "FILT",
+        "cutoff": "CUT", "bandwidth": "BW", "type": "TYPE", "mode": "MODE", "stereo": "ST", "pan": "PAN", "spread": "SPREAD",
+    ]
+    static func short(_ title: String) -> String {
+        let parts = title.replacingOccurrences(of: "_", with: " ").split(whereSeparator: { $0 == " " || $0 == "(" || $0 == ")" }).map(String.init)
+        guard let last = parts.last else { return title.uppercased() }
+        let own = words[last.lowercased()] ?? (last.count > 7 ? String(last.prefix(6)) : last).uppercased()
+        let group = parts.dropLast()
+        if group.isEmpty { return own }
+        if group.count == 1, let g = group.first, g.count <= 4 || Int(g) != nil { return "\(g.uppercased()) \(own)" }
+        // "Low Cut" → LC, "Band 2" → B2 (numbers kept whole).
+        let initials = group.map { w in Int(w) != nil ? w : String(w.prefix(1)).uppercased() }.joined()
+        return "\(initials) \(own)"
+    }
 }

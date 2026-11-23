@@ -205,7 +205,13 @@ class FaceplateScreen: NSView {
     var onHoverRole: ((FigureRole?) -> Void)?
     /// The latest input/output pairs (transfer figures), normalised to the input's peak.
     var liveTransfer: [CGPoint] { [] }
-    var atelierFigure: AtelierFigure? { Theme.look.devices == .schematic ? AtelierFigure.of(kind: codexKind, subject: codexSubject) : nil }
+    /// The family's figure (Atelier engraves it; Graphite and Prism draw it in their own idiom, LookFigures.swift).
+    var atelierFigure: AtelierFigure? {
+        switch Theme.look.devices {
+        case .schematic, .rack, .cards: AtelierFigure.of(kind: codexKind, subject: codexSubject)
+        case .pedalboard: nil
+        }
+    }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
     override func mouseDown(with event: NSEvent) { if !(atelierFigure != nil && figureMouseDown(event)) { super.mouseDown(with: event) } }
     override func mouseDragged(with event: NSEvent) { if figureDrag != nil { figureMouseDragged(event) } else { super.mouseDragged(with: event) } }
@@ -234,6 +240,7 @@ class FaceplateScreen: NSView {
     var drawsOnGlass: Bool { false }
     final override func draw(_ dirtyRect: NSRect) {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+        if drawLookFigure(ctx) { return }
         if Theme.look.devices == .cards && !drawsOnGlass { drawOnGlass(ctx, dirtyRect); return }
         if Theme.look.devices == .schematic && drawCodex(ctx) { return }
         // The screen's contents fade with its backlight into dark glass (fully dark: only the glass is drawn).

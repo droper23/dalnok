@@ -356,6 +356,10 @@ final class SelfTest {
         check(perform("Solo Track"), "menu Track > Solo Track")
         s.refresh(onDisplayTick: true)
         check(s.track(t0)?.solo == true, "track soloed")
+        let quiet = s.soloSilenced()
+        let plain = s.allTracks.filter { t in t.id != t0 && t.output == 0 && t.stack == 0 && !s.allTracks.contains { $0.output == t.id || $0.stack == t.id } }
+        check(!quiet.contains(t0) && plain.allSatisfy { quiet.contains($0.id) },
+              "a solo silences the other tracks, and the arrangement fades their clips (\(quiet.count) silenced of \(s.allTracks.count))")
         _ = perform("Solo Track")
         s.refresh(onDisplayTick: true)
         check(s.track(t0)?.solo == false, "track unsoloed")

@@ -176,6 +176,29 @@ final class Session {
 
     func track(_ id: DalnokTrackId) -> TrackView? { allTracks.first { $0.id == id } }
 
+    /// Tracks a solo makes silent, as the engine decides it (render.cpp): with any track soloed, a track that is not
+    /// soloed, does not feed a soloed bus and is not a bus fed by a soloed track.
+    func soloSilenced() -> Set<DalnokTrackId> {
+        let all = allTracks
+        guard all.contains(where: \.solo) else { return [] }
+        let byId = Dictionary(all.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        func downstream(_ t: TrackView) -> [DalnokTrackId] { // the buses (and stacks) a track plays into
+            var out: [DalnokTrackId] = [], seen = Set<DalnokTrackId>(), next = [t.output, t.stack].filter { $0 != 0 }
+            while let id = next.popLast() {
+                guard seen.insert(id).inserted, let b = byId[id] else { continue }
+                out.append(id); next += [b.output, b.stack].filter { $0 != 0 }
+            }
+            return out
+        }
+        var audible = Set<DalnokTrackId>()
+        for t in all where t.solo {
+            audible.insert(t.id)
+            audible.formUnion(downstream(t)) // a soloed source keeps its buses
+            for u in all where downstream(u).contains(t.id) { audible.insert(u.id) } // a soloed bus keeps what feeds it
+        }
+        return Set(all.map(\.id)).subtracting(audible)
+    }
+
     // MARK: Lane layout (shared by the arrangement, the track headers and the launcher)
 
     /// A shown track's lane height: its own, else the arrangement's default (View ▸ Taller/Shorter Tracks).

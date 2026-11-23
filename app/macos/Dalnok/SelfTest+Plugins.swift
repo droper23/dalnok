@@ -431,7 +431,7 @@ extension SelfTest {
         if let delay = pm.all.first(where: { $0.name == "AUDelay" }) {
             pm.toggleFavorite(delay)
             pm.select(source: .favorites)
-            check(pm.rows.map(\.name) == ["AUDelay"], "a starred plug-in appears in Favorites")
+            check(pm.rows.map(\.name) == ["AUDelay"], "a starred plug-in appears in Favourites")
             pm.toggleFavorite(delay)
             check(pm.rows.isEmpty, "unstarring removes it")
             var c = PluginLibrary.collections; c["Mix Bus"] = []; PluginLibrary.collections = c
