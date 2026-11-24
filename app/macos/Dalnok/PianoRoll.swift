@@ -795,6 +795,20 @@ final class PianoRollView: NSView {
         commit(notes, select: sel)
     }
 
+    /// A MIDI function (Clip ▸ MIDI Functions) on the selected notes, or all; the changed notes stay selected.
+    func applyFunction(_ op: Int32, _ a: Double, _ b: Double, title: String) {
+        guard let c = clip else { return }
+        var sel = c.notes.filter { selection.contains(key($0)) }
+        var out = sel
+        let status = sel.isEmpty ? dalnok_midi_transform(session.engine.handle, clipId, op, nil, 0, a, b, nil)
+                                 : dalnok_midi_transform(session.engine.handle, clipId, op, &sel, Int32(sel.count), a, b, &out)
+        session.refresh()
+        if !sel.isEmpty { selection = Set(out.map(key)) }
+        needsDisplay = true
+        session.onMessage?(status == DALNOK_OK ? "\(title): \(sel.isEmpty ? "every note" : sel.count == 1 ? "1 note" : "\(sel.count) notes")"
+                                              : "\(title): no notes to change")
+    }
+
     /// Quantizes the selected notes (or all) to the quantize value and strength (Clip ▸ Quantize, the editor's bar).
     func quantizeSelection() {
         guard let c = clip else { return }

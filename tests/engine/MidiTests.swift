@@ -488,3 +488,59 @@ func oneNoteSession(pitch: UInt8 = 69, velocity: UInt8 = 127) -> (OpaquePointer,
         #expect(written == 0 && dalnok_media_frames(media) == 48_000, "tail \(written), \(dalnok_media_frames(media)) frames")
     }
 }
+
+@Suite struct MidiFunctions {
+    // 120 BPM at 48 kHz: one beat = 24,000 frames.
+    func clip(_ notes: [DalnokNote]) -> (OpaquePointer, DalnokClipId) {
+        let e = dalnok_engine_create(48_000)!
+        let c = dalnok_midi_clip_add(e, dalnok_track_add_instrument(e, nil), 0, 192_000)
+        var n = notes
+        _ = dalnok_midi_clip_set_notes(e, c, &n, Int32(n.count))
+        return (e, c)
+    }
+    func notes(_ e: OpaquePointer, _ c: DalnokClipId) -> [DalnokNote] {
+        var out = [DalnokNote](repeating: DalnokNote(), count: 64)
+        let n = Int(dalnok_midi_clip_notes(e, c, &out, 64))
+        return Array(out.prefix(n))
+    }
+
+    @Test func legatoFixedLengthAndVelocity() {
+        let (e, c) = clip([DalnokNote(start: 0, length: 100, pitch: 60, velocity: 80),
+                           DalnokNote(start: 0, length: 100, pitch: 64, velocity: 90), // a chord with the first
+                           DalnokNote(start: 24_000, length: 100, pitch: 62, velocity: 100),
+                           DalnokNote(start: 60_000, length: 100, pitch: 65, velocity: 120)])
+        defer { dalnok_engine_destroy(e) }
+        #expect(dalnok_midi_transform(e, c, Int32(DALNOK_MIDI_LEGATO.rawValue), nil, 0, 0, 0, nil) == DALNOK_OK)
+        #expect(notes(e, c).map(\.length) == [24_000, 24_000, 36_000, 100], "each to the next start; the last unchanged")
+        #expect(undoName(e) == "Legato")
+        #expect(dalnok_midi_transform(e, c, Int32(DALNOK_MIDI_FIXED_LENGTH.rawValue), nil, 0, 0.5, 0, nil) == DALNOK_OK)
+        #expect(notes(e, c).allSatisfy { $0.length == 12_000 })
+        // Only the selected note, and `out` reports it.
+        var sel = [notes(e, c)[2]], out = [DalnokNote()]
+        #expect(dalnok_midi_transform(e, c, Int32(DALNOK_MIDI_SET_VELOCITY.rawValue), &sel, 1, 33, 0, &out) == DALNOK_OK)
+        #expect(notes(e, c).map(\.velocity) == [80, 90, 33, 120] && out[0].velocity == 33 && out[0].pitch == 62)
+        #expect(dalnok_midi_transform(e, c, Int32(DALNOK_MIDI_SCALE_VELOCITY.rawValue), nil, 0, 150, 0, nil) == DALNOK_OK)
+        #expect(notes(e, c).map(\.velocity) == [120, 127, 50, 127], "×1.5, capped at 127")
+        #expect(dalnok_midi_transform(e, c, Int32(DALNOK_MIDI_SET_VELOCITY.rawValue), nil, 0, 0, 0, nil) != DALNOK_OK)
+    }
+
+    @Test func scaleQuantizeSnapsToTheNearestDegree() {
+        // Every pitch of the chromatic octave from C4 into D minor (root 2, scale 1): D E F G A Bb C.
+        let (e, c) = clip((0..<12).map { DalnokNote(start: Int64($0) * 1_000, length: 500, pitch: UInt8(60 + $0), velocity: 100) })
+        defer { dalnok_engine_destroy(e) }
+        #expect(dalnok_midi_transform(e, c, Int32(DALNOK_MIDI_SCALE_QUANTIZE.rawValue), nil, 0, 2, 1, nil) == DALNOK_OK)
+        // C C# D D# E F F# G G# A A# B -> C C D D E F F G G A Bb Bb(B is 1 above Bb, 1 below C: tie goes down)
+        #expect(notes(e, c).map(\.pitch) == [60, 60, 62, 62, 64, 65, 65, 67, 67, 69, 70, 70])
+    }
+
+    @Test func humanizeStaysWithinItsRangesAndVaries() {
+        let grid = (0..<32).map { DalnokNote(start: Int64($0) * 6_000, length: 3_000, pitch: 60, velocity: 100) }
+        let (e, c) = clip(grid); defer { dalnok_engine_destroy(e) }
+        #expect(dalnok_midi_transform(e, c, Int32(DALNOK_MIDI_HUMANIZE.rawValue), nil, 0, 10, 8, nil) == DALNOK_OK)
+        let after = notes(e, c)
+        #expect(after.count == 32)
+        let shifts = zip(after, grid).map { abs($0.start - $1.start) }, vels = after.map { abs(Int($0.velocity) - 100) }
+        #expect(shifts.max()! <= 480 && vels.max()! <= 8, "±10 ms (480 frames) and ±8")
+        #expect(Set(shifts).count > 8 && Set(vels).count > 4, "not all the same")
+    }
+}

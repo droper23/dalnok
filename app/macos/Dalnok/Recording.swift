@@ -541,6 +541,23 @@ extension MainWindowController {
     /// Q (Logic's Quantize): the selected notes in the piano roll, else every selected clip, to the quantize value at
     /// the quantize strength, as one undo step. MIDI clips move their notes; audio clips stay whole and are warped so
     /// their transients land on the grid (`dalnok_audio_quantize`: attacks at their own speed, the rest stretched).
+    /// Clip ▸ MIDI Functions: on the selected notes in the piano roll (or the docked editor), else every note of the
+    /// selected MIDI clips. One undo step.
+    @objc func midiFunction(_ sender: NSMenuItem) {
+        guard let args = sender.representedObject as? [Double], args.count == 3 else { return }
+        let op = Int32(args[0])
+        if pianoRollIsKey || (!clipEditor.isHidden && clipEditor.focused && clipEditor.clip?.isMidi == true) {
+            return activeRoll.applyFunction(op, args[1], args[2], title: sender.title)
+        }
+        let clips = timeline.selectedClips.compactMap { session.clip($0) }.filter(\.isMidi)
+        guard !clips.isEmpty else { return flash("Select MIDI clips or notes") }
+        session.engine.beginGroup(sender.title)
+        for c in clips { _ = dalnok_midi_transform(session.engine.handle, c.id, op, nil, 0, args[1], args[2], nil) }
+        session.engine.endGroup()
+        session.refresh()
+        flash("\(sender.title): \(clips.count == 1 ? "1 clip" : "\(clips.count) clips")")
+    }
+
     @objc func quantizeSelection(_ sender: Any?) {
         if pianoRollIsKey { return activeRoll.quantizeSelection() }
         var clips = timeline.selectedClips.compactMap { session.clip($0) }.filter { $0.folder == 0 }

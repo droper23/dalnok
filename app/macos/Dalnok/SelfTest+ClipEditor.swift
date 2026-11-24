@@ -118,6 +118,20 @@ extension SelfTest {
         _ = await waitUntil { e.position > 0 }
         check(abs(Double(e.position) - (Double(c.start) + sixteenth)) <= 4_096, "Play starts at the selected notes (\(e.position))")
         e.pause()
+        // Clip ▸ MIDI Functions on the docked editor: the selected note only (and it stays selected), then every note.
+        let oneBeat = Int64(beat)
+        s.setNotes(midi, [DalnokNote(start: c.offset, length: 100, pitch: 60, velocity: 100),
+                          DalnokNote(start: c.offset + oneBeat, length: 100, pitch: 62, velocity: 100)])
+        roll.selection = [PianoRollView.NoteKey(start: c.offset + oneBeat, pitch: 62)]
+        w.clipEditor.focused = true
+        let vel = s.clip(midi)?.notes.map(\.velocity) ?? []
+        check(perform("Set Velocity to 64", exact: true) && (s.clip(midi)?.notes.map(\.velocity) ?? []) == [100, 64] && roll.selection.count == 1,
+              "MIDI Functions ▸ Set Velocity changes the selected note only (\(vel) → \(s.clip(midi)?.notes.map(\.velocity) ?? []))")
+        roll.selection = []
+        check(perform("Legato", exact: true) && s.clip(midi)?.notes.first?.length == oneBeat && e.undoName == "Legato",
+              "MIDI Functions ▸ Legato joins every note to the next (\(s.clip(midi)?.notes.first?.length ?? -1))")
+        _ = perform("Undo")
+        check(s.clip(midi)?.notes.first?.length == 100, "undo restores the lengths")
 
         // The Clip / Devices switch.
         w.bottomTabs.selectedSegment = 1

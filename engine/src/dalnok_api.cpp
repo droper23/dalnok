@@ -826,6 +826,18 @@ DalnokStatus dalnok_midi_quantize(DalnokEngine *e, DalnokClipId c, double grid, 
     std::string err;
     return e ? statusFor(e->impl.quantize(c, grid, strength, err), err) : DALNOK_ERR_INVALID_ARG;
 }
+DalnokStatus dalnok_midi_transform(DalnokEngine *e, DalnokClipId c, int32_t function, const DalnokNote *selected,
+                                   int32_t count, double a, double b, DalnokNote *out) {
+    if (!e || count < 0 || (count > 0 && !selected)) return DALNOK_ERR_INVALID_ARG;
+    std::vector<dalnok::MidiNote> only;
+    for (int32_t i = 0; i < count; ++i) only.push_back({selected[i].start, selected[i].length, selected[i].pitch, selected[i].velocity});
+    std::vector<dalnok::MidiNote> after;
+    std::string err;
+    if (!e->impl.transformNotes(c, function, only, a, b, after, err)) return statusFor(false, err);
+    if (out) for (size_t i = 0; i < after.size() && i < static_cast<size_t>(count); ++i) // in `selected`'s order
+        out[i] = {after[i].start, after[i].length, after[i].pitch, after[i].velocity};
+    return DALNOK_OK;
+}
 DalnokStatus dalnok_tempo_set(DalnokEngine *e, double bpm, int32_t num, int32_t den) {
     std::string err;
     return e ? statusFor(e->impl.setTempo(bpm, num, den, err), err) : DALNOK_ERR_INVALID_ARG;

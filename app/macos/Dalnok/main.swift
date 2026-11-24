@@ -429,6 +429,37 @@ func buildMenu(target: MainWindowController) -> NSMenu {
         it.target = target
         quantize.submenu?.addItem(it)
     }
+    // MIDI Functions (Logic's Functions menu): each item carries [function, a, b] for dalnok_midi_transform.
+    let functions = NSMenuItem(title: "MIDI Functions", action: nil, keyEquivalent: "")
+    functions.submenu = NSMenu(title: "MIDI Functions")
+    func fn(_ title: String, _ op: DalnokMidiFunction, _ a: Double = 0, _ b: Double = 0, into m: NSMenu?) {
+        let it = NSMenuItem(title: title, action: #selector(W.midiFunction(_:)), keyEquivalent: "")
+        it.representedObject = [Double(op.rawValue), a, b]
+        it.target = target
+        m?.addItem(it)
+    }
+    fn("Legato", DALNOK_MIDI_LEGATO, into: functions.submenu)
+    let lengths = NSMenuItem(title: "Fixed Length", action: nil, keyEquivalent: "")
+    lengths.submenu = NSMenu(title: "Fixed Length")
+    for (t, beats) in [("1/32 Note", 0.125), ("1/16 Note", 0.25), ("1/8 Note", 0.5), ("1/4 Note", 1.0), ("1/2 Note", 2.0), ("Whole Note", 4.0)] {
+        fn(t, DALNOK_MIDI_FIXED_LENGTH, beats, into: lengths.submenu)
+    }
+    functions.submenu?.addItem(lengths)
+    let scales = NSMenuItem(title: "Scale Quantize", action: nil, keyEquivalent: "")
+    scales.submenu = NSMenu(title: "Scale Quantize")
+    let roots = ["C", "C♯", "D", "E♭", "E", "F", "F♯", "G", "A♭", "A", "B♭", "B"]
+    for (k, name) in ["Major", "Minor", "Dorian", "Mixolydian", "Major Pentatonic", "Minor Pentatonic", "Harmonic Minor", "Blues"].enumerated() {
+        let sub = NSMenuItem(title: name, action: nil, keyEquivalent: "")
+        sub.submenu = NSMenu(title: name)
+        for (r, root) in roots.enumerated() { fn("\(root) \(name)", DALNOK_MIDI_SCALE_QUANTIZE, Double(r), Double(k), into: sub.submenu) }
+        scales.submenu?.addItem(sub)
+    }
+    functions.submenu?.addItem(scales)
+    fn("Humanize", DALNOK_MIDI_HUMANIZE, 10, 8, into: functions.submenu)
+    functions.submenu?.addItem(.separator())
+    for v in [127.0, 100, 64] { fn("Set Velocity to \(Int(v))", DALNOK_MIDI_SET_VELOCITY, v, into: functions.submenu) }
+    fn("Louder (+10%)", DALNOK_MIDI_SCALE_VELOCITY, 110, into: functions.submenu)
+    fn("Softer (−10%)", DALNOK_MIDI_SCALE_VELOCITY, 90, into: functions.submenu)
     menu("Clip", [
         item("New MIDI Clip", #selector(W.newMidiClip(_:)), "m", [.command, .shift]),
         item("Piano Roll", #selector(W.openPianoRoll(_:)), "p", []),
@@ -436,6 +467,7 @@ func buildMenu(target: MainWindowController) -> NSMenu {
         item("Make Take Folder", #selector(W.makeTakeFolder(_:)), ""),
         item("Mute Clip", #selector(W.toggleClipMute(_:)), ""),
         quantize,
+        functions,
         .separator(),
         item("Add Short Fades", #selector(W.addShortFades(_:)), "f", [.control]),
         item("Remove Fades", #selector(W.removeFades(_:)), ""),

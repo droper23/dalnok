@@ -260,6 +260,10 @@ public:
                              std::vector<MidiNote> notes = {}, const char *undoName = "New MIDI Clip");
     bool setNotes(DalnokClipId id, std::vector<MidiNote> notes, std::string &err);
     bool quantize(DalnokClipId id, double gridBeats, double strength, std::string &err);
+    // MIDI functions on `only` (empty = every note in the clip's window), one undo step; `out` gets the selected notes
+    // as they are afterwards, in the same order (so an editor can keep them selected). See DalnokMidiFunction.
+    bool transformNotes(DalnokClipId id, int32_t op, const std::vector<MidiNote> &only, double a, double b,
+                        std::vector<MidiNote> &out, std::string &err);
     // Audio quantize (API 47, audio_quantize.cpp): the clip's transients (source frames), and a warp map that moves
     // them to the grid by `strength` (attacks at their own speed, the rest stretched to fit; one undo step).
     std::vector<int64_t> audioTransients(DalnokClipId id, double sensitivity, std::string &err) const;
@@ -532,6 +536,7 @@ private:
     int rtPreviewHeld_ = 0;
     int64_t rtPreviewHoldFrames_ = 0;
     std::atomic<float> masterPeakL_{0.0f}, masterPeakR_{0.0f};
+    uint32_t humanizeSeed_ = 0x2545F491u; // each Humanize differs, and runs repeat from a fresh engine
     std::unique_ptr<LoudnessMeter> loudness_; // the master while playing (BS.1770; metronome excluded)
     float masterDcL_ = 0, masterDcR_ = 0; // audio thread (meterLevel)
 

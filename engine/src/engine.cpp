@@ -577,6 +577,95 @@ bool Engine::quantize(DalnokClipId id, double gridBeats, double strength, std::s
     });
 }
 
+bool Engine::transformNotes(DalnokClipId id, int32_t op, const std::vector<MidiNote> &only, double a, double b,
+                            std::vector<MidiNote> &out, std::string &err) {
+    // Scales as semitone sets from the root (bit k = degree k): major, natural minor, dorian, mixolydian,
+    // major pentatonic, minor pentatonic, harmonic minor, blues.
+    static constexpr uint16_t kScales[] = {0xAB5, 0x5AD, 0x6AD, 0x6B5, 0x295, 0x4A9, 0x9AD, 0x4E9};
+    const ClipState *peek = model_.clip(id);
+    if (!peek) return fail(err, "no such clip");
+    if (!peek->midi()) return fail(err, "not a MIDI clip");
+    switch (op) {
+    case DALNOK_MIDI_LEGATO: break;
+    case DALNOK_MIDI_FIXED_LENGTH: if (!(a > 0 && a <= 64)) return fail(err, "length must be 0-64 beats"); break;
+    case DALNOK_MIDI_SCALE_QUANTIZE:
+        if (!(a >= 0 && a <= 11) || !(b >= 0 && b < static_cast<double>(std::size(kScales))))
+            return fail(err, "root must be 0-11 and scale 0-7");
+        break;
+    case DALNOK_MIDI_HUMANIZE: if (!(a >= 0 && a <= 100) || !(b >= 0 && b <= 64)) return fail(err, "timing 0-100 ms, velocity 0-64"); break;
+    case DALNOK_MIDI_SET_VELOCITY: if (!(a >= 1 && a <= 127)) return fail(err, "velocity must be 1-127"); break;
+    case DALNOK_MIDI_SCALE_VELOCITY: if (!(a > 0 && a <= 400)) return fail(err, "scale must be 0-400 %"); break;
+    default: return fail(err, "unknown MIDI function");
+    }
+    const uint32_t seed = humanizeSeed_ = humanizeSeed_ * 1664525u + 1013904223u;
+    return edit(op == DALNOK_MIDI_LEGATO ? "Legato" : op == DALNOK_MIDI_FIXED_LENGTH ? "Fixed Length"
+                : op == DALNOK_MIDI_SCALE_QUANTIZE ? "Scale Quantize" : op == DALNOK_MIDI_HUMANIZE ? "Humanize" : "Velocity",
+                true, [&](Model &m) {
+        ClipState *c = m.clip(id);
+        const int64_t lo = c->offset, hi = c->offset + c->length, origin = c->start - c->offset;
+        auto picked = [&](const MidiNote &n) {
+            if (n.start < lo || n.start >= hi) return false;
+            if (only.empty()) return true;
+            return std::any_of(only.begin(), only.end(), [&](const MidiNote &o) { return o.start == n.start && o.pitch == n.pitch; });
+        };
+        std::vector<MidiNote> keep, moved;
+        for (const auto &n : *c->notes) (picked(n) ? moved : keep).push_back(n);
+        if (moved.empty()) return fail(err, "no notes to change");
+        uint32_t rng = seed;
+        auto random = [&] { rng ^= rng << 13; rng ^= rng >> 17; rng ^= rng << 5; return static_cast<double>(rng) / 4294967296.0 * 2 - 1; };
+        const std::vector<MidiNote> original = moved;
+        std::vector<int64_t> starts;
+        for (const auto &n : moved) starts.push_back(n.start);
+        std::sort(starts.begin(), starts.end());
+        for (auto &n : moved) {
+            switch (op) {
+            case DALNOK_MIDI_LEGATO: { // to the next selected note's start (chords: the next later start); the last stays
+                const auto next = std::upper_bound(starts.begin(), starts.end(), n.start);
+                if (next != starts.end()) n.length = *next - n.start;
+                break;
+            }
+            case DALNOK_MIDI_FIXED_LENGTH: {
+                double beat;
+                int64_t end;
+                if (!map_.frameToBeat(origin + n.start, beat) || !map_.beatToFrame(beat + a, end)) return fail(err, "note is beyond the supported timeline");
+                n.length = std::max<int64_t>(1, end - origin - n.start);
+                break;
+            }
+            case DALNOK_MIDI_SCALE_QUANTIZE: { // nearest degree of the scale; a tie goes down
+                const uint16_t scale = kScales[static_cast<size_t>(b)];
+                const int root = static_cast<int>(a);
+                for (int d = 0; d <= 6; ++d) {
+                    const int down = n.pitch - d, up = n.pitch + d;
+                    if (down >= 0 && (scale >> ((down - root + 120) % 12) & 1)) { n.pitch = static_cast<uint8_t>(down); break; }
+                    if (up <= 127 && (scale >> ((up - root + 120) % 12) & 1)) { n.pitch = static_cast<uint8_t>(up); break; }
+                }
+                break;
+            }
+            case DALNOK_MIDI_HUMANIZE: {
+                const int64_t shift = static_cast<int64_t>(std::llround(random() * a * 1e-3 * sampleRate_));
+                n.start = std::clamp<int64_t>(n.start + shift, lo, hi - 1);
+                n.velocity = static_cast<uint8_t>(std::clamp<long>(std::lround(n.velocity + random() * b), 1, 127));
+                break;
+            }
+            case DALNOK_MIDI_SET_VELOCITY: n.velocity = static_cast<uint8_t>(std::lround(a)); break;
+            case DALNOK_MIDI_SCALE_VELOCITY:
+                n.velocity = static_cast<uint8_t>(std::clamp<long>(std::lround(n.velocity * a / 100), 1, 127));
+                break;
+            }
+        }
+        out.clear(); // in the order of `only` (each note matched by its start and pitch before the change)
+        if (only.empty()) out = moved;
+        for (const auto &o : only) {
+            size_t j = 0;
+            while (j < original.size() && !(original[j].start == o.start && original[j].pitch == o.pitch)) ++j;
+            out.push_back(j < original.size() ? moved[j] : o);
+        }
+        keep.insert(keep.end(), moved.begin(), moved.end()); // changed notes last: they win a collision
+        c->notes = sortedNotes(std::move(keep));
+        return true;
+    });
+}
+
 // ---- Plugins ----------------------------------------------------------------
 
 int32_t Engine::addPlugin(DalnokTrackId track, const std::string &path, const std::string &classId, std::string &err) {

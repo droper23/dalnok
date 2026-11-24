@@ -791,6 +791,21 @@ DalnokStatus dalnok_midi_clip_set_notes(DalnokEngine *engine, DalnokClipId clip,
 int32_t dalnok_midi_clip_notes(const DalnokEngine *engine, DalnokClipId clip, DalnokNote *out, int32_t capacity);
 /* Moves note starts toward a grid of `grid_beats` anchored at frame 0 (strength 0-1). */
 DalnokStatus dalnok_midi_quantize(DalnokEngine *engine, DalnokClipId clip, double grid_beats, double strength);
+/* MIDI functions (Logic's MIDI Functions / Ableton's note tools), API 47. They act on `selected` (count 0 = every note
+ * in the clip's window), as one undo step, and write the selected notes as they are afterwards to `out` (same order,
+ * may be null). Arguments:
+ *   LEGATO           -                       each note lasts until the next selected start
+ *   FIXED_LENGTH     a = length in beats
+ *   SCALE_QUANTIZE   a = root (0 = C .. 11), b = scale (0 major, 1 minor, 2 dorian, 3 mixolydian, 4 major
+ *                    pentatonic, 5 minor pentatonic, 6 harmonic minor, 7 blues); nearest degree, ties go down
+ *   HUMANIZE         a = timing range ± ms, b = velocity range ±
+ *   SET_VELOCITY     a = 1-127;  SCALE_VELOCITY  a = percent */
+typedef enum {
+    DALNOK_MIDI_LEGATO = 0, DALNOK_MIDI_FIXED_LENGTH = 1, DALNOK_MIDI_SCALE_QUANTIZE = 2, DALNOK_MIDI_HUMANIZE = 3,
+    DALNOK_MIDI_SET_VELOCITY = 4, DALNOK_MIDI_SCALE_VELOCITY = 5
+} DalnokMidiFunction;
+DalnokStatus dalnok_midi_transform(DalnokEngine *engine, DalnokClipId clip, int32_t function, const DalnokNote *selected,
+                                   int32_t count, double a, double b, DalnokNote *out);
 /* Audio quantize (API 47; Logic's Flex quantize, with slices). The clip's transients (attack starts, in source frames;
  * `sensitivity` 0-1, 0.5 typical): returns the total count, writes up to `capacity`, -1 if not an audio clip. */
 int32_t dalnok_audio_transients(const DalnokEngine *engine, DalnokClipId clip, double sensitivity, int64_t *out, int32_t capacity);
