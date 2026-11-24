@@ -92,7 +92,7 @@ final class TimelineView: NSView {
     private let spectrumFan = CAGradientLayer()   // Prism: light dispersed by the playhead's prism head
     private var mins: [Float] = [], maxs: [Float] = []
 
-    private enum Zone { case body, leftEdge, rightEdge, fadeIn, fadeOut }
+    private enum Zone: Equatable { case body, leftEdge, rightEdge, fadeIn, fadeOut, warp(Int) }
     /// What the pointer would do here, for the control bar's hint line (Settings ▸ Appearance ▸ Hints).
     private(set) var hoverHint: String?
     private func hint(_ p: CGPoint, _ h: (ClipView, Zone)?) -> String? {
@@ -103,6 +103,7 @@ final class TimelineView: NSView {
         case .leftEdge: return "Clip start: drag to trim (hold ⌃ to ignore the grid)"
         case .rightEdge: return "Clip end: drag to trim, ⌥-drag to time-stretch (hold ⌃ to ignore the grid)"
         case .fadeIn, .fadeOut: return "Fade handle: drag to lengthen or shorten the fade"
+        case .warp: return "Quantized hit: drag to move it (snaps to the grid; hold ⌃ to ignore it). The attack moves whole; the audio around it stretches"
         case .body: return clip.isMidi ? "MIDI clip: drag to move (hold ⌃ to ignore the grid), double-click to edit its notes"
                                        : "Audio clip: drag to move (hold ⌃ to ignore the grid), drag an edge to trim"
         }
@@ -1291,6 +1292,7 @@ final class TimelineView: NSView {
                   at: CGPoint(x: max(rect.minX, 0) + 6, y: rect.minY + 1.5))
         ctx.restoreGState()
         if selected || clip.id == hoveredClip { drawFadeHandles(ctx, clip, rect: rect) }
+        drawWarpMarkers(ctx, clip, rect: rect)
 
         ctx.addPath(path)
         ctx.setStrokeColor((selected ? Theme.selection : tint.border).cgColor)
@@ -1398,6 +1400,32 @@ final class TimelineView: NSView {
         }
     }
 
+    /// A quantized clip's hits: a short tick at the top and bottom of the waveform, with a grip triangle (drag to move).
+    private func drawWarpMarkers(_ ctx: CGContext, _ clip: ClipView, rect: CGRect) {
+        guard clip.warp.count > 2, rect.height > titleH + 10 else { return }
+        let color = Theme.text.withAlphaComponent(0.7)
+        ctx.saveGState()
+        ctx.setFillColor(color.cgColor)
+        let hit = clip.warpHitOffset(sampleRate: sampleRate)
+        for i in clip.warpMarkers(sampleRate: sampleRate) {
+            let x = xPos(forFrame: Double(clip.start + clip.warp[i].time + hit)).rounded() + 0.5
+            guard x > rect.minX + 2, x < rect.maxX - 2 else { continue }
+            ctx.fill(CGRect(x: x - 0.5, y: rect.minY + titleH, width: 1, height: 5))
+            ctx.fill(CGRect(x: x - 0.5, y: rect.maxY - 6, width: 1, height: 5))
+            ctx.move(to: CGPoint(x: x - 3, y: rect.maxY - 1)); ctx.addLine(to: CGPoint(x: x + 3, y: rect.maxY - 1))
+            ctx.addLine(to: CGPoint(x: x, y: rect.maxY - 5)); ctx.closePath(); ctx.fillPath()
+        }
+        ctx.restoreGState()
+    }
+
+    /// Window-coordinate point of a quantized clip's hit marker (self-test).
+    func windowPoint(ofWarp i: Int, in id: DalnokClipId) -> CGPoint? {
+        guard let ti = session.tracks.firstIndex(where: { $0.clips.contains { $0.id == id } }),
+              let c = session.clip(id), c.warp.indices.contains(i) else { return nil }
+        let r = clipRect(c, laneY: laneY(ti))
+        return convert(CGPoint(x: xPos(forFrame: Double(c.start + c.warp[i].time + c.warpHitOffset(sampleRate: sampleRate))), y: r.maxY - 8), to: nil)
+    }
+
     /// One min/max column per device pixel across the visible span.
     private func drawWaveform(_ ctx: CGContext, media: OpaquePointer, clip: ClipView, rect: CGRect, top: CGFloat,
                               color: NSColor, dim: Bool, scale: CGFloat) {
@@ -1480,6 +1508,12 @@ final class TimelineView: NSView {
                 if abs(p.x - (r.minX + max(wi, 4))) <= zone / 2 || p.x <= r.minX + zone { return (clip, .fadeIn) }
                 if abs(p.x - (r.maxX - max(wo, 4))) <= zone / 2 || p.x >= r.maxX - zone { return (clip, .fadeOut) }
             }
+            if clip.warp.count > 2, p.y > r.minY + titleH + 4 {
+                let hit = clip.warpHitOffset(sampleRate: sampleRate)
+                for i in clip.warpMarkers(sampleRate: sampleRate) where abs(xPos(forFrame: Double(clip.start + clip.warp[i].time + hit)) - p.x) <= 4 {
+                    return (clip, .warp(i))
+                }
+            }
             if p.x <= r.minX + edge { return (clip, .leftEdge) }
             if p.x >= r.maxX - edge { return (clip, .rightEdge) }
             return (clip, .body)
@@ -1508,6 +1542,7 @@ final class TimelineView: NSView {
         case .leftEdge?, .rightEdge?: NSCursor.resizeLeftRight.set()
         case .fadeIn?, .fadeOut?: NSCursor.crosshair.set()
         case .body?: NSCursor.openHand.set()
+        case .warp?: NSCursor.resizeLeftRight.set()
         case nil: NSCursor.arrow.set()
         }
     }
@@ -1558,8 +1593,9 @@ final class TimelineView: NSView {
         let stretch = zone == .rightEdge && event.modifierFlags.contains(.option) && !clip.isMidi
         let moving = zone == .body ? selectedClips.compactMap { session.clip($0) } : [clip]
         drag = Drag(clip: clip, moving: moving, zone: zone, startX: p.x, startY: p.y, stretch: stretch)
+        if case .warp = zone { session.engine.beginGroup("Move Quantized Hit") } else {
         session.engine.beginGroup(stretch ? "Time Stretch" : zone == .body ? "Move Clip"
-                                  : (zone == .fadeIn || zone == .fadeOut) ? "Fade" : "Trim Clip")
+                                  : (zone == .fadeIn || zone == .fadeOut) ? "Fade" : "Trim Clip") }
         if zone == .body { NSCursor.closedHand.set() }
     }
 
@@ -1614,6 +1650,13 @@ final class TimelineView: NSView {
         let c = d.clip
         guard let current = session.clip(c.id) else { return }
         switch d.zone {
+        case .warp(let i):
+            // The hit plays where the pointer is (on the grid unless ⌃): its anchor's clip time follows.
+            guard c.warp.indices.contains(i) else { break }
+            let hit = c.warpHitOffset(sampleRate: sampleRate)
+            let at = snap(Double(c.start + c.warp[i].time + hit) + delta, bypass: bypass) - current.start - hit
+            if let w = current.warpMoving(i, toTime: at, sampleRate: sampleRate),
+               w.map(\.time) != current.warp.map(\.time), session.setWarp(c.id, w) { d.changed = true }
         case .body:
             liftClips(d, pointer: p)
             let start = snap(Double(c.start) + delta, bypass: bypass)
@@ -2020,6 +2063,7 @@ extension TimelineView {
         }
         ctx.restoreGState()
         if selected || hovered { drawFadeHandles(ctx, clip, rect: rect) }
+        drawWarpMarkers(ctx, clip, rect: rect)
         if !glass {
             // The outline: four pen strokes in the track's ink that overshoot the corners; a selected clip is gone over
             // again in black ink, with corner ticks.

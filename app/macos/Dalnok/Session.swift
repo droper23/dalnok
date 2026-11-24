@@ -716,3 +716,68 @@ final class Session {
         onChange?()
     }
 }
+
+// MARK: Moving quantize (warp) anchors by hand
+
+extension ClipView {
+    /// Is the segment from anchor `i` to `i + 1` an attack's head (played at the clip's own speed, ≤ 50 ms)?
+    func warpHeadStarts(at i: Int, sampleRate: Double) -> Bool {
+        guard i >= 0, i + 1 < warp.count, let last = warp.last, last.time > 0 else { return false }
+        let base = Double(last.source - warp[0].source) / Double(last.time)
+        let ds = warp[i + 1].source - warp[i].source, dt = warp[i + 1].time - warp[i].time
+        return Double(ds) <= sampleRate * 0.05 + 2 && abs(Double(ds) / Double(dt) - base) < 1e-3
+    }
+    /// Clip frames from a hit's anchor to its attack (audio quantize anchors sit 6 ms of source before the attack).
+    func warpHitOffset(sampleRate: Double) -> Int64 {
+        guard let last = warp.last, last.time > 0 else { return 0 }
+        let base = Double(last.source - warp[0].source) / Double(last.time)
+        return Int64((sampleRate * 0.006 / base).rounded())
+    }
+    /// The anchors a person moves: each interior anchor except a head's end (it moves with its hit).
+    func warpMarkers(sampleRate: Double) -> [Int] {
+        guard warp.count > 2 else { return [] }
+        return (1..<(warp.count - 1)).filter { !warpHeadStarts(at: $0 - 1, sampleRate: sampleRate) }
+    }
+    /// The warp with anchor `i` (and its head's end) moved to clip time `t` (the hit plays there), kept playable:
+    /// order kept and every segment's speed within 0.25-4.
+    func warpMoving(_ i: Int, toTime t: Int64, sampleRate: Double) -> [(source: Int64, time: Int64)]? {
+        guard i > 0, i < warp.count - 1 else { return nil }
+        let end = warpHeadStarts(at: i, sampleRate: sampleRate) && i + 2 < warp.count ? i + 1 : i
+        let prev = warp[i - 1], next = warp[end + 1]
+        let ds1 = Double(warp[i].source - prev.source), ds2 = Double(next.source - warp[end].source)
+        // Bounds on the shift d of anchors i…end.
+        var lo = Double(prev.time) + ds1 / 4 - Double(warp[i].time), hi = Double(prev.time) + ds1 * 4 - Double(warp[i].time)
+        lo = max(lo, Double(next.time - warp[end].time) - ds2 * 4)
+        hi = min(hi, Double(next.time - warp[end].time) - ds2 / 4)
+        guard lo <= hi else { return nil }
+        let d = Int64(min(max(Double(t - warp[i].time), lo.rounded(.up)), hi.rounded(.down)))
+        var w = warp
+        for k in i...end { w[k].time += d }
+        return w
+    }
+    /// The warp with anchor `i` (and its head's end) pinned to source frame `s` instead (the audio that lands there).
+    func warpMoving(_ i: Int, toSource s: Int64, sampleRate: Double) -> [(source: Int64, time: Int64)]? {
+        guard i > 0, i < warp.count - 1 else { return nil }
+        let end = warpHeadStarts(at: i, sampleRate: sampleRate) && i + 2 < warp.count ? i + 1 : i
+        let prev = warp[i - 1], next = warp[end + 1]
+        let dt1 = Double(warp[i].time - prev.time), dt2 = Double(next.time - warp[end].time)
+        var lo = Double(prev.source) + dt1 / 4 - Double(warp[i].source), hi = Double(prev.source) + dt1 * 4 - Double(warp[i].source)
+        lo = max(lo, Double(next.source - warp[end].source) - dt2 * 4)
+        hi = min(hi, Double(next.source - warp[end].source) - dt2 / 4)
+        guard lo <= hi else { return nil }
+        let d = Int64(min(max(Double(s - warp[i].source), lo.rounded(.up)), hi.rounded(.down)))
+        var w = warp
+        for k in i...end { w[k].source += d }
+        return w
+    }
+}
+
+extension Session {
+    /// Replaces a clip's warp (one undo step, or part of the current gesture's group).
+    @discardableResult func setWarp(_ c: DalnokClipId, _ w: [(source: Int64, time: Int64)]) -> Bool {
+        var s = w.map(\.source), t = w.map(\.time)
+        let ok = dalnok_clip_set_warp(engine.handle, c, &s, &t, Int32(w.count)) == DALNOK_OK
+        refresh()
+        return ok
+    }
+}

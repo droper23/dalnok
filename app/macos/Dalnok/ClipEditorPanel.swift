@@ -217,7 +217,7 @@ final class AudioClipView: NSView {
         let got = Int(dalnok_audio_transients(session.engine.handle, c.id, QuantizeSetting.sensitivity, &out, Int32(n)))
         transients = Array(out.prefix(max(0, min(n, got))))
     }
-    private enum Edge { case left, right }
+    private enum Edge: Equatable { case left, right, anchor(Int) }
     private var drag: (edge: Edge, startX: CGFloat, clip: ClipView, changed: Bool)?
     static let ruler: CGFloat = 20
 
@@ -339,10 +339,17 @@ final class AudioClipView: NSView {
             ctx.fill(CGRect(x: ex - 1, y: wave.minY, width: 2, height: wave.height))
             ctx.fill(CGRect(x: ex - 5, y: wave.minY, width: 10, height: 8))
         }
-        // Warp anchors (a quantized clip): faint lines where the timing was moved.
+        // A quantized clip's hits (the audio pinned to each moved time): a line with a grip at the bottom; drag one to
+        // pin that time to another moment of the audio (when a hit was found in the wrong place).
         if c.warp.count > 2 {
-            ctx.setFillColor(Theme.textFaint.withAlphaComponent(0.5).cgColor)
-            for p in c.warp.dropFirst().dropLast() { ctx.fill(CGRect(x: x(Double(p.source)).rounded(), y: wave.minY + 12, width: 1, height: wave.height - 12)) }
+            let pre = Double(pinOffset)
+            ctx.setFillColor(Theme.text.withAlphaComponent(0.55).cgColor)
+            for i in c.warpMarkers(sampleRate: session.engine.sampleRate) {
+                let px = x(Double(c.warp[i].source) + pre).rounded() + 0.5
+                ctx.fill(CGRect(x: px - 0.5, y: wave.minY + 12, width: 1, height: wave.height - 12))
+                ctx.move(to: CGPoint(x: px - 4, y: bounds.maxY)); ctx.addLine(to: CGPoint(x: px + 4, y: bounds.maxY))
+                ctx.addLine(to: CGPoint(x: px, y: bounds.maxY - 6)); ctx.closePath(); ctx.fillPath()
+            }
         }
         // Ruler: seconds of the source.
         Theme.panel.setFill(); CGRect(x: 0, y: 0, width: bounds.width, height: Self.ruler).fill()
@@ -361,8 +368,13 @@ final class AudioClipView: NSView {
         }
     }
 
+    /// Source frames from an anchor to the attack it pins (audio quantize places anchors 6 ms before the attack).
+    private var pinOffset: Int64 { Int64((session.engine.sampleRate * 0.006).rounded()) }
     private func edge(at p: CGPoint) -> Edge? {
         guard let c = clip, p.y >= Self.ruler else { return nil }
+        for i in c.warpMarkers(sampleRate: session.engine.sampleRate) where abs(x(Double(c.warp[i].source + pinOffset)) - p.x) <= 4 {
+            return .anchor(i)
+        }
         let (a, b) = region(c)
         if abs(p.x - x(a)) <= 6 { return .left }
         if abs(p.x - x(b)) <= 6 { return .right }
@@ -376,16 +388,18 @@ final class AudioClipView: NSView {
     }
     override func mouseMoved(with event: NSEvent) {
         let p = convert(event.locationInWindow, from: nil)
-        (edge(at: p) != nil && clip?.isStretched == false ? NSCursor.resizeLeftRight : NSCursor.arrow).set()
+        let e = edge(at: p)
+        let movable = e.map { if case .anchor = $0 { return true }; return clip?.isStretched == false } ?? false
+        (movable ? NSCursor.resizeLeftRight : NSCursor.arrow).set()
     }
     override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
         onFocus?()
         let p = convert(event.locationInWindow, from: nil)
         guard let c = clip else { return }
-        if let e = edge(at: p), !c.isStretched {
+        if let e = edge(at: p), !c.isStretched || { if case .anchor = e { return true }; return false }() {
             drag = (e, p.x, c, false)
-            session.engine.beginGroup("Trim Clip")
+            if case .anchor = e { session.engine.beginGroup("Move Quantized Hit") } else { session.engine.beginGroup("Trim Clip") }
             return
         }
         // A click elsewhere puts the playhead there (inside the clip's region).
@@ -404,6 +418,9 @@ final class AudioClipView: NSView {
         let c = d.clip
         let delta = Int64((Double(p.x - d.startX) * framesPerPoint).rounded())
         switch d.edge {
+        case .anchor(let i):
+            if let w = c.warpMoving(i, toSource: c.warp[i].source + delta, sampleRate: session.engine.sampleRate),
+               w.map(\.source) != current.warp.map(\.source), session.setWarp(c.id, w) { d.changed = true }
         case .left: // keeps the clip's end in place on the timeline
             let offset = min(max(0, c.offset + delta), c.offset + c.length - 1)
             let start = c.start + (offset - c.offset)

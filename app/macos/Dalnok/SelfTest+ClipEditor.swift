@@ -199,7 +199,46 @@ extension SelfTest {
         check(hits.enumerated().allSatisfy { abs($0.element - ($0.offset + 1) * step) <= Int(rate * 0.001) },
               "every hit sounds on its eighth note within 1 ms (\(hits.enumerated().map { $0.element - ($0.offset + 1) * step }))")
         s.setSolo(drums, false)
-        for _ in 0..<3 where (s.clip(audioClip)?.warp.count ?? 0) > 0 { _ = perform("Undo") } // Unsolo, Solo, then the quantize
+        try? w.snapshot(to: workdir.appendingPathComponent("clip-quantized.png"))
+        // Moving a quantized hit by hand in the arrangement: ⌃-drag its marker; the hit sounds where it was dropped.
+        if let qc = s.clip(audioClip), let i = qc.warpMarkers(sampleRate: rate).dropFirst(2).first,
+           let mp = w.timeline.windowPoint(ofWarp: i, in: audioClip) {
+            let before = qc.warp[i].time
+            let dx = CGFloat(rate * 0.02 / w.timeline.framesPerPoint) // 20 ms later
+            w.timeline.mouseDown(with: NSEvent.mouseEvent(with: .leftMouseDown, location: mp, modifierFlags: .control, timestamp: 0,
+                                                          windowNumber: w.window!.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!)
+            for k in 1...6 {
+                w.timeline.mouseDragged(with: NSEvent.mouseEvent(with: .leftMouseDragged, location: CGPoint(x: mp.x + dx * CGFloat(k) / 6, y: mp.y),
+                                                                 modifierFlags: .control, timestamp: 0, windowNumber: w.window!.windowNumber,
+                                                                 context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!)
+            }
+            w.timeline.mouseUp(with: mouse(.leftMouseUp, CGPoint(x: mp.x + dx, y: mp.y), .control))
+            let after = s.clip(audioClip)?.warp[i].time ?? before
+            check(abs(Double(after - before) - rate * 0.02) <= w.timeline.framesPerPoint * 2 && e.undoName == "Move Quantized Hit",
+                  "dragging a quantized hit's marker moves it (\(after - before) frames, \(e.undoName))")
+            var l2 = [Float](repeating: 0, count: total), r2 = l2
+            _ = dalnok_render_offline(e.handle, 0, Int64(total), &l2, &r2)
+            if let moved = s.clip(audioClip) {
+                let hitAt = Int(moved.start + moved.warp[i].time + moved.warpHitOffset(sampleRate: rate))
+                let first = (hitAt - step / 3..<min(total, hitAt + step / 3)).first { abs(l2[$0]) > 0.1 } ?? -1
+                check(abs(first - hitAt) <= Int(rate * 0.001), "the moved hit sounds where it was dropped (\(first - hitAt) frames)")
+            }
+            // The sample view: dragging the same hit's marker pins that time to other audio.
+            let av = w.clipEditor.audio
+            if let mc = s.clip(audioClip) {
+                let srcBefore = mc.warp[i].source
+                let ax = av.x(Double(srcBefore) + (rate * 0.006).rounded())
+                let ap = av.convert(CGPoint(x: ax, y: av.bounds.height - 20), to: nil)
+                let adx = CGFloat(rate * 0.003 / av.framesPerPoint)
+                av.mouseDown(with: mouse(.leftMouseDown, ap))
+                av.mouseDragged(with: mouse(.leftMouseDragged, CGPoint(x: ap.x + adx, y: ap.y)))
+                av.mouseUp(with: mouse(.leftMouseUp, CGPoint(x: ap.x + adx, y: ap.y)))
+                let srcAfter = s.clip(audioClip)?.warp[i].source ?? srcBefore
+                check(srcAfter > srcBefore && e.undoName == "Move Quantized Hit",
+                      "dragging a hit in the sample view pins other audio to it (\(srcAfter - srcBefore) frames)")
+            }
+        } else { check(false, "the quantized clip has hit markers on screen") }
+        for _ in 0..<6 where (s.clip(audioClip)?.warp.count ?? 0) > 0 { _ = perform("Undo") } // the hits, Unsolo, Solo, the quantize
         check(s.clip(audioClip)?.warp.isEmpty == true, "undo restores the clip as recorded")
 
         // The hover playhead follows the mouse over the arrangement.
