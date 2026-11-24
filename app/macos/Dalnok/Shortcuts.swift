@@ -311,6 +311,7 @@ struct ShortcutPreset {
         ShortcutPreset(id: "logic", title: "Logic Pro", note: approximate, bindings: b([
             ("track.create_audio", ["opt+cmd+a"]), ("track.create_midi", ["opt+cmd+s"]), ("project.import_audio", ["shift+cmd+i"]),
             ("midi.quantize_clip", []), ("view.zoom_in", ["cmd+right"]), ("view.zoom_out", ["cmd+left"]),
+            ("edit.split_at_playhead", ["cmd+t"]),
         ]), unavailable: ["Smart Controls (B)", "Loop Browser (O)", "Flex View (⌘F)", "Toggle Region Mute (M)"]),
         ShortcutPreset(id: "ableton", title: "Ableton Live", note: approximate, bindings: b([
             ("edit.split_at_playhead", ["cmd+e"]), ("project.export_mix", ["shift+cmd+r"]), ("track.create_audio", ["cmd+t"]),

@@ -32,6 +32,24 @@ import Testing
         #expect(clipInfo(e, c).start == 0, "clip stays where it was")
         #expect(runCommand(e, "clip.move", "{\"clip\":\(c),\"start\":5000}").0 == DALNOK_OK)
     }
+
+    @Test func outOfRangeValuesAreErrorsNotClamps() {
+        let e = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(e) }
+        let m = makeMedia([[Float](repeating: 0.1, count: 1_000)]); defer { dalnok_media_release(m) }
+        let t = dalnok_track_add(e, "A")
+        let c = dalnok_clip_add(e, t, m, 0, 0, 0)
+        let bad = [("track.setVolume", "{\"track\":\(t),\"db\":1e9}"), ("track.setVolume", "{\"track\":\(t),\"db\":12.5}"),
+                   ("master.setGain", "{\"db\":1e30}"), ("clip.setGain", "{\"clip\":\(c),\"db\":25}"),
+                   ("track.setPan", "{\"track\":\(t),\"pan\":2}"), ("transport.seek", "{\"frame\":-1}"),
+                   ("transport.seek", "{\"seconds\":1e300}"),
+                   ("clip.setFades", "{\"clip\":\(c),\"fadeIn\":800,\"fadeOut\":800}")]
+        for (name, args) in bad { #expect(runCommand(e, name, args).0 == DALNOK_ERR_INVALID_ARG, "\(name) \(args)") }
+        let good = [("track.setVolume", "{\"track\":\(t),\"db\":12}"), ("track.setVolume", "{\"track\":\(t),\"db\":-200}"),
+                    ("master.setGain", "{\"db\":-6}"), ("clip.setGain", "{\"clip\":\(c),\"db\":24}"),
+                    ("track.setPan", "{\"track\":\(t),\"pan\":-1}"), ("transport.seek", "{\"frame\":0}"),
+                    ("clip.setFades", "{\"clip\":\(c),\"fadeIn\":500,\"fadeOut\":500}")]
+        for (name, args) in good { #expect(runCommand(e, name, args).0 == DALNOK_OK, "\(name) \(args)") }
+    }
 }
 
 @Suite struct HostileAudio {

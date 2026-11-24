@@ -61,7 +61,7 @@ func openProject(_ path: String) -> OpaquePointer {
     var err = [CChar](repeating: 0, count: 512)
     var missing: Int32 = 0
     guard dalnok_project_load(engine, path, &missing, &err, 512) == DALNOK_OK else { fail(cstr(err)) }
-    if missing > 0 { print("warning: \(missing) media file(s) offline") }
+    if missing > 0 { FileHandle.standardError.write(Data("warning: \(missing) media file(s) offline\n".utf8)) }
     return engine
 }
 func opt(_ name: String) -> String? { args.firstIndex(of: name).flatMap { $0 + 1 < args.count ? args[$0 + 1] : nil } }

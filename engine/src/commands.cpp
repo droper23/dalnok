@@ -35,6 +35,17 @@ bool needInt(const Value &a, const char *key, Int &out, std::string &err) {
     return true;
 }
 
+// A gain in dB the catalog accepts: finite and at most `max` (anything at or below -96 dB means silence). The engine
+// clamps for faders being dragged past their end; a command with an out-of-range value is a mistake and says so.
+bool needDb(const Value &a, const char *key, double max, double &out, std::string &err) {
+    if (!needNumber(a, key, out, err)) return false;
+    if (!std::isfinite(out) || out > max + 1e-9) {
+        err = std::string("argument '") + key + "' must be at most " + std::to_string(static_cast<int>(max)) + " dB";
+        return false;
+    }
+    return true;
+}
+
 DalnokStatus status(bool ok, const std::string &err) {
     if (ok) return DALNOK_OK;
     return err.rfind("no such", 0) == 0 ? DALNOK_ERR_NOT_FOUND : DALNOK_ERR_INVALID_ARG;
@@ -73,13 +84,14 @@ const CommandDef kCommands[] = {
     {"track.setVolume", "Set Track Volume", "{track, db}", [](ARGS) {
          DalnokTrackId t;
          double db;
-         if (!needInt(a, "track", t, err) || !needNumber(a, "db", db, err)) return DALNOK_ERR_INVALID_ARG;
+         if (!needInt(a, "track", t, err) || !needDb(a, "db", 12, db, err)) return DALNOK_ERR_INVALID_ARG;
          return status(e.setGainDb(t, static_cast<float>(db), err), err);
      }},
     {"track.setPan", "Set Track Pan", "{track, pan: -1..1}", [](ARGS) {
          DalnokTrackId t;
          double p;
          if (!needInt(a, "track", t, err) || !needNumber(a, "pan", p, err)) return DALNOK_ERR_INVALID_ARG;
+         if (!(p >= -1 && p <= 1)) return err = "pan must be -1..1", DALNOK_ERR_INVALID_ARG;
          return status(e.setPan(t, static_cast<float>(p), err), err);
      }},
     {"track.setMute", "Mute or Unmute Track", "{track, muted}", [](ARGS) {
@@ -270,7 +282,7 @@ const CommandDef kCommands[] = {
      }},
     {"master.setGain", "Master Volume", "{db}", [](ARGS) {
          double db;
-         if (!needNumber(a, "db", db, err)) return DALNOK_ERR_INVALID_ARG;
+         if (!needDb(a, "db", 12, db, err)) return DALNOK_ERR_INVALID_ARG;
          return status(e.setMasterGainDb(static_cast<float>(db), err), err);
      }},
     {"takes.makeFolder", "Make Take Folder", "{track, clips: [clip, ...]}", [](ARGS) {
@@ -439,12 +451,14 @@ const CommandDef kCommands[] = {
              return DALNOK_ERR_INVALID_ARG;
          const auto curve = a.getString("curve", "linear");
          if (curve != "linear" && curve != "equalPower") return err = "curve must be linear or equalPower", DALNOK_ERR_INVALID_ARG;
+         if (const ClipState *clip = e.model().clip(c); clip && fi >= 0 && fo >= 0 && fi > clip->length - fo)
+             return err = "fades are longer than the clip", DALNOK_ERR_INVALID_ARG;
          return status(e.setClipFades(c, fi, fo, curve == "equalPower" ? kFadeEqualPower : kFadeLinear, err), err);
      }},
     {"clip.setGain", "Set Clip Gain", "{clip, db}", [](ARGS) {
          DalnokClipId c;
          double db;
-         if (!needInt(a, "clip", c, err) || !needNumber(a, "db", db, err)) return DALNOK_ERR_INVALID_ARG;
+         if (!needInt(a, "clip", c, err) || !needDb(a, "db", 24, db, err)) return DALNOK_ERR_INVALID_ARG;
          return status(e.setClipGain(c, static_cast<float>(db), err), err);
      }},
     {"clip.setMuted", "Mute or Unmute Clip", "{clip, muted}", [](ARGS) {
@@ -553,11 +567,13 @@ const CommandDef kCommands[] = {
     {"transport.seek", "Go to Position", "{frame} or {seconds}", [](ARGS) {
          double v;
          if (a.get("seconds") && needNumber(a, "seconds", v, err)) {
+             if (!(v >= 0 && v < 1e9)) return err = "seconds must be 0 or more", DALNOK_ERR_INVALID_ARG;
              e.seek(static_cast<int64_t>(std::llround(v * e.sampleRate())));
              return DALNOK_OK;
          }
          int64_t f;
          if (!needInt(a, "frame", f, err)) return DALNOK_ERR_INVALID_ARG;
+         if (f < 0) return err = "frame must be 0 or more", DALNOK_ERR_INVALID_ARG;
          e.seek(f);
          return DALNOK_OK;
      }},
