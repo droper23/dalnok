@@ -219,6 +219,15 @@ const CommandDef kCommands[] = {
          if (!needInt(a, "track", t, err)) return DALNOK_ERR_INVALID_ARG;
          return e.duplicateTrack(t, err) ? DALNOK_OK : DALNOK_ERR_INVALID_ARG;
      }},
+    {"track.bounceInPlace", "Bounce in Place", "{track, path: where the bounced WAV goes}", [](ARGS) {
+         DalnokTrackId t;
+         if (!needInt(a, "track", t, err)) return DALNOK_ERR_INVALID_ARG;
+         const std::string path = a.getString("path", "");
+         if (path.empty()) return err = "missing argument 'path'", DALNOK_ERR_INVALID_ARG;
+         const auto id = e.bounceInPlace(t, path, err);
+         r.set("id", id);
+         return status(id != 0, err);
+     }},
     {"audio.quantize", "Quantize Audio", "{clip, grid (quarter notes, default 0.25), strength (0-1], sensitivity (0-1)}", [](ARGS) {
          DalnokClipId c;
          if (!needInt(a, "clip", c, err)) return DALNOK_ERR_INVALID_ARG;

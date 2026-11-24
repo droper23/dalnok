@@ -166,6 +166,18 @@ extension SelfTest {
             _ = perform("Undo")
             check(s.tracks.count == n, "undo removes the copy")
         }
+        // Bounce Track in Place (⌃⌘B): a new audio track below with one clip; the original muted; one undo step.
+        if let t = s.tracks.first(where: { !$0.isBus && !$0.isStack && !$0.clips.isEmpty && !$0.muted }) {
+            w.headers.select(t.id)
+            let n = s.tracks.count
+            check(perform("Bounce Track in Place", exact: true) && s.tracks.count == n + 1, "Track ▸ Bounce Track in Place adds a track")
+            let i = s.tracks.firstIndex { $0.id == t.id } ?? 0
+            let bounced = s.tracks[min(i + 1, s.tracks.count - 1)]
+            check(bounced.name == t.name + " Bounce" && bounced.clips.count == 1 && s.tracks[i].muted && w.selectedTrack == bounced.id,
+                  "the bounce sits below with one clip, the original is muted (\(bounced.name))")
+            _ = perform("Undo")
+            check(s.tracks.count == n && s.tracks.first(where: { $0.id == t.id })?.muted == false, "undo removes the bounce and unmutes")
+        }
         // Hide Track / Show All Tracks: out of view, still playing; the header title counts them.
         if let t = s.tracks.first {
             w.headers.select(t.id)
@@ -432,7 +444,8 @@ extension SelfTest {
         // Palette speaks other DAWs' languages.
         w.showCommandPalette(nil)
         w.palette.filter("bounce")
-        check(w.palette.results.first?.title == "Export Mix…", "palette: 'bounce' → \(w.palette.results.first?.title ?? "-")")
+        let bounceHits = w.palette.results.prefix(3).map(\.title) // Logic's word for export, and Bounce in Place
+        check(bounceHits.contains("Export Mix…") && bounceHits.contains("Bounce Track in Place"), "palette: 'bounce' → \(bounceHits)")
         w.palette.filter("split region")
         check(w.palette.results.first?.title == "Split at Playhead", "palette: 'split region' → \(w.palette.results.first?.title ?? "-")")
         w.palette.filter("collect all and save")

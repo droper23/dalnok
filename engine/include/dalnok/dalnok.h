@@ -973,6 +973,11 @@ DalnokStatus dalnok_render_to_wav(DalnokEngine *engine, const char *path, int64_
 DalnokStatus dalnok_render_to_wav_tail(DalnokEngine *engine, const char *path, int64_t start_frame, int64_t frames,
                                        int32_t bits, int64_t max_tail, int64_t *tail_written, char *err,
                                        size_t err_len);
+/* Bounce in Place: renders the track's clips through its plug-ins (pre-fader, with their tail) into a 32-bit float
+ * WAV at `path`, adds it on a new audio track right below with the same fader, pan and output, and mutes the
+ * original. One undo step. Returns the new track (0 on failure, with a message in `err`). API 47. */
+DalnokTrackId dalnok_track_bounce_in_place(DalnokEngine *engine, DalnokTrackId track, const char *path, char *err,
+                                           size_t err_len);
 
 /* ---- Diagnostics ----------------------------------------------------- */
 

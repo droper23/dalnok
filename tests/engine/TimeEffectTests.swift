@@ -114,3 +114,33 @@ private func dB(_ x: Double) -> Double { 20 * log10(max(x, 1e-12)) }
         #expect(abs(dB(Double(out)) - (dB(0.001) - 20)) < 0.2, "-20 dB range: \(dB(Double(out)) - dB(0.001)) dB")
     }
 }
+
+@Suite struct BounceInPlace {
+    @Test func bounceSoundsTheSameAndMutesTheSource() throws {
+        // A 0.25 s tone into a delay (the tail runs past the clip), fader -6 dB, panned: the bounced track must play
+        // the same mix once the source is muted.
+        let x = (0..<12_000).map { Float(0.4 * sin(2 * Double.pi * 330 * Double($0) / 48_000)) }
+        let (e, t) = session(x); defer { dalnok_engine_destroy(e) }
+        _ = add(e, t, "delay", [0: 120, 1: 120, 2: 40, 6: 40])
+        dalnok_track_set_gain_db(e, t, -6)
+        dalnok_track_set_pan(e, t, 0.3)
+        let n = 96_000
+        let (dryL, dryR) = render(e, frames: n)
+        var err = [CChar](repeating: 0, count: 256)
+        let path = tempDir().appendingPathComponent("bounce.wav").path
+        let b = dalnok_track_bounce_in_place(e, t, path, &err, 256)
+        #expect(b != 0, "\(cstr(err))")
+        #expect(dalnok_track_count(e) == 2 && dalnok_track_at(e, 1) == b, "new track right below")
+        var src = DalnokTrackInfo(), out = DalnokTrackInfo()
+        _ = dalnok_track_info(e, t, &src); _ = dalnok_track_info(e, b, &out)
+        #expect(src.muted && !out.muted && abs(out.gain_db + 6) < 1e-4 && abs(out.pan - 0.3) < 1e-6)
+        let (l, r) = render(e, frames: n)
+        let worst = max(zip(l, dryL).map { abs($0 - $1) }.max() ?? 1, zip(r, dryR).map { abs($0 - $1) }.max() ?? 1)
+        #expect(worst < 1e-5, "bounced mix differs by \(worst)")
+        #expect(dryL[13_000..<20_000].map { abs($0) }.max() ?? 0 > 0.01, "the delay tail (after the clip) is in the comparison")
+        #expect(dalnok_undo(e) && dalnok_track_count(e) == 1, "one undo step")
+        _ = dalnok_track_info(e, t, &src)
+        #expect(!src.muted)
+        #expect(dalnok_track_bounce_in_place(e, 999, path, &err, 256) == 0)
+    }
+}

@@ -366,6 +366,11 @@ public:
     bool renderToWav(const std::string &path, int64_t start, int64_t frames, int32_t bits, std::string &err,
                      int64_t maxTail = 0, int64_t *tailWritten = nullptr);
 
+    // Bounce in Place (Logic) / Freeze-and-flatten (Ableton): renders `track`'s clips through its plug-ins (pre-fader,
+    // with their tail) into a 32-bit float WAV at `path`, puts it on a new audio track right below with the same
+    // fader, pan and output, and mutes the original. One undo step. Returns the new track (0 on failure).
+    DalnokTrackId bounceInPlace(DalnokTrackId track, const std::string &path, std::string &err);
+
     void stats(DalnokStats &out) const;
     void resetStats();
     int32_t snapshotMismatches() const; // tracks whose reused content differs from a fresh build (tests)

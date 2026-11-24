@@ -1104,6 +1104,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         let dup = NSMenuItem(title: "Duplicate Track", action: #selector(duplicateTrack(_:)), keyEquivalent: "")
         dup.target = self
         m.addItem(dup)
+        let bounce = NSMenuItem(title: "Bounce Track in Place", action: #selector(bounceTrackInPlace(_:)), keyEquivalent: "")
+        bounce.target = self
+        m.addItem(bounce)
         let arm = NSMenuItem(title: "Record Enable", action: #selector(toggleArmTrack(_:)), keyEquivalent: "")
         arm.target = self
         m.addItem(arm)
@@ -2067,6 +2070,21 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         let id = dalnok_track_duplicate(session.engine.handle, t)
         session.refresh()
         if id != 0 { headers.select(id) } else { flash("Tracks inside a stack can be duplicated one by one") }
+    }
+    /// Logic's Bounce in Place, Ableton's Freeze and Flatten: the track through its plug-ins becomes audio on a new
+    /// track below (same fader, pan and output); the original is muted, so the plug-ins can be removed or kept.
+    @objc func bounceTrackInPlace(_ sender: Any?) {
+        guard let t = selectedTrack, let name = session.tracks.first(where: { $0.id == t })?.name else { return NSSound.beep() }
+        let folder = recordingFolder
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let safe = name.map { "/:\\".contains($0) ? "-" : $0 }
+        let stamp = Int(Date().timeIntervalSince1970)
+        let url = folder.appendingPathComponent("\(String(safe)) Bounce \(stamp).wav")
+        var err = [CChar](repeating: 0, count: 512)
+        let id = dalnok_track_bounce_in_place(session.engine.handle, t, url.path, &err, err.count)
+        session.refresh()
+        if id != 0 { headers.select(id); flash("Bounced \(name) in place") }
+        else { flash(String(cString: err)) }
     }
     @objc func zoomToSelection(_ sender: Any?) {
         let clips = timeline.selectedClips.compactMap { session.clip($0) }

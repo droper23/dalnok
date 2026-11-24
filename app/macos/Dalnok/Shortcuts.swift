@@ -254,6 +254,7 @@ private let specs: [String: Spec] = [
     "deleteMarkerAtPlayhead:": Spec(id: "transport.delete_marker", category: "Timeline and Navigation", detail: "Delete the marker at the playhead."),
     "hideTrack:": Spec(id: "track.hide", category: "Tracks", detail: "Hide the selected track (it keeps playing).", keywords: ["hide", "visibility"]),
     "showAllTracks:": Spec(id: "track.show_all", category: "Tracks", detail: "Show every hidden track.", keywords: ["unhide", "visibility"]),
+    "bounceTrackInPlace:": Spec(id: "track.bounce_in_place", category: "Tracks", detail: "Render the selected track through its plug-ins to a new audio track below and mute the original.", keywords: ["freeze", "flatten", "render", "print"]),
     "duplicateTrack:": Spec(id: "track.duplicate", category: "Tracks", detail: "Duplicate the selected track with its clips, plug-ins and settings.", keywords: ["copy track"]),
     "zoomToSelection:": Spec(id: "view.zoom_to_selection", category: "Timeline and Navigation", detail: "Fit the selected clips in the window."),
     "tallerTracks:": Spec(id: "view.taller_tracks", category: "Timeline and Navigation", detail: "Vertical zoom in: taller tracks.", keywords: ["vertical zoom", "track height"]),

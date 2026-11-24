@@ -1032,6 +1032,14 @@ DalnokStatus dalnok_render_to_wav(DalnokEngine *e, const char *path, int64_t sta
     return DALNOK_OK;
 }
 
+DalnokTrackId dalnok_track_bounce_in_place(DalnokEngine *e, DalnokTrackId track, const char *path, char *err, size_t err_len) {
+    if (!e || !path) return 0;
+    std::string msg;
+    const DalnokTrackId out = e->impl.bounceInPlace(track, path, msg);
+    if (!out) copyOut(err, err_len, msg);
+    return out;
+}
+
 DalnokStatus dalnok_render_to_wav_tail(DalnokEngine *e, const char *path, int64_t start, int64_t frames, int32_t bits,
                                        int64_t max_tail, int64_t *tail_written, char *err, size_t err_len) {
     if (!e || !path || max_tail < 0) return DALNOK_ERR_INVALID_ARG;

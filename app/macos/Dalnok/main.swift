@@ -372,6 +372,7 @@ func buildMenu(target: MainWindowController) -> NSMenu {
         item("Rename Track", #selector(W.renameTrack(_:)), ""),
         item("Delete Track", #selector(W.deleteTrack(_:)), "\u{8}", [.command]),
         item("Duplicate Track", #selector(W.duplicateTrack(_:)), "d", [.control, .shift]),
+        item("Bounce Track in Place", #selector(W.bounceTrackInPlace(_:)), "b", [.control, .command]),
         item("Hide Track", #selector(W.hideTrack(_:)), "h", [.control]),
         item("Show All Tracks", #selector(W.showAllTracks(_:)), "h", [.control, .shift]),
         .separator(),

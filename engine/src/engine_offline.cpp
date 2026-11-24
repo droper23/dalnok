@@ -136,6 +136,79 @@ bool Engine::renderToWav(const std::string &path, int64_t start, int64_t frames,
     return w->close(err);
 }
 
+DalnokTrackId Engine::bounceInPlace(DalnokTrackId track, const std::string &path, std::string &err) {
+    [[maybe_unused]] const FlushDenormals flushDenormals;
+    const TrackState *src = model_.track(track);
+    if (!src) return fail(err, "no such track"), 0;
+    if (src->kind == kTrackBus) return fail(err, "buses can't be bounced in place (bounce their tracks)"), 0;
+    int64_t start = INT64_MAX, end = 0;
+    for (const auto &c : model_.clips)
+        if (c.track == track && c.slot < 0 && !c.alt && !c.muted) {
+            start = std::min(start, c.start);
+            end = std::max(end, c.start + c.length);
+        }
+    if (end <= start) return fail(err, "the track has no clips to bounce"), 0;
+
+    renderPendingStretchesNow();
+    const auto offline = pluginHost_.offlineCopies(model_);
+    const auto state = compile(nullptr, &offline);
+    size_t index = state->tracks.size();
+    for (size_t i = 0; i < state->tracks.size(); ++i) if (state->tracks[i].id == static_cast<int32_t>(track)) index = i;
+    if (index == state->tracks.size()) return fail(err, "the track is not rendered"), 0;
+    const int64_t latency = state->tracks[index].latency; // the track's plug-ins delay its output by this much
+    auto scratch = std::make_unique<Scratch>();
+    std::vector<SynthState> synths(state->tracks.size());
+    std::vector<float> l(kMaxBlock), r(kMaxBlock);
+    std::vector<float> outL, outR;
+    StreamCache::Lease lease;
+    const int64_t window = static_cast<int64_t>(sampleRate_);
+    int64_t leasedTo = start;
+    const int64_t body = end - start + latency, maxTail = static_cast<int64_t>(sampleRate_ * 10);
+    const int64_t quietNeeded = static_cast<int64_t>(sampleRate_ * 0.5);
+    int64_t lastLoud = 0, quiet = 0;
+    for (int64_t done = 0; done < body || (done < body + maxTail && quiet < quietNeeded);) {
+        const int n = static_cast<int>(std::min<int64_t>(kMaxBlock, (done < body ? body : body + maxTail) - done));
+        const int64_t pos = start + done;
+        if (pos + n > leasedTo) {
+            lease.clear();
+            leaseStreams(lease, *state, pos, window + n);
+            leasedTo = pos + window + n;
+        }
+        renderBlock(*state, pos, n, l.data(), r.data(), *scratch, false, false, synths.data());
+        const float *cl = state->chainL.data() + index * kMaxBlock, *cr = state->chainR.data() + index * kMaxBlock;
+        outL.insert(outL.end(), cl, cl + n);
+        outR.insert(outR.end(), cr, cr + n);
+        float peak = 0;
+        for (int i = 0; i < n; ++i) peak = std::max({peak, std::fabs(cl[i]), std::fabs(cr[i])});
+        done += n;
+        if (peak >= 1e-5f) { lastLoud = done; quiet = 0; } else if (done > body) quiet += n;
+    }
+    // Drop the plug-ins' latency (the bounce lines up with the clips) and the silent end of the tail.
+    const int64_t keep = std::max(end - start, lastLoud - latency);
+    const auto from = static_cast<size_t>(std::min<int64_t>(latency, static_cast<int64_t>(outL.size())));
+    const auto to = std::min(outL.size(), from + static_cast<size_t>(keep));
+    std::unique_ptr<WavWriter> w(openWavWriter(path, sampleRate_, 32, err));
+    if (!w || !w->write(outL.data() + from, outR.data() + from, static_cast<int64_t>(to - from), err) || !w->close(err)) return 0;
+    auto media = Media::loadFile(path, sampleRate_, err);
+    if (!media) return 0;
+    const DalnokMediaId mid = poolAdd(media, path);
+
+    const TrackState copy = *src;
+    beginGroup("Bounce in Place");
+    DalnokTrackId out = addTrack(copy.name + " Bounce", err);
+    int32_t at = 0;
+    for (size_t i = 0; i < model_.tracks.size(); ++i) if (model_.tracks[i].id == track) at = static_cast<int32_t>(i) + 1;
+    const bool ok = out && moveTrack(out, at, err) && addClip(out, mid, start, 0, static_cast<int64_t>(to - from), err) &&
+                    setTrackOutput(out, copy.output, err) && setGainDb(out, copy.gainDb, err) && setPan(out, copy.pan, err) &&
+                    setMute(track, true, err);
+    endGroup();
+    if (!ok) {
+        if (out) undo();
+        return 0;
+    }
+    return out;
+}
+
 // ---- Diagnostics --------------------------------------------------------
 
 void Engine::stats(DalnokStats &o) const {
