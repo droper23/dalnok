@@ -189,6 +189,40 @@ func oneNoteSession(pitch: UInt8 = 69, velocity: UInt8 = 127) -> (OpaquePointer,
         #expect(dalnok_midi_take_input_notes(e, &out, 8) == 0, "taken once")
     }
 
+    @Test func captureMidiTurnsWhatWasPlayedIntoAClip() {
+        let e = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(e) }
+        let t = dalnok_track_add_instrument(e, "Keys")
+        var l = [Float](repeating: 0, count: 512), r = l
+        func pump(_ n: Int) { for _ in 0..<n { dalnok_engine_pump(e, &l, &r, 512); var b = [DalnokInputNote](repeating: DalnokInputNote(), count: 64); _ = dalnok_midi_take_input_notes(e, &b, 64) } }
+        var err = [CChar](repeating: 0, count: 256)
+        #expect(dalnok_midi_capture(e, t, &err, 256) == 0 && cstr(err) == "nothing was played")
+        // Stopped, playhead in bar 2 (beat 5 = 120,000): two notes 1,024 frames apart; the phrase starts at bar 2.
+        dalnok_transport_seek(e, 120_000)
+        pump(2)
+        dalnok_midi_inject(e, 0x90, 60, 100); pump(2)
+        dalnok_midi_inject(e, 0x80, 60, 0); dalnok_midi_inject(e, 0x90, 62, 80); pump(1)
+        dalnok_midi_inject(e, 0x80, 62, 0); pump(1)
+        let c = dalnok_midi_capture(e, t, &err, 256)
+        #expect(c != 0, "\(cstr(err))")
+        let info = clipInfo(e, c)
+        #expect(info.start == 96_000 && info.length == 96_000 && undoName(e) == "Capture MIDI", "one bar from bar 2: \(info.start) \(info.length)")
+        var notes = [DalnokNote](repeating: DalnokNote(), count: 4)
+        #expect(dalnok_midi_clip_notes(e, c, &notes, 4) == 2)
+        #expect(notes[0].start == 0 && notes[0].length == 1_024 && notes[1].start == 1_024 && notes[1].length == 512 && notes[1].velocity == 80)
+        #expect(dalnok_midi_capture(e, t, &err, 256) == 0, "captured once")
+        // Playing from 0: notes keep their timeline places (block-stamped like recording).
+        dalnok_transport_seek(e, 0); pump(1)
+        dalnok_transport_play(e); pump(3)
+        let at = dalnok_transport_position(e)
+        dalnok_midi_inject(e, 0x90, 64, 90); pump(2)
+        dalnok_midi_inject(e, 0x80, 64, 0); pump(1)
+        dalnok_transport_pause(e)
+        let timed = dalnok_midi_capture(e, t, &err, 256)
+        #expect(timed != 0 && clipInfo(e, timed).start == 0, "\(cstr(err))")
+        #expect(dalnok_midi_clip_notes(e, timed, &notes, 4) == 1 && abs(notes[0].start - at) <= 512 && notes[0].length == 1_024,
+                "at \(notes[0].start), played near \(at)")
+    }
+
     @Test func quantizeMovesStartsTowardTheGrid() {
         let e = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(e) }
         let t = dalnok_track_add_instrument(e, nil)

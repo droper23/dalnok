@@ -243,6 +243,12 @@ DalnokStatus dalnok_midi_inject(DalnokEngine *engine, uint8_t status, uint8_t da
  * keeps the last 512; returns how many were written. */
 typedef struct { uint8_t pitch, velocity; bool on; } DalnokInputNote;
 int32_t dalnok_midi_take_input_notes(DalnokEngine *engine, DalnokInputNote *out, int32_t capacity);
+/* Capture MIDI (API 47): the latest phrase played on MIDI inputs since the last capture becomes a clip on `track`
+ * (whole bars; at its timeline place if the transport was running, else from the playhead's bar). Returns the clip,
+ * 0 with a message when nothing was played. Call dalnok_midi_take_input_notes regularly (the app does on every
+ * display tick) so no input is dropped. */
+DalnokClipId dalnok_midi_capture(DalnokEngine *engine, DalnokTrackId track, char *err, size_t err_len);
+int32_t dalnok_midi_capture_pending(DalnokEngine *engine); /* notes played since the last capture */
 uint64_t dalnok_midi_dropped(const DalnokEngine *engine);
 
 /* Runs the live render path (transport fades, smoothing, meters) for `frames`

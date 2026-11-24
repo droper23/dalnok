@@ -987,7 +987,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         if tickCount % 15 == 0 && !devicePanel.isHidden { devicePanel.refreshValues() }
         if !devicePanel.isHidden { devicePanel.pollMeters() } // Graphite faceplates and Warm Analog pedals
         if !clipEditor.isHidden { clipEditor.tick() } // the editors' playheads
+        // MIDI input: step input takes the notes; otherwise they only feed Capture MIDI's history (drained every tick).
         if activeRoll.stepInput { activeRoll.stepTick() }
+        else { var drop = [DalnokInputNote](repeating: DalnokInputNote(), count: 64); while dalnok_midi_take_input_notes(session.engine.handle, &drop, 64) == 64 {} }
         if pianoRoll.window?.isVisible == true { pianoRoll.roll.updatePlayhead() }
         if transientMessageUntil < Date(), transientMessageUntil != .distantPast {
             transientMessageUntil = .distantPast
@@ -2544,6 +2546,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         case #selector(toggleSoloTrack(_:)):
             item.state = selectedTrack.flatMap { session.track($0) }?.solo == true ? .on : .off
             return selectedTrack != nil
+        case #selector(captureMidi(_:)):
+            return dalnok_midi_capture_pending(session.engine.handle) > 0
         case #selector(toggleStepInput(_:)):
             item.state = activeRoll.stepInput ? .on : .off
             return activeRoll.clip?.isMidi == true

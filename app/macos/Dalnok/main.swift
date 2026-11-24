@@ -491,6 +491,7 @@ func buildMenu(target: MainWindowController) -> NSMenu {
         item("Cycle", #selector(W.toggleCycle(_:)), "c", []),
         item("Set Cycle to Selection", #selector(W.setCycleToSelection(_:)), "u"),
         item("Count-In", #selector(W.toggleCountIn(_:)), "k", [.shift]),
+        item("Capture MIDI", #selector(W.captureMidi(_:)), "c", [.command, .shift]),
         item("Autopunch", #selector(W.toggleAutopunch(_:)), ""),
         item("Set Punch to Cycle", #selector(W.setPunchToCycle(_:)), ""),
         item("Edit Tempo", #selector(W.editTempo(_:)), "t", [.command, .option]),

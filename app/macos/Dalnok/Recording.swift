@@ -558,6 +558,18 @@ extension MainWindowController {
         flash("\(sender.title): \(clips.count == 1 ? "1 clip" : "\(clips.count) clips")")
     }
 
+    /// Transport ▸ Capture MIDI (⇧⌘C, as in Ableton): what was just played on the keyboard, recording or not, becomes a
+    /// clip on the armed instrument track (else the selected track).
+    @objc func captureMidi(_ sender: Any?) {
+        let target = session.tracks.first { $0.armed && !$0.isBus && $0.isInstrument }?.id ?? selectedTrack
+        guard let t = target else { return flash("Select or arm an instrument track to capture into") }
+        var err = [CChar](repeating: 0, count: 256)
+        let c = dalnok_midi_capture(session.engine.handle, t, &err, err.count)
+        session.refresh()
+        if c != 0 { timeline.selectClips([c]); flash("Captured \(session.clip(c)?.noteCount ?? 0) notes") }
+        else { flash(String(cString: err) == "nothing was played" ? "Nothing played since the last capture" : String(cString: err)) }
+    }
+
     /// Clip ▸ Step Input: notes played on a MIDI keyboard go into the open MIDI clip at the playhead, one step at a time.
     @objc func toggleStepInput(_ sender: Any?) {
         let roll = activeRoll

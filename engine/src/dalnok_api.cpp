@@ -1122,6 +1122,14 @@ size_t dalnok_plugin_sample_path(const DalnokEngine *e, int32_t slot, int32_t zo
 int32_t dalnok_midi_take_input_notes(DalnokEngine *e, DalnokInputNote *out, int32_t capacity) {
     return e && out && capacity > 0 ? e->impl.takeInputNotes(out, capacity) : 0;
 }
+DalnokClipId dalnok_midi_capture(DalnokEngine *e, DalnokTrackId track, char *err, size_t err_len) {
+    if (!e) return 0;
+    std::string msg;
+    const DalnokClipId c = e->impl.captureMidi(track, msg);
+    if (!c) copyOut(err, err_len, msg);
+    return c;
+}
+int32_t dalnok_midi_capture_pending(DalnokEngine *e) { return e ? e->impl.capturePending() : 0; }
 DalnokStatus dalnok_clip_set_loop(DalnokEngine *e, DalnokClipId c, bool looped) {
     std::string err;
     return e ? statusFor(e->impl.setClipLoop(c, looped, err), err) : DALNOK_ERR_INVALID_ARG;

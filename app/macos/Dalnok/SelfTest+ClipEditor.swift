@@ -150,6 +150,20 @@ extension SelfTest {
         _ = await waitUntil { abs(e.position - c.start - 2 * oneStep) <= 1 }
         check(abs(e.position - c.start - 2 * oneStep) <= 1, "the playhead moved two steps (\(e.position - c.start))")
         check(perform("Step Input", exact: true) && !roll.stepInput, "Step Input turns off")
+        // Transport ▸ Capture MIDI: notes played (not recording) become a clip on the selected instrument track.
+        if let keys = s.clip(midi)?.track {
+            w.headers.select(keys)
+            let before = s.track(keys)?.clips.count ?? 0
+            dalnok_midi_inject(e.handle, 0x90, 72, 100)
+            dalnok_midi_inject(e.handle, 0x80, 72, 0)
+            dalnok_midi_inject(e.handle, 0x90, 76, 100)
+            dalnok_midi_inject(e.handle, 0x80, 76, 0)
+            let handle = e.handle
+            let heard = await waitUntil { dalnok_midi_capture_pending(handle) >= 2 } // the audio callback reads MIDI input
+            check(heard && perform("Capture MIDI", exact: true) && (s.track(keys)?.clips.count ?? 0) == before + 1 && e.undoName == "Capture MIDI",
+                  "Transport ▸ Capture MIDI adds the played notes as a clip (heard \(heard))")
+            if e.undoName == "Capture MIDI" { _ = perform("Undo") }
+        }
 
         // The lower lane as a controller lane (mod wheel): click sets a point, a drag draws more, one undo step.
         roll.laneController = 1

@@ -4,6 +4,7 @@
 #include "engine_internal.hpp"
 
 #include <algorithm>
+#include <array>
 #include <functional>
 #include <cmath>
 #include <cstdio>
@@ -218,6 +219,90 @@ bool Engine::exportStems(const std::string &folder, int32_t format, int64_t star
     return true;
 }
 
+void Engine::drainInputNotes(std::vector<InputNote> *fresh) {
+    InputNote e;
+    while (inputNotes_.pop(e)) {
+        captureHistory_.push_back(e);
+        if (fresh) fresh->push_back(e);
+    }
+    const uint64_t keep = static_cast<uint64_t>(sampleRate_ * 120); // two minutes
+    const uint64_t now = inputClock_.load(std::memory_order_relaxed);
+    std::erase_if(captureHistory_, [&](const InputNote &n) { return n.clock + keep < now; });
+}
+
+int Engine::takeInputNotes(DalnokInputNote *out, int capacity) {
+    std::vector<InputNote> fresh;
+    drainInputNotes(&fresh);
+    int n = 0;
+    for (const auto &e : fresh) if (n < capacity) out[n++] = {e.pitch, e.velocity, e.on};
+    return n;
+}
+
+int Engine::capturePending() {
+    drainInputNotes(nullptr);
+    return static_cast<int>(std::count_if(captureHistory_.begin(), captureHistory_.end(),
+                                          [&](const InputNote &e) { return e.on && e.clock >= captureFrom_; }));
+}
+
+DalnokClipId Engine::captureMidi(DalnokTrackId track, std::string &err) {
+    const TrackState *t = model_.track(track);
+    if (!t) return fail(err, "no such track"), 0;
+    if (t->kind == kTrackBus) return fail(err, "choose an instrument track"), 0;
+    drainInputNotes(nullptr);
+    std::vector<InputNote> played;
+    for (const auto &e : captureHistory_) if (e.clock >= captureFrom_) played.push_back(e);
+    // The latest phrase: back from the last note to the first pause of 4 s or more.
+    const uint64_t pause = static_cast<uint64_t>(sampleRate_ * 4);
+    size_t first = played.size();
+    while (first > 0 && (first == played.size() || played[first].clock - played[first - 1].clock < pause)) --first;
+    played.erase(played.begin(), played.begin() + static_cast<std::ptrdiff_t>(first));
+    if (std::none_of(played.begin(), played.end(), [](const InputNote &e) { return e.on; })) return fail(err, "nothing was played"), 0;
+    // Played with the transport running: notes go where they were played. Stopped: the phrase starts at the
+    // playhead (the bar it is in), keeping its own timing.
+    const bool timed = std::all_of(played.begin(), played.end(), [](const InputNote &e) { return e.pos >= 0; });
+    const uint64_t clock0 = played.front().clock;
+    double bar0 = 0;
+    int64_t origin = 0;
+    {
+        int64_t at = timed ? played.front().pos : std::max<int64_t>(0, position());
+        double beat;
+        if (!map_.frameToBeat(at, beat)) beat = 0;
+        const double barBeats = 4.0 * model_.meters.front().num / std::max(1, model_.meters.front().den);
+        bar0 = std::floor(beat / barBeats) * barBeats;
+        if (!map_.beatToFrame(bar0, origin)) origin = 0; // the bar the first note (or the playhead) is in
+    }
+    auto when = [&](const InputNote &e) { return timed ? e.pos : origin + static_cast<int64_t>(e.clock - clock0); };
+    struct Held { int64_t at = -1; uint8_t velocity = 0; };
+    std::array<Held, 128> held{};
+    std::vector<MidiNote> notes;
+    int64_t last = origin;
+    for (const auto &e : played) {
+        const int64_t at = when(e);
+        last = std::max(last, at);
+        Held &h = held[e.pitch & 0x7f];
+        if (h.at >= 0) { notes.push_back({h.at - origin, std::max<int64_t>(1, at - h.at), static_cast<uint8_t>(e.pitch & 0x7f), h.velocity}); h.at = -1; }
+        if (e.on) h = {at, static_cast<uint8_t>(std::max<int>(1, e.velocity & 0x7f))};
+    }
+    for (int p = 0; p < 128; ++p) // still held: to the last event
+        if (held[static_cast<size_t>(p)].at >= 0)
+            notes.push_back({held[static_cast<size_t>(p)].at - origin, std::max<int64_t>(1, last - held[static_cast<size_t>(p)].at),
+                             static_cast<uint8_t>(p), held[static_cast<size_t>(p)].velocity});
+    if (std::any_of(notes.begin(), notes.end(), [](const MidiNote &n) { return n.start < 0; }))
+        for (auto &n : notes) n.start = std::max<int64_t>(0, n.start);
+    int64_t end = origin;
+    for (const auto &n : notes) end = std::max(end, origin + n.start + n.length);
+    // Whole bars.
+    double endBeat;
+    int64_t clipEnd = end;
+    if (map_.frameToBeat(end, endBeat)) {
+        const double barBeats = 4.0 * model_.meters.front().num / std::max(1, model_.meters.front().den);
+        map_.beatToFrame(std::ceil(endBeat / barBeats - 1e-9) * barBeats, clipEnd);
+    }
+    const DalnokClipId c = addMidiClip(track, origin, std::max<int64_t>(1, clipEnd - origin), err, std::move(notes), "Capture MIDI");
+    if (c) captureFrom_ = inputClock_.load(std::memory_order_relaxed);
+    return c;
+}
+
 bool Engine::renderLoudness(int64_t start, int64_t frames, LoudnessReading &out, std::string &err) {
     if (start < 0 || frames <= 0) return fail(err, "invalid range");
     LoudnessMeter meter(sampleRate_);
@@ -307,7 +392,7 @@ DalnokTrackId Engine::bounceInPlace(DalnokTrackId track, const std::string &path
 
 void Engine::stats(DalnokStats &o) const {
     o.callbacks = callbacks_.load(std::memory_order_relaxed);
-    o.frames_rendered = framesRendered_.load(std::memory_order_relaxed);
+    o.frames_rendered = inputClock_.load(std::memory_order_relaxed);
     o.max_callback_ns = maxCallbackNs_.load(std::memory_order_relaxed);
     o.last_callback_ns = lastCallbackNs_.load(std::memory_order_relaxed);
     o.max_frames_per_callback = maxFrames_.load(std::memory_order_relaxed);

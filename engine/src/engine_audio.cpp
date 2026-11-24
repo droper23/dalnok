@@ -179,7 +179,9 @@ void Engine::handleMidiInput(int64_t pos, int frames) DALNOK_NONBLOCKING {
         while (parser->pop(m)) {
             const uint8_t type = m.status & 0xf0;
             const bool on = type == 0x90 && m.data2 > 0, off = type == 0x80 || (type == 0x90 && m.data2 == 0);
-            if (on || off) (void)inputNotes_.push({m.data1, m.data2, on}); // for step input; full = dropped, harmless
+            if (on || off) // step input and Capture MIDI; full = dropped, harmless
+                (void)inputNotes_.push({m.data1, m.data2, on, transport_.playing.load(std::memory_order_relaxed) ? pos : -1,
+                                        inputClock_.load(std::memory_order_relaxed)});
             if (pluginLive && (on || off) && rtLiveNoteCount_ < 256)
                 rtLiveNotes_[rtLiveNoteCount_++] = PluginNote{0, static_cast<uint8_t>(on ? 1 : 0), m.data1, m.data2};
             // Controllers (sustain pedal, mod wheel, ...) and pitch bend reach a plug-in instrument played live.
@@ -245,6 +247,7 @@ void Engine::process(float *left, float *right, int frames) DALNOK_NONBLOCKING {
     }
     const int64_t before = rtPosition_;
     handleMidiInput(before, frames);
+    inputClock_.fetch_add(static_cast<uint64_t>(frames), std::memory_order_relaxed);
     const bool anySolo = soloCount_.load(std::memory_order_relaxed) > 0;
     const int64_t seek = transport_.seekRequest.exchange(-1, std::memory_order_relaxed);
     if (seek >= 0) pendingSeek_ = seek;

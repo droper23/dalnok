@@ -541,15 +541,21 @@ private:
     int clickLeft_ = 0;
     RecordedMidi rtMidiEvents_[256]{};
     // Every live note-on and note-off from MIDI inputs, for the app (step input). Audio thread pushes; the app drains.
-    struct InputNote { uint8_t pitch, velocity; bool on; };
+    // `pos`: the timeline frame while playing, -1 stopped; `clock`: frames the engine has run (always counting).
+    struct InputNote { uint8_t pitch, velocity; bool on; int64_t pos; uint64_t clock; };
     SpscQueue<InputNote, 512> inputNotes_;
+    std::vector<InputNote> captureHistory_; // control thread: the last two minutes played (Capture MIDI)
+    uint64_t captureFrom_ = 0;              // clock of the last capture (later notes only)
+    std::atomic<uint64_t> inputClock_{0};   // frames processed (audio thread; live device and pump alike)
+    void drainInputNotes(std::vector<InputNote> *fresh);
 public:
-    int takeInputNotes(DalnokInputNote *out, int capacity) {
-        int n = 0;
-        InputNote e;
-        while (n < capacity && inputNotes_.pop(e)) out[n++] = {e.pitch, e.velocity, e.on};
-        return n;
-    }
+    int takeInputNotes(DalnokInputNote *out, int capacity);
+    // Capture MIDI (Ableton): the latest phrase played on MIDI inputs since the last capture (back to a pause of 4 s
+    // or more, at most two minutes) becomes a clip on `track`, in whole bars. Played while the transport ran, the
+    // notes keep their timeline positions; played while stopped, the phrase starts at the bar the playhead is in.
+    // One undo step.
+    DalnokClipId captureMidi(DalnokTrackId track, std::string &err);
+    int capturePending(); // notes played since the last capture
 private:
     int rtMidiCount_ = 0;
     PluginNote rtLiveNotes_[256]{}; // this callback's live notes for a plugin instrument
