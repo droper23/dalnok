@@ -291,8 +291,10 @@ extension SelfTest {
         let e = s.engine
         e.pause()
         MainWindowController.simulatedInput = false
+        // Leave the device as found: later steps seek (applied by the audio thread) when it was running.
+        let wasRunning = dalnok_engine_device_running(e.handle)
         do { try e.startDevice(); try e.setOutputDevice(nil) } catch { return check(false, "output device starts: \(error)") }
-        defer { dalnok_engine_stop_device(e.handle) } // later steps run without a device
+        defer { if !wasRunning { dalnok_engine_stop_device(e.handle) } }
         MainWindowController.recordingInputUID = device.uid
         w.syncInputDevice()
         let found: DalnokTrackId? = s.tracks.first(where: { !$0.isInstrument && !$0.isBus && $0.stack == 0 })?.id
