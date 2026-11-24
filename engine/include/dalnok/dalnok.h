@@ -239,6 +239,10 @@ DalnokStatus dalnok_record_recover(const char *journal, char *json, size_t len, 
 DalnokStatus dalnok_midi_open_input(DalnokEngine *engine, int32_t unique_id, char *err, size_t err_len);
 /* Feeds one channel message as if it came from a device. [control thread] */
 DalnokStatus dalnok_midi_inject(DalnokEngine *engine, uint8_t status, uint8_t data1, uint8_t data2);
+/* Notes played on MIDI inputs since the last call (on and off, in order), for step input (API 47). The engine
+ * keeps the last 512; returns how many were written. */
+typedef struct { uint8_t pitch, velocity; bool on; } DalnokInputNote;
+int32_t dalnok_midi_take_input_notes(DalnokEngine *engine, DalnokInputNote *out, int32_t capacity);
 uint64_t dalnok_midi_dropped(const DalnokEngine *engine);
 
 /* Runs the live render path (transport fades, smoothing, meters) for `frames`

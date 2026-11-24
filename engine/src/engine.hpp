@@ -540,6 +540,17 @@ private:
     float clickY1_ = 0, clickY2_ = 0, clickCoefNow_ = 0, clickEnv_ = 0;
     int clickLeft_ = 0;
     RecordedMidi rtMidiEvents_[256]{};
+    // Every live note-on and note-off from MIDI inputs, for the app (step input). Audio thread pushes; the app drains.
+    struct InputNote { uint8_t pitch, velocity; bool on; };
+    SpscQueue<InputNote, 512> inputNotes_;
+public:
+    int takeInputNotes(DalnokInputNote *out, int capacity) {
+        int n = 0;
+        InputNote e;
+        while (n < capacity && inputNotes_.pop(e)) out[n++] = {e.pitch, e.velocity, e.on};
+        return n;
+    }
+private:
     int rtMidiCount_ = 0;
     PluginNote rtLiveNotes_[256]{}; // this callback's live notes for a plugin instrument
     int rtLiveNoteCount_ = 0;

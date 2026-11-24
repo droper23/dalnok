@@ -176,6 +176,19 @@ func oneNoteSession(pitch: UInt8 = 69, velocity: UInt8 = 127) -> (OpaquePointer,
         #expect(dalnok_track_clip_at(e, dalnok_track_at(e, 0), 0) == 0, "one undo removes the take with its controllers")
     }
 
+    @Test func inputNotesAreReportedForStepInput() {
+        let e = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(e) }
+        var l = [Float](repeating: 0, count: 512), r = l
+        dalnok_midi_inject(e, 0x90, 60, 100)
+        dalnok_midi_inject(e, 0xB0, 1, 20) // not a note: not reported
+        dalnok_midi_inject(e, 0x90, 60, 0)
+        dalnok_engine_pump(e, &l, &r, 512)
+        var out = [DalnokInputNote](repeating: DalnokInputNote(), count: 8)
+        #expect(dalnok_midi_take_input_notes(e, &out, 8) == 2)
+        #expect(out[0].pitch == 60 && out[0].on && out[0].velocity == 100 && !out[1].on)
+        #expect(dalnok_midi_take_input_notes(e, &out, 8) == 0, "taken once")
+    }
+
     @Test func quantizeMovesStartsTowardTheGrid() {
         let e = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(e) }
         let t = dalnok_track_add_instrument(e, nil)

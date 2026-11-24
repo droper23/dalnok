@@ -987,6 +987,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         if tickCount % 15 == 0 && !devicePanel.isHidden { devicePanel.refreshValues() }
         if !devicePanel.isHidden { devicePanel.pollMeters() } // Graphite faceplates and Warm Analog pedals
         if !clipEditor.isHidden { clipEditor.tick() } // the editors' playheads
+        if activeRoll.stepInput { activeRoll.stepTick() }
         if pianoRoll.window?.isVisible == true { pianoRoll.roll.updatePlayhead() }
         if transientMessageUntil < Date(), transientMessageUntil != .distantPast {
             transientMessageUntil = .distantPast
@@ -2543,6 +2544,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         case #selector(toggleSoloTrack(_:)):
             item.state = selectedTrack.flatMap { session.track($0) }?.solo == true ? .on : .off
             return selectedTrack != nil
+        case #selector(toggleStepInput(_:)):
+            item.state = activeRoll.stepInput ? .on : .off
+            return activeRoll.clip?.isMidi == true
         case #selector(toggleClipLoop(_:)):
             let sel = timeline.selectedClips.compactMap { session.clip($0) }
             item.state = !sel.isEmpty && sel.allSatisfy { $0.loopLength > 0 } ? .on : .off

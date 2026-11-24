@@ -132,6 +132,25 @@ extension SelfTest {
               "MIDI Functions ▸ Legato joins every note to the next (\(s.clip(midi)?.notes.first?.length ?? -1))")
         _ = perform("Undo")
         check(s.clip(midi)?.notes.first?.length == 100, "undo restores the lengths")
+        // Clip ▸ Step Input: a chord on the first step, one note on the next; the playhead moves one step each time.
+        s.setNotes(midi, [])
+        e.seek(c.start); _ = await waitUntil { e.position == c.start }
+        w.clipEditor.focused = true
+        check(perform("Step Input", exact: true) && roll.stepInput, "Clip ▸ Step Input turns step input on")
+        let oneStep = roll.stepLength(at: c.start)
+        for (status, pitch, vel) in [(0x90, 60, 90), (0x90, 64, 90), (0x80, 60, 0), (0x80, 64, 0), (0x90, 67, 70), (0x80, 67, 0)] {
+            roll.stepNote(pitch: UInt8(pitch), velocity: UInt8(vel), on: status == 0x90)
+            if status == 0x80 { _ = await waitUntil { e.position != c.start || pitch == 60 } }
+        }
+        let stepped = (s.clip(midi)?.notes ?? []).sorted { ($0.start, $0.pitch) < ($1.start, $1.pitch) }
+        // Steps follow the beat grid: at 44.1 kHz a sixteenth is 5,512.5 frames, so steps round to ±1 frame.
+        check(stepped.count == 3 && stepped[0].start == stepped[1].start && abs(stepped[2].start - stepped[0].start - oneStep) <= 1
+              && stepped.allSatisfy { abs($0.length - oneStep) <= 1 },
+              "step input writes a chord then a note, one step apart (\(stepped.map { ($0.start - c.offset, $0.pitch) }), step \(oneStep))")
+        _ = await waitUntil { abs(e.position - c.start - 2 * oneStep) <= 1 }
+        check(abs(e.position - c.start - 2 * oneStep) <= 1, "the playhead moved two steps (\(e.position - c.start))")
+        check(perform("Step Input", exact: true) && !roll.stepInput, "Step Input turns off")
+
         // The lower lane as a controller lane (mod wheel): click sets a point, a drag draws more, one undo step.
         roll.laneController = 1
         roll.layoutSubtreeIfNeeded()

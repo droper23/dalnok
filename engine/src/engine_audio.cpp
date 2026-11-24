@@ -179,6 +179,7 @@ void Engine::handleMidiInput(int64_t pos, int frames) DALNOK_NONBLOCKING {
         while (parser->pop(m)) {
             const uint8_t type = m.status & 0xf0;
             const bool on = type == 0x90 && m.data2 > 0, off = type == 0x80 || (type == 0x90 && m.data2 == 0);
+            if (on || off) (void)inputNotes_.push({m.data1, m.data2, on}); // for step input; full = dropped, harmless
             if (pluginLive && (on || off) && rtLiveNoteCount_ < 256)
                 rtLiveNotes_[rtLiveNoteCount_++] = PluginNote{0, static_cast<uint8_t>(on ? 1 : 0), m.data1, m.data2};
             // Controllers (sustain pedal, mod wheel, ...) and pitch bend reach a plug-in instrument played live.

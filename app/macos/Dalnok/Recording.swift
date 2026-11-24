@@ -558,6 +558,14 @@ extension MainWindowController {
         flash("\(sender.title): \(clips.count == 1 ? "1 clip" : "\(clips.count) clips")")
     }
 
+    /// Clip ▸ Step Input: notes played on a MIDI keyboard go into the open MIDI clip at the playhead, one step at a time.
+    @objc func toggleStepInput(_ sender: Any?) {
+        let roll = activeRoll
+        guard roll.clip?.isMidi == true else { return flash("Open a MIDI clip in the editor first (double-click it)") }
+        roll.stepInput.toggle()
+        flash(roll.stepInput ? "Step input: play notes; each step is \(QuantizeSetting.name)" : "Step input off")
+    }
+
     @objc func quantizeSelection(_ sender: Any?) {
         if pianoRollIsKey { return activeRoll.quantizeSelection() }
         var clips = timeline.selectedClips.compactMap { session.clip($0) }.filter { $0.folder == 0 }

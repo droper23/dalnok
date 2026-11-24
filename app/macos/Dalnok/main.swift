@@ -470,6 +470,7 @@ func buildMenu(target: MainWindowController) -> NSMenu {
         item("Loop Clip", #selector(W.toggleClipLoop(_:)), "l", []),
         quantize,
         functions,
+        item("Step Input", #selector(W.toggleStepInput(_:)), ""),
         .separator(),
         item("Add Short Fades", #selector(W.addShortFades(_:)), "f", [.control]),
         item("Remove Fades", #selector(W.removeFades(_:)), ""),

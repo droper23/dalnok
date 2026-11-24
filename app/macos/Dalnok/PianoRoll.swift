@@ -83,6 +83,10 @@ final class PianoRollView: NSView {
     var velocityHeight: CGFloat = 72 { didSet { needsDisplay = true } }
     /// What the lower lane shows: -1 velocity, else a MIDI controller (128 = pitch bend). See PianoRoll+Controllers.
     var laneController = -1
+    /// Step input (PianoRoll+StepInput): on, the keys played go in at the playhead.
+    var stepInput = false { didSet { stepHeld = []; if stepInput { var b = [DalnokInputNote](repeating: DalnokInputNote(), count: 512); _ = dalnok_midi_take_input_notes(session.engine.handle, &b, 512) } } }
+    var stepHeld: Set<UInt8> = []
+    var stepAt: Int64 = 0
     var drawingController = false
     /// Docked in the main window's clip editor: status text goes here instead of the window's subtitle, and a click
     /// reports focus (so editing keys and Delete act on notes).
