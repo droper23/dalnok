@@ -59,6 +59,10 @@ done
 python3 - "$seeds" <<'PY'
 import os, sys
 seeds = sys.argv[1]
+# A Standard MIDI File (format 1: tempo track, then notes with running status), kind byte 7.
+mid = (b"MThd\0\0\0\x06\0\x01\0\x02\x01\xe0" + b"MTrk\0\0\0\x0b\0\xff\x51\x03\x09\x27\xc0\0\xff\x2f\0"
+       + b"MTrk\0\0\0\x14\0\x90\x3c\x64\x83\x60\x3c\0\0\x3e\x50\x83\x60\x80\x3e\0\0\xff\x2f\0")
+open(os.path.join(seeds, "smf"), "wb").write(b"\x07" + mid)
 docs = {
     1: '<REAPER_PROJECT 0.1 "7.0" 0\n  TEMPO 120 4 4\n  <TRACK\n    NAME "A"\n    VOLPAN 1 0 -1 -1 1\n    <ITEM\n      POSITION 0\n      LENGTH 1\n      <SOURCE WAVE\n        FILE "a.wav"\n      >\n    >\n  >\n>\n',
     2: '<?xml version="1.0" encoding="UTF-8"?>\n<Ableton MajorVersion="5" MinorVersion="11.0_433"><LiveSet><Tracks><AudioTrack Id="1"><Name><EffectiveName Value="A"/></Name>'

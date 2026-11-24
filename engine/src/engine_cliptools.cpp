@@ -209,3 +209,125 @@ DalnokClipId Engine::joinClips(const std::vector<DalnokClipId> &ids, const std::
 }
 
 } // namespace dalnok
+
+// ---- Standard MIDI Files ----------------------------------------------------------------------------------------
+
+#include "midi_file.hpp"
+
+#include <fstream>
+#include <sstream>
+
+namespace dalnok {
+using namespace detail;
+
+std::vector<DalnokClipId> Engine::importMidiFile(const std::string &path, int64_t at, DalnokTrackId into, std::string &err) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return err = "can't open " + path, std::vector<DalnokClipId>{};
+    std::stringstream ss;
+    ss << in.rdbuf();
+    const std::string bytes = ss.str();
+    if (bytes.size() > 64u << 20) return fail(err, "the MIDI file is too large"), std::vector<DalnokClipId>{};
+    SmfFile file;
+    if (!parseMidiFile(bytes, file, err)) return {};
+    if (into && (!model_.track(into) || model_.track(into)->kind == kTrackBus)) return fail(err, "choose an instrument track"), std::vector<DalnokClipId>{};
+    std::string base = path.substr(path.find_last_of('/') + 1);
+    if (const auto dot = base.find_last_of('.'); dot != std::string::npos) base = base.substr(0, dot);
+    std::vector<DalnokClipId> out;
+    beginGroup("Import MIDI File");
+    bool ok = true;
+    // An empty project takes the file's tempo and meter (as Logic and Ableton offer to).
+    const bool empty = std::none_of(model_.clips.begin(), model_.clips.end(), [](const ClipState &c) { return c.slot < 0; });
+    if (empty && (!file.tempo.empty() || file.meterNum != 4 || file.meterDen != 4)) {
+        std::vector<TempoPoint> tempo;
+        for (const auto &t : file.tempo) if (tempo.empty() || t.beat > tempo.back().beat + 1e-6) tempo.push_back({t.beat, t.bpm});
+        if (tempo.empty() || tempo.front().beat > 0) tempo.insert(tempo.begin(), {0, tempo.empty() ? model_.bpm() : tempo.front().bpm});
+        std::vector<MeterChange> meters = model_.meters;
+        meters.front().num = file.meterNum;
+        meters.front().den = file.meterDen;
+        std::string tempoErr;
+        if (!setTempoMap(std::move(tempo), std::move(meters), tempoErr)) { /* keep the project's tempo */ }
+    }
+    double beat0 = 0;
+    if (!map_.frameToBeat(std::max<int64_t>(0, at), beat0)) beat0 = 0;
+    const double barBeats = 4.0 * model_.meters.front().num / std::max(1, model_.meters.front().den);
+    const double lenBeats = std::max(barBeats, std::ceil(file.lengthBeats / barBeats - 1e-9) * barBeats);
+    int64_t start = 0, end = 0;
+    ok = map_.beatToFrame(beat0, start) && map_.beatToFrame(beat0 + lenBeats, end) && end > start;
+    // One clip per file track (all of them in one clip when a track was chosen).
+    std::vector<SmfTrack> tracks = file.tracks;
+    if (into && tracks.size() > 1) {
+        SmfTrack all;
+        for (auto &t : tracks) {
+            all.notes.insert(all.notes.end(), t.notes.begin(), t.notes.end());
+            all.controllers.insert(all.controllers.end(), t.controllers.begin(), t.controllers.end());
+        }
+        all.name = base;
+        tracks = {all};
+    }
+    for (size_t k = 0; ok && k < tracks.size(); ++k) {
+        const SmfTrack &st = tracks[k];
+        DalnokTrackId t = into;
+        if (!t) {
+            t = addInstrumentTrack(st.name.empty() ? (tracks.size() == 1 ? base : base + " " + std::to_string(k + 1)) : st.name, err);
+            ok = t != 0;
+        }
+        std::vector<MidiNote> notes;
+        for (const auto &n : st.notes) {
+            int64_t a, b;
+            if (!map_.beatToFrame(beat0 + n.beat, a) || !map_.beatToFrame(beat0 + n.beat + n.length, b)) continue;
+            notes.push_back({a - start, std::max<int64_t>(1, b - a), n.pitch, std::max<uint8_t>(1, n.velocity)});
+        }
+        std::vector<MidiCC> ccs;
+        for (const auto &c : st.controllers) {
+            int64_t a;
+            if (map_.beatToFrame(beat0 + c.beat, a)) ccs.push_back({a - start, c.controller, c.value});
+        }
+        const DalnokClipId clip = ok ? addMidiClip(t, start, end - start, err, std::move(notes), "Import MIDI File") : 0;
+        ok = clip != 0 && (ccs.empty() || setControllers(clip, std::move(ccs), err));
+        if (ok) {
+            if (ClipState *cs = model_.clip(clip)) cs->name = st.name.empty() ? base : st.name;
+            out.push_back(clip);
+        }
+    }
+    endGroup();
+    if (!ok) { undo(); return {}; }
+    return out;
+}
+
+bool Engine::exportMidiClip(DalnokClipId id, const std::string &path, std::string &err) {
+    const ClipState *c = model_.clip(id);
+    if (!c) return fail(err, "no such clip");
+    if (!c->midi()) return fail(err, "export a MIDI clip");
+    double b0;
+    if (!map_.frameToBeat(c->start, b0)) return fail(err, "the clip is beyond the supported timeline");
+    SmfTrack track;
+    track.name = c->name;
+    auto beatOf = [&](int64_t sourceFrame, double &out) {
+        double b;
+        if (!map_.frameToBeat(c->start - c->offset + sourceFrame, b)) return false;
+        out = b - b0;
+        return true;
+    };
+    for (const auto &n : *c->notes) {
+        if (n.start < c->offset || n.start >= c->offset + c->length) continue;
+        double a, b;
+        if (!beatOf(n.start, a) || !beatOf(std::min(n.start + n.length, c->offset + c->length), b)) continue;
+        track.notes.push_back({a, std::max(1e-3, b - a), n.pitch, n.velocity, 0});
+    }
+    if (c->controllers)
+        for (const auto &e : *c->controllers) {
+            double a;
+            if (e.start >= c->offset && e.start < c->offset + c->length && beatOf(e.start, a)) track.controllers.push_back({a, e.controller, e.value});
+        }
+    std::vector<SmfTempo> tempo;
+    for (const auto &t : model_.tempo) { // the tempo map from the clip's start on
+        if (t.beat <= b0) { if (tempo.empty()) tempo.push_back({0, t.bpm}); else tempo.front().bpm = t.bpm; }
+        else tempo.push_back({t.beat - b0, t.bpm});
+    }
+    const std::string bytes = writeMidiFile(track, tempo, model_.meters.front().num, model_.meters.front().den);
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    if (!out || !out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()))) return err = "can't write " + path, false;
+    return true;
+}
+
+} // namespace dalnok

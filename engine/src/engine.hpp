@@ -297,6 +297,10 @@ public:
     bool reverseClip(DalnokClipId id, const std::string &path, std::string &err);
     std::vector<DalnokClipId> stripSilence(DalnokClipId id, double thresholdDb, double minSilence, std::string &err);
     DalnokClipId joinClips(const std::vector<DalnokClipId> &ids, const std::string &path, std::string &err);
+    // Standard MIDI Files: import as one MIDI clip per file track at `at` (new instrument tracks, or all on `into`;
+    // an empty project takes the file's tempo and meter), one undo step; export a MIDI clip (with the tempo map).
+    std::vector<DalnokClipId> importMidiFile(const std::string &path, int64_t at, DalnokTrackId into, std::string &err);
+    bool exportMidiClip(DalnokClipId id, const std::string &path, std::string &err);
     bool setClipFollowsTempo(DalnokClipId id, bool on, std::string &err); // see ClipState::followsTempo
     bool moveClip(DalnokClipId id, DalnokTrackId track, int64_t start, std::string &err);
     bool setClipRegion(DalnokClipId id, int64_t start, int64_t offset, int64_t length, std::string &err);

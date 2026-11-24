@@ -232,6 +232,8 @@ private let specs: [String: Spec] = [
     "addShortFades:": Spec(id: "clip.short_fades", category: "Clips", detail: "Add short fades to the selected clip."),
     "captureMidi:": Spec(id: "transport.capture_midi", category: "Transport", detail: "Turn what was just played on a MIDI keyboard into a clip, recording or not.", keywords: ["retrospective record", "capture"]),
     "toggleStepInput:": Spec(id: "midi.step_input", category: "MIDI", detail: "Write notes played on a MIDI keyboard at the playhead, one step at a time.", keywords: ["step record", "step entry"]),
+    "importMidiFile:": Spec(id: "project.import_midi", category: "Project", detail: "Import a Standard MIDI File as MIDI clips on new instrument tracks.", keywords: ["mid", "smf"]),
+    "exportMidiClip:": Spec(id: "clip.export_midi", category: "Clips", detail: "Save the selected MIDI clip as a Standard MIDI File.", keywords: ["mid", "smf"]),
     "joinClips:": Spec(id: "clip.join", category: "Clips", detail: "Make one clip of the selected clips on a track.", keywords: ["consolidate", "glue", "merge", "bounce"]),
     "normalizeClips:": Spec(id: "clip.normalize", category: "Clips", detail: "Set the selected clips' gain so their peaks reach −0.1 dBFS.", keywords: ["gain", "loudness"]),
     "reverseClips:": Spec(id: "clip.reverse", category: "Clips", detail: "Play the selected audio clips backwards.", keywords: ["backwards", "flip"]),

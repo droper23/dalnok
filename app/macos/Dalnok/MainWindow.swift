@@ -303,10 +303,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         root.onDragHover = { [weak self] on in self?.emptyState.dropTargeted = on }
         root.onDrop = { [weak self] urls in
             guard let self else { return }
-            if let project = urls.first(where: { Self.foreignExtensions.contains($0.pathExtension.lowercased()) || $0.hasDirectoryPath }) {
+            let midi = urls.filter { Self.midiExtensions.contains($0.pathExtension.lowercased()) }
+            if !midi.isEmpty { self.importMidiFiles(midi) }
+            let rest = urls.filter { !Self.midiExtensions.contains($0.pathExtension.lowercased()) }
+            if let project = rest.first(where: { Self.foreignExtensions.contains($0.pathExtension.lowercased()) || $0.hasDirectoryPath }) {
                 self.importProject(project)
-            } else {
-                self.session.importFiles(urls)
+            } else if !rest.isEmpty {
+                self.session.importFiles(rest)
             }
         }
         window.contentView = root
@@ -1514,6 +1517,49 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         panel.beginSheetModal(for: window!) { [weak self] resp in
             guard resp == .OK else { return }
             MainActor.assumeIsolated { self?.session.importFiles(panel.urls) }
+        }
+    }
+
+    // MARK: Standard MIDI Files
+
+    static let midiExtensions: Set<String> = ["mid", "midi", "smf"]
+    /// File ▸ Import MIDI File…: each file's tracks become MIDI clips on new instrument tracks at the playhead.
+    @objc func importMidiFile(_ sender: Any?) {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = true
+        panel.allowedContentTypes = [UTType(filenameExtension: "mid") ?? .midi]
+        panel.message = "Each track of the file becomes a MIDI clip on a new instrument track, at the playhead."
+        panel.beginSheetModal(for: window!) { [weak self] resp in
+            guard resp == .OK else { return }
+            MainActor.assumeIsolated { self?.importMidiFiles(panel.urls) }
+        }
+    }
+    @discardableResult
+    func importMidiFiles(_ urls: [URL]) -> Int {
+        var made = 0, failed: [String] = []
+        var err = [CChar](repeating: 0, count: 256)
+        for url in urls {
+            var ids = [DalnokClipId](repeating: 0, count: 64)
+            let n = Int(dalnok_midi_file_import(session.engine.handle, url.path, max(0, session.engine.position), 0, &ids, 64, &err, err.count))
+            if n > 0 { made += n } else { failed.append("\(url.lastPathComponent): \(String(cString: err))") }
+        }
+        session.refresh()
+        flash(failed.isEmpty ? "Imported \(made) MIDI clip\(made == 1 ? "" : "s")" : failed.joined(separator: "; "))
+        return made
+    }
+    /// Clip ▸ Export MIDI Clip…
+    @objc func exportMidiClip(_ sender: Any?) {
+        guard let c = selectedClipView, c.isMidi else { return flash("Select a MIDI clip to export") }
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [UTType(filenameExtension: "mid") ?? .midi]
+        panel.nameFieldStringValue = c.name + ".mid"
+        panel.beginSheetModal(for: window!) { [weak self] resp in
+            guard resp == .OK, let url = panel.url, let self else { return }
+            MainActor.assumeIsolated {
+                var err = [CChar](repeating: 0, count: 256)
+                let ok = dalnok_midi_file_export(self.session.engine.handle, c.id, url.path, &err, err.count) == DALNOK_OK
+                self.flash(ok ? "Exported \(url.lastPathComponent)" : String(cString: err))
+            }
         }
     }
 
@@ -2851,6 +2897,7 @@ final class DropView: NSView {
         return urls.filter {
             (UTType(filenameExtension: $0.pathExtension)?.conforms(to: .audio) ?? false)
                 || MainWindowController.foreignExtensions.contains($0.pathExtension.lowercased()) || $0.hasDirectoryPath
+                || MainWindowController.midiExtensions.contains($0.pathExtension.lowercased())
         }
     }
 

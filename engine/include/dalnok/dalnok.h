@@ -1062,6 +1062,13 @@ DalnokStatus dalnok_clip_normalize(DalnokEngine *engine, DalnokClipId clip, doub
 DalnokStatus dalnok_clip_reverse(DalnokEngine *engine, DalnokClipId clip, const char *path, char *err, size_t err_len);
 int32_t dalnok_clip_strip_silence(DalnokEngine *engine, DalnokClipId clip, double threshold_db, double min_silence,
                                   DalnokClipId *out, int32_t capacity, char *err, size_t err_len);
+/* Standard MIDI Files (.mid, formats 0 and 1; API 47). Import puts one MIDI clip per file track at `at_frame` on new
+ * instrument tracks (or all of them on `into_track`, 0 = new tracks); an empty project takes the file's tempo and
+ * meter. One undo step. Returns how many clips were made (ids to `out`), 0 with a message. Export writes a MIDI
+ * clip (notes, controllers, tempo map from the clip's start; 960 ticks per quarter note). */
+int32_t dalnok_midi_file_import(DalnokEngine *engine, const char *path, int64_t at_frame, DalnokTrackId into_track,
+                                DalnokClipId *out, int32_t capacity, char *err, size_t err_len);
+DalnokStatus dalnok_midi_file_export(DalnokEngine *engine, DalnokClipId clip, const char *path, char *err, size_t err_len);
 DalnokClipId dalnok_clips_join(DalnokEngine *engine, const DalnokClipId *clips, int32_t count, const char *path, char *err, size_t err_len);
 /* Audio follows tempo (Ableton's warp, API 47): tempo changes keep the clip on its beats and time-stretch it, pitch
  * kept (format 18). Not for varispeed clips. One undo step. */

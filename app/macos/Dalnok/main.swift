@@ -334,6 +334,7 @@ func buildMenu(target: MainWindowController) -> NSMenu {
         item("Save As…", #selector(W.saveDocumentAs(_:)), "s", [.command, .shift]),
         .separator(),
         item("Import Audio…", #selector(W.importAudio), "i"),
+        item("Import MIDI File…", #selector(W.importMidiFile(_:)), "i", [.command, .option]),
         item("Export Mix…", #selector(W.exportMix(_:)), "b"),
         item("Export Stems…", #selector(W.exportStems(_:)), "b", [.command, .shift]),
         { () -> NSMenuItem in
@@ -492,6 +493,7 @@ func buildMenu(target: MainWindowController) -> NSMenu {
         item("Mute Clip", #selector(W.toggleClipMute(_:)), ""),
         item("Loop Clip", #selector(W.toggleClipLoop(_:)), "l", []),
         item("Slice to Drums", #selector(W.sliceToDrums(_:)), ""),
+        item("Export MIDI Clip…", #selector(W.exportMidiClip(_:)), ""),
         item("Join Clips", #selector(W.joinClips(_:)), "j"),
         item("Normalize", #selector(W.normalizeClips(_:)), ""),
         item("Reverse", #selector(W.reverseClips(_:)), ""),

@@ -1173,6 +1173,22 @@ int32_t dalnok_clip_strip_silence(DalnokEngine *e, DalnokClipId c, double thresh
     for (size_t i = 0; out && i < ids.size() && i < static_cast<size_t>(std::max(0, capacity)); ++i) out[i] = ids[i];
     return static_cast<int32_t>(ids.size());
 }
+int32_t dalnok_midi_file_import(DalnokEngine *e, const char *path, int64_t at, DalnokTrackId into, DalnokClipId *out,
+                                int32_t capacity, char *err, size_t err_len) {
+    if (!e || !path) return 0;
+    std::string msg;
+    const auto ids = e->impl.importMidiFile(path, at, into, msg);
+    if (ids.empty()) { copyOut(err, err_len, msg); return 0; }
+    for (size_t i = 0; out && i < ids.size() && i < static_cast<size_t>(std::max(0, capacity)); ++i) out[i] = ids[i];
+    return static_cast<int32_t>(ids.size());
+}
+DalnokStatus dalnok_midi_file_export(DalnokEngine *e, DalnokClipId c, const char *path, char *err, size_t err_len) {
+    if (!e || !path) return DALNOK_ERR_INVALID_ARG;
+    std::string msg;
+    if (e->impl.exportMidiClip(c, path, msg)) return DALNOK_OK;
+    copyOut(err, err_len, msg);
+    return DALNOK_ERR_IO;
+}
 DalnokClipId dalnok_clips_join(DalnokEngine *e, const DalnokClipId *clips, int32_t count, const char *path, char *err, size_t err_len) {
     if (!e || !clips || count < 0) return 0;
     std::string msg;

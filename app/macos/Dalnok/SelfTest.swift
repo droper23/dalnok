@@ -505,6 +505,24 @@ final class SelfTest {
         check(stems == audible && (try? FileManager.default.contentsOfDirectory(atPath: stemDir.path).count) == audible,
               "File ▸ Export Stems writes one file per track (\(stems) of \(audible))")
         check(menuItem("Export Stems…", exact: true) != nil, "File ▸ Export Stems… is in the menu")
+        // Standard MIDI Files: a MIDI clip exported, then File ▸ Import MIDI File's path brings it back on a new track.
+        let midiTrack = dalnok_track_add_instrument(e.handle, "Selftest MIDI File")
+        let madeClip = dalnok_midi_clip_add(e.handle, midiTrack, 0, Int64(e.sampleRate * 2))
+        var twoNotes = [DalnokNote(start: 0, length: 4_800, pitch: 60, velocity: 100), DalnokNote(start: 9_600, length: 4_800, pitch: 67, velocity: 90)]
+        _ = dalnok_midi_clip_set_notes(e.handle, madeClip, &twoNotes, 2)
+        s.refresh()
+        if let mc = s.clip(madeClip) {
+            let mid = workdir.appendingPathComponent("selftest.mid")
+            var merr = [CChar](repeating: 0, count: 256)
+            check(dalnok_midi_file_export(e.handle, mc.id, mid.path, &merr, merr.count) == DALNOK_OK, "a MIDI clip exports as a .mid file")
+            let n = s.tracks.count
+            check(w.importMidiFiles([mid]) >= 1 && s.tracks.count == n + 1 && s.tracks.last?.clips.first?.noteCount == mc.noteCount,
+                  "importing it adds a track with the same notes (\(s.tracks.last?.clips.first?.noteCount ?? 0) of \(mc.noteCount))")
+            check(menuItem("Import MIDI File…", exact: true) != nil && menuItem("Export MIDI Clip…", exact: true) != nil, "the MIDI file menu items are there")
+            _ = perform("Undo")
+            check(s.tracks.count == n, "undo removes the imported track")
+        }
+        s.removeTrack(midiTrack)
         // File ▸ Export Queue: a mix and a stems export queued, then rendered in one go.
         let queued = workdir.appendingPathComponent("queued", isDirectory: true)
         try? FileManager.default.createDirectory(at: queued, withIntermediateDirectories: true)

@@ -94,7 +94,7 @@ void applyAndRelease(DalnokProjectData *data) {
 
 extern "C" int LLVMFuzzerTestOneInput(const uint8_t *bytes, size_t size) {
     if (size < 1) return 0;
-    const uint8_t kind = bytes[0] % 7;
+    const uint8_t kind = bytes[0] % 8;
     const std::string body(reinterpret_cast<const char *>(bytes) + 1, size - 1);
     const fs::path dir = workDir();
     fs::path path;
@@ -110,6 +110,15 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *bytes, size_t size) {
         }
         case 4: path = dir / "in.fcpxml"; writeFile(path, body); break;
         case 5: path = dir / "in.dawproject"; writeFile(path, storedZip("project.xml", body)); break;
+        case 7: { // a Standard MIDI File, imported into an empty engine
+            path = dir / "in.mid";
+            writeFile(path, body);
+            static DalnokEngine *engine = dalnok_engine_create(48000);
+            char e[256];
+            DalnokClipId ids[64];
+            if (dalnok_midi_file_import(engine, path.c_str(), 0, 0, ids, 64, e, sizeof e) > 0) dalnok_undo(engine);
+            return 0;
+        }
         default: path = dir / "raw.dawproject"; writeFile(path, body); break; // the zip reader itself
     }
     char report[1 << 14], err[512];
