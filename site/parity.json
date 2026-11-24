@@ -1307,7 +1307,7 @@
     },
     {
       "id": "stockfx",
-      "name": "Stock effects (EQ, compressor, reverb, delay)",
+      "name": "Stock effects (EQ, compressor, gate, reverb, delay)",
       "category": "Instruments & Effects",
       "priority": "P0",
       "refs": [
@@ -1331,15 +1331,19 @@
           "todo"
         ],
         [
-          "Reverb",
-          "todo"
+          "Reverb (Dalnok Reverb: predelay, decay, size, damping, width)",
+          "verified"
         ],
         [
-          "Delay",
-          "todo"
+          "Delay (Dalnok Delay: stereo or ping-pong, filtered feedback)",
+          "verified"
+        ],
+        [
+          "Noise gate with hold, hysteresis and sidechain key (Dalnok Gate)",
+          "verified"
         ]
       ],
-      "evidence": "BuiltinPluginTests: Dalnok Channel EQ renders match the Logic-derived reference designs (peak, shelf, cut) within 2e-6 to 1e-5. CompressorTests: Dalnok Compressor offline renders match an independent reference within 2e-6 (peak/RMS, hard/soft knee, auto gain, mix), the static curve and meter within 0.01 dB, attack and release reach 1-1/e in one time constant (0.01 dB), and a muted track keys it sample-accurately through the sidechain (filter and listen included); self-test drives the sidechain menu."
+      "evidence": "BuiltinPluginTests: Dalnok Channel EQ renders match the Logic-derived reference designs (peak, shelf, cut) within 2e-6 to 1e-5. CompressorTests: Dalnok Compressor offline renders match an independent reference within 2e-6 (peak/RMS, hard/soft knee, auto gain, mix), the static curve and meter within 0.01 dB, attack and release reach 1-1/e in one time constant (0.01 dB), and a muted track keys it sample-accurately through the sidechain (filter and listen included); self-test drives the sidechain menu. TimeEffectTests: Delay echo lands on the sample at its time, feedback 50 % gives -6 dB (±1 dB) per repeat, ping-pong alternates sides; Reverb's measured T60 is within 0.3 s of the setting and its sides decorrelate, Mix 0 is transparent (1e-6); Gate passes at unity (±0.1 dB), closes to silence (<1e-6) and its Range attenuates by the set dB (±0.2)."
     },
     {
       "id": "sampler",
@@ -1725,6 +1729,10 @@
           "verified"
         ],
         [
+          "16-bit TPDF dither; whole-arrangement export rings out to silence",
+          "verified"
+        ],
+        [
           "Export the cycle range",
           "verified"
         ],
@@ -1737,7 +1745,7 @@
           "todo"
         ]
       ],
-      "evidence": "renderToWavRoundTrips; self-test export decodes to the session length."
+      "evidence": "renderToWavRoundTrips; self-test export decodes to the session length. ExportDither recovers a 0.4 LSB sine at 16 bits; ExportTail renders a synth release past the last clip and keeps silent endings exact."
     },
     {
       "id": "interchange",

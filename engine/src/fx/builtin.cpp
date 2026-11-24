@@ -4,6 +4,7 @@
 
 #include "fx/channel_eq.hpp"
 #include "fx/compressor.hpp"
+#include "fx/time_fx.hpp"
 #include "json.hpp"
 
 #include <algorithm>
@@ -17,6 +18,9 @@ const std::vector<BuiltinInfo> &builtinPlugins() {
     static const std::vector<BuiltinInfo> list = {
         {"channel-eq", "Dalnok Channel EQ", "EQ"},
         {"compressor", "Dalnok Compressor", "Dynamics"},
+        {"gate", "Dalnok Gate", "Dynamics"},
+        {"delay", "Dalnok Delay", "Delay"},
+        {"reverb", "Dalnok Reverb", "Reverb"},
     };
     return list;
 }
@@ -25,6 +29,9 @@ std::unique_ptr<PluginProcessor> loadBuiltin(const std::string &id, double sampl
     (void)maxBlock;
     if (id == "channel-eq") return std::make_unique<fx::ChannelEq>(sampleRate);
     if (id == "compressor") return std::make_unique<fx::Compressor>(sampleRate);
+    if (id == "gate") return std::make_unique<fx::Gate>(sampleRate);
+    if (id == "delay") return std::make_unique<fx::Delay>(sampleRate);
+    if (id == "reverb") return std::make_unique<fx::Reverb>(sampleRate);
     err = "unknown built-in plug-in " + id;
     return nullptr;
 }
