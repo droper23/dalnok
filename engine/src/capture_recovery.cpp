@@ -28,26 +28,35 @@ void put32(uint8_t *p, uint32_t n) { for (int i = 0; i < 4; ++i) p[i] = static_c
 }
 
 bool recoverCapture(const std::string &source, const std::string &destination,
-                    uint64_t &frames, uint32_t &trailingBytes, std::string &error, int channel) {
+                    uint64_t &frames, uint32_t &trailingBytes, std::string &error, int channel,
+                    uint32_t emptyRate, uint32_t emptyChannels) {
     frames = 0; trailingBytes = 0;
     const int input = ::open(source.c_str(), O_RDONLY);
-    if (input < 0) { error = "cannot open capture spool"; return false; }
+    struct stat st{};
+    const bool neverStarted = emptyRate > 0 && emptyChannels > 0 &&
+        (input < 0 ? errno == ENOENT : ::fstat(input, &st) == 0 && S_ISREG(st.st_mode) && st.st_size < 16);
+    if (input < 0 && !neverStarted) { error = "cannot open capture spool"; return false; }
     CaptureSpool::Inspection info;
-    if (!CaptureSpool::inspectFd(input, info) || (channel < 0 && info.channels > 2) ||
+    if (neverStarted) info = {emptyRate, emptyChannels, 0, input < 0 ? 0 : static_cast<uint64_t>(st.st_size)};
+    else if (!CaptureSpool::inspectFd(input, info) || (channel < 0 && info.channels > 2) ||
         (channel >= 0 && static_cast<uint32_t>(channel) >= info.channels)) {
         ::close(input); error = "invalid capture spool or unsupported channel count"; return false;
+    }
+    if (neverStarted && ((channel < 0 && info.channels > 2) || (channel >= 0 && static_cast<uint32_t>(channel) >= info.channels))) {
+        if (input >= 0) ::close(input);
+        error = "invalid capture spool or unsupported channel count"; return false;
     }
     // channel >= 0: a mono file of that spool channel; otherwise every channel (at most two).
     const uint32_t spoolChannels = info.channels, outChannels = channel >= 0 ? 1 : info.channels;
     info.channels = outChannels;
     const uint64_t bytes = info.completeFrames * info.channels * sizeof(float);
     if (bytes > std::numeric_limits<uint32_t>::max() - 36) {
-        ::close(input); error = "capture is too large for WAV"; return false;
+        if (input >= 0) ::close(input); error = "capture is too large for WAV"; return false;
     }
     std::string pattern = destination + ".tmp-XXXXXX";
     std::vector<char> temp(pattern.begin(), pattern.end()); temp.push_back('\0');
     const int output = ::mkstemp(temp.data());
-    if (output < 0) { ::close(input); error = "cannot create recovery temporary file"; return false; }
+    if (output < 0) { if (input >= 0) ::close(input); error = "cannot create recovery temporary file"; return false; }
     ::fchmod(output, 0644); // an ordinary audio file, like any other in the project folder
     uint8_t header[44]{};
     std::memcpy(header, "RIFF", 4); put32(header + 4, static_cast<uint32_t>(bytes) + 36);
@@ -92,7 +101,7 @@ bool recoverCapture(const std::string &source, const std::string &destination,
     }
     if (ok) ok = ::fsync(output) == 0;
     if (::close(output) != 0) ok = false;
-    ::close(input);
+    if (input >= 0) ::close(input);
     // A hard link publishes atomically and fails if the destination exists.
     if (ok) ok = ::link(temp.data(), destination.c_str()) == 0;
     ::unlink(temp.data());

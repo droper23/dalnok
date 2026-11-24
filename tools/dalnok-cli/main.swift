@@ -36,7 +36,7 @@ usage:
   dalnok-cli inputs                                                    list audio input devices
   dalnok-cli midi-inputs                                               list MIDI sources
   dalnok-cli capture-test <device-name> <channel> <seconds> <new-spool>  experimental duplex capture
-  dalnok-cli record <device-name> <channel> <seconds> <folder> [--save p.dalnok] [--monitor] [--output <name|default>]  record an armed track
+  dalnok-cli record <device-name> <channel[,channel…]> <seconds> <folder> [--save p.dalnok] [--monitor] [--output <name|default>]  record an armed track
   dalnok-cli simulate-record <folder> <seconds>                         record generated input in real time (crash tests)
   dalnok-cli recover-takes <folder>                                      recover unfinished takes from their journals
   dalnok-cli midi-play <source-id> <seconds> [--record]                  play (and record) the built-in synth from MIDI
@@ -99,7 +99,9 @@ case "capture-test":
 case "record", "simulate-record":
     let simulated = cmd == "simulate-record"
     guard simulated ? args.count == 3 : args.count >= 5 else { print(usage); leave(2) }
-    let channel = simulated ? 1 : (Int32(args[2]) ?? 0)
+    // One armed track per listed input channel ("1,2"): each records its own take, all in one undo step.
+    let channels = simulated ? [Int32(1)] : args[2].split(separator: ",").map { Int32($0) ?? 0 }
+    let channel = channels.min() ?? 0
     let seconds = Double(simulated ? args[2] : args[3]) ?? 0
     let folder = simulated ? args[1] : args[4]
     guard channel > 0, seconds > 0, seconds <= 3_600 else { print(usage); leave(2) }
@@ -111,7 +113,7 @@ case "record", "simulate-record":
         guard let device = devices.prefix(Int(max(0, min(count, current)))).first(where: {
             withUnsafeBytes(of: $0.name) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) } == args[1]
         }) else { fail("input device not found") }
-        guard channel <= device.input_channels else { fail("input channel is out of range") }
+        guard channels.allSatisfy({ $0 <= device.input_channels }), Set(channels).count == channels.count else { fail("input channel is out of range") }
         uid = withUnsafeBytes(of: device.uid) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }
         rate = device.sample_rate
     }
@@ -131,9 +133,12 @@ case "record", "simulate-record":
         }
         guard dalnok_engine_set_output_device(engine, out, &err, err.count) == DALNOK_OK else { fail(cstr(err)) }
     }
-    let track = dalnok_track_add(engine, "Input \(channel)")
-    _ = dalnok_track_set_input(engine, track, channel - 1)
-    _ = dalnok_track_set_armed(engine, track, true)
+    for ch in channels {
+        let track = dalnok_track_add(engine, "Input \(ch)")
+        _ = dalnok_track_set_input(engine, track, ch - 1)
+        _ = dalnok_track_set_armed(engine, track, true)
+    }
+    let before = Set((try? FileManager.default.contentsOfDirectory(atPath: folder)) ?? [])
     dalnok_record_set_monitoring(engine, args.contains("--monitor"))
     guard dalnok_record_start(engine, uid, folder, &err, err.count) == DALNOK_OK else { fail(cstr(err)) }
     print("recording (round-trip latency estimate \(dalnok_record_latency(engine)) frames)…")
@@ -158,6 +163,22 @@ case "record", "simulate-record":
     let path = withUnsafeBytes(of: result.path) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }
     print("captured \(result.capture.captured_frames), wrote \(result.capture.written_frames), dropped \(result.capture.dropped_frames); file \(result.frames) frames at \(path)")
     print("take began at frame \(result.start_frame); placed at \(clipStart(engine, result.audio_clip)) after \(result.latency_frames) frames of latency compensation")
+    if channels.count > 1 {
+        // Per-take level, overall and per second, so each input can be told apart (e.g. guitar first, then voice).
+        print("\(result.audio_clip_count) takes placed for \(channels.count) armed tracks")
+        let made = ((try? FileManager.default.contentsOfDirectory(atPath: folder)) ?? []).filter { !before.contains($0) && $0.hasSuffix(".wav") }.sorted()
+        for name in made {
+            var media: OpaquePointer?
+            guard dalnok_media_load("\(folder)/\(name)", rate, &media, &err, err.count) == DALNOK_OK, let media else { print("\(name): load failed: \(cstr(err))"); continue }
+            defer { dalnok_media_release(media) }
+            let frames = dalnok_media_frames(media), seconds = Int((Double(frames) / rate).rounded(.up))
+            var lo = [Float](repeating: 0, count: seconds), hi = lo
+            _ = dalnok_media_peaks(media, 0, 0, rate, &lo, &hi, Int64(seconds))
+            let peaks = zip(lo, hi).map { max(-$0, $1) }
+            print("\(name): \(frames) frames, \(dalnok_media_channels(media)) ch, peak \(String(format: "%.3f", peaks.max() ?? 0)); per second: " + peaks.map { String(format: "%.2f", $0) }.joined(separator: " "))
+        }
+        guard result.audio_clip_count == Int32(channels.count) else { fail("expected \(channels.count) takes, placed \(result.audio_clip_count)") }
+    }
     if let project = opt("--save") {
         guard dalnok_project_save(engine, project, &err, err.count) == DALNOK_OK else { fail(cstr(err)) }
         print("saved \(project)")

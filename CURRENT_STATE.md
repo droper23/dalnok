@@ -5,7 +5,28 @@ milestone: 0.4.0 released 2026-11-23 (four themes in six looks with their own fi
 ---
 # Current State
 
-## Latest (2026-11-23, night): Scarlett hardware tests
+## Latest (2026-11-23, late): flakes fixed, fuzz clean, two-input recording on the Scarlett, stills
+No new feature. Branch `chore/flakes-and-checks`.
+- **CI `record-crash.sh` flake fixed:** a take killed after its journal was written but before capture created the spool
+  could not be recovered ("invalid capture spool"). It now recovers as an empty take (`recoverCapture` emptyRate/emptyChannels);
+  engine test `aTakeKilledBeforeCaptureBeganRecoversEmpty` (missing and partial spool recover; a corrupt header still fails).
+- **Self-test crash under load fixed:** the first split used a fixed 0.3 s pause after a seek; when the seek had not landed the
+  split was a no-op and the Undos undid the import (nil clip, crash at SelfTest.swift:156). Now `settle`, and a failed check
+  instead of a crash. Matrix 12/12 PASS.
+- **Fuzz 120 s clean** (156,688 runs, no findings; 1,000 round-trips pass). Needed: `#include <algorithm>` in `au_host.mm`
+  (Homebrew clang 23), an LSan suppression for the stretch-cache worker's thread start state (macOS LSan doesn't scan
+  that thread's stack), and the build stamp taken at build start (a header edited mid-build went unnoticed).
+- **Two inputs on the Scarlett** (`dalnok-cli record "Scarlett Solo 4th Gen" 1,2 30 … --output default`): two takes, 0
+  dropped frames, guitar and mic played by the owner. The two files are identical sample for sample, and so are channels 1
+  and 2 recorded with ffmpeg outside Dalnok: the interface sends the same signal to both USB inputs (likely its routing in
+  Focusrite Control 2). Dalnok's per-track channels (0 and 1) and capture map are right. Distinct signals not yet verified.
+- **Stills:** the traveller seen on AUNewPitch's Pitch Scale (Atelier Dark and Light); it said L · C · R on a pitch
+  control, now − · 0 · + unless the parameter is pan/balance/width. The two-line header seen in the self-test's
+  `header-two-line.png` (Atelier Dark). The header check now uses the last row (the first can be a hidden track).
+- **Open:** a one-block (512 frames) ⌘V paste offset seen once in a single run; distinct-signal two-input test after the
+  Scarlett's routing is changed; the gallery's Inspector shows the system input device's name (the owner's).
+
+## Earlier (2026-11-23, night): Scarlett hardware tests
 Owner connected the Scarlett Solo 4th Gen. No engine change.
 - **Loopback** (`DALNOK_TEST_LOOPBACK="Scarlett Solo 4th Gen:3" swift test --filter HardwareLoopback`): 2/2 pass.
   Measured 1143 vs 1200 reported; per stream 1137, 1137, 1143, 1137, 1137, 1143 (one frame above 2026-11-21's 1136/1142,
@@ -33,7 +54,7 @@ PR #21 merged (`main` a37d3c2); `dist/Dalnok.app` rebuilt from it. No engine cha
   passed alone), a fresh-preferences run PASS, CI 6/6 (build-test passed on a re-run: `record-crash.sh` reported an
   invalid capture spool once; this PR touches no engine code; not investigated).
 - **Open:** the early clip-drag flake under parallel load and the `record-crash.sh` flake; pan traveller still has no
-  still; fuzz.
+  still.
 
 ## Earlier (2026-11-23, afternoon): Atelier seismograph, clearer controls, plain dials, fast self-test
 PRs #18 (plug-in looks revert, fold, OPEN, matrix script) and #19 (seismograph) merged; `main` 3b8dadf. No engine change.

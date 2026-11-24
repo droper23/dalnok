@@ -157,6 +157,39 @@ func files(_ dir: URL) -> [String] {
         #expect(dalnok_record_recover(bad.path, &json, json.count, &err, 256) != DALNOK_OK)
     }
 
+    /// A take killed after its journal was written but before capture began (seen on CI with a 50 ms kill) has no spool,
+    /// or one shorter than its 16-byte header: it recovers as an empty WAV instead of failing. A corrupt header still fails.
+    @Test func aTakeKilledBeforeCaptureBeganRecoversEmpty() throws {
+        let dir = tempDir()
+        var json = [CChar](repeating: 0, count: 8_192), err = [CChar](repeating: 0, count: 256)
+        func journal(_ name: String) throws -> URL {
+            let url = dir.appendingPathComponent("\(name).dlntake")
+            try #"{"format":"dalnok-take","version":1,"state":"recording","spool":"\#(name).dlncap","wav":"\#(name).wav","sampleRate":44100,"channels":1}"#
+                .write(to: url, atomically: true, encoding: .utf8)
+            return url
+        }
+        func header(_ wav: URL) throws -> (rate: UInt32, channels: UInt16, bytes: UInt32) {
+            let d = try Data(contentsOf: wav)
+            func u32(_ at: Int) -> UInt32 { d[at..<at + 4].enumerated().reduce(0) { $0 | UInt32($1.element) << (8 * $1.offset) } }
+            return (u32(24), UInt16(d[22]) | UInt16(d[23]) << 8, u32(40))
+        }
+        for (name, spool) in [("Missing", nil), ("Partial", Data("DLNCAP".utf8))] as [(String, Data?)] {
+            if let spool { try spool.write(to: dir.appendingPathComponent("\(name).dlncap")) }
+            let j = try journal(name)
+            #expect(dalnok_record_recover(j.path, &json, json.count, &err, 256) == DALNOK_OK, "\(name): \(cstr(err))")
+            let r = try JSONSerialization.jsonObject(with: Data(cstr(json).utf8)) as? [String: Any] ?? [:]
+            #expect(r["frames"] as? Int == 0 && r["state"] as? String == "recovered", "\(name): \(r)")
+            let h = try header(dir.appendingPathComponent("\(name) (recovered).wav"))
+            #expect(h.rate == 44_100 && h.channels == 1 && h.bytes == 0, "\(name): \(h)")
+            #expect(dalnok_record_recover(j.path, &json, json.count, &err, 256) == DALNOK_OK, "\(name): repeatable")
+            if let spool { #expect(try Data(contentsOf: dir.appendingPathComponent("\(name).dlncap")) == spool) }
+        }
+        var corrupt = Data("NOTACAP!".utf8); corrupt.append(contentsOf: [UInt8](repeating: 0, count: 8))
+        try corrupt.write(to: dir.appendingPathComponent("Corrupt.dlncap"))
+        #expect(dalnok_record_recover(try journal("Corrupt").path, &json, json.count, &err, 256) != DALNOK_OK)
+        #expect(!files(dir).contains("Corrupt (recovered).wav"))
+    }
+
     @Test func recordingNeedsAnArmedTrackAndAnInput() {
         let e = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(e) }
         let dir = tempDir()

@@ -10,6 +10,7 @@
 #import <AudioToolbox/AudioToolbox.h>
 #import <AudioUnit/AUCocoaUIView.h>
 #import <AVFoundation/AVFoundation.h>
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <map>

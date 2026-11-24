@@ -765,13 +765,15 @@ final class FaceplateControl: NSControl, ParameterControl {
             let marker = CGMutablePath(); marker.addLines(between: [CGPoint(x: mx, y: box.maxY - 3.5), CGPoint(x: mx - 3, y: box.maxY + 1), CGPoint(x: mx + 3, y: box.maxY + 1)]); marker.closeSubpath()
             ctx.addPath(marker); ctx.setFillColor(ink.cgColor); ctx.fillPath()
         case .traveller:
-            // A balanced traveller: a faceted weight on a symmetric scale, the centre engraved longest, L · C · R.
+            // A balanced traveller: a faceted weight on a symmetric scale, the centre engraved longest, L · C · R (or − · 0 · +).
             Atelier.rule(ctx, CGPoint(x: sr.minX, y: mid), CGPoint(x: sr.maxX, y: mid), weight: Atelier.fine, color: faint)
             for i in 0...10 {
                 let tx = (sr.minX + sr.width * CGFloat(i) / 10).rounded() + 0.5, long = i == 5 ? 7.0 : i % 5 == 0 ? 5.0 : 3.0
                 Atelier.rule(ctx, CGPoint(x: tx, y: mid - long / 2), CGPoint(x: tx, y: mid + long / 2), weight: i == 5 ? 0.8 : Atelier.hair, color: Theme.ink(i == 5 ? 0.8 : 0.5))
             }
-            for (t, l) in [(0.0, "L"), (0.5, "C"), (1.0, "R")] as [(CGFloat, String)] {
+            // L · C · R only for a stereo position; any other centred value (pitch, tilt, offset) reads − · 0 · +.
+            let n = name.lowercased(), stereo = n.contains("pan") || n.contains("balance") || n.contains("width")
+            for (t, l) in (stereo ? [(0.0, "L"), (0.5, "C"), (1.0, "R")] : [(0.0, "−"), (0.5, "0"), (1.0, "+")]) as [(CGFloat, String)] {
                 Atelier.note(ctx, l, at: CGPoint(x: sr.minX + sr.width * t, y: mid + 4), size: 6, color: Theme.ink(0.6), align: t == 0 ? .left : t == 1 ? .right : .center, roman: true)
             }
             if abs(cx - sr.midX) > 0.5 { Atelier.rule(ctx, CGPoint(x: sr.midX, y: mid), CGPoint(x: cx, y: mid), weight: 2, color: strong) }
