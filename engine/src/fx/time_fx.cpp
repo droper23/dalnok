@@ -227,6 +227,53 @@ void Gate::process(float *left, float *right, int frames, const PluginNote *, in
     reductionDb_.store(static_cast<float>(std::min(100.0, -20 * std::log10(std::max(lowest, 1e-5)))), std::memory_order_relaxed);
 }
 
+// ---- Analyzer ---------------------------------------------------------------------------------------------------
+
+namespace {
+const std::vector<P> &analyzerParams() {
+    static const std::vector<P> params = {
+        {Analyzer::kRms, "RMS", "dBFS", -120, 6, -120, P::Linear, nullptr, true},
+        {Analyzer::kPeak, "Peak", "dBFS", -120, 6, -120, P::Linear, nullptr, true},
+        {Analyzer::kCorrelation, "Correlation", "", -1, 1, 0, P::Linear, nullptr, true},
+        {Analyzer::kBalance, "Balance", "dB", -24, 24, 0, P::Linear, nullptr, true},
+    };
+    return params;
+}
+} // namespace
+
+Analyzer::Analyzer(double sampleRate)
+    : BuiltinProcessor("analyzer", "Dalnok Analyzer", analyzerParams()), coef_(1.0 - std::exp(-1.0 / (0.3 * sampleRate))),
+      fall_(std::pow(0.1, 1.0 / sampleRate)) {}
+
+double Analyzer::meter(uint32_t id) const {
+    switch (id) {
+    case kRms: return rms_.load(std::memory_order_relaxed);
+    case kPeak: return peakDb_.load(std::memory_order_relaxed);
+    case kCorrelation: return corr_.load(std::memory_order_relaxed);
+    case kBalance: return balance_.load(std::memory_order_relaxed);
+    default: return 0;
+    }
+}
+
+void Analyzer::process(float *left, float *right, int frames, const PluginNote *, int) DALNOK_NONBLOCKING {
+    applyPending();
+    // 300 ms exponential windows: mean squares and the cross product; the peak falls 20 dB/s.
+    for (int i = 0; i < frames; ++i) {
+        const double l = left[i], r = right[i];
+        ll_ += coef_ * (l * l - ll_);
+        rr_ += coef_ * (r * r - rr_);
+        lr_ += coef_ * (l * r - lr_);
+        peak_ = std::max(peak_ * fall_, std::max(std::fabs(l), std::fabs(r)));
+    }
+    const double ms = 0.5 * (ll_ + rr_);
+    auto db = [](double x) { return x > 1e-12 ? 10 * std::log10(x) : -120.0; };
+    rms_.store(static_cast<float>(std::max(-120.0, db(ms))), std::memory_order_relaxed);
+    peakDb_.store(static_cast<float>(std::max(-120.0, 2 * db(peak_))), std::memory_order_relaxed);
+    corr_.store(static_cast<float>(ll_ > 1e-12 && rr_ > 1e-12 ? std::clamp(lr_ / std::sqrt(ll_ * rr_), -1.0, 1.0) : 0.0),
+                std::memory_order_relaxed);
+    balance_.store(static_cast<float>(std::clamp(db(rr_) - db(ll_), -24.0, 24.0)), std::memory_order_relaxed);
+}
+
 } // namespace dalnok::fx
 
 #pragma clang diagnostic pop

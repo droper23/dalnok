@@ -144,3 +144,44 @@ private func dB(_ x: Double) -> Double { 20 * log10(max(x, 1e-12)) }
         #expect(dalnok_track_bounce_in_place(e, 999, path, &err, 256) == 0)
     }
 }
+
+@Suite struct AnalyzerMeters {
+    func readings(_ l: [Float], _ r: [Float]) -> (rms: Double, peak: Double, corr: Double, balance: Double, out: [Float]) {
+        let e = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(e) }
+        let t = dalnok_track_add(e, "M")
+        let m = makeMedia([l, r]); defer { dalnok_media_release(m) }
+        DalnokEngine.dalnok_clip_add(e, t, dalnok_pool_add(e, m, ""), 0, 0, 0)
+        var err = [CChar](repeating: 0, count: 256)
+        let slot = dalnok_plugin_add(e, t, "dalnok:analyzer", nil, &err, 256)
+        let (out, _) = render(e, frames: l.count) // offline: its own copy of the plug-in (audio passes through)
+        // The meters are the live instance's: play through the live path.
+        var bl = [Float](repeating: 0, count: 512), br = bl
+        dalnok_transport_play(e)
+        for _ in 0..<(l.count / 512 - 4) { dalnok_engine_pump(e, &bl, &br, 512) }
+        var v = [Double](repeating: 0, count: 4)
+        let ranges: [(Double, Double)] = [(-120, 6), (-120, 6), (-1, 1), (-24, 24)]
+        for i in 0..<4 {
+            var p = DalnokPluginParameter()
+            _ = dalnok_plugin_parameter(e, slot, Int32(i), &p)
+            v[i] = ranges[i].0 + p.value * (ranges[i].1 - ranges[i].0)
+        }
+        return (v[0], v[1], v[2], v[3], out)
+    }
+    @Test func levelsCorrelationAndBalance() {
+        let n = 96_000 // two seconds: the 300 ms windows settle to within 0.01 dB
+        let s = (0..<n).map { Float(0.5 * sin(2 * Double.pi * 1_000 * Double($0) / 48_000)) }
+        let same = readings(s, s)
+        #expect(abs(same.rms - (20 * log10(0.5) - 3.0103)) < 0.1, "sine RMS \(same.rms) dBFS, expected -9.03")
+        #expect(abs(same.peak - 20 * log10(0.5)) < 0.1, "peak \(same.peak)")
+        #expect(abs(same.corr - 1) < 0.01 && abs(same.balance) < 0.1, "mono: correlation \(same.corr)")
+        #expect(zip(same.out, s).allSatisfy { $0 == $1 }, "passes audio through untouched")
+        let inverted = readings(s, s.map { -$0 })
+        #expect(abs(inverted.corr + 1) < 0.01, "out of phase: \(inverted.corr)")
+        var seed: UInt32 = 7
+        func noise() -> Float { seed = seed &* 1_664_525 &+ 1_013_904_223; return Float(Int32(bitPattern: seed)) / Float(Int32.max) * 0.3 }
+        let a = (0..<n).map { _ in noise() }, b = (0..<n).map { _ in noise() }
+        #expect(abs(readings(a, b).corr) < 0.1, "unrelated noise: about 0")
+        let quiet = readings(s, s.map { $0 * 0.5 })
+        #expect(abs(quiet.balance + 6.02) < 0.1, "right 6 dB down: balance \(quiet.balance)")
+    }
+}

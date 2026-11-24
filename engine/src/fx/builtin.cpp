@@ -22,6 +22,7 @@ const std::vector<BuiltinInfo> &builtinPlugins() {
         {"gate", "Dalnok Gate", "Dynamics"},
         {"delay", "Dalnok Delay", "Delay"},
         {"reverb", "Dalnok Reverb", "Reverb"},
+        {"analyzer", "Dalnok Analyzer", "Analyzer"},
         {"sampler", "Dalnok Sampler", "Sampler", true},
         {"drums", "Dalnok Drums", "Drums", true},
     };
@@ -35,6 +36,7 @@ std::unique_ptr<PluginProcessor> loadBuiltin(const std::string &id, double sampl
     if (id == "gate") return std::make_unique<fx::Gate>(sampleRate);
     if (id == "delay") return std::make_unique<fx::Delay>(sampleRate);
     if (id == "reverb") return std::make_unique<fx::Reverb>(sampleRate);
+    if (id == "analyzer") return std::make_unique<fx::Analyzer>(sampleRate);
     if (id == "sampler") return std::make_unique<fx::Sampler>(sampleRate);
     if (id == "drums") return std::make_unique<fx::Drums>(sampleRate);
     err = "unknown built-in plug-in " + id;

@@ -66,3 +66,22 @@ private:
 };
 
 } // namespace dalnok::fx
+
+namespace dalnok::fx {
+// Dalnok Analyzer (Logic's MultiMeter, Ableton's Spectrum and Utility meters): passes audio through untouched and
+// reports RMS and peak level (300 ms), stereo correlation (+1 mono, 0 unrelated, -1 out of phase) and balance. The
+// device panel's faceplate draws its spectrum.
+class Analyzer final : public BuiltinProcessor {
+public:
+    explicit Analyzer(double sampleRate);
+    void process(float *left, float *right, int frames, const PluginNote *notes, int noteCount) DALNOK_NONBLOCKING override;
+    enum : uint32_t { kRms = 0, kPeak, kCorrelation, kBalance };
+
+private:
+    void changed() DALNOK_NONBLOCKING override {}
+    double meter(uint32_t id) const override;
+    double coef_, fall_; // 300 ms window; peak decay per sample (20 dB/s)
+    double ll_ = 0, rr_ = 0, lr_ = 0, peak_ = 0;
+    std::atomic<float> rms_{-120}, peakDb_{-120}, corr_{0}, balance_{0};
+};
+} // namespace dalnok::fx
