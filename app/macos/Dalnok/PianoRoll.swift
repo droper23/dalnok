@@ -514,8 +514,11 @@ final class PianoRollView: NSView {
     }
     func hitStem(_ p: CGPoint) -> DalnokNote? {
         guard let c = clip, velocityLane.contains(p) else { return nil }
-        return visibleNotes(c).min { abs(x(timeline($0, c)) - p.x) < abs(x(timeline($1, c)) - p.x) }
-            .flatMap { abs(x(timeline($0, c)) - p.x) <= 6 ? $0 : nil }
+        // Notes of a chord share one x: the closest stem top to the pointer wins, so each can be picked.
+        let near = visibleNotes(c).filter { abs(x(timeline($0, c)) - p.x) <= 6 }
+        let lane = velocityLane
+        func top(_ n: DalnokNote) -> CGFloat { lane.maxY - 4 - (lane.height - 12) * CGFloat(n.velocity) / 127 }
+        return near.min { (abs(x(timeline($0, c)) - p.x), abs(top($0) - p.y)) < (abs(x(timeline($1, c)) - p.x), abs(top($1) - p.y)) }
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -616,7 +619,10 @@ final class PianoRollView: NSView {
             guard let earliest = moving.map(\.start).min(), let low = moving.map(\.pitch).min(), let high = moving.map(\.pitch).max() else { return }
             // The beat grid follows tempo changes: snap the earliest note's landing point, then move all by that delta.
             let origin = Double((clip?.start ?? 0) - (clip?.offset ?? 0)), t0 = origin + Double(earliest)
-            let dt = max(-earliest, Int64(bypass ? dxFrames.rounded() : snap(t0 + dxFrames, bypass: false) - t0))
+            // Stay inside the clip's window: a note moved past its end (or before a trimmed start) is neither shown nor played.
+            let lo = Int64(clip?.offset ?? 0), hi = lo + Int64((clip?.length ?? 1) - 1)
+            let latest = moving.map(\.start).max() ?? earliest
+            let dt = max(lo - earliest, min(hi - latest, Int64(bypass ? dxFrames.rounded() : snap(t0 + dxFrames, bypass: false) - t0)))
             let dp = max(-Int(low), min(127 - Int(high), -Int(((p.y - d.start.y) / rowHeight).rounded())))
             for n in d.original {
                 guard d.moving.contains(key(n)) else { result.append(n); continue }
@@ -740,8 +746,9 @@ final class PianoRollView: NSView {
 
     func nudge(by frames: Int64) {
         guard let c = clip, !selection.isEmpty else { return }
-        guard let earliest = c.notes.filter({ selection.contains(key($0)) }).map(\.start).min() else { return }
-        let delta = max(-earliest, frames)
+        let starts = c.notes.filter { selection.contains(key($0)) }.map(\.start)
+        guard let earliest = starts.min(), let latest = starts.max() else { return }
+        let delta = max(c.offset - earliest, min(c.offset + c.length - 1 - latest, frames))
         guard delta != 0 else { return }
         var sel: Set<NoteKey> = []
         let notes = c.notes.map { n -> DalnokNote in
@@ -760,8 +767,10 @@ final class PianoRollView: NSView {
         var sel: Set<NoteKey> = []
         let notes = c.notes.map { n -> DalnokNote in
             guard all || selection.contains(key(n)) else { return n }
+            guard n.start >= c.offset, n.start < c.offset + c.length else { return n } // outside the window: not shown, not touched
             let t = timeline(n, c), target = session.beatToFrame((session.frameToBeat(t) / grid).rounded() * grid)
-            let m = DalnokNote(start: max(0, n.start + Int64(((target - t) * strength).rounded())), length: n.length, pitch: n.pitch, velocity: n.velocity)
+            let at = min(max(n.start + Int64(((target - t) * strength).rounded()), c.offset), c.offset + c.length - 1)
+            let m = DalnokNote(start: at, length: n.length, pitch: n.pitch, velocity: n.velocity)
             if !all { sel.insert(key(m)) }
             return m
         }

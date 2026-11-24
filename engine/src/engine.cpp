@@ -502,19 +502,23 @@ bool Engine::quantize(DalnokClipId id, double gridBeats, double strength, std::s
         ClipState *c = m.clip(id);
         if (!c) return fail(err, "no such clip");
         if (!c->midi()) return fail(err, "not a MIDI clip");
-        if (!(gridBeats >= 1.0 / 64 && gridBeats <= 16) || !(strength > 0 && strength <= 1))
+        if (!(gridBeats >= 1.0 / 64 && gridBeats <= 16) || !(strength >= 0 && strength <= 1))
             return fail(err, "grid must be 1/64-16 beats and strength 0-1");
         // The grid is in beats from the timeline origin (bar 1), not the clip, and follows the tempo map.
         const auto origin = c->start - c->offset;
         std::vector<MidiNote> notes = *c->notes;
         for (auto &n : notes) {
+            // Notes outside the clip's window are neither shown nor played: leave them be.
+            if (n.start < c->offset || n.start >= c->offset + c->length) continue;
             const int64_t at = origin + n.start;
             double beat;
             int64_t snapped;
             if (!map_.frameToBeat(at, beat) || !map_.beatToFrame(std::round(beat / gridBeats) * gridBeats, snapped))
                 return fail(err, "note is beyond the supported timeline");
             const double moved = static_cast<double>(at) + static_cast<double>(snapped - at) * strength;
-            n.start = std::max<int64_t>(0, static_cast<int64_t>(std::llround(moved)) - origin);
+            // A note near the end that rounds up to the next grid line stays on the window's last frame.
+            n.start = std::clamp<int64_t>(static_cast<int64_t>(std::llround(moved)) - origin, c->offset,
+                                          c->offset + c->length - 1);
         }
         c->notes = sortedNotes(std::move(notes));
         return true;

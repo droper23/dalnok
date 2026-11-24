@@ -166,6 +166,38 @@ func oneNoteSession(pitch: UInt8 = 69, velocity: UInt8 = 127) -> (OpaquePointer,
         #expect(dalnok_midi_quantize(e, c, 0, 1) != DALNOK_OK)
     }
 
+    @Test func quantizeKeepsNotesInsideTheClipWindow() {
+        let e = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(e) }
+        let t = dalnok_track_add_instrument(e, nil)
+        // Timeline 1,000 ... 91,000; a beat is 24,000 frames. 89,500 (timeline 90,500) rounds up to beat 4 = 96,000,
+        // which is past the clip's end, where the note would neither show nor play.
+        let c = dalnok_midi_clip_add(e, t, 1_000, 90_000)
+        var notes = [DalnokNote(start: 89_500, length: 100, pitch: 60, velocity: 100),
+                     DalnokNote(start: 23_000, length: 100, pitch: 62, velocity: 100)]
+        dalnok_midi_clip_set_notes(e, c, &notes, 2)
+        #expect(dalnok_midi_quantize(e, c, 1, 1) == DALNOK_OK)
+        dalnok_midi_clip_notes(e, c, &notes, 2)
+        #expect(notes[0].start == 23_000) // already on beat 1
+        #expect(notes[1].start == 89_999) // the last frame of the clip, not 95,000
+    }
+
+    @Test func quantizeStrengthZeroChangesNothingAndTripletsLandOnThirds() {
+        let e = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(e) }
+        let t = dalnok_track_add_instrument(e, nil)
+        let c = dalnok_midi_clip_add(e, t, 0, 96_000)
+        // 1/8 triplet = 1/3 beat = 8,000 frames at 120 BPM / 48 kHz.
+        var notes = [DalnokNote(start: 7_700, length: 100, pitch: 60, velocity: 100),
+                     DalnokNote(start: 16_300, length: 100, pitch: 62, velocity: 100)]
+        dalnok_midi_clip_set_notes(e, c, &notes, 2)
+        #expect(dalnok_midi_quantize(e, c, 1.0 / 3, 0) == DALNOK_OK)
+        dalnok_midi_clip_notes(e, c, &notes, 2)
+        #expect(notes[0].start == 7_700 && notes[1].start == 16_300)
+        #expect(dalnok_midi_quantize(e, c, 1.0 / 3, 1) == DALNOK_OK)
+        dalnok_midi_clip_notes(e, c, &notes, 2)
+        #expect(abs(notes[0].start - 8_000) <= 1 && abs(notes[1].start - 16_000) <= 1)
+        #expect(dalnok_midi_quantize(e, c, 0.25, 1.5) != DALNOK_OK && dalnok_midi_quantize(e, c, 0.25, -0.1) != DALNOK_OK)
+    }
+
     @Test func splitMidiClipRendersIdentically() {
         let (e, _, c) = oneNoteSession(); defer { dalnok_engine_destroy(e) }
         var note2 = [DalnokNote(start: 4_800, length: 20_000, pitch: 69, velocity: 127),
