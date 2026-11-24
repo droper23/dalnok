@@ -24,10 +24,12 @@ for delay in 0.05 0.7 2.5; do
   journal=$(find "$dir" -name '*.dlntake' -print -quit 2>/dev/null || true)
   if [[ -z "$journal" ]]; then echo "kill after ${delay}s: no journal (take had not started)"; continue; fi
   spool="${journal%.dlntake}.dlncap"
-  before=$(shasum "$spool" | cut -d' ' -f1)
+  # Killed between the journal and the first capture: no spool yet (it recovers as an empty take).
+  sum() { if [[ -f "$spool" ]]; then shasum "$spool" | cut -d' ' -f1; else echo missing; fi; }
+  before=$(sum)
   "$cli" recover-takes "$dir"
   "$cli" recover-takes "$dir" >/dev/null  # repeated recovery must not change anything
-  after=$(shasum "$spool" | cut -d' ' -f1)
+  after=$(sum)
   [[ "$before" == "$after" ]] || { echo "spool changed by recovery" >&2; exit 1; }
   wav="${journal%.dlntake} (recovered).wav"
   python3 -I - "$wav" "$delay" <<'PY'

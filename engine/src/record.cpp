@@ -401,6 +401,9 @@ bool recoverTake(const std::string &journal, json::Value &out, std::string &err)
     const std::string spool = (dir / out.getString("spool", "")).string();
     uint64_t frames = 0;
     uint32_t trailing = 0;
+    // Killed between writing the journal and starting capture: the take recovers as empty instead of failing.
+    const auto emptyRate = static_cast<uint32_t>(std::max<double>(0, out.getNumber("sampleRate", 0)));
+    const auto emptyChannels = static_cast<uint32_t>(std::max<double>(1, out.getNumber("channels", 1)));
     json::Value *tracks = out.get("tracks");
     if (tracks && tracks->isArray() && tracks->array.size() > 1) {
         // Multi-track take: one "<take> (recovered).wav" per track from its spool channel.
@@ -408,7 +411,7 @@ bool recoverTake(const std::string &journal, json::Value &out, std::string &err)
             const std::string wav = tracks->array[i].getString("wav", "");
             if (wav.empty()) return fail(err, "take journal lists a track without a file name");
             const std::string each = recoveredPath((dir / wav).string());
-            if (!fs::exists(each) && !recoverCapture(spool, each, frames, trailing, err, static_cast<int>(i))) return false;
+            if (!fs::exists(each) && !recoverCapture(spool, each, frames, trailing, err, static_cast<int>(i), emptyRate, emptyChannels)) return false;
             tracks->array[i].set("recoveredWav", fs::path(each).filename().string());
             if (i == 0) out.set("recoveredWav", fs::path(each).filename().string());
         }
@@ -427,7 +430,7 @@ bool recoverTake(const std::string &journal, json::Value &out, std::string &err)
         out.set("path", target);
         return true;
     }
-    if (!recoverCapture(spool, target, frames, trailing, err)) return false;
+    if (!recoverCapture(spool, target, frames, trailing, err, -1, emptyRate, emptyChannels)) return false;
     syncDirectory(dir.string());
     out.set("state", "recovered");
     out.set("frames", static_cast<int64_t>(frames));

@@ -222,13 +222,18 @@ extension SelfTest {
             w.setTrackHeight(before); w.window?.layoutIfNeeded()
         }
         // A long instrument name never runs over the pan knob, and never hides the plug-in count (it takes a second line).
-        if let row = w.headers.rows.first {
+        if let row = w.headers.rows.last { // the first row can be a track this run has hidden
             let (src, counts) = (row.inputSource, row.inputCounts)
             row.setInput(source: "A Very Long Instrument Name", counts: "3 FX")
             row.layoutSubtreeIfNeeded()
             check(row.inputButton.frame.minX >= row.pan.frame.maxX + 7, "the input label stops before the pan knob (truncating)")
             let lines = row.inputButton.title.components(separatedBy: "\n")
             check(lines.count == 2 && lines[1] == "3 FX", "a long input name puts the plug-in count on its own line (\(lines))")
+            if let content = row.window?.contentView { // for a look by eye: the window, and where the row is in it
+                row.display()
+                Screenshots.png(content, workdir.appendingPathComponent("header-two-line.png"))
+                print("HEADER-ROW \(NSStringFromRect(row.convert(row.bounds, to: content))) in \(NSStringFromRect(content.bounds))")
+            }
             row.setInput(source: "IN 1", counts: "3 FX")
             check(row.inputButton.title == "IN 1 · 3 FX", "a short one keeps it on one line (\(row.inputButton.title))")
             row.setInput(source: src, counts: counts)

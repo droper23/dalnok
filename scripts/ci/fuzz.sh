@@ -28,6 +28,8 @@ stamp="$out/obj/.stamp"
 if [ -f "$stamp" ] && { [ "$0" -nt "$stamp" ] || [ -n "$(find engine -name '*.h' -newer "$stamp" -o -name '*.hpp' -newer "$stamp" -o -name '*.inc' -newer "$stamp" | head -1)" ]; }; then
   rm -f "$out"/obj/*.o
 fi
+# The stamp takes the time the build started, so a header edited during the build still rebuilds everything next time.
+mkdir -p "$out/obj"; touch "$stamp.new"
 objs=()
 while IFS= read -r f; do
   o="$out/obj/$(echo "$f" | tr '/' '_').o"
@@ -40,7 +42,7 @@ while IFS= read -r f; do
     *) "$CXX" -std=c++20 -fsanitize=fuzzer-no-link "${common[@]}" -c "$f" -o "$o" ;;
   esac
 done < <(find engine/src engine/dsp/src -name '*.cpp' -o -name '*.mm' | grep -v '/fx/channel_eq_cuts' | sort; echo engine/third_party/pugixml/pugixml.cpp)
-touch "$stamp"
+mv "$stamp.new" "$stamp"
 "$CXX" -std=c++20 -fsanitize=fuzzer "${common[@]}" tools/fuzz/fuzz_projects.cpp "${objs[@]}" -o "$out/fuzz_projects" \
   -framework AudioToolbox -framework CoreAudio -framework CoreMIDI -framework CoreFoundation -framework AppKit \
   -framework AVFoundation -framework Accelerate -lz
@@ -80,7 +82,9 @@ DALNOK_FUZZ_SEED_DIR="$PWD/$seeds" swift test --disable-sandbox --filter LogicIm
 
 # Earlier findings must now pass; replay them, then keep them as regression inputs.
 # Process-lifetime objects, never destroyed by design: libFuzzer's RSS thread and the shared stream cache (ADR-0016).
-printf 'leak:fuzzer::StartRssThread\nleak:dalnok::StreamCache::shared\n' > "$out/lsan.supp"
+# The engine's stretch-cache worker: its std::thread start state is referenced only from that thread's own stack, which
+# LeakSanitizer on macOS does not scan reliably, so a mid-run leak check reports it (the engine is destroyed at exit).
+printf 'leak:fuzzer::StartRssThread\nleak:dalnok::StreamCache::shared\nleak:dalnok::StretchCache::StretchCache\n' > "$out/lsan.supp"
 export ASAN_OPTIONS=detect_leaks=1 LSAN_OPTIONS="suppressions=$PWD/$out/lsan.supp"
 mkdir -p "$out/regressions"
 for f in "$out"/artifacts/crash-* "$out"/artifacts/timeout-* "$out"/artifacts/leak-* "$out"/artifacts/oom-*; do

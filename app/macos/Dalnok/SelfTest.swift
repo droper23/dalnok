@@ -140,7 +140,7 @@ final class SelfTest {
         // Split via menu at 1 s.
         w.timeline.selectedClip = first.id
         e.seek(Int64(e.sampleRate))
-        await wait(0.3)
+        await settle(e, Int64(e.sampleRate)) // under load a fixed pause could split at 0 (a no-op), and the Undos below would undo the import
         check(perform("Split at Playhead"), "menu Edit > Split at Playhead enabled")
         check(s.tracks.first?.clips.count == 2, "split made 2 clips")
         check(menuItem("Undo")?.title == "Undo Split at Playhead", "undo title is \"\(menuItem("Undo")?.title ?? "-")\"")
@@ -153,7 +153,7 @@ final class SelfTest {
         check(!MainWindowController.isTyping, "no text field holds the keyboard at launch (Space, R and Delete work)")
         // Drag the clip body right: moves (snapped), one undo step.
         dragClip(first.id, zone: "body", fraction: 0.5)
-        let moved = s.clip(first.id)!
+        guard let moved = s.clip(first.id) else { check(false, "the dragged clip still exists (undo \(e.undoName))"); return finish() }
         check(moved.start > 0, "drag moved clip to \(moved.start)")
         let q = Int64(w.timeline.snapQuantum())
         let quantum = w.timeline.snapQuantum()

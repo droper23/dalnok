@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+- Recording: a take killed in the instant between starting and capturing its first sample now recovers as an empty take instead of reporting an invalid capture file.
+- Atelier: the balanced traveller reads L · C · R only for pan and balance; other centred controls (a pitch shift, for one) read − · 0 · +.
+- `dalnok-cli record` takes several input channels (`1,2`): one armed track and one take per input, with each take's level per second.
 - Plug-ins: select several units in the device chain (⌘-click, ⇧-click for a run) and press ⌫ to remove them in one undo step; a right-click on one of them removes them all; a click anywhere outside the units deselects them.
 - Plug-ins: select several in the Library or the Plug-ins window and insert them together (double-click, Return, or "Insert N on …"), or drag them onto a track, the device panel or the Inspector; they land in order and undo as one step.
 - Settings ▸ Appearance ▸ Figure motion (Atelier and Prism): moving but still under the pointer (as before), always moving, or still until pointed at.
