@@ -2558,6 +2558,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             return !exportQueue.isEmpty
         case #selector(clearQueue(_:)):
             return !exportQueue.isEmpty
+        case #selector(applyCopiedGroove(_:)):
+            if let g = Self.copiedGroove { item.title = "Apply Groove of \(g.from)" } else { item.title = "Apply Copied Groove" }
+            return Self.copiedGroove != nil
         case #selector(captureMidi(_:)):
             return dalnok_midi_capture_pending(session.engine.handle) > 0
         case #selector(toggleStepInput(_:)):

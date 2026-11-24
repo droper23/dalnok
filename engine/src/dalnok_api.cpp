@@ -856,6 +856,19 @@ DalnokStatus dalnok_midi_transform(DalnokEngine *e, DalnokClipId c, int32_t func
         out[i] = {after[i].start, after[i].length, after[i].pitch, after[i].velocity};
     return DALNOK_OK;
 }
+DalnokStatus dalnok_groove_extract(DalnokEngine *e, DalnokClipId c, double grid, int32_t count, double *offsets) {
+    if (!e || !offsets) return DALNOK_ERR_INVALID_ARG;
+    std::vector<double> out;
+    std::string err;
+    if (!e->impl.extractGroove(c, grid, count, out, err)) return statusFor(false, err);
+    for (size_t i = 0; i < out.size(); ++i) offsets[i] = out[i];
+    return DALNOK_OK;
+}
+DalnokStatus dalnok_groove_apply(DalnokEngine *e, DalnokClipId c, double grid, const double *offsets, int32_t count, double strength) {
+    if (!e || !offsets || count < 1) return DALNOK_ERR_INVALID_ARG;
+    std::string err;
+    return statusFor(e->impl.applyGroove(c, grid, std::vector<double>(offsets, offsets + count), strength, err), err);
+}
 DalnokStatus dalnok_tempo_set(DalnokEngine *e, double bpm, int32_t num, int32_t den) {
     std::string err;
     return e ? statusFor(e->impl.setTempo(bpm, num, den, err), err) : DALNOK_ERR_INVALID_ARG;

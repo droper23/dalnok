@@ -663,3 +663,41 @@ func oneNoteSession(pitch: UInt8 = 69, velocity: UInt8 = 127) -> (OpaquePointer,
         #expect(rms(render(e, 0, 24_000)[20_000..<23_000]) < 1e-4)
     }
 }
+
+@Suite struct Grooves {
+    @Test func extractSwingFromOneClipAndApplyItToAnother() {
+        // 120 BPM at 48 kHz: an eighth is 12,000 frames. The template's offbeats are late by 0.1 beat (2,400 frames).
+        let e = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(e) }
+        let t = dalnok_track_add_instrument(e, nil)
+        let template = dalnok_midi_clip_add(e, t, 0, 96_000)
+        var swung: [DalnokNote] = []
+        for k in 0..<8 {
+            let late: Int64 = k % 2 == 1 ? 2_400 : 0
+            swung.append(DalnokNote(start: Int64(k) * 12_000 + late, length: 1_000, pitch: 60, velocity: 100))
+        }
+        _ = dalnok_midi_clip_set_notes(e, template, &swung, 8)
+        var groove = [Double](repeating: 9, count: 2)
+        #expect(dalnok_groove_extract(e, template, 0.5, 2, &groove) == DALNOK_OK)
+        #expect(abs(groove[0]) < 1e-6 && abs(groove[1] - 0.1) < 1e-6, "groove \(groove)")
+        let straight = dalnok_midi_clip_add(e, t, 96_000, 96_000)
+        var notes: [DalnokNote] = []
+        for k in 0..<8 {
+            let early: Int64 = k == 2 ? 700 : 0
+            notes.append(DalnokNote(start: Int64(k) * 12_000 + early, length: 1_000, pitch: 64, velocity: 100))
+        }
+        _ = dalnok_midi_clip_set_notes(e, straight, &notes, 8)
+        #expect(dalnok_groove_apply(e, straight, 0.5, &groove, 2, 1) == DALNOK_OK && undoName(e) == "Groove")
+        var got = [DalnokNote](repeating: DalnokNote(), count: 8)
+        _ = dalnok_midi_clip_notes(e, straight, &got, 8)
+        var want: [Int64] = []
+        for k in 0..<8 { want.append(Int64(k) * 12_000 + (k % 2 == 1 ? 2_400 : 0)) }
+        #expect(got.map(\.start) == want, "on the groove (the early 700 corrected too): \(got.map(\.start))")
+        // Half strength moves half way from where each note was.
+        dalnok_undo(e)
+        #expect(dalnok_groove_apply(e, straight, 0.5, &groove, 2, 0.5) == DALNOK_OK)
+        _ = dalnok_midi_clip_notes(e, straight, &got, 8)
+        #expect(got[1].start == 12_000 + 1_200 && got[2].start == 24_000 + 350)
+        var bad = [0.6]
+        #expect(dalnok_groove_apply(e, straight, 0.5, &bad, 1, 1) != DALNOK_OK, "an offset beyond a step is refused")
+    }
+}

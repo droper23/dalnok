@@ -803,6 +803,12 @@ DalnokStatus dalnok_midi_clip_set_notes(DalnokEngine *engine, DalnokClipId clip,
 int32_t dalnok_midi_clip_notes(const DalnokEngine *engine, DalnokClipId clip, DalnokNote *out, int32_t capacity);
 /* Moves note starts toward a grid of `grid_beats` anchored at frame 0 (strength 0-1). */
 DalnokStatus dalnok_midi_quantize(DalnokEngine *engine, DalnokClipId clip, double grid_beats, double strength);
+/* Groove (API 47): offsets in beats for each step of a pattern on a grid (step k of `count`). Extract measures them
+ * from a clip (MIDI notes, or an audio clip's hits); apply moves a MIDI clip's notes to grid + offset, `strength` of
+ * the way (one undo step). Swing 8ths at 60 %: grid 0.5, offsets {0, 0.1}. */
+DalnokStatus dalnok_groove_extract(DalnokEngine *engine, DalnokClipId clip, double grid_beats, int32_t count, double *offsets);
+DalnokStatus dalnok_groove_apply(DalnokEngine *engine, DalnokClipId clip, double grid_beats, const double *offsets, int32_t count,
+                                 double strength);
 /* MIDI functions (Logic's MIDI Functions / Ableton's note tools), API 47. They act on `selected` (count 0 = every note
  * in the clip's window), as one undo step, and write the selected notes as they are afterwards to `out` (same order,
  * may be null). Arguments:

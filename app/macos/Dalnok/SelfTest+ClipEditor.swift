@@ -132,6 +132,29 @@ extension SelfTest {
               "MIDI Functions ▸ Legato joins every note to the next (\(s.clip(midi)?.notes.first?.length ?? -1))")
         _ = perform("Undo")
         check(s.clip(midi)?.notes.first?.length == 100, "undo restores the lengths")
+        // Clip ▸ Quantize ▸ Swing and grooves: straight eighths swung at 62 %, then that groove copied onto another clip.
+        let eighth = Int64(beat / 2)
+        let straight = (0..<4).map { DalnokNote(start: c.offset + Int64($0) * eighth, length: 100, pitch: 60, velocity: 100) }
+        s.setNotes(midi, straight)
+        w.clipEditor.focused = false
+        w.timeline.selectClips([midi])
+        let strength = QuantizeSetting.strength
+        QuantizeSetting.strength = 1
+        check(perform("Swing 8ths 62%", exact: true), "Clip ▸ Quantize ▸ Swing 8ths 62% runs")
+        let swungStarts = (s.clip(midi)?.notes ?? []).map { $0.start - c.offset }.sorted()
+        let late = Int64((beat * 0.12).rounded()) // (62 % - 50 %) of two eighths (one beat) = 0.12 beat
+        check(swungStarts.count == 4 && swungStarts[0] == 0 && abs(swungStarts[1] - eighth - late) <= 1 && swungStarts[2] == 2 * eighth,
+              "the offbeats are late by 0.12 beat (\(swungStarts))")
+        let gridSaved = QuantizeSetting.grid
+        QuantizeSetting.grid = 0.5
+        check(perform("Copy Groove from Clip", exact: true) && MainWindowController.copiedGroove != nil, "Copy Groove from Clip takes the clip's feel")
+        s.setNotes(midi, straight)
+        check(perform("Apply Groove of \(s.clip(midi)?.name ?? "")", exact: true)
+              && abs(((s.clip(midi)?.notes ?? []).map { $0.start - c.offset }.sorted()[1]) - eighth - late) <= 1,
+              "Apply Groove puts the copied swing on straight notes")
+        QuantizeSetting.grid = gridSaved
+        QuantizeSetting.strength = strength
+
         // Clip ▸ Step Input: a chord on the first step, one note on the next; the playhead moves one step each time.
         s.setNotes(midi, [])
         e.seek(c.start); _ = await waitUntil { e.position == c.start }

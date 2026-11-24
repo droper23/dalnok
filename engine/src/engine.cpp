@@ -607,6 +607,61 @@ bool Engine::quantize(DalnokClipId id, double gridBeats, double strength, std::s
     });
 }
 
+bool Engine::extractGroove(DalnokClipId id, double gridBeats, int steps, std::vector<double> &offsets, std::string &err) {
+    const ClipState *c = model_.clip(id);
+    if (!c) return fail(err, "no such clip");
+    if (!(gridBeats >= 1.0 / 64 && gridBeats <= 4) || steps < 1 || steps > 64) return fail(err, "grid 1/64-4 beats, 1-64 steps");
+    std::vector<int64_t> hits; // timeline frames
+    if (c->midi()) {
+        for (const auto &n : *c->notes) if (n.start >= c->offset && n.start < c->offset + c->length) hits.push_back(c->start - c->offset + n.start);
+    } else {
+        std::vector<int64_t> src = audioTransients(id, 0.5, err);
+        if (!err.empty()) return false;
+        for (int64_t s : src) hits.push_back(c->start + static_cast<int64_t>(std::llround(static_cast<double>(s - c->offset) / c->rate)));
+    }
+    std::vector<double> sum(static_cast<size_t>(steps), 0.0);
+    std::vector<int> count(static_cast<size_t>(steps), 0);
+    for (int64_t h : hits) {
+        double beat;
+        if (!map_.frameToBeat(h, beat)) continue;
+        const double k = std::round(beat / gridBeats);
+        const auto step = static_cast<size_t>(((static_cast<long long>(k) % steps) + steps) % steps);
+        sum[step] += beat - k * gridBeats;
+        ++count[step];
+    }
+    if (std::all_of(count.begin(), count.end(), [](int n) { return n == 0; })) return fail(err, "the clip has no notes or hits to take a groove from");
+    offsets.assign(static_cast<size_t>(steps), 0.0);
+    for (size_t k = 0; k < offsets.size(); ++k) offsets[k] = count[k] ? sum[k] / count[k] : 0.0;
+    return true;
+}
+
+bool Engine::applyGroove(DalnokClipId id, double gridBeats, const std::vector<double> &offsets, double strength, std::string &err) {
+    if (!(gridBeats >= 1.0 / 64 && gridBeats <= 4) || offsets.empty() || offsets.size() > 64 || !(strength >= 0 && strength <= 1))
+        return fail(err, "grid 1/64-4 beats, 1-64 offsets and strength 0-1");
+    for (double o : offsets) if (!(std::fabs(o) < gridBeats)) return fail(err, "each offset must be within one grid step");
+    return edit("Groove", true, [&](Model &m) {
+        ClipState *c = m.clip(id);
+        if (!c) return fail(err, "no such clip");
+        if (!c->midi()) return fail(err, "grooves apply to MIDI clips");
+        const auto origin = c->start - c->offset;
+        const auto steps = static_cast<long long>(offsets.size());
+        std::vector<MidiNote> notes = *c->notes;
+        for (auto &n : notes) {
+            if (n.start < c->offset || n.start >= c->offset + c->length) continue;
+            double beat;
+            int64_t target;
+            if (!map_.frameToBeat(origin + n.start, beat)) continue;
+            const auto k = static_cast<long long>(std::round(beat / gridBeats));
+            const double want = k * gridBeats + offsets[static_cast<size_t>(((k % steps) + steps) % steps)];
+            if (!map_.beatToFrame(want, target)) continue;
+            const double moved = static_cast<double>(origin + n.start) + static_cast<double>(target - origin - n.start) * strength;
+            n.start = std::clamp<int64_t>(static_cast<int64_t>(std::llround(moved)) - origin, c->offset, c->offset + c->length - 1);
+        }
+        c->notes = sortedNotes(std::move(notes));
+        return true;
+    });
+}
+
 bool Engine::transformNotes(DalnokClipId id, int32_t op, const std::vector<MidiNote> &only, double a, double b,
                             std::vector<MidiNote> &out, std::string &err) {
     // Scales as semitone sets from the root (bit k = degree k): major, natural minor, dorian, mixolydian,

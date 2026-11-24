@@ -262,6 +262,12 @@ public:
     // Replaces a MIDI clip's controller events (sorted here; one undo step). See MidiCC.
     bool setControllers(DalnokClipId id, std::vector<MidiCC> events, std::string &err);
     bool quantize(DalnokClipId id, double gridBeats, double strength, std::string &err);
+    // Groove (Ableton's Groove Pool, Logic's groove templates). A groove is the offset, in beats, of each step of a
+    // pattern on a grid (step k of a bar of 16ths, ...). extractGroove measures one from a clip: its notes, or the
+    // hits of an audio clip, averaged per step. applyGroove moves a MIDI clip's notes to grid + the step's offset,
+    // `strength` of the way. Swing is the two-step groove {0, swing}. One undo step.
+    bool extractGroove(DalnokClipId id, double gridBeats, int steps, std::vector<double> &offsets, std::string &err);
+    bool applyGroove(DalnokClipId id, double gridBeats, const std::vector<double> &offsets, double strength, std::string &err);
     // MIDI functions on `only` (empty = every note in the clip's window), one undo step; `out` gets the selected notes
     // as they are afterwards, in the same order (so an editor can keep them selected). See DalnokMidiFunction.
     bool transformNotes(DalnokClipId id, int32_t op, const std::vector<MidiNote> &only, double a, double b,

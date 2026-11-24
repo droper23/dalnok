@@ -558,6 +558,44 @@ extension MainWindowController {
         flash("\(sender.title): \(clips.count == 1 ? "1 clip" : "\(clips.count) clips")")
     }
 
+    // MARK: Grooves (Clip ▸ Quantize)
+
+    /// The MIDI clips a groove acts on: the docked editor's clip when it has focus, else the selected MIDI clips.
+    private var grooveTargets: [ClipView] {
+        if !clipEditor.isHidden, clipEditor.focused, let c = clipEditor.clip, c.isMidi { return [c] }
+        return timeline.selectedClips.compactMap { session.clip($0) }.filter(\.isMidi)
+    }
+    private func applyGroove(_ offsets: [Double], grid: Double, name: String) {
+        let clips = grooveTargets
+        guard !clips.isEmpty else { return flash("Select MIDI clips to groove") }
+        session.engine.beginGroup(name)
+        var o = offsets
+        for c in clips { _ = dalnok_groove_apply(session.engine.handle, c.id, grid, &o, Int32(o.count), QuantizeSetting.strength) }
+        session.engine.endGroup()
+        session.refresh()
+        flash("\(name): \(clips.count == 1 ? "1 clip" : "\(clips.count) clips")")
+    }
+    /// Swing: every second step of the grid late by (swing - 50) % of two steps (50 % = straight, 66 % = triplet feel).
+    @objc func applySwing(_ sender: NSMenuItem) {
+        guard let v = sender.representedObject as? [Double], v.count == 2 else { return }
+        applyGroove([0, (v[1] / 100 - 0.5) * 2 * v[0]], grid: v[0], name: sender.title)
+    }
+    static var copiedGroove: (grid: Double, offsets: [Double], from: String)?
+    @objc func copyGroove(_ sender: Any?) {
+        guard let c = timeline.selectedClips.compactMap({ session.clip($0) }).first ?? clipEditor.clip else { return flash("Select a clip to take its groove") }
+        let grid = QuantizeSetting.grid, steps = max(1, Int((4 / grid).rounded())) // one bar of 4/4 on the quantize grid
+        var offsets = [Double](repeating: 0, count: steps)
+        guard dalnok_groove_extract(session.engine.handle, c.id, grid, Int32(steps), &offsets) == DALNOK_OK else {
+            return flash("\(c.name) has no notes or hits to take a groove from")
+        }
+        Self.copiedGroove = (grid, offsets, c.name)
+        flash("Copied the groove of \(c.name) (\(QuantizeSetting.name), one bar)")
+    }
+    @objc func applyCopiedGroove(_ sender: Any?) {
+        guard let g = Self.copiedGroove else { return flash("Copy a groove from a clip first") }
+        applyGroove(g.offsets, grid: g.grid, name: "Groove of \(g.from)")
+    }
+
     /// Transport ▸ Capture MIDI (⇧⌘C, as in Ableton): what was just played on the keyboard, recording or not, becomes a
     /// clip on the armed instrument track (else the selected track).
     @objc func captureMidi(_ sender: Any?) {

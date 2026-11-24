@@ -439,6 +439,20 @@ func buildMenu(target: MainWindowController) -> NSMenu {
         it.target = target
         quantize.submenu?.addItem(it)
     }
+    // Grooves: swing presets, and a groove copied from one clip applied to others.
+    quantize.submenu?.addItem(.separator())
+    for (grid, label) in [(0.5, "8ths"), (0.25, "16ths")] {
+        for pct in [54.0, 58.0, 62.0, 66.0] {
+            let it = NSMenuItem(title: "Swing \(label) \(Int(pct))%", action: #selector(W.applySwing(_:)), keyEquivalent: "")
+            it.representedObject = [grid, pct]
+            it.target = target
+            quantize.submenu?.addItem(it)
+        }
+    }
+    quantize.submenu?.addItem(.separator())
+    for (t, s) in [("Copy Groove from Clip", #selector(W.copyGroove(_:))), ("Apply Copied Groove", #selector(W.applyCopiedGroove(_:)))] {
+        let it = NSMenuItem(title: t, action: s, keyEquivalent: ""); it.target = target; quantize.submenu?.addItem(it)
+    }
     // MIDI Functions (Logic's Functions menu): each item carries [function, a, b] for dalnok_midi_transform.
     let functions = NSMenuItem(title: "MIDI Functions", action: nil, keyEquivalent: "")
     functions.submenu = NSMenu(title: "MIDI Functions")
