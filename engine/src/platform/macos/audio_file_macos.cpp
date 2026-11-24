@@ -1,6 +1,7 @@
 // Audio file decode/encode via ExtAudioFile (WAV, AIFF, CAF, MP3, AAC, ALAC, FLAC).
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "media.hpp"
+#include "dalnok/dalnok.h"
 
 #include <AudioToolbox/AudioToolbox.h>
 #include <CoreFoundation/CoreFoundation.h>
@@ -155,7 +156,7 @@ namespace {
 
 class ExtWavWriter final : public WavWriter {
 public:
-    ExtWavWriter(ExtAudioFileRef f, int32_t bits) : file_(f), dither_(bits == 16) {}
+    ExtWavWriter(ExtAudioFileRef f, int32_t ditherBits) : file_(f), dither_(ditherBits == 16) {}
     ~ExtWavWriter() override {
         std::string ignored;
         close(ignored);
@@ -225,24 +226,46 @@ WavWriter *openWavWriter(const std::string &path, double sampleRate, int32_t bit
         err = "bits must be 16, 24 or 32";
         return nullptr;
     }
+    return openAudioWriter(path, sampleRate, bits == 16 ? DALNOK_FORMAT_WAV16 : bits == 24 ? DALNOK_FORMAT_WAV24 : DALNOK_FORMAT_WAV32F, err);
+}
+
+WavWriter *openAudioWriter(const std::string &path, double sampleRate, int32_t format, std::string &err) {
     AudioStreamBasicDescription fmt{};
     fmt.mSampleRate = sampleRate;
-    fmt.mFormatID = kAudioFormatLinearPCM;
     fmt.mChannelsPerFrame = 2;
-    fmt.mFramesPerPacket = 1;
-    fmt.mBitsPerChannel = static_cast<UInt32>(bits);
-    fmt.mBytesPerFrame = 2 * static_cast<UInt32>(bits) / 8;
-    fmt.mBytesPerPacket = fmt.mBytesPerFrame;
-    fmt.mFormatFlags = kAudioFormatFlagIsPacked |
-                       (bits == 32 ? kAudioFormatFlagIsFloat : kAudioFormatFlagIsSignedInteger);
-
+    AudioFileTypeID type = kAudioFileWAVEType;
+    UInt32 bitRate = 0;
+    int32_t ditherBits = 0;
+    auto pcm = [&](UInt32 bits, bool isFloat, bool bigEndian) {
+        fmt.mFormatID = kAudioFormatLinearPCM;
+        fmt.mFramesPerPacket = 1;
+        fmt.mBitsPerChannel = bits;
+        fmt.mBytesPerFrame = 2 * bits / 8;
+        fmt.mBytesPerPacket = fmt.mBytesPerFrame;
+        fmt.mFormatFlags = kAudioFormatFlagIsPacked | (isFloat ? kAudioFormatFlagIsFloat : kAudioFormatFlagIsSignedInteger) |
+                           (bigEndian ? kAudioFormatFlagIsBigEndian : 0);
+    };
+    switch (format) {
+    case DALNOK_FORMAT_WAV16: pcm(16, false, false); ditherBits = 16; break;
+    case DALNOK_FORMAT_WAV24: pcm(24, false, false); break;
+    case DALNOK_FORMAT_WAV32F: pcm(32, true, false); break;
+    case DALNOK_FORMAT_AIFF24: pcm(24, false, true); type = kAudioFileAIFFType; break;
+    case DALNOK_FORMAT_AAC: fmt.mFormatID = kAudioFormatMPEG4AAC; type = kAudioFileM4AType; bitRate = 256000; break;
+    case DALNOK_FORMAT_ALAC:
+        fmt.mFormatID = kAudioFormatAppleLossless; fmt.mFormatFlags = kAppleLosslessFormatFlag_24BitSourceData;
+        fmt.mFramesPerPacket = 4096; type = kAudioFileM4AType; break;
+    case DALNOK_FORMAT_FLAC:
+        fmt.mFormatID = kAudioFormatFLAC; fmt.mFormatFlags = kAppleLosslessFormatFlag_24BitSourceData;
+        fmt.mFramesPerPacket = 4096; type = kAudioFileFLACType; break;
+    default: err = "unknown export format"; return nullptr;
+    }
     CFURLRef url = makeURL(path);
     if (!url) {
         err = "invalid path";
         return nullptr;
     }
     ExtAudioFileRef file = nullptr;
-    OSStatus s = ExtAudioFileCreateWithURL(url, kAudioFileWAVEType, &fmt, nullptr, kAudioFileFlags_EraseFile, &file);
+    OSStatus s = ExtAudioFileCreateWithURL(url, type, &fmt, nullptr, kAudioFileFlags_EraseFile, &file);
     CFRelease(url);
     if (s != noErr) {
         err = statusErr("create file", s);
@@ -250,12 +273,21 @@ WavWriter *openWavWriter(const std::string &path, double sampleRate, int32_t bit
     }
     AudioStreamBasicDescription client = planarFloat(sampleRate, 2);
     s = ExtAudioFileSetProperty(file, kExtAudioFileProperty_ClientDataFormat, sizeof(client), &client);
+    if (s == noErr && bitRate) {
+        AudioConverterRef conv = nullptr;
+        UInt32 size = sizeof(conv);
+        if (ExtAudioFileGetProperty(file, kExtAudioFileProperty_AudioConverter, &size, &conv) == noErr && conv) {
+            AudioConverterSetProperty(conv, kAudioConverterEncodeBitRate, sizeof(bitRate), &bitRate);
+            CFArrayRef config = nullptr; // tell ExtAudioFile the converter changed
+            ExtAudioFileSetProperty(file, kExtAudioFileProperty_ConverterConfig, sizeof(config), &config);
+        }
+    }
     if (s != noErr) {
         ExtAudioFileDispose(file);
         err = statusErr("set client format", s);
         return nullptr;
     }
-    return new ExtWavWriter(file, bits);
+    return new ExtWavWriter(file, ditherBits);
 }
 
 } // namespace dalnok

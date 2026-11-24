@@ -154,6 +154,23 @@ final class Engine {
         }
     }
 
+    /// Export formats offered by File ▸ Export Mix…: title, file extension, engine format.
+    static let exportFormats: [(title: String, ext: String, format: DalnokFileFormat)] = [
+        ("WAV 24-bit", "wav", DALNOK_FORMAT_WAV24), ("WAV 16-bit (dithered)", "wav", DALNOK_FORMAT_WAV16),
+        ("WAV 32-bit float", "wav", DALNOK_FORMAT_WAV32F), ("AIFF 24-bit", "aif", DALNOK_FORMAT_AIFF24),
+        ("FLAC (lossless)", "flac", DALNOK_FORMAT_FLAC), ("Apple Lossless (.m4a)", "m4a", DALNOK_FORMAT_ALAC),
+        ("AAC 256 kbit/s (.m4a)", "m4a", DALNOK_FORMAT_AAC),
+    ]
+    func export(to url: URL, format: DalnokFileFormat, range: (start: Int64, end: Int64)? = nil) throws {
+        var err = [CChar](repeating: 0, count: 512)
+        let start = range?.start ?? 0, frames = (range?.end ?? sessionLength) - start
+        guard frames > 0 else { throw EngineError(description: "Nothing to export") }
+        let tail = range == nil ? Int64(10 * dalnok_engine_sample_rate(handle)) : 0
+        guard dalnok_render_to_file(handle, url.path, start, frames, Int32(format.rawValue), tail, nil, &err, 512) == DALNOK_OK else {
+            throw EngineError(description: cString(err))
+        }
+    }
+
     // Devices
     struct OutputDevice: Equatable {
         let uid: String

@@ -1753,19 +1753,23 @@
           "verified"
         ],
         [
-          "Export the cycle range",
+          "AIFF, FLAC, Apple Lossless and AAC export (format menu in the export panel)",
           "verified"
         ],
         [
-          "MP3, AAC, and FLAC export",
+          "MP3 export",
           "todo"
+        ],
+        [
+          "Export the cycle range",
+          "verified"
         ],
         [
           "Stems and render queue",
           "todo"
         ]
       ],
-      "evidence": "renderToWavRoundTrips; self-test export decodes to the session length. ExportDither recovers a 0.4 LSB sine at 16 bits; ExportTail renders a synth release past the last clip and keeps silent endings exact. BounceInPlace: the bounced track (fader −6 dB, pan 0.3, a delay tail past the clip) renders the same mix within 1e-5 once the source is muted; one undo. Self-test: Track ▸ Bounce Track in Place in all six looks at 48 and 44.1 kHz."
+      "evidence": "renderToWavRoundTrips; self-test export decodes to the session length. ExportDither recovers a 0.4 LSB sine at 16 bits; ExportTail renders a synth release past the last clip and keeps silent endings exact. BounceInPlace: the bounced track (fader −6 dB, pan 0.3, a delay tail past the clip) renders the same mix within 1e-5 once the source is muted; one undo. Self-test: Track ▸ Bounce Track in Place in all six looks at 48 and 44.1 kHz. ExportFormats: WAV, AIFF, FLAC and ALAC decode back sample-exact (within 1e-6) at the same length; AAC keeps the level within 0.2 dB. Self-test exports FLAC from the app."
     },
     {
       "id": "interchange",

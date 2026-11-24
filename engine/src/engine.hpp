@@ -371,6 +371,8 @@ public:
     // maxTail > 0 keeps rendering after `frames` until the output has decayed to silence (or maxTail frames).
     bool renderToWav(const std::string &path, int64_t start, int64_t frames, int32_t bits, std::string &err,
                      int64_t maxTail = 0, int64_t *tailWritten = nullptr);
+    bool renderToFile(const std::string &path, int64_t start, int64_t frames, int32_t format, std::string &err,
+                      int64_t maxTail = 0, int64_t *tailWritten = nullptr);
 
     // Bounce in Place (Logic) / Freeze-and-flatten (Ableton): renders `track`'s clips through its plug-ins (pre-fader,
     // with their tail) into a 32-bit float WAV at `path`, puts it on a new audio track right below with the same

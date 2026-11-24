@@ -2,6 +2,7 @@
 // chain) and synthesized mouse gestures, then verifies the engine model.
 // SPDX-License-Identifier: GPL-3.0-or-later
 import AppKit
+import UniformTypeIdentifiers
 import AVFoundation
 import DalnokEngine
 
@@ -492,6 +493,13 @@ final class SelfTest {
         check(loaded && dalnok_media_frames(media) == s.length && dalnok_media_channels(media) == 2,
               "exported WAV decodes to \(dalnok_media_frames(media)) frames (session \(s.length)), stereo")
         if let media { dalnok_media_release(media) }
+        let flac = workdir.appendingPathComponent("selftest.flac")
+        var flacMedia: OpaquePointer?
+        check(w.exportMix(to: flac, format: DALNOK_FORMAT_FLAC) && dalnok_media_load(flac.path, e.sampleRate, &flacMedia, nil, 0) == DALNOK_OK
+              && dalnok_media_frames(flacMedia) == s.length, "export as FLAC decodes to the session length")
+        if let flacMedia { dalnok_media_release(flacMedia) }
+        check(Engine.exportFormats.count == 7 && Engine.exportFormats.allSatisfy { UTType(filenameExtension: $0.ext) != nil },
+              "the export panel offers seven formats, each a known file type")
         // DAWproject: the File menu offers it; the export imports back with the same clips.
         if let item = menuItem("Export as DAWproject…") { item.menu?.update(); check(item.isEnabled, "File > Export as DAWproject… is enabled") }
         else { check(false, "File > Export as DAWproject… exists") }

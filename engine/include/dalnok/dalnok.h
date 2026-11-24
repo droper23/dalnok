@@ -1002,6 +1002,14 @@ DalnokStatus dalnok_render_to_wav_tail(DalnokEngine *engine, const char *path, i
 /* Bounce in Place: renders the track's clips through its plug-ins (pre-fader, with their tail) into a 32-bit float
  * WAV at `path`, adds it on a new audio track right below with the same fader, pan and output, and mutes the
  * original. One undo step. Returns the new track (0 on failure, with a message in `err`). API 47. */
+/* Export formats (API 47). AAC is 256 kbit/s in an .m4a; ALAC and FLAC are lossless 24-bit; 16-bit WAV is dithered. */
+typedef enum {
+    DALNOK_FORMAT_WAV16 = 0, DALNOK_FORMAT_WAV24 = 1, DALNOK_FORMAT_WAV32F = 2, DALNOK_FORMAT_AIFF24 = 3,
+    DALNOK_FORMAT_AAC = 4, DALNOK_FORMAT_ALAC = 5, DALNOK_FORMAT_FLAC = 6
+} DalnokFileFormat;
+/* As dalnok_render_to_wav_tail, in any DalnokFileFormat. */
+DalnokStatus dalnok_render_to_file(DalnokEngine *engine, const char *path, int64_t start_frame, int64_t frames,
+                                   int32_t format, int64_t max_tail, int64_t *tail_written, char *err, size_t err_len);
 DalnokTrackId dalnok_track_bounce_in_place(DalnokEngine *engine, DalnokTrackId track, const char *path, char *err,
                                            size_t err_len);
 

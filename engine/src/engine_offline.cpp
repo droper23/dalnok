@@ -73,6 +73,20 @@ bool Engine::renderToWav(const std::string &path, int64_t start, int64_t frames,
     return w->close(err);
 }
 
+bool Engine::renderToFile(const std::string &path, int64_t start, int64_t frames, int32_t format, std::string &err,
+                          int64_t maxTail, int64_t *tailWritten) {
+    if (start < 0 || frames <= 0) {
+        err = "invalid range";
+        return false;
+    }
+    std::unique_ptr<WavWriter> w(openAudioWriter(path, sampleRate_, format, err));
+    if (!w) return false;
+    if (!renderBlocks(start, frames, maxTail, tailWritten, err,
+                      [&](const float *l, const float *r, int64_t n) { return w->write(l, r, n, err); }))
+        return false;
+    return w->close(err);
+}
+
 bool Engine::renderBlocks(int64_t start, int64_t frames, int64_t maxTail, int64_t *tailWritten, std::string &err,
                           const std::function<bool(const float *, const float *, int64_t)> &sink) {
     [[maybe_unused]] const FlushDenormals flushDenormals;

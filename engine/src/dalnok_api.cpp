@@ -1066,6 +1066,16 @@ DalnokStatus dalnok_render_loudness(DalnokEngine *e, int64_t start, int64_t fram
     return DALNOK_OK;
 }
 
+DalnokStatus dalnok_render_to_file(DalnokEngine *e, const char *path, int64_t start, int64_t frames, int32_t format,
+                                   int64_t max_tail, int64_t *tail_written, char *err, size_t err_len) {
+    if (!e || !path || max_tail < 0) return DALNOK_ERR_INVALID_ARG;
+    std::string msg;
+    if (!e->impl.renderToFile(path, start, frames, format, msg, max_tail, tail_written)) {
+        copyOut(err, err_len, msg);
+        return DALNOK_ERR_IO;
+    }
+    return DALNOK_OK;
+}
 DalnokTrackId dalnok_track_bounce_in_place(DalnokEngine *e, DalnokTrackId track, const char *path, char *err, size_t err_len) {
     if (!e || !path) return 0;
     std::string msg;

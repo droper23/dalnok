@@ -80,6 +80,9 @@ public:
     virtual bool close(std::string &err) = 0;
 };
 WavWriter *openWavWriter(const std::string &path, double sampleRate, int32_t bits, std::string &err);
+// Any export format (DalnokFileFormat): WAV 16/24/32-bit float, AIFF 24-bit, AAC 256 kbit/s (.m4a), Apple Lossless
+// (.m4a, 24-bit) or FLAC (24-bit). 16-bit WAV is dithered.
+WavWriter *openAudioWriter(const std::string &path, double sampleRate, int32_t format, std::string &err);
 
 } // namespace dalnok
 

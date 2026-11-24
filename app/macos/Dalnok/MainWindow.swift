@@ -1091,6 +1091,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
     // MARK: Tracks
 
+    var exportFormatChanged: ((Int) -> Void)? // the export panel's format menu
     var selectedTrack: DalnokTrackId? { headers.selectedTrack }
 
     private func trackContextMenu() -> NSMenu {
@@ -1572,18 +1573,40 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         }
     }
 
+    static var exportFormatIndex: Int {
+        get { min(max(0, UserDefaults.standard.integer(forKey: "exportFormat")), Engine.exportFormats.count - 1) }
+        set { UserDefaults.standard.set(newValue, forKey: "exportFormat") }
+    }
     @objc func exportMix(_ sender: Any?) {
         let panel = NSSavePanel()
-        panel.allowedContentTypes = [.wav]
-        panel.nameFieldStringValue = (session.projectURL?.deletingPathExtension().lastPathComponent ?? "Mix") + ".wav"
+        let formats = Engine.exportFormats
+        func apply(_ i: Int) {
+            let f = formats[i]
+            panel.allowedContentTypes = [UTType(filenameExtension: f.ext) ?? .audio]
+            let base = panel.nameFieldStringValue.isEmpty ? "Mix" : (panel.nameFieldStringValue as NSString).deletingPathExtension
+            panel.nameFieldStringValue = base + "." + f.ext
+        }
+        panel.nameFieldStringValue = session.projectURL?.deletingPathExtension().lastPathComponent ?? "Mix"
+        let popup = NSPopUpButton(frame: .zero, pullsDown: false)
+        popup.addItems(withTitles: formats.map(\.title))
+        popup.selectItem(at: Self.exportFormatIndex)
+        let label = NSTextField(labelWithString: "Format:")
+        let row = NSStackView(views: [label, popup])
+        row.edgeInsets = NSEdgeInsets(top: 8, left: 12, bottom: 8, right: 12)
+        panel.accessoryView = row
+        apply(Self.exportFormatIndex)
+        popup.target = self
+        exportFormatChanged = { i in Self.exportFormatIndex = i; apply(i) }
+        popup.action = #selector(exportFormatPicked(_:))
         let c = session.cycle
-        panel.message = c.on ? "Exports the cycle range (\(timeline.positionText(c.start)) to \(timeline.positionText(c.end))) as a 24-bit WAV. Turn Cycle off to export everything."
-                             : "Exports the full arrangement as a 24-bit WAV."
+        panel.message = c.on ? "Exports the cycle range (\(timeline.positionText(c.start)) to \(timeline.positionText(c.end))). Turn Cycle off to export everything."
+                             : "Exports the full arrangement, with its reverb and delay tails."
         panel.beginSheetModal(for: window!) { [weak self] resp in
             guard resp == .OK, let url = panel.url else { return }
-            MainActor.assumeIsolated { () -> Void in self?.exportMix(to: url) }
+            MainActor.assumeIsolated { () -> Void in self?.exportMix(to: url, format: formats[Self.exportFormatIndex].format) }
         }
     }
+    @objc private func exportFormatPicked(_ sender: NSPopUpButton) { exportFormatChanged?(sender.indexOfSelectedItem) }
 
     /// File ▸ Export as DAWproject…: the arrangement and mixer for other DAWs (Bitwig, Studio One, Cubase, ...).
     @objc func exportDawproject(_ sender: Any?) {
@@ -1610,11 +1633,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     }
 
     @discardableResult
-    func exportMix(to url: URL) -> Bool {
+    func exportMix(to url: URL, format: DalnokFileFormat = DALNOK_FORMAT_WAV24) -> Bool {
         do {
             let t0 = Date()
             let c = session.cycle
-            try session.engine.exportWav(to: url, range: c.on ? (c.start, c.end) : nil)
+            try session.engine.export(to: url, format: format, range: c.on ? (c.start, c.end) : nil)
             flash(String(format: "Exported %@ in %.0f ms", url.lastPathComponent, Date().timeIntervalSince(t0) * 1000))
             return true
         } catch {

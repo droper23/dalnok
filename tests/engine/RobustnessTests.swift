@@ -108,3 +108,36 @@ import Testing
         #expect(l[24_000..<n].allSatisfy { $0 == 0 }, "digital silence stays silent")
     }
 }
+
+@Suite struct ExportFormats {
+    @Test func everyFormatDecodesBackToTheMix() throws {
+        let n = 48_000
+        let x = (0..<n).map { Float(0.5 * sin(2 * Double.pi * 1_000 * Double($0) / 48_000)) }
+        let e = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(e) }
+        let m = makeMedia([x, x]); defer { dalnok_media_release(m) }
+        DalnokEngine.dalnok_clip_add(e, dalnok_track_add(e, "S"), dalnok_pool_add(e, m, ""), 0, 0, 0)
+        let cases: [(DalnokFileFormat, String, Float)] = [ // format, extension, worst sample error allowed
+            (DALNOK_FORMAT_WAV24, "wav", 1e-6), (DALNOK_FORMAT_AIFF24, "aif", 1e-6), (DALNOK_FORMAT_ALAC, "m4a", 1e-6),
+            (DALNOK_FORMAT_FLAC, "flac", 1e-6), (DALNOK_FORMAT_AAC, "m4a", .infinity)]
+        for (format, ext, tol) in cases {
+            let path = tempDir().appendingPathComponent("mix-\(format.rawValue).\(ext)").path
+            var err = [CChar](repeating: 0, count: 256)
+            #expect(dalnok_render_to_file(e, path, 0, Int64(n), Int32(format.rawValue), 0, nil, &err, 256) == DALNOK_OK, "\(format): \(cstr(err))")
+            var media: OpaquePointer?
+            #expect(dalnok_media_load(path, 48_000, &media, &err, 256) == DALNOK_OK, "\(format) decodes: \(cstr(err))")
+            let back = try #require(media); defer { dalnok_media_release(back) }
+            let frames = Int(dalnok_media_frames(back))
+            #expect(abs(frames - n) <= (tol.isFinite ? 0 : 2_112), "\(format): \(frames) frames of \(n)")
+            let p = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(p) }
+            DalnokEngine.dalnok_clip_add(p, dalnok_track_add(p, "R"), dalnok_pool_add(p, back, ""), 0, 0, 0)
+            let (l, _) = render(p, frames: n)
+            if tol.isFinite {
+                #expect(zip(l, x).map { abs($0 - $1) }.max()! <= tol + 1.0 / 8_388_608, "\(format) is lossless")
+            } else { // lossy: the level holds within 0.2 dB
+                let rms = { (v: ArraySlice<Float>) in sqrt(v.reduce(0) { $0 + Double($1) * Double($1) } / Double(v.count)) }
+                let db = 20 * log10(rms(l[4_800..<43_200]) / rms(x[4_800..<43_200]))
+                #expect(abs(db) < 0.2, "\(format) level \(db) dB")
+            }
+        }
+    }
+}
