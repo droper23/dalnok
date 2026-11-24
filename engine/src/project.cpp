@@ -31,7 +31,7 @@ namespace fs = std::filesystem;
 namespace dalnok {
 
 namespace {
-constexpr int kFormatVersion = 17;
+constexpr int kFormatVersion = 18;
 constexpr int kConstantTempoVersion = 3; // written when there are no tempo or meter changes, so older builds still open it
 
 // Format history (A-16), one step per version. Loading runs every step from the file's version up to
@@ -61,6 +61,7 @@ constexpr Migration kMigrations[] = {
     {15, "audio warp maps (audio quantize)", nullptr},
     {16, "clip loops", nullptr},
     {17, "MIDI controllers and pitch bend in clips", nullptr},
+    {18, "audio that follows tempo", nullptr},
 };
 constexpr bool migrationsCover() {
     int v = 1;
@@ -360,6 +361,7 @@ json::Value Engine::describe() const {
                 if (c.pitch != 0) cv.set("pitch", static_cast<double>(c.pitch));
                 if (!c.preservePitch) cv.set("preservePitch", false);
             }
+            if (c.followsTempo) cv.set("followTempo", true);
             if (c.gainDb != 0) cv.set("gainDb", std::isfinite(c.gainDb) ? json::Value(static_cast<double>(c.gainDb)) : json::Value());
             if (c.fadeIn > 0) cv.set("fadeIn", c.fadeIn);
             if (c.fadeOut > 0) cv.set("fadeOut", c.fadeOut);
@@ -510,7 +512,8 @@ bool Engine::saveProject(const std::string &path, std::string &err, bool copyMed
     const bool loops = std::any_of(model_.clips.begin(), model_.clips.end(), [](const ClipState &c) { return c.looped(); });
     const bool controllers = std::any_of(model_.clips.begin(), model_.clips.end(),
                                          [](const ClipState &c) { return c.controllers && !c.controllers->empty(); });
-    doc.set("version", controllers ? 17 : loops ? 16 : warp ? 15 : phase ? 14 : builtin ? 13 : clipMute ? 12 : !model_.markers.empty() ? 11 : bypass ? 10 : launcher || sidechain ? 9 : pluginAutomation ? 8 : !model_.folders.empty() || masterGain ? 7 : automation ? 6 : routing ? 5 : model_.tempo.size() > 1 || model_.meters.size() > 1 ? 4 : kConstantTempoVersion);
+    const bool follow = std::any_of(model_.clips.begin(), model_.clips.end(), [](const ClipState &c) { return c.followsTempo; });
+    doc.set("version", follow ? 18 : controllers ? 17 : loops ? 16 : warp ? 15 : phase ? 14 : builtin ? 13 : clipMute ? 12 : !model_.markers.empty() ? 11 : bypass ? 10 : launcher || sidechain ? 9 : pluginAutomation ? 8 : !model_.folders.empty() || masterGain ? 7 : automation ? 6 : routing ? 5 : model_.tempo.size() > 1 || model_.meters.size() > 1 ? 4 : kConstantTempoVersion);
     json::Value body = describe();
     for (auto &[key, value] : body.object) {
         if (key != "media") continue;
@@ -786,6 +789,7 @@ std::unique_ptr<Engine::PreparedProject> Engine::readDocument(const json::Value 
                     c.rate = std::clamp(cv.getNumber("rate", 1.0), 0.05, 20.0);
                     c.pitch = static_cast<float>(std::clamp(cv.getNumber("pitch", 0.0), -48.0, 48.0));
                     c.preservePitch = cv.getBool("preservePitch", true);
+                    c.followsTempo = cv.getBool("followTempo", false) && c.preservePitch;
                     if (const json::Value *wv = cv.get("warp"); wv && wv->isArray()) {
                         WarpList w;
                         for (const auto &pt : wv->array)

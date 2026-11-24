@@ -99,6 +99,9 @@ extension SelfTest {
             check(s.clip(c.id)?.loopLength == c.length, "the Loop box loops the clip")
             cs.mute.state = .on; cs.mute.sendAction(cs.mute.action, to: cs.mute.target)
             check(s.clip(c.id)?.muted == true, "the Mute box mutes the clip")
+            cs.follow.state = .on; cs.follow.sendAction(cs.follow.action, to: cs.follow.target)
+            check(s.clip(c.id)?.followsTempo == true && e.undoName == "Follow Tempo", "the Follow Tempo box makes the audio follow tempo")
+            _ = perform("Undo")
             try? w.snapshot(to: workdir.appendingPathComponent("clip-inspector.png"))
             for _ in 0..<4 { _ = perform("Undo") }
             check(s.clip(c.id)?.muted == false && s.clip(c.id)?.loopLength == 0 && s.clip(c.id)?.fadeIn == c.fadeIn && abs((s.clip(c.id)?.gainDb ?? 1) - c.gainDb) < 0.01,

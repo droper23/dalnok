@@ -28,4 +28,5 @@ out->follow_loops = c->followLoops;
 out->muted = c->muted;
 out->warp_points = c->warped() ? static_cast<int32_t>(c->warp->size()) : 0;
 out->loop_length = c->loopLength;
+out->follows_tempo = c->followsTempo;
 out->loop_phase = c->loopPhase;

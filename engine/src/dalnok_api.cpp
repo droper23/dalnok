@@ -1143,6 +1143,10 @@ DalnokClipId dalnok_midi_capture(DalnokEngine *e, DalnokTrackId track, char *err
     return c;
 }
 int32_t dalnok_midi_capture_pending(DalnokEngine *e) { return e ? e->impl.capturePending() : 0; }
+DalnokStatus dalnok_clip_set_follow_tempo(DalnokEngine *e, DalnokClipId c, bool follow) {
+    std::string err;
+    return e ? statusFor(e->impl.setClipFollowsTempo(c, follow, err), err) : DALNOK_ERR_INVALID_ARG;
+}
 DalnokStatus dalnok_clip_set_loop(DalnokEngine *e, DalnokClipId c, bool looped) {
     std::string err;
     return e ? statusFor(e->impl.setClipLoop(c, looped, err), err) : DALNOK_ERR_INVALID_ARG;

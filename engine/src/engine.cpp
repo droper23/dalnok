@@ -401,6 +401,26 @@ bool remapMidi(Model &m, const TempoMap &from, const TempoMap &to, std::string &
     std::map<std::pair<const std::vector<MidiNote> *, int64_t>, NoteList> lists;
     std::map<std::pair<const std::vector<MidiCC> *, int64_t>, CCList> ccLists;
     for (auto &clip : m.clips) {
+        if (!clip.midi() && clip.followsTempo && !clip.looped() && clip.slot < 0) {
+            // Audio that follows tempo: the same beats, the same source audio, stretched to fit (pitch kept).
+            int64_t start, end;
+            if (!remap(clip.start, start) || !remap(clip.start + clip.length, end) || start < 0 || end <= start)
+                return fail(err, "tempo change would move audio beyond the supported timeline");
+            const double k = static_cast<double>(end - start) / static_cast<double>(clip.length);
+            const double rate = clip.rate / k;
+            if (!(rate >= 0.05 && rate <= 20)) return fail(err, "tempo change would stretch audio past 20x");
+            if (clip.warped()) {
+                WarpList w = *clip.warp;
+                for (auto &p : w) p.time = static_cast<int64_t>(std::llround(static_cast<double>(p.time) * k));
+                clip.warp = std::make_shared<const WarpList>(std::move(w));
+            }
+            clip.fadeIn = static_cast<int64_t>(std::llround(static_cast<double>(clip.fadeIn) * k));
+            clip.fadeOut = static_cast<int64_t>(std::llround(static_cast<double>(clip.fadeOut) * k));
+            clip.start = start;
+            clip.length = end - start;
+            clip.rate = rate;
+            continue;
+        }
         if (!clip.midi()) continue;
         const int64_t origin = clip.start - clip.offset;
         int64_t newOrigin, start, end;

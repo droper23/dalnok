@@ -143,6 +143,8 @@ struct ClipState {
     double rate = 1.0;               // source frames per timeline frame (≠1: time-stretched)
     float pitch = 0;                 // transposition in semitones (preservePitch only)
     bool preservePitch = true;       // false: varispeed (pitch follows rate)
+    // Audio follows tempo (Ableton's warp): tempo changes keep the clip on its beats and time-stretch it (pitch kept).
+    bool followsTempo = false;
     WarpMap warp;                    // audio quantize: segments at their own speeds (null: one speed, `rate`)
     bool warped() const { return warp && !warp->empty(); }
     bool stretched() const { return std::fabs(rate - 1.0) > 1e-9 || pitch != 0 || warped(); }

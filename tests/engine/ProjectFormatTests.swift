@@ -241,6 +241,7 @@ struct ProjectFormat {
             15: [(["tracks", 0, "clips", 0, "warp"], "[[0, 0], [2400, 2000], [4800, 4800]]")],
             16: [(["tracks", 0, "clips", 0, "loopLength"], "4800"), (["tracks", 0, "clips", 0, "loopPhase"], "1200")],
             17: [(["tracks", 1, "clips", 0, "controllers"], "[[0, 1, 64], [2400, 128, 12000], [4800, 64, 127]]")],
+            18: [(["tracks", 0, "clips", 0, "followTempo"], "1")],
         ]
         func text(_ v: Any?) -> String {
             guard let v else { return "nil" }

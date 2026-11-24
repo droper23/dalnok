@@ -555,6 +555,7 @@ typedef struct {
     bool muted;                    /* clip muted */
     int32_t warp_points;           /* audio quantize: warp anchors (dalnok_clip_warp) */
     int64_t loop_length;           /* clip loop: the repeating window (0 = not looped) */
+    bool follows_tempo;            /* audio follows tempo changes (time-stretched) */
     int64_t loop_phase;            /* clip loop: where its first pass starts in the window */
 } DalnokClipInfo;
 /* END GENERATED DalnokClipInfo */
@@ -1049,6 +1050,9 @@ size_t dalnok_plugin_sample_path(const DalnokEngine *engine, int32_t slot, int32
 /* Clip loop (API 47): on, the clip's current window repeats for as long as the clip is extended (drag its right
  * edge); off, it plays its window once. Not for time-stretched or quantized audio or launcher slots. One undo step. */
 DalnokStatus dalnok_clip_set_loop(DalnokEngine *engine, DalnokClipId clip, bool looped);
+/* Audio follows tempo (Ableton's warp, API 47): tempo changes keep the clip on its beats and time-stretch it, pitch
+ * kept (format 18). Not for varispeed clips. One undo step. */
+DalnokStatus dalnok_clip_set_follow_tempo(DalnokEngine *engine, DalnokClipId clip, bool follow);
 DalnokTrackId dalnok_track_bounce_in_place(DalnokEngine *engine, DalnokTrackId track, const char *path, char *err,
                                            size_t err_len);
 

@@ -19,6 +19,7 @@ final class ClipInspector: NSStackView {
     let fadeIn = NSTextField(string: ""), fadeOut = NSTextField(string: "")
     let loop = NSButton(checkboxWithTitle: "Loop", target: nil, action: nil)
     let mute = NSButton(checkboxWithTitle: "Mute", target: nil, action: nil)
+    let follow = NSButton(checkboxWithTitle: "Follow Tempo", target: nil, action: nil)
     private var fadeRow: NSView!
     private var gainRow: NSView!
 
@@ -45,7 +46,9 @@ final class ClipInspector: NSStackView {
             f.target = self; f.action = #selector(fadesTyped(_:)); f.setAccessibilityLabel(l + " (ms)"); f.toolTip = l + " length in milliseconds"
             f.widthAnchor.constraint(equalToConstant: 64).isActive = true
         }
-        for b in [loop, mute] { b.controlSize = .small; b.font = Theme.ui(11); b.target = self }
+        for b in [loop, mute, follow] { b.controlSize = .small; b.font = Theme.ui(11); b.target = self }
+        follow.action = #selector(followClicked(_:))
+        follow.toolTip = "Tempo changes keep this audio on its beats and time-stretch it, pitch kept (Ableton's warp)"
         loop.action = #selector(loopClicked(_:)); loop.toolTip = "Repeat the clip when its end is dragged out (L)"
         mute.action = #selector(muteClicked(_:)); mute.toolTip = "Keep the clip but silence it"
 
@@ -61,7 +64,7 @@ final class ClipInspector: NSStackView {
         gainValue.widthAnchor.constraint(equalToConstant: 56).isActive = true
         let transposeRow = row("Transpose", [transpose, transposeValue])
         fadeRow = row("Fades", [fadeIn, fadeOut])
-        let toggles = NSStackView(views: [loop, mute]); toggles.spacing = 14
+        let toggles = NSStackView(views: [loop, mute, follow]); toggles.spacing = 12
         for v in [head, name, place, gainRow!, transposeRow, fadeRow!, toggles] as [NSView] { addArrangedSubview(v) }
         setCustomSpacing(2, after: name)
         head.widthAnchor.constraint(equalTo: widthAnchor).isActive = true
@@ -89,6 +92,15 @@ final class ClipInspector: NSStackView {
         loop.state = c.loopLength > 0 ? .on : .off
         loop.isEnabled = c.isMidi || (c.rate == 1 && c.pitch == 0 && c.warp.isEmpty) || c.loopLength > 0
         mute.state = c.muted ? .on : .off
+        follow.isHidden = c.isMidi // MIDI always follows tempo
+        follow.state = c.followsTempo ? .on : .off
+        follow.isEnabled = c.preservePitch
+    }
+    @objc private func followClicked(_ b: NSButton) {
+        guard let c = current else { return }
+        _ = dalnok_clip_set_follow_tempo(session.engine.handle, c.id, b.state == .on)
+        session.refresh()
+        reload()
     }
 
     @objc private func gainMoved(_ s: NSSlider) {

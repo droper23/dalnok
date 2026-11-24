@@ -61,5 +61,6 @@ int32_t       follow_loops   | followLoops   | c->followLoops                   
 bool          muted          | muted         | c->muted                                                 | clip muted
 int32_t       warp_points    | warpPoints    | c->warped() ? static_cast<int32_t>(c->warp->size()) : 0  | audio quantize: warp anchors (dalnok_clip_warp)
 int64_t       loop_length    | loopLength    | c->loopLength                                            | clip loop: the repeating window (0 = not looped)
+bool          follows_tempo  | followsTempo  | c->followsTempo                                          | audio follows tempo changes (time-stretched)
 int64_t       loop_phase     | loopPhase     | c->loopPhase                                             | clip loop: where its first pass starts in the window
 end

@@ -194,3 +194,27 @@ private func notes(_ e: OpaquePointer, _ clip: DalnokClipId) -> [DalnokNote] {
         #expect(s.0 == 192_000 && s.2 == 192_000 && s.3 == 384_000, "redo: \(s)")
     }
 }
+
+@Suite struct AudioFollowsTempo {
+    @Test func aFollowingClipStaysOnItsBeatsAndKeepsItsPitch() {
+        let n = 48_000 // one second of 1 kHz = two beats at 120 BPM
+        let tone = (0..<n).map { Float(0.5 * sin(2 * Double.pi * 1_000 * Double($0) / 48_000)) }
+        let e = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(e) }
+        let m = makeMedia([tone]); defer { dalnok_media_release(m) }
+        let pool = dalnok_pool_add(e, m, "")
+        let follow = DalnokEngine.dalnok_clip_add(e, dalnok_track_add(e, "Follow"), pool, 24_000, 0, 0) // beat 1
+        let fixed = DalnokEngine.dalnok_clip_add(e, dalnok_track_add(e, "Fixed"), pool, 24_000, 0, 0)
+        #expect(dalnok_clip_set_follow_tempo(e, follow, true) == DALNOK_OK && undoName(e) == "Follow Tempo")
+        #expect(clipInfo(e, follow).follows_tempo)
+        #expect(dalnok_tempo_set(e, 60, 4, 4) == DALNOK_OK)
+        let f = clipInfo(e, follow), x = clipInfo(e, fixed)
+        #expect(f.start == 48_000 && f.length == 96_000 && abs(f.rate - 0.5) < 1e-9, "beat 1 at 60 BPM, twice as long: \(f.start) \(f.length) \(f.rate)")
+        #expect(x.start == 24_000 && x.length == 48_000 && x.rate == 1, "a clip that doesn't follow keeps its time")
+        dalnok_track_set_mute(e, dalnok_track_at(e, 1), true)
+        var l = [Float](repeating: 0, count: 150_000), r = l
+        _ = dalnok_render_offline(e, 0, 150_000, &l, &r)
+        let hz = frequency(l[60_000..<130_000])
+        #expect(abs(hz - 1_000) < 3, "pitch kept while stretched: \(hz) Hz")
+        #expect(dalnok_undo(e) && dalnok_undo(e) && clipInfo(e, follow).rate == 1, "undo the mute, then the tempo change")
+    }
+}

@@ -61,10 +61,11 @@ struct ClipFields: Equatable {
     var muted: Bool // clip muted
     var warpPoints: Int32 // audio quantize: warp anchors (dalnok_clip_warp)
     var loopLength: Int64 // clip loop: the repeating window (0 = not looped)
+    var followsTempo: Bool // audio follows tempo changes (time-stretched)
     var loopPhase: Int64 // clip loop: where its first pass starts in the window
 }
 extension ClipFields {
     init(_ c: DalnokClipInfo) {
-        self.init(id: c.id, track: c.track, media: c.media, start: c.start, offset: c.offset, length: c.length, mediaFrames: c.media_frames, offline: c.offline, fadeIn: c.fade_in, fadeOut: c.fade_out, fadeCurve: c.fade_curve, gainDb: c.gain_db, rate: c.rate, pitch: c.pitch, preservePitch: c.preserve_pitch, processing: c.processing, name: fixedString(c.name), isMidi: c.midi, noteCount: c.note_count, folder: c.folder, alt: c.alt, slot: c.slot, follow: c.follow, followLoops: c.follow_loops, muted: c.muted, warpPoints: c.warp_points, loopLength: c.loop_length, loopPhase: c.loop_phase)
+        self.init(id: c.id, track: c.track, media: c.media, start: c.start, offset: c.offset, length: c.length, mediaFrames: c.media_frames, offline: c.offline, fadeIn: c.fade_in, fadeOut: c.fade_out, fadeCurve: c.fade_curve, gainDb: c.gain_db, rate: c.rate, pitch: c.pitch, preservePitch: c.preserve_pitch, processing: c.processing, name: fixedString(c.name), isMidi: c.midi, noteCount: c.note_count, folder: c.folder, alt: c.alt, slot: c.slot, follow: c.follow, followLoops: c.follow_loops, muted: c.muted, warpPoints: c.warp_points, loopLength: c.loop_length, followsTempo: c.follows_tempo, loopPhase: c.loop_phase)
     }
 }

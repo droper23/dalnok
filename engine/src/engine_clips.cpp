@@ -179,6 +179,17 @@ bool Engine::setClipRegion(DalnokClipId id, int64_t start, int64_t offset, int64
     });
 }
 
+bool Engine::setClipFollowsTempo(DalnokClipId id, bool on, std::string &err) {
+    return edit("Follow Tempo", true, [&](Model &m) {
+        ClipState *c = m.clip(id);
+        if (!c) return fail(err, "no such clip");
+        if (c->midi()) return fail(err, "MIDI always follows tempo");
+        if (on && !c->preservePitch) return fail(err, "varispeed clips can't follow tempo (turn Preserve Pitch on)");
+        c->followsTempo = on;
+        return true;
+    });
+}
+
 bool Engine::setClipLoop(DalnokClipId id, bool on, std::string &err) {
     return edit("Loop", true, [&](Model &m) {
         ClipState *c = m.clip(id);
