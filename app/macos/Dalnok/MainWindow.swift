@@ -516,6 +516,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             if let self, !self.mixer.isHidden { self.mixer.select(id) } // the mixer marks the same track (audit round 3)
         }
         palette.onOpenGuide = { [weak self] c in self?.conceptGuide.show(daw: c.daw, query: c.term) }
+        // The Inspector's Clip section follows the selected clip (one clip selected).
+        inspector.clipSection.positionText = { [weak self] f in self?.timeline.positionText(f) ?? "\(f)" }
+        timeline.onSelectionChange = { [weak self] in
+            guard let self else { return }
+            self.inspector.clip = self.timeline.selectedClips.count == 1 ? self.timeline.selectedClips.first : nil
+        }
         session.onChange = { [weak self] in self?.modelChanged() }
         transport.stopLoadingButton.target = self
         transport.stopLoadingButton.action = #selector(stopLoadingPlugins(_:))

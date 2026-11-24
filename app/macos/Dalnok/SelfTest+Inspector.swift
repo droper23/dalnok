@@ -85,6 +85,27 @@ extension SelfTest {
             check(ins.track == other.id && ins.nameLabel.stringValue == other.name, "selecting another track refreshes the inspector")
             w.headers.select(t.id)
         }
+        // Clip section (Region Inspector): shown for one selected clip; gain, fades, loop and mute edit the clip.
+        if let c = t.clips.first(where: { $0.rate == 1 && $0.pitch == 0 && $0.warp.isEmpty && $0.loopLength == 0 }) {
+            let cs = ins.clipSection
+            w.timeline.selectClips([c.id])
+            check(!cs.isHidden && cs.clip == c.id && cs.name.stringValue.hasPrefix(c.name), "selecting a clip shows it in the Inspector (\(cs.name.stringValue))")
+            cs.gain.doubleValue = -6; cs.gain.sendAction(cs.gain.action, to: cs.gain.target)
+            check(abs((s.clip(c.id)?.gainDb ?? 0) + 6) < 0.01 && cs.gainValue.stringValue == "−6.0 dB", "the Clip gain slider sets the clip's gain (\(cs.gainValue.stringValue))")
+            cs.fadeIn.stringValue = "10"; cs.fadeIn.sendAction(cs.fadeIn.action, to: cs.fadeIn.target)
+            let tenMs = Int64((s.engine.sampleRate * 0.01).rounded())
+            check(s.clip(c.id)?.fadeIn == tenMs && cs.fadeIn.stringValue == "10 ms", "typing a fade-in length sets it (\(s.clip(c.id)?.fadeIn ?? -1))")
+            cs.loop.state = .on; cs.loop.sendAction(cs.loop.action, to: cs.loop.target)
+            check(s.clip(c.id)?.loopLength == c.length, "the Loop box loops the clip")
+            cs.mute.state = .on; cs.mute.sendAction(cs.mute.action, to: cs.mute.target)
+            check(s.clip(c.id)?.muted == true, "the Mute box mutes the clip")
+            try? w.snapshot(to: workdir.appendingPathComponent("clip-inspector.png"))
+            for _ in 0..<4 { _ = perform("Undo") }
+            check(s.clip(c.id)?.muted == false && s.clip(c.id)?.loopLength == 0 && s.clip(c.id)?.fadeIn == c.fadeIn && abs((s.clip(c.id)?.gainDb ?? 1) - c.gainDb) < 0.01,
+                  "four undos take back the Clip section's edits")
+            w.timeline.selectClips([])
+            check(cs.isHidden, "with no clip selected the Clip section hides")
+        }
         // Volume dial: a drag is one undo step.
         let g0 = s.track(t.id)?.gainDb ?? 0
         let k = ins.volume

@@ -59,6 +59,9 @@ final class InspectorPanel: SidePanelView {
     let meter = MeterView()
     /// Atelier: Fig. 3, the track's signal path, at the foot.
     let figure = InspectorFigure()
+    /// The selected clip (Region Inspector), above the track's sections.
+    lazy var clipSection = ClipInspector(session: session)
+    var clip: DalnokClipId? { get { clipSection.clip } set { clipSection.clip = newValue } }
     private var shown: Int?
 
     init(session: Session) {
@@ -211,7 +214,7 @@ final class InspectorPanel: SidePanelView {
 
         let trackHead = PanelHead("Track"), channelHead = PanelHead("Channel"), insertsHead = PanelHead("Inserts"), sendsHead = PanelHead("Sends")
         let levelHead = PanelHead("Level")
-        for v in [header, empty, trackHead, inputRow!, outputRow, monitorRow!, channelHead, dials, chips, insertsHead, insertsStack,
+        for v in [header, empty, clipSection, trackHead, inputRow!, outputRow, monitorRow!, channelHead, dials, chips, insertsHead, insertsStack,
                   sendsHead, sendsStack, addSend, levelHead, meter, figure] as [NSView] {
             stack.addArrangedSubview(v)
         }
@@ -220,11 +223,12 @@ final class InspectorPanel: SidePanelView {
         figureHeight.isActive = true
         stack.setCustomSpacing(22, after: meter)
         // Full-width rows (the stack's leading alignment would otherwise size them to fit).
-        for v in [header, trackHead, inputRow!, outputRow, monitorRow!, channelHead, dials, chips, insertsHead, insertsStack, sendsHead, sendsStack, levelHead, meter, figure] as [NSView] {
+        for v in [header, clipSection, trackHead, inputRow!, outputRow, monitorRow!, channelHead, dials, chips, insertsHead, insertsStack, sendsHead, sendsStack, levelHead, meter, figure] as [NSView] {
             v.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -(stack.edgeInsets.left + stack.edgeInsets.right)).isActive = true
         }
         empty.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -26).isActive = true
         stack.setCustomSpacing(12, after: header)
+        stack.setCustomSpacing(14, after: clipSection)
         stack.setCustomSpacing(12, after: monitorRow)
         stack.setCustomSpacing(12, after: chips)
         stack.setCustomSpacing(12, after: insertsStack)
@@ -248,12 +252,14 @@ final class InspectorPanel: SidePanelView {
     func reload() {
         guard let id = track, let t = session.track(id) else {
             sectionViews.forEach { $0.isHidden = true }
+            clipSection.isHidden = true
             empty.isHidden = false
             shown = nil
             return
         }
         sectionViews.forEach { $0.isHidden = false }
         empty.isHidden = true
+        clipSection.reload()
         let index = session.tracks.firstIndex { $0.id == id } ?? 0
         number.stringValue = String(format: Theme.look.mixer == .instrument ? "%02d" : "%d", index + 1)
         nameLabel.stringValue = t.name
