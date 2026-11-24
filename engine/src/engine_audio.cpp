@@ -186,7 +186,8 @@ void Engine::handleMidiInput(int64_t pos, int frames) DALNOK_NONBLOCKING {
                 rtLiveNotes_[rtLiveNoteCount_++] = PluginNote{0, type == 0xb0 ? kEventControl : kEventPitchBend, m.data1, m.data2};
             if (synth && on) synth->noteOn(current_->synth, m.data1, m.data2, -1);
             else if (synth && off) synth->noteOff(current_->synth, m.data1);
-            else if (synth && type == 0xb0 && (m.data1 == 120 || m.data1 == 123)) synth->reset();
+            else if (synth && type == 0xb0) synth->control(current_->synth, m.data1, m.data2);
+            else if (synth && type == 0xe0) synth->pitchBend(m.data1 | (m.data2 << 7));
             if (!on && !off) continue;
             if (count < kMaxEvents) events[count++] = {pos, m.status, m.data1, m.data2};
             else rec_.midiRecordDropped.fetch_add(1, std::memory_order_relaxed);

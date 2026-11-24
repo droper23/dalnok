@@ -42,6 +42,7 @@ struct SynthVoice {
     float velocity = 0, env = 0, releaseStep = 0, phase = 0, inc = 0, lp1 = 0, lp2 = 0;
     int64_t endFrame = -1; // timeline frame of the note-off (timeline voices), -1 = held
     uint64_t age = 0;
+    bool sustained = false; // released while the sustain pedal was down: sounds until the pedal comes up
 };
 
 // Voice state. Live playback, live input, and each offline render own separate instances.
@@ -53,10 +54,30 @@ struct SynthState {
     std::array<uint8_t, 128> pluginHeld{};
     int64_t pluginExpected = -1;
     uint64_t mutedMidiSignature = 0;
+    float bend = 1.0f;     // pitch-bend frequency ratio (±2 semitones)
+    bool pedal = false;    // sustain pedal (CC 64 >= 64)
 
     void reset() DALNOK_NONBLOCKING {
         for (auto &v : voices) v = SynthVoice{};
         expected = -1;
+        bend = 1.0f;
+        pedal = false;
+    }
+    // Pitch bend, 0-16383 (8192 = none), over ±2 semitones.
+    void pitchBend(int value) DALNOK_NONBLOCKING {
+        bend = __builtin_exp2f(static_cast<float>(value - 8192) / 8192.0f * 2.0f / 12.0f);
+    }
+    // Control change: 64 sustain (pedal up releases what it held), 120/123 all sound/notes off.
+    void control(const SynthParams &p, uint8_t cc, uint8_t value) DALNOK_NONBLOCKING {
+        if (cc == 64) {
+            const bool down = value >= 64;
+            if (pedal && !down)
+                for (auto &v : voices)
+                    if (v.sustained) { v.sustained = false; release(p, v); }
+            pedal = down;
+        } else if (cc == 120 || cc == 123) {
+            for (auto &v : voices) if (v.stage != SynthVoice::idle) release(p, v);
+        }
     }
     bool active() const DALNOK_NONBLOCKING {
         for (const auto &v : voices)
@@ -82,13 +103,16 @@ struct SynthState {
         slot->inc = p.increment[slot->note];
         slot->endFrame = endFrame;
         slot->age = ++counter;
+        slot->sustained = false;
         if (fresh) { slot->env = 0; slot->phase = 0; slot->lp1 = slot->lp2 = 0; }
     }
     void noteOff(const SynthParams &p, uint8_t note) DALNOK_NONBLOCKING {
         for (auto &v : voices)
             if (v.stage != SynthVoice::idle && v.stage != SynthVoice::release && v.note == (note & 0x7f) &&
-                v.endFrame < 0)
-                release(p, v);
+                v.endFrame < 0 && !v.sustained) {
+                if (pedal) v.sustained = true;
+                else release(p, v);
+            }
     }
     static void release(const SynthParams &p, SynthVoice &v) DALNOK_NONBLOCKING {
         v.stage = SynthVoice::release;
@@ -102,7 +126,8 @@ struct SynthState {
             if (v.stage == SynthVoice::idle) continue;
             for (int i = 0; i < frames; ++i) {
                 if (v.endFrame >= 0 && pos >= 0 && pos + i >= v.endFrame && v.stage != SynthVoice::release) {
-                    release(p, v);
+                    if (pedal) v.sustained = true;
+                    else release(p, v);
                     v.endFrame = -1;
                 }
                 switch (v.stage) {
@@ -123,10 +148,10 @@ struct SynthState {
                 if (v.stage == SynthVoice::idle) break;
                 // PolyBLEP saw.
                 float saw = 2.0f * v.phase - 1.0f;
-                const float t = v.phase, dt = v.inc;
+                const float t = v.phase, dt = v.inc * bend;
                 if (t < dt) { const float x = t / dt; saw -= x + x - x * x - 1.0f; }
                 else if (t > 1.0f - dt) { const float x = (t - 1.0f) / dt; saw -= x * x + x + x + 1.0f; }
-                v.phase += v.inc;
+                v.phase += v.inc * bend;
                 if (v.phase >= 1.0f) v.phase -= 1.0f;
                 v.lp1 += p.lowpass * (saw - v.lp1);
                 v.lp2 += p.lowpass * (v.lp1 - v.lp2);

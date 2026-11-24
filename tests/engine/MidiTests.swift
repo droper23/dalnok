@@ -564,3 +564,26 @@ func oneNoteSession(pitch: UInt8 = 69, velocity: UInt8 = 127) -> (OpaquePointer,
         #expect(dalnok_midi_clip_set_controllers(e, c, &bad, 1) != DALNOK_OK)
     }
 }
+
+@Suite struct PolyControllers {
+    @Test func pitchBendAndSustainPedal() {
+        let e = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(e) }
+        let c = dalnok_midi_clip_add(e, dalnok_track_add_instrument(e, nil), 0, 96_000)
+        // A4 for 0.1 s with the pedal down from 0 to 0.5 s, then (a second A4 at 1 s) bent fully up: B4.
+        var notes = [DalnokNote(start: 0, length: 4_800, pitch: 69, velocity: 100),
+                     DalnokNote(start: 48_000, length: 24_000, pitch: 69, velocity: 100)]
+        _ = dalnok_midi_clip_set_notes(e, c, &notes, 2)
+        var ccs = [DalnokMidiCC(start: 0, controller: 64, value: 127), DalnokMidiCC(start: 24_000, controller: 64, value: 0),
+                   DalnokMidiCC(start: 48_000, controller: Int32(DALNOK_PITCH_BEND), value: 16_383)]
+        #expect(dalnok_midi_clip_set_controllers(e, c, &ccs, 3) == DALNOK_OK)
+        let l = render(e, 0, 96_000)
+        func rms(_ s: ArraySlice<Float>) -> Float { sqrt(s.reduce(0) { $0 + $1 * $1 } / Float(s.count)) }
+        #expect(rms(l[20_000..<23_000]) > 0.01, "held by the pedal after the note ended (\(rms(l[20_000..<23_000])))")
+        #expect(rms(l[40_000..<47_000]) < 1e-4, "released when the pedal came up")
+        let f = frequency(l[50_000..<70_000])
+        #expect(abs(f - 493.88) < 1, "bent two semitones up: \(f) Hz")
+        // Without the pedal the first note has died away by 20,000 (0.18 s release).
+        _ = dalnok_midi_clip_set_controllers(e, c, nil, 0)
+        #expect(rms(render(e, 0, 24_000)[20_000..<23_000]) < 1e-4)
+    }
+}

@@ -123,19 +123,33 @@ namespace {
 // Plays a track's notes for [pos, pos + frames) into out (mono, overwritten).
 // Returns false if nothing sounded.
 bool renderNotes(const std::vector<RenderNote> &notes, const SynthParams &p, SynthState &synth, int64_t pos, int frames,
-                 float *out) DALNOK_NONBLOCKING {
+                 float *out, const std::vector<RenderCC> *ccs = nullptr) DALNOK_NONBLOCKING {
     if (synth.expected != pos) synth.reset(); // seek: notes are not chased
     synth.expected = pos + frames;
     const auto first = std::lower_bound(notes.begin(), notes.end(), pos,
                                         [](const RenderNote &n, int64_t at) DALNOK_NONBLOCKING { return n.start < at; });
-    if (!synth.active() && (first == notes.end() || first->start >= pos + frames)) return false;
+    auto cc = ccs ? std::lower_bound(ccs->begin(), ccs->end(), pos, [](const RenderCC &c, int64_t at) DALNOK_NONBLOCKING { return c.at < at; })
+                  : std::vector<RenderCC>::const_iterator{};
+    const bool anyCC = ccs && cc != ccs->end() && cc->at < pos + frames;
+    if (!synth.active() && !anyCC && (first == notes.end() || first->start >= pos + frames)) return false;
     clear(out, frames);
     int done = 0;
+    // Controllers at a frame come before the notes starting there (a note starts with its bend already set).
+    auto controllersUntil = [&](int64_t until) DALNOK_NONBLOCKING {
+        for (; ccs && cc != ccs->end() && cc->at < until; ++cc) {
+            const int at = static_cast<int>(cc->at - pos);
+            if (at > done) { synth.render(p, out + done, at - done, pos + done); done = at; }
+            if (cc->kind == kEventPitchBend) synth.pitchBend(cc->d1 | (cc->d2 << 7));
+            else synth.control(p, cc->d1, cc->d2);
+        }
+    };
     for (auto it = first; it != notes.end() && it->start < pos + frames; ++it) {
+        controllersUntil(it->start + 1);
         const int at = static_cast<int>(it->start - pos);
         if (at > done) { synth.render(p, out + done, at - done, pos + done); done = at; }
         synth.noteOn(p, it->pitch, it->velocity, it->end);
     }
+    controllersUntil(pos + frames);
     if (frames > done) synth.render(p, out + done, frames - done, pos + done);
     return true;
 }
@@ -390,7 +404,7 @@ void renderBlock(const RenderState &state, int64_t pos, int frames, float *left,
                 inflight = instrument(t.content->notes.data(), t.content->noteEnds.data(), t.content->notes.size(), pos,
                                       t.content->controllers.data(), t.content->controllers.size());
                 st.any = true;
-            } else if (t.instrument && renderNotes(t.content->notes, state.synth, synth, pos, frames, L)) {
+            } else if (t.instrument && renderNotes(t.content->notes, state.synth, synth, pos, frames, L, &t.content->controllers)) {
                 for (int k = 0; k < frames; ++k) R[k] = L[k];
                 st.any = true;
             }
