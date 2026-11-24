@@ -50,6 +50,13 @@ int32_t Engine::makeTakeFolder(Model &m, DalnokTrackId track, std::vector<Dalnok
 int32_t Engine::addTakeFolder(DalnokTrackId track, std::vector<DalnokClipId> takes, std::string &err) {
     int32_t folder = 0;
     edit("Take Folder", true, [&](Model &m) {
+        if (takes.empty()) return fail(err, "a take folder needs at least one clip");
+        if (!m.track(track)) return fail(err, "no such track");
+        {
+            auto sorted = takes;
+            std::sort(sorted.begin(), sorted.end());
+            if (std::adjacent_find(sorted.begin(), sorted.end()) != sorted.end()) return fail(err, "a clip can't be listed twice");
+        }
         for (auto id : takes) {
             const ClipState *c = m.clip(id);
             if (!c || c->track != track || c->midi() || c->folder) return fail(err, "takes must be audio clips on the track, not in a folder");

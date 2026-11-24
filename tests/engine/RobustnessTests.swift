@@ -13,6 +13,16 @@ import Testing
 }
 
 @Suite struct HostileCommands {
+    @Test func emptyOrRepeatedTakeFolderIsRejected() {
+        let e = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(e) }
+        let m = makeMedia([[Float](repeating: 0.1, count: 1_000)]); defer { dalnok_media_release(m) }
+        let t = dalnok_track_add(e, "A")
+        let c = dalnok_clip_add(e, t, m, 0, 0, 0)
+        #expect(runCommand(e, "takes.makeFolder", "{\"track\":\(t)}").0 != DALNOK_OK, "no clips: would save a project that cannot reload")
+        #expect(runCommand(e, "takes.makeFolder", "{\"track\":\(t),\"clips\":[\(c),\(c)]}").0 != DALNOK_OK)
+        #expect(runCommand(e, "takes.makeFolder", "{\"track\":\(t),\"clips\":[\(c)]}").0 == DALNOK_OK)
+    }
+
     @Test func moveClipRejectsEndOverflow() {
         let e = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(e) }
         let m = makeMedia([[Float](repeating: 0.1, count: 1_000)]); defer { dalnok_media_release(m) }
