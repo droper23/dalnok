@@ -4,6 +4,7 @@
 #pragma once
 
 #include "media.hpp"
+#include "warp.hpp"
 
 #include <condition_variable>
 #include <deque>
@@ -20,9 +21,10 @@ struct StretchKey {
     int64_t offset, sourceLength, outLength;
     int32_t pitchCents;
     bool preservePitch;
+    uint64_t warp = 0; // hash of the clip's warp map (0: none)
     bool operator<(const StretchKey &o) const {
-        return std::tie(media, offset, sourceLength, outLength, pitchCents, preservePitch) <
-               std::tie(o.media, o.offset, o.sourceLength, o.outLength, o.pitchCents, o.preservePitch);
+        return std::tie(media, offset, sourceLength, outLength, pitchCents, preservePitch, warp) <
+               std::tie(o.media, o.offset, o.sourceLength, o.outLength, o.pitchCents, o.preservePitch, o.warp);
     }
 };
 
@@ -30,6 +32,7 @@ struct StretchJob {
     StretchKey key;
     std::shared_ptr<const Media> source;
     uint64_t generation = 0; // stamped by the cache; results from an older project are dropped
+    WarpMap warp;            // when set: render the warp map (key.outLength frames) instead of one speed
 };
 
 /// Renders one stretched region synchronously (any thread).

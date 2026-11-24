@@ -1416,7 +1416,7 @@
           "verified"
         ],
         [
-          "Audio quantize (Q): transients detected, slices moved to the grid, tails time-stretched, attacks untouched",
+          "Audio quantize (Q): transients warped onto the grid inside one clip; attacks untouched, the rest time-stretched",
           "verified"
         ],
         [
@@ -1439,7 +1439,7 @@
       "evidence": "MidiTests: recording, quantize, persistence, split rendering, and a Core MIDI virtual source driving the instrument through a real input port (TSan clean). The app self-test plays live MIDI through the running device, records a note through the menus and quantizes. Input events are stamped at the start of the audio callback that receives them, so timing is up to one buffer late. The Arturia MiniLab has not been played into a recording yet. The piano roll is driven by the GUI self-test with synthesized mouse and key events (add, drag, resize, velocity, transpose, nudge, delete, undo, select all). GUI self-test also covers marquee and keyboard step entry. GUI self-test checks group movement at pitch and time boundaries."
     },
     {
-      "id": "tempo 2026-11-23 (API 47): AudioQuantizeTests: transients found within 1 ms of the real attacks, none in a held tone; off-grid eighth notes (up to 30 ms) render on the grid within 0.5 ms, every hit once, each correlating above 0.9 with the original hit, no sample step above 0.05 between hits, one undo; half strength moves hits halfway. Self-test (all six looks at 48 and 44.1 kHz): double-click lane makes a MIDI clip on an empty track, MIDI clip right-edge resize, the docked editor, double-click-drag draws a two-beat note, ⌘C/⌘V/⌘D notes, Q, Play from selected notes or clip, Clip / Devices switch, plug-in ⌘C/⌘V with settings, audio Q (every hit within 1 ms of its eighth note), hover playhead.",
+      "id": "tempo 2026-11-23 (API 47): AudioQuantizeTests: transients found within 1 ms of the real attacks, none in a held tone; off-grid eighth notes (up to 30 ms) render on the grid within 0.5 ms in one warped clip, every hit once, each correlating above 0.98 with the original, no sample step above 0.05 between hits; split and save/reopen keep the timing; one undo; half strength moves hits halfway and requantizing starts from the recording. Self-test (all six looks at 48 and 44.1 kHz): double-click lane makes a MIDI clip on an empty track, MIDI clip right-edge resize, the docked editor, double-click-drag draws a two-beat note, ⌘C/⌘V/⌘D notes, Q, Play from selected notes or clip, Clip / Devices switch, plug-in ⌘C/⌘V with settings, audio Q (every hit within 1 ms of its eighth note), hover playhead.",
       "name": "Tempo and time signature",
       "category": "MIDI",
       "priority": "P0",

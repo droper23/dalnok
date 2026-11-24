@@ -4,7 +4,13 @@
 
 - **Clip editor at the bottom of the window** (as in Ableton and Logic): double-click a clip and it opens below the arrangement — MIDI in a piano roll, audio in a sample view with its transients marked and draggable region edges. A Clip / Devices switch (and View ▸ Clip Editor, ⌥⌘E) flips the space between the clip and the track's plug-ins; its top edge resizes it.
 - **Quantize like Logic:** Q quantizes the selected notes, or the selected clips, to the quantize value (1/4 to 1/32, with 1/8 and 1/16 triplets) at the quantize strength, both chosen in the clip editor's bar or Clip ▸ Quantize.
-- **Audio quantize:** Q on an audio clip finds its transients, cuts it just before each one, moves each slice so its transient lands on the grid and time-stretches the slice's tail (pitch kept) to meet the next — no gaps, no doubled hits, a short crossfade at each cut. Attacks are never stretched, so they stay sharp; slices that barely move aren't processed at all. One undo step.
+- **Audio quantize:** Q on an audio clip moves its transients onto the grid without cutting it: the clip stays whole and gets a warp map. Each attack (its first 50 ms) plays at its own speed and only the audio between hits is time-stretched (pitch kept), with a 5 ms crossfade at each anchor, 6 ms before the attack. Quantizing again starts from the recorded timing; trims, splits and saved projects keep the warp; one undo step. The sample view marks the transients and anchors. Project format 15.
+- Both editors (docked and the Piano Roll window) show the playhead as it moves.
+- The Clip / Devices switch and the Quantize button are drawn in each look; ⌥⌘E switches between clip and devices.
+- Fixed: Graphite's plug-in knobs were drawn as Atelier's dials (a pattern in the faceplate's drawing applied the look check to selectors only).
+- Fixed: Atelier's dials hid part of their light bars under the dial's side; the ticks and value arc now run the whole way round.
+- Fixed: the value shown while dragging a knob kept the look it was first shown in (Atelier's figures in Graphite after switching).
+- Input Monitoring: with no input chosen, Dalnok now monitors a connected audio interface rather than the Mac's built-in microphone (macOS's default input), and the Inspector's Monitor menu opens the input the same way the I button does.
 - MIDI: double-click empty space in a lane to add a one-bar MIDI clip (an empty audio track becomes an instrument track); double-click and drag in the piano roll to draw a note as long as the drag; ⌘C / ⌘X / ⌘V / ⌘D copy, cut, paste (at the playhead) and duplicate notes.
 - Fixed: resizing a MIDI clip from its right edge made it disappear.
 - Plug-ins: copy plug-ins (⌘C or right-click ▸ Copy) and paste them on any track (⌘V or right-click ▸ Paste After) with their settings, in one undo step. An instrument added to an empty audio track turns it into an instrument track.

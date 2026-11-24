@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <cmath>
 #include <complex>
+#include <cstdlib>
 #include <numeric>
 #include <vector>
 
@@ -178,123 +179,97 @@ std::vector<int64_t> Engine::audioTransients(DalnokClipId id, double sensitivity
     return t;
 }
 
-std::vector<DalnokClipId> Engine::quantizeAudio(DalnokClipId id, double gridBeats, double strength, double sensitivity,
-                                                std::string &err) {
-    if (!(gridBeats > 0) || !(strength > 0) || strength > 1) return fail(err, "grid must be > 0 and strength in (0, 1]"), std::vector<DalnokClipId>{};
+bool Engine::quantizeAudio(DalnokClipId id, double gridBeats, double strength, double sensitivity, std::string &err) {
+    if (!(gridBeats > 0) || !(strength > 0) || strength > 1) return fail(err, "grid must be > 0 and strength in (0, 1]");
     const ClipState *src = model_.clip(id);
-    if (!src) return fail(err, "no such clip"), std::vector<DalnokClipId>{};
-    if (src->midi()) return fail(err, "use midi.quantize for MIDI clips"), std::vector<DalnokClipId>{};
-    if (src->slot >= 0 || src->alt || src->folder != 0) return fail(err, "only arrangement clips outside take folders can be quantized"), std::vector<DalnokClipId>{};
+    if (!src) return fail(err, "no such clip");
+    if (src->midi()) return fail(err, "use midi.quantize for MIDI clips");
+    if (src->slot >= 0 || src->alt || src->folder != 0) return fail(err, "only arrangement clips outside take folders can be quantized");
+    if (!src->preservePitch && std::fabs(src->rate - 1.0) > 1e-9) return fail(err, "varispeed clips can't be quantized");
     const ClipState c = *src;
     const PoolEntry *pe = poolEntry(c.media);
-    if (!pe || !pe->handle->impl) return fail(err, "the clip's audio is offline"), std::vector<DalnokClipId>{};
-    const int64_t mediaFrames = pe->handle->impl->frames();
+    if (!pe || !pe->handle->impl) return fail(err, "the clip's audio is offline");
     const double sr = static_cast<double>(pe->handle->impl->sampleRate());
     const auto transients = audioTransients(id, sensitivity, err);
-    if (!err.empty()) return {};
+    if (!err.empty()) return false;
 
-    // Times: source frames -> the clip's timeline (at its current rate) -> the grid.
-    const double rate0 = c.rate;
-    const auto toTimeline = [&](double s) { return static_cast<double>(c.start) + (s - static_cast<double>(c.offset)) / rate0; };
-    const int64_t pre = std::llround(sr * 0.006);  // the cut sits this far before the attack (source frames)
-    const int64_t fade = std::llround(sr * 0.0025); // crossfade at each cut (timeline frames)
+    // Quantize from the performance as recorded (any earlier warp is replaced, not compounded): the source spread
+    // evenly over the clip, as it plays without a warp.
+    const int64_t span = c.warped() ? c.warp->back().source - c.warp->front().source : c.sourceLength();
+    const double rate0 = static_cast<double>(span) / static_cast<double>(c.length);
+    const auto clipTime = [&](double s) { return (s - static_cast<double>(c.offset)) / rate0; }; // from the clip's start
+    const int64_t pre = std::llround(sr * 0.006);   // anchors sit this far before each attack (source frames)
+    const int64_t head = std::llround(sr * 0.05);   // an attack's first 50 ms play at their own speed
     const int64_t minSeg = std::llround(sr * 0.02);
-    const int64_t srcEnd = c.offset + c.sourceLength();
-    struct Anchor { int64_t cut; double target; }; // source frame of the cut, its timeline frame after quantizing
-    std::vector<Anchor> anchors;
-    anchors.push_back({c.offset, static_cast<double>(c.start)});
-    bool firstMoves = false; // a transient at the clip's start moves the start with it
+    const int64_t x = warpCrossfade(sr);
+    const int64_t srcEnd = c.offset + span;
+    // Cuts: (source frame, clip time after quantizing). The clip's start and end stay where they are.
+    struct Cut { int64_t source; double time; };
+    std::vector<Cut> cuts{{c.offset, 0.0}};
+    const auto speedOk = [&](double ds, double dt) { return dt >= static_cast<double>(minSeg) / 2 && ds / dt >= 0.5 * rate0 && ds / dt <= 2 * rate0; };
     for (int64_t a : transients) {
-        const double at = toTimeline(static_cast<double>(a));
+        const double at = static_cast<double>(c.start) + clipTime(static_cast<double>(a));
         double beat;
         int64_t grid;
         if (!map_.frameToBeat(static_cast<int64_t>(std::llround(at)), beat) ||
             !map_.beatToFrame(std::round(beat / gridBeats) * gridBeats, grid)) continue;
-        const double target = at + (static_cast<double>(grid) - at) * strength;
-        const int64_t cut = std::max(c.offset, a - pre);
-        const double cutTarget = target - static_cast<double>(a - cut) / rate0;
-        if (a - c.offset < minSeg + pre) { // at the very start: the slice starts here and moves with its transient
-            if (anchors.size() == 1 && !firstMoves && cutTarget >= 0) {
-                anchors[0] = {c.offset, cutTarget - static_cast<double>(cut - c.offset) / rate0};
-                firstMoves = true;
-            }
-            continue;
-        }
-        if (srcEnd - cut < minSeg) continue; // too near the end to make a slice
-        const Anchor &p = anchors.back();
-        const double srcSpan = static_cast<double>(cut - p.cut), tlSpan = cutTarget - p.target;
-        // Keep timing sane: slices stretch at most 2x either way, and transients keep their order.
-        if (cut - p.cut < minSeg || tlSpan < static_cast<double>(minSeg) / 2 || srcSpan / tlSpan / rate0 > 2.0 || srcSpan / tlSpan / rate0 < 0.5)
-            continue;
-        anchors.push_back({cut, cutTarget});
+        const double target = at + (static_cast<double>(grid) - at) * strength - static_cast<double>(c.start);
+        const int64_t cut = a - pre;
+        const double cutTime = target - static_cast<double>(pre) / rate0;
+        if (cut - cuts.back().source < minSeg || srcEnd - cut < minSeg) continue;
+        if (!speedOk(static_cast<double>(cut - cuts.back().source), cutTime - cuts.back().time)) continue;
+        cuts.push_back({cut, cutTime});
     }
-    const double endTarget = static_cast<double>(c.start + c.length);
-    while (anchors.size() > 1) { // the last slice must still fit before the clip's (fixed) end
-        const double srcSpan = static_cast<double>(srcEnd - anchors.back().cut), tlSpan = endTarget - anchors.back().target;
-        if (tlSpan >= static_cast<double>(minSeg) / 2 && srcSpan / tlSpan / rate0 <= 2.0 && srcSpan / tlSpan / rate0 >= 0.5) break;
-        anchors.pop_back();
-    }
-    if (anchors.size() == 1 && !firstMoves) return fail(err, "no transients to quantize"), std::vector<DalnokClipId>{};
+    while (cuts.size() > 1 && !speedOk(static_cast<double>(srcEnd - cuts.back().source), static_cast<double>(c.length) - cuts.back().time))
+        cuts.pop_back();
+    if (cuts.size() == 1) return fail(err, "no transients to quantize");
+    cuts.push_back({srcEnd, static_cast<double>(c.length)});
 
-    // Each slice: a head played as it is (the attack) and, when the slice must change length, a stretched tail. Every
-    // piece after the first runs on under the next piece's fade-in (later pieces lie on top: the crossfade).
-    std::vector<ClipState> slices;
-    const int64_t headMax = std::llround(sr * 0.05);
-    auto piece = [&](int64_t t0, int64_t s0, int64_t len, double rate, bool fadeInHere, bool runOn) {
-        ClipState s = c;
-        s.start = t0;
-        s.offset = s0;
-        s.rate = rate;
-        s.fadeIn = slices.empty() ? c.fadeIn : (fadeInHere ? fade : 0);
-        s.fadeOut = 0;
-        s.fadeCurve = slices.empty() ? c.fadeCurve : 0;
-        if (rate != 1.0) s.preservePitch = s.preservePitch || std::fabs(rate0 - 1.0) < 1e-9; // keep pitch unless varispeed
-        if (runOn) { // as far as the source allows
-            const double room = static_cast<double>(mediaFrames - s0) / rate - static_cast<double>(len);
-            len += std::clamp<int64_t>(static_cast<int64_t>(room), 0, fade);
-        }
-        s.length = std::max<int64_t>(1, len);
-        slices.push_back(std::move(s));
-    };
-    for (size_t k = 0; k < anchors.size(); ++k) {
-        const bool last = k + 1 == anchors.size();
-        const int64_t s0 = anchors[k].cut, s1 = last ? srcEnd : anchors[k + 1].cut;
-        const int64_t t0 = std::llround(anchors[k].target), t1 = last ? c.start + c.length : std::llround(anchors[k + 1].target);
-        if (t0 < 0) return fail(err, "the quantized clip would start before the timeline"), std::vector<DalnokClipId>{};
-        const int64_t srcLen = s1 - s0, tlLen = std::max<int64_t>(1, t1 - t0);
-        const bool plain = std::fabs(rate0 - 1.0) < 1e-9 && c.pitch == 0;
-        // Barely moved: the whole slice as it is, when the timing error stays inside the crossfade.
-        if (plain && std::llabs(srcLen - tlLen) < fade / 2) {
-            piece(t0, s0, last ? std::min(tlLen, mediaFrames - s0) : srcLen, 1.0, true, !last); // the clip's end stays put
-            if (last) slices.back().fadeOut = c.fadeOut, slices.back().fadeCurve = c.fadeCurve;
-            continue;
-        }
-        // The head keeps the attack; the tail (at least as long as the head) takes up the difference.
-        const int64_t head = plain ? std::min<int64_t>(headMax, std::min(srcLen, tlLen) / 3) : 0;
-        if (head > 0) piece(t0, s0, head, 1.0, true, true);
-        const int64_t ts0 = s0 + head, tt0 = t0 + head;
-        const double rate = static_cast<double>(srcLen - head) / static_cast<double>(tlLen - head); // source per timeline frame
-        piece(tt0, ts0, tlLen - head, rate, true, !last);
-        if (last) slices.back().fadeOut = c.fadeOut, slices.back().fadeCurve = c.fadeCurve;
+    // Anchors: between two cuts, the head (the attack) at the clip's own speed and the rest stretched to fit. A span
+    // that barely changes length plays at one speed throughout (copied when the clip isn't stretched).
+    WarpList w;
+    for (size_t k = 0; k + 1 < cuts.size(); ++k) {
+        const int64_t s0 = cuts[k].source, s1 = cuts[k + 1].source;
+        const int64_t t0 = std::llround(cuts[k].time), t1 = std::llround(cuts[k + 1].time);
+        w.push_back({s0, t0});
+        const double natural = static_cast<double>(s1 - s0) / rate0;
+        const int64_t h = std::min<int64_t>(head, std::min<int64_t>(t1 - t0, static_cast<int64_t>(natural)) / 3);
+        if (std::fabs(natural - static_cast<double>(t1 - t0)) >= static_cast<double>(x) / 2 && h > x * 2)
+            w.push_back({s0 + std::llround(static_cast<double>(h) * rate0), t0 + h});
     }
-    for (const auto &s : slices)
-        if (s.offset + s.sourceLength() > mediaFrames + 1) return fail(err, "a slice runs past the clip's audio"), std::vector<DalnokClipId>{};
+    w.push_back({srcEnd, c.length});
+    w.front() = {c.offset, 0};
+    if (!warpValid(w)) return fail(err, "the quantized timing can't be played (transients too close together)");
 
-    const DalnokClipId first = nextClip_;
-    const bool ok = edit("Quantize Audio", true, [&](Model &m) {
-        auto it = std::find_if(m.clips.begin(), m.clips.end(), [id](const ClipState &x) { return x.id == id; });
-        if (it == m.clips.end()) return fail(err, "no such clip");
-        const std::string name = it->name;
-        m.clips.erase(it);
-        DalnokClipId next = first;
-        for (auto &s : slices) { s.id = next++; s.name = name; m.clips.push_back(s); } // later slices on top (crossfades)
+    return edit("Quantize Audio", true, [&](Model &m) {
+        ClipState *t = m.clip(id);
+        if (!t) return fail(err, "no such clip");
+        t->rate = rate0;
+        t->preservePitch = true;
+        t->warp = std::make_shared<const WarpList>(std::move(w));
         return true;
     });
-    if (!ok) return {};
-    nextClip_ = first + static_cast<DalnokClipId>(slices.size());
-    std::vector<DalnokClipId> out;
-    for (size_t i = 0; i < slices.size(); ++i) out.push_back(first + static_cast<DalnokClipId>(i));
-    return out;
+}
+
+bool Engine::setClipWarp(DalnokClipId id, WarpList w, std::string &err) {
+    return edit(w.empty() ? "Remove Quantize" : "Warp Clip", true, [&](Model &m) {
+        ClipState *c = m.clip(id);
+        if (!c) return fail(err, "no such clip");
+        if (c->midi()) return fail(err, "MIDI clips have no warp");
+        if (w.empty()) {
+            if (!c->warped()) return fail(err, "the clip has no warp");
+            c->rate = static_cast<double>(c->warp->back().source - c->warp->front().source) / static_cast<double>(c->length);
+            c->warp = nullptr;
+            return true;
+        }
+        const PoolEntry *pe = poolEntry(c->media);
+        if (!warpValid(w) || w.front().source != c->offset || w.back().time != c->length || !pe || w.back().source > pe->frames)
+            return fail(err, "a warp starts at the clip's offset, ends at its length, inside its audio, speeds 0.25-4");
+        c->rate = static_cast<double>(w.back().source - w.front().source) / static_cast<double>(c->length);
+        c->preservePitch = true;
+        c->warp = std::make_shared<const WarpList>(std::move(w));
+        return true;
+    });
 }
 
 } // namespace dalnok

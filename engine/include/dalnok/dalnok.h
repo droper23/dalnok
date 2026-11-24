@@ -532,6 +532,7 @@ typedef struct {
     int32_t follow;                /* launcher follow action: 0 none, 1 next filled slot, 2 stop */
     int32_t follow_loops;          /* after this many loops */
     bool muted;                    /* clip muted */
+    int32_t warp_points;           /* audio quantize: warp anchors (dalnok_clip_warp) */
 } DalnokClipInfo;
 /* END GENERATED DalnokClipInfo */
 DalnokStatus dalnok_clip_info(const DalnokEngine *engine, DalnokClipId clip, DalnokClipInfo *out);
@@ -782,12 +783,17 @@ DalnokStatus dalnok_midi_quantize(DalnokEngine *engine, DalnokClipId clip, doubl
 /* Audio quantize (API 47; Logic's Flex quantize, with slices). The clip's transients (attack starts, in source frames;
  * `sensitivity` 0-1, 0.5 typical): returns the total count, writes up to `capacity`, -1 if not an audio clip. */
 int32_t dalnok_audio_transients(const DalnokEngine *engine, DalnokClipId clip, double sensitivity, int64_t *out, int32_t capacity);
-/* Cuts the clip just before each transient, moves each slice so its transient goes toward the grid of `grid_beats`
- * (tempo map) by `strength` (0-1], and time-stretches each slice (pitch kept) to run to the next: no gaps, a short
- * crossfade at each cut, the clip's end in place. Slices that barely move stay unstretched. One undo step. Writes up
- * to `capacity` new clip ids; returns the slice count, 0 on failure (no transients, MIDI, offline). */
-int32_t dalnok_audio_quantize(DalnokEngine *engine, DalnokClipId clip, double grid_beats, double strength, double sensitivity,
-                              DalnokClipId *out, int32_t capacity);
+/* Quantizes an audio clip in place (one clip, one undo step): a warp map moves each transient toward the grid of
+ * `grid_beats` (tempo map) by `strength` (0-1]. Each attack (its first 50 ms) plays at the clip's own speed; the rest
+ * between two transients is time-stretched (pitch kept) to fit, with a 5 ms crossfade centred on every anchor, 6 ms
+ * before the attack. The clip's start and end stay. Quantizing again starts from the recorded timing. Trims and splits
+ * keep the warp. DALNOK_ERR_INVALID_ARG: no transients, MIDI, varispeed, offline. */
+DalnokStatus dalnok_audio_quantize(DalnokEngine *engine, DalnokClipId clip, double grid_beats, double strength, double sensitivity);
+/* The clip's warp anchors: source frames in its media and times from the clip's start (dalnok_clip_info warp_points
+ * of them). Returns the total count (0: no warp, -1: no such audio clip). */
+int32_t dalnok_clip_warp(const DalnokEngine *engine, DalnokClipId clip, int64_t *source, int64_t *time, int32_t capacity);
+/* Sets the warp (count 0 removes it: one speed again). One undo step. */
+DalnokStatus dalnok_clip_set_warp(DalnokEngine *engine, DalnokClipId clip, const int64_t *source, const int64_t *time, int32_t count);
 /* Tempo and meter maps. Beats are quarter notes from the timeline origin; bars are zero-based
  * (bar 1 on screen = 0). Tempo is constant between points; meter changes start on a bar.
  * Any tempo change keeps MIDI clips and notes on their beats; audio clips keep their time.

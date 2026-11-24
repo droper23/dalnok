@@ -1404,6 +1404,22 @@ final class TimelineView: NSView {
         let visX0 = max(rect.minX, 0), visX1 = min(rect.maxX, bounds.width)
         let columns = Int(((visX1 - visX0) * scale).rounded(.up))
         guard columns > 0 else { return }
+        if clip.warp.count >= 2 { // a quantized clip: each warp segment drawn at its own speed
+            for i in 1..<clip.warp.count {
+                let a = clip.warp[i - 1], b = clip.warp[i]
+                let x0 = max(visX0, xPos(forFrame: Double(clip.start + a.time))), x1 = min(visX1, xPos(forFrame: Double(clip.start + b.time)))
+                guard x1 > x0 else { continue }
+                var part = clip
+                part.warp = []
+                part.fields.start = clip.start + a.time
+                part.fields.offset = a.source
+                part.fields.length = b.time - a.time
+                part.fields.rate = Double(b.source - a.source) / Double(b.time - a.time)
+                drawWaveform(ctx, media: media, clip: part, rect: CGRect(x: x0, y: rect.minY, width: x1 - x0, height: rect.height),
+                             top: top, color: color, dim: dim, scale: scale)
+            }
+            return
+        }
         if mins.count < columns { mins = [Float](repeating: 0, count: columns); maxs = mins }
         // Stretched clips draw their source at `rate` source frames per timeline frame.
         let fpc = framesPerPoint / Double(scale) * clip.rate

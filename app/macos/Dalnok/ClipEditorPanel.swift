@@ -37,9 +37,9 @@ final class ClipEditorPanel: NSView {
     private let title = NSTextField(labelWithString: "")
     private let status = NSTextField(labelWithString: "")
     private let placeholder = NSTextField(labelWithString: "Double-click a clip to edit it here.")
-    let gridPopup = NSPopUpButton(frame: .zero, pullsDown: false)
-    let strengthPopup = NSPopUpButton(frame: .zero, pullsDown: false)
-    let quantizeButton = NSButton(title: "Quantize", target: nil, action: nil)
+    let gridPopup = RuledPopUpButton(frame: .zero, pullsDown: false)
+    let strengthPopup = RuledPopUpButton(frame: .zero, pullsDown: false)
+    let quantizeButton = LookButton(frame: .zero)
     let resizeEdge = HeightResizeEdge()
     static let barHeight: CGFloat = 28
     /// The editor's height (its top edge resizes it; remembered apart from the device chain's).
@@ -83,9 +83,7 @@ final class ClipEditorPanel: NSView {
         strengthPopup.toolTip = "Quantize strength: how far toward the grid Q moves each note"
         gridPopup.setAccessibilityLabel("Quantize value")
         strengthPopup.setAccessibilityLabel("Quantize strength")
-        quantizeButton.controlSize = .small
-        quantizeButton.bezelStyle = .rounded
-        quantizeButton.font = Theme.ui(11)
+        quantizeButton.title = "Quantize"
         quantizeButton.target = self
         quantizeButton.action = #selector(quantizeTapped)
         quantizeButton.toolTip = "Quantize: the selected notes (or every note) of a MIDI clip; an audio clip's transients (Q)"
@@ -105,6 +103,7 @@ final class ClipEditorPanel: NSView {
             title.widthAnchor.constraint(lessThanOrEqualToConstant: 260),
             q.leadingAnchor.constraint(equalTo: title.trailingAnchor, constant: 16), q.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
             gridPopup.leadingAnchor.constraint(equalTo: q.trailingAnchor, constant: 6), gridPopup.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
+            gridPopup.widthAnchor.constraint(greaterThanOrEqualToConstant: 112), strengthPopup.widthAnchor.constraint(greaterThanOrEqualToConstant: 70),
             strengthPopup.leadingAnchor.constraint(equalTo: gridPopup.trailingAnchor, constant: 6), strengthPopup.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
             quantizeButton.leadingAnchor.constraint(equalTo: strengthPopup.trailingAnchor, constant: 6), quantizeButton.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
             status.leadingAnchor.constraint(equalTo: quantizeButton.trailingAnchor, constant: 14), status.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
@@ -167,6 +166,10 @@ final class ClipEditorPanel: NSView {
         if c.isMidi { roll.quantizeSelection() } else { focus(); onQuantizeAudio?() }
     }
 
+    /// Every display tick: the playhead of whichever editor is showing.
+    func tick() {
+        if !roll.isHidden { roll.updatePlayhead() } else if !audio.isHidden { audio.updatePlayhead() }
+    }
     /// After any model change: the clip may have been edited, undone or deleted.
     func modelChanged() { update() }
 
@@ -198,8 +201,8 @@ final class AudioClipView: NSView {
     var onFocus: (() -> Void)?
     var onStatus: ((String) -> Void)?
     /// Source frames per point and the source frame at the left edge.
-    var framesPerPoint: Double = 100 { didSet { needsDisplay = true } }
-    var scrollFrame: Double = 0 { didSet { needsDisplay = true } }
+    var framesPerPoint: Double = 100 { didSet { needsDisplay = true; shownPlayhead = .nan; updatePlayhead() } }
+    var scrollFrame: Double = 0 { didSet { needsDisplay = true; shownPlayhead = .nan; updatePlayhead() } }
     private var mins: [Float] = [], maxs: [Float] = []
     /// The clip's transients (source frames), as audio quantize hears them; recomputed when the clip's region changes.
     private var transients: [Int64] = []
@@ -218,23 +221,49 @@ final class AudioClipView: NSView {
     private var drag: (edge: Edge, startX: CGFloat, clip: ClipView, changed: Bool)?
     static let ruler: CGFloat = 20
 
+    /// The playhead (a layer moved every display tick): where the clip's audio is playing, through any warp. Before or
+    /// after the clip it waits at the region's edge, dimmed.
+    let playheadLayer = CALayer()
+    private var shownPlayhead: CGFloat = .nan
+    func updatePlayhead() {
+        guard let c = clip else { playheadLayer.isHidden = true; return }
+        let pos = session.engine.position
+        let inside = pos >= c.start && pos < c.end
+        let t = Double(min(max(pos, c.start), c.end) - c.start)
+        let px = x(c.sourceFrame(atClipTime: t)).rounded()
+        guard px != shownPlayhead || playheadLayer.opacity != (inside ? 1 : 0.35) else { return }
+        shownPlayhead = px
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        playheadLayer.frame = CGRect(x: px - 0.5, y: 0, width: 1.5, height: bounds.height)
+        playheadLayer.opacity = inside ? 1 : 0.35
+        playheadLayer.isHidden = px < 0 || px > bounds.width
+        CATransaction.commit()
+    }
+
     init(session: Session) {
         self.session = session
         super.init(frame: .zero)
         wantsLayer = true
         clipsToBounds = true
+        playheadLayer.backgroundColor = Theme.playhead.cgColor
+        playheadLayer.zPosition = 10
+        layer?.addSublayer(playheadLayer)
         setAccessibilityLabel("Audio clip")
         setAccessibilityRole(.group)
     }
     required init?(coder: NSCoder) { fatalError() }
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
+    override func layout() { super.layout(); shownPlayhead = .nan; updatePlayhead() }
 
     var clip: ClipView? { session.clip(clipId).flatMap { $0.isMidi ? nil : $0 } }
     func x(_ source: Double) -> CGFloat { CGFloat((source - scrollFrame) / framesPerPoint) }
     func source(atX x: CGFloat) -> Double { scrollFrame + Double(x) * framesPerPoint }
     /// The region the clip plays, in source frames.
-    func region(_ c: ClipView) -> (Double, Double) { (Double(c.offset), Double(c.offset) + Double(c.sourceSpan)) }
+    func region(_ c: ClipView) -> (Double, Double) {
+        if let last = c.warp.last { return (Double(c.offset), Double(last.source)) }
+        return (Double(c.offset), Double(c.offset) + Double(c.sourceSpan))
+    }
 
     /// Shows the whole source with a little room either side.
     func fit() {
@@ -251,7 +280,8 @@ final class AudioClipView: NSView {
         func t(_ f: Int64) -> String { String(format: "%.3f s", Double(f) / rate) }
         var parts = ["Plays \(t(c.offset))–\(t(c.offset + c.sourceSpan)) of \(t(c.mediaFrames))"]
         if c.gainDb != 0 { parts.append(c.gainDb.isFinite ? String(format: "gain %+.1f dB", c.gainDb) : "gain −∞") }
-        if c.isStretched { parts.append(String(format: "speed %.2f×", 1 / c.rate)) }
+        if c.warp.count > 2 { parts.append("quantized (\(c.warp.count - 2) anchors)") }
+        else if c.isStretched { parts.append(String(format: "speed %.2f×", 1 / c.rate)) }
         if c.offline { parts.append("source missing") }
         refreshTransients(c)
         parts.append(transients.count == 1 ? "1 transient" : "\(transients.count) transients")
@@ -309,11 +339,10 @@ final class AudioClipView: NSView {
             ctx.fill(CGRect(x: ex - 1, y: wave.minY, width: 2, height: wave.height))
             ctx.fill(CGRect(x: ex - 5, y: wave.minY, width: 10, height: 8))
         }
-        // The playhead, where it falls inside the clip.
-        let pos = session.engine.position
-        if pos >= c.start && pos < c.end {
-            let px = x(Double(c.offset) + Double(pos - c.start) * c.rate)
-            ctx.setFillColor(Theme.playhead.cgColor); ctx.fill(CGRect(x: px, y: 0, width: 1, height: bounds.height))
+        // Warp anchors (a quantized clip): faint lines where the timing was moved.
+        if c.warp.count > 2 {
+            ctx.setFillColor(Theme.textFaint.withAlphaComponent(0.5).cgColor)
+            for p in c.warp.dropFirst().dropLast() { ctx.fill(CGRect(x: x(Double(p.source)).rounded(), y: wave.minY + 12, width: 1, height: wave.height - 12)) }
         }
         // Ruler: seconds of the source.
         Theme.panel.setFill(); CGRect(x: 0, y: 0, width: bounds.width, height: Self.ruler).fill()
@@ -362,8 +391,12 @@ final class AudioClipView: NSView {
         // A click elsewhere puts the playhead there (inside the clip's region).
         let (a, b) = region(c)
         let s = min(max(source(atX: p.x), a), b - 1)
-        session.engine.seek(c.start + Int64(((s - a) / c.rate).rounded()))
-        needsDisplay = true
+        // Through the warp: the clip time whose source is the clicked frame (search, the map is monotonic).
+        var lo = 0.0, hi = Double(c.length)
+        for _ in 0..<40 { let mid = (lo + hi) / 2; if c.sourceFrame(atClipTime: mid) < s { lo = mid } else { hi = mid } }
+        session.engine.seek(c.start + Int64(lo.rounded()))
+        shownPlayhead = .nan
+        updatePlayhead()
     }
     override func mouseDragged(with event: NSEvent) {
         guard var d = drag, let current = clip else { return }
@@ -408,5 +441,85 @@ final class AudioClipView: NSView {
         let px = convert(event.locationInWindow, from: nil).x, anchor = source(atX: px)
         framesPerPoint = min(max(framesPerPoint / (1 + event.magnification), 0.5), 1e6)
         scrollFrame = anchor - Double(px) * framesPerPoint
+    }
+}
+
+/// The clip editor's Clip / Devices switch in the look: Atelier's ruled cells (RuledTabs), elsewhere a small pill
+/// whose chosen side is filled with the look's colour (Graphite's gold, Warm Analog's amber, Prism's light).
+@MainActor
+final class LookTabs: RuledTabs {
+    override func draw(_ dirtyRect: NSRect) {
+        guard Theme.activeStyle != .atelier, let ctx = NSGraphicsContext.current?.cgContext else { return super.draw(dirtyRect) }
+        LookChrome.pill(ctx, bounds, segments: (0..<segmentCount).map { (label(forSegment: $0) ?? "", selectedSegment == $0) },
+                        focused: window?.firstResponder === self)
+    }
+}
+
+/// A small text button in the look (Quantize): a ruled box in Atelier, a pill elsewhere; lit while pressed.
+@MainActor
+final class LookButton: NSButton {
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        isBordered = false
+        setButtonType(.momentaryPushIn)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+    override var intrinsicContentSize: NSSize {
+        let w = (title as NSString).size(withAttributes: [.font: LookChrome.font]).width
+        return NSSize(width: ceil(w) + 22, height: 20)
+    }
+    override func draw(_ dirtyRect: NSRect) {
+        guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+        LookChrome.pill(ctx, bounds, segments: [(title, isHighlighted)], focused: window?.firstResponder === self, button: true)
+    }
+}
+
+@MainActor
+enum LookChrome {
+    static var font: NSFont { Theme.activeStyle == .atelier ? Theme.title(12) : Theme.ui(11, .semibold) }
+    /// Cells side by side in one rounded (or, in Atelier, ruled) frame; `on` cells are filled with the look's colour.
+    static func pill(_ ctx: CGContext, _ bounds: CGRect, segments: [(String, Bool)], focused: Bool, button: Bool = false) {
+        let r = bounds.insetBy(dx: 0.5, dy: 1.5)
+        let style = Theme.activeStyle
+        let radius: CGFloat = style == .prism ? r.height / 2 : style == .atelier ? 0 : 4
+        let frame = CGPath(roundedRect: r, cornerWidth: radius, cornerHeight: radius, transform: nil)
+        let tint = Theme.controlTint
+        ctx.saveGState()
+        ctx.addPath(frame); ctx.clip()
+        ctx.setFillColor((style == .atelier ? Theme.panelRaised.withAlphaComponent(0.6) : Theme.ink(style == .prism ? 0.07 : 0.05)).cgColor)
+        ctx.fill(r)
+        let w = r.width / CGFloat(max(1, segments.count))
+        for (i, (label, on)) in segments.enumerated() {
+            let cell = CGRect(x: r.minX + CGFloat(i) * w, y: r.minY, width: w, height: r.height)
+            if on {
+                if style == .atelier { Theme.laneHighlight.setFill(); cell.fill() }
+                else {
+                    ctx.setFillColor((style == .prism ? tint.withAlphaComponent(button ? 0.35 : 0.55) : tint.withAlphaComponent(button ? 0.6 : 0.9)).cgColor)
+                    ctx.fill(cell)
+                }
+            }
+            if i > 0 {
+                ctx.setFillColor(Theme.ink(0.18).cgColor)
+                ctx.fill(CGRect(x: cell.minX - 0.5, y: cell.minY + 3, width: 1, height: cell.height - 6))
+            }
+            let dark = on && style != .atelier && style != .prism && Theme.isLight(tint)
+            let color: NSColor = dark ? NSColor.black.withAlphaComponent(0.82) : (on || button ? Theme.text : Theme.textDim)
+            let attrs: [NSAttributedString.Key: Any] = [.font: on && style == .atelier ? Theme.title(12, .semibold) : font, .foregroundColor: color]
+            let s = (label as NSString).size(withAttributes: attrs)
+            (label as NSString).draw(at: CGPoint(x: cell.midX - s.width / 2, y: cell.midY - s.height / 2), withAttributes: attrs)
+            if on && style == .atelier && !button {
+                Atelier.rule(ctx, CGPoint(x: cell.minX + 6, y: cell.maxY - 1.5), CGPoint(x: cell.maxX - 6, y: cell.maxY - 1.5), weight: Atelier.heavy, color: Atelier.vermilion)
+            }
+        }
+        ctx.restoreGState()
+        if style == .atelier { Atelier.box(ctx, r, weight: Atelier.hair, color: Theme.ink(0.7)) }
+        else {
+            ctx.addPath(frame)
+            ctx.setStrokeColor((style == .prism ? Theme.ink(0.22) : Theme.ink(0.16)).cgColor); ctx.setLineWidth(1); ctx.strokePath()
+        }
+        if focused {
+            ctx.addPath(CGPath(roundedRect: r.insetBy(dx: -1.5, dy: -1.5), cornerWidth: radius + 1.5, cornerHeight: radius + 1.5, transform: nil))
+            ctx.setStrokeColor(NSColor.keyboardFocusIndicatorColor.cgColor); ctx.setLineWidth(1); ctx.strokePath()
+        }
     }
 }

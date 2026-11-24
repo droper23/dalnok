@@ -565,13 +565,27 @@ int32_t dalnok_audio_transients(const DalnokEngine *e, DalnokClipId clip, double
     for (int32_t i = 0; out && i < capacity && i < static_cast<int32_t>(t.size()); ++i) out[i] = t[static_cast<size_t>(i)];
     return static_cast<int32_t>(t.size());
 }
-int32_t dalnok_audio_quantize(DalnokEngine *e, DalnokClipId clip, double grid, double strength, double sensitivity, DalnokClipId *out,
-                              int32_t capacity) {
-    if (!e) return 0;
+DalnokStatus dalnok_audio_quantize(DalnokEngine *e, DalnokClipId clip, double grid, double strength, double sensitivity) {
     std::string err;
-    const auto ids = e->impl.quantizeAudio(clip, grid, strength, sensitivity, err);
-    for (int32_t i = 0; out && i < capacity && i < static_cast<int32_t>(ids.size()); ++i) out[i] = ids[static_cast<size_t>(i)];
-    return static_cast<int32_t>(ids.size());
+    return e ? statusFor(e->impl.quantizeAudio(clip, grid, strength, sensitivity, err), err) : DALNOK_ERR_INVALID_ARG;
+}
+int32_t dalnok_clip_warp(const DalnokEngine *e, DalnokClipId clip, int64_t *source, int64_t *time, int32_t capacity) {
+    if (!e) return -1;
+    const dalnok::ClipState *c = e->impl.model().clip(clip);
+    if (!c || c->midi()) return -1;
+    if (!c->warped()) return 0;
+    for (int32_t i = 0; i < capacity && i < static_cast<int32_t>(c->warp->size()); ++i) {
+        if (source) source[i] = (*c->warp)[static_cast<size_t>(i)].source;
+        if (time) time[i] = (*c->warp)[static_cast<size_t>(i)].time;
+    }
+    return static_cast<int32_t>(c->warp->size());
+}
+DalnokStatus dalnok_clip_set_warp(DalnokEngine *e, DalnokClipId clip, const int64_t *source, const int64_t *time, int32_t count) {
+    if (!e || count < 0 || (count > 0 && (!source || !time))) return DALNOK_ERR_INVALID_ARG;
+    dalnok::WarpList w;
+    for (int32_t i = 0; i < count; ++i) w.push_back({source[i], time[i]});
+    std::string err;
+    return statusFor(e->impl.setClipWarp(clip, std::move(w), err), err);
 }
 int32_t dalnok_plugins_copy(DalnokEngine *e, DalnokTrackId from, const int32_t *slots, int32_t count, DalnokTrackId to,
                             int32_t index, int32_t *out, int32_t capacity) {

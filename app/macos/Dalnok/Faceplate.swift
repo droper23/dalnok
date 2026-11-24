@@ -843,7 +843,10 @@ final class FaceplateControl: NSControl, ParameterControl {
         switch kind {
         case .toggle:
             Faceplate.pushSwitch(ctx, CGRect(x: c.x - 13, y: c.y - 9, width: 26, height: 19), on: value >= 0.5, color: tint, lit: light)
-        case .knob, .selector where Theme.look.devices == .cards || Theme.look.devices == .schematic:
+        // (`where` binds to every pattern: written once per pattern, a `where` after `.knob, .selector` guarded only
+        // `.selector`, so every Graphite knob was drawn as Atelier's dial.)
+        case .knob where Theme.look.devices == .cards || Theme.look.devices == .schematic,
+             .selector where Theme.look.devices == .cards || Theme.look.devices == .schematic:
             // Glass bead (Prism) or drawn dial (Atelier); the kits draw upright, so un-flip around the knob.
             let r: CGFloat = kind == .knob ? 14 : 12
             ctx.saveGState(); ctx.translateBy(x: 0, y: 2 * c.y); ctx.scaleBy(x: 1, y: -1)

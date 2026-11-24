@@ -59,9 +59,10 @@ struct ClipFields: Equatable {
     var follow: Int32 // launcher follow action: 0 none, 1 next filled slot, 2 stop
     var followLoops: Int32 // after this many loops
     var muted: Bool // clip muted
+    var warpPoints: Int32 // audio quantize: warp anchors (dalnok_clip_warp)
 }
 extension ClipFields {
     init(_ c: DalnokClipInfo) {
-        self.init(id: c.id, track: c.track, media: c.media, start: c.start, offset: c.offset, length: c.length, mediaFrames: c.media_frames, offline: c.offline, fadeIn: c.fade_in, fadeOut: c.fade_out, fadeCurve: c.fade_curve, gainDb: c.gain_db, rate: c.rate, pitch: c.pitch, preservePitch: c.preserve_pitch, processing: c.processing, name: fixedString(c.name), isMidi: c.midi, noteCount: c.note_count, folder: c.folder, alt: c.alt, slot: c.slot, follow: c.follow, followLoops: c.follow_loops, muted: c.muted)
+        self.init(id: c.id, track: c.track, media: c.media, start: c.start, offset: c.offset, length: c.length, mediaFrames: c.media_frames, offline: c.offline, fadeIn: c.fade_in, fadeOut: c.fade_out, fadeCurve: c.fade_curve, gainDb: c.gain_db, rate: c.rate, pitch: c.pitch, preservePitch: c.preserve_pitch, processing: c.processing, name: fixedString(c.name), isMidi: c.midi, noteCount: c.note_count, folder: c.folder, alt: c.alt, slot: c.slot, follow: c.follow, followLoops: c.follow_loops, muted: c.muted, warpPoints: c.warp_points)
     }
 }

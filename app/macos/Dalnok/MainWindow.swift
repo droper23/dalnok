@@ -216,7 +216,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     let devicePanel: DevicePanel
     /// The clip editor shares the bottom area with the device chain (Ableton's Clip and Device views).
     let clipEditor: ClipEditorPanel
-    let bottomTabs = NSSegmentedControl(labels: ["Clip", "Devices"], trackingMode: .selectOne, target: nil, action: nil)
+    let bottomTabs = LookTabs(labels: ["Clip", "Devices"], trackingMode: .selectOne, target: nil, action: nil)
     enum BottomMode: Int { case clip = 0, devices = 1 }
     static var bottomMode: BottomMode {
         get { BottomMode(rawValue: UserDefaults.standard.integer(forKey: "bottomMode") == 1 ? 0 : 1) ?? .devices }
@@ -371,11 +371,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         devicePanelHeight = devicePanel.heightAnchor.constraint(equalToConstant: Self.showDevicePanel ? bottomHeight : 0)
         devicePanelHeight.isActive = true
         bottomTabs.controlSize = .small
-        bottomTabs.font = Theme.ui(11)
+        bottomTabs.font = LookChrome.font
+        bottomTabs.setWidth(58, forSegment: 0)
+        bottomTabs.setWidth(66, forSegment: 1)
         bottomTabs.target = self
         bottomTabs.action = #selector(bottomTabChosen(_:))
-        bottomTabs.setToolTip("The clip open for editing (double-click a clip)", forSegment: 0)
-        bottomTabs.setToolTip("The selected track's plug-ins", forSegment: 1)
+        bottomTabs.setToolTip("The clip open for editing: double-click a clip (⌥⌘E switches)", forSegment: 0)
+        bottomTabs.setToolTip("The selected track's plug-ins (⌥⌘E switches)", forSegment: 1)
         bottomTabs.setAccessibilityLabel("Bottom panel")
         applyBottomMode()
         launcherWidth = launcher.widthAnchor.constraint(equalToConstant: Self.showLauncher ? launcher.width : 0)
@@ -983,6 +985,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         if tickCount % 30 == 0 && !e.deviceAlive { deviceLost() }
         if tickCount % 15 == 0 && !devicePanel.isHidden { devicePanel.refreshValues() }
         if !devicePanel.isHidden { devicePanel.pollMeters() } // Graphite faceplates and Warm Analog pedals
+        if !clipEditor.isHidden { clipEditor.tick() } // the editors' playheads
+        if pianoRoll.window?.isVisible == true { pianoRoll.roll.updatePlayhead() }
         if transientMessageUntil < Date(), transientMessageUntil != .distantPast {
             transientMessageUntil = .distantPast
             updateStatus()
@@ -1869,6 +1873,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         library.resizeEdge.onEnd = { [weak self] in self?.fitSidePanels() }
         inspector.onOpenPlugin = { [weak self] t, slot in self?.openPluginWindow(track: t, slot: slot) }
         inspector.onAddPlugin = { [weak self] t in self?.headers.select(t); self?.showPlugins(nil) }
+        inspector.onSetMonitor = { [weak self] t, on in
+            guard let self, self.session.track(t)?.inputMonitor != on else { return }
+            self.toggleTrackInputMonitor(t)
+        }
         inspector.onDropPlugin = { [weak self] paths, t in
             if let err = self?.insertPlugins(paths, on: t) { self?.flash("Couldn’t add the plug-in: \(err)") }
         }

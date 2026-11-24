@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <set>
 #include <unordered_map>
 #include <utility>
@@ -43,6 +44,7 @@ bool Engine::setClipStretch(DalnokClipId id, int64_t length, double rate, float 
         if (!pe || c->offset + span > pe->frames + 1) return fail(err, "stretch reads past the end of the source");
         c->length = length;
         c->rate = rate;
+        c->warp = nullptr; // one speed again (a quantized clip loses its warp)
         c->pitch = preservePitch ? pitch : 0;
         c->preservePitch = preservePitch;
         return true;
@@ -143,6 +145,20 @@ bool Engine::setClipRegion(DalnokClipId id, int64_t start, int64_t offset, int64
         if (!c) return fail(err, "no such clip");
         const PoolEntry *pe = poolEntry(c->media);
         const int64_t frames = c->midi() ? INT64_MAX / 2 : (pe ? pe->frames : 0); // MIDI clips can extend freely
+        if (c->warped()) { // a quantized clip keeps its warp: the new edges cut the map (1:1 past its old ends)
+            if (start < 0 || length <= 0) return fail(err, "region out of range");
+            const int64_t t0 = start - c->start;
+            WarpList w = cropWarp(*c->warp, t0, t0 + length);
+            const int64_t s0 = static_cast<int64_t>(std::llround(warpSourceAt(*c->warp, static_cast<double>(t0))));
+            const int64_t s1 = static_cast<int64_t>(std::llround(warpSourceAt(*c->warp, static_cast<double>(t0 + length))));
+            if (s0 < 0 || s1 > frames || s1 <= s0) return fail(err, "region out of range");
+            c->start = start;
+            c->offset = s0;
+            c->length = length;
+            c->rate = static_cast<double>(s1 - s0) / static_cast<double>(length);
+            c->warp = w.empty() ? nullptr : std::make_shared<const WarpList>(std::move(w));
+            return true;
+        }
         const auto span = static_cast<int64_t>(std::llround(static_cast<double>(length) * c->rate));
         if (start < 0 || offset < 0 || length <= 0 || offset + span > frames)
             return fail(err, "region out of range");
@@ -166,6 +182,20 @@ DalnokClipId Engine::splitClip(DalnokClipId id, int64_t at, std::string &err) {
         right.start = at;
         right.offset += static_cast<int64_t>(std::llround(static_cast<double>(leftLen) * it->rate));
         right.length -= leftLen;
+        if (it->warped()) { // each side keeps its part of the warp map
+            const WarpList whole = *it->warp;
+            const auto part = [&](ClipState &c, int64_t t0, int64_t t1) {
+                const int64_t s0 = std::llround(warpSourceAt(whole, static_cast<double>(t0)));
+                const int64_t s1 = std::llround(warpSourceAt(whole, static_cast<double>(t1)));
+                WarpList w = cropWarp(whole, t0, t1);
+                c.offset = s0;
+                c.rate = static_cast<double>(s1 - s0) / static_cast<double>(t1 - t0);
+                c.warp = w.empty() ? nullptr : std::make_shared<const WarpList>(std::move(w));
+            };
+            const int64_t total = it->length + right.length;
+            part(right, leftLen, total);
+            part(*it, 0, leftLen);
+        }
         right.fadeIn = 0;      // the right part keeps the original fade-out
         it->fadeOut = 0;       // the left part keeps the original fade-in
         m.clips.insert(it + 1, std::move(right)); // same z-level as the original

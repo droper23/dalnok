@@ -14,7 +14,8 @@
 namespace dalnok {
 
 StretchKey stretchKeyOf(const ClipState &c) {
-    return {c.media, c.offset, c.sourceLength(), c.length, static_cast<int32_t>(std::lround(c.pitch * 100)), c.preservePitch};
+    return {c.media, c.offset, c.sourceLength(), c.length, static_cast<int32_t>(std::lround(c.pitch * 100)), c.preservePitch,
+            c.warped() ? warpHash(*c.warp) : 0};
 }
 
 const PoolEntry *RenderCompiler::pool(DalnokMediaId id) const {
@@ -37,7 +38,7 @@ bool RenderCompiler::sameInputs(const ClipKey &k, const ClipState &c) {
         k.fadeCurve != c.fadeCurve || k.muted != c.muted || k.alt != c.alt || k.preservePitch != c.preservePitch ||
         k.notes != c.notes || k.mediaId != c.media || k.start != c.start || k.offset != c.offset ||
         k.length != c.length || k.fadeIn != c.fadeIn || k.fadeOut != c.fadeOut || k.gainDb != c.gainDb ||
-        k.pitch != c.pitch || k.rate != c.rate)
+        k.pitch != c.pitch || k.rate != c.rate || k.warp != c.warp)
         return false;
     const Media *media = resolvedMedia(c);
     if (media != k.media.get()) return false;
@@ -109,7 +110,7 @@ std::shared_ptr<const TrackContent> RenderCompiler::buildContent(const std::vect
             const StretchKey key = stretchKeyOf(c);
             auto derived = in_->stretch.find(key);
             if (!derived) {
-                needed.push_back({key, media});
+                needed.push_back({key, media, 0, c.warped() ? c.warp : nullptr});
                 continue;
             }
             media = derived;
@@ -284,7 +285,7 @@ std::unique_ptr<RenderState> RenderCompiler::compile(const CompileInputs &inputs
                     k.id = c.id; k.slot = c.slot; k.follow = c.follow; k.followLoops = c.followLoops; k.fadeCurve = c.fadeCurve;
                     k.muted = c.muted; k.alt = c.alt; k.preservePitch = c.preservePitch; k.notes = c.notes; k.mediaId = c.media;
                     k.start = c.start; k.offset = c.offset; k.length = c.length; k.fadeIn = c.fadeIn; k.fadeOut = c.fadeOut;
-                    k.gainDb = c.gainDb; k.pitch = c.pitch; k.rate = c.rate;
+                    k.gainDb = c.gainDb; k.pitch = c.pitch; k.rate = c.rate; k.warp = c.warp;
                     if (const PoolEntry *pe = c.midi() ? nullptr : pool(c.media); pe && pe->handle->impl) {
                         k.media = pe->handle->impl;
                         k.derived = resolvedStretch(c, k.media.get());

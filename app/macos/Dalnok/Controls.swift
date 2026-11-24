@@ -25,6 +25,14 @@ final class ValueBubble {
         guard let root = view.window?.contentView else { return }
         let l = label
         if l.superview !== root { root.addSubview(l, positioned: .above, relativeTo: nil) }
+        // Restyled each time: the bubble outlives a theme switch (it kept Atelier's serif figures in Graphite).
+        if styledFor != Theme.activeStyle || styledVariant != Theme.isLight {
+            styledFor = Theme.activeStyle; styledVariant = Theme.isLight
+            l.font = Theme.mono(11, .medium)
+            l.textColor = Theme.text
+            l.layer?.backgroundColor = (Theme.isLight ? Theme.panelRaised.withAlphaComponent(0.96) : Theme.hex(0x0B0C0E, 0.92)).cgColor
+            l.layer?.borderColor = Theme.hairline.cgColor
+        }
         l.stringValue = text
         l.sizeToFit()
         let w = l.frame.width + 12, h: CGFloat = 18
@@ -40,6 +48,8 @@ final class ValueBubble {
     }
 
     static func hide() { label.isHidden = true }
+    private static var styledFor: Theme.Style?
+    private static var styledVariant = false
 }
 
 // MARK: - Fader
@@ -338,6 +348,8 @@ class RotaryKnob: NSControl {
     private let pointer = CAShapeLayer()
     /// Atelier: the dial drawn as a turned part seen a little from above: its knurled side under the face (cached image).
     private let skirt = CALayer()
+    /// Atelier: a paper band under the dial's light bars, so the full sweep reads over the knurled side.
+    private let ringCase = CAShapeLayer()
     static let revealScale: CGFloat = 0.68
     var faceScale: CGFloat { face.affineTransform().a } // for tests
 
@@ -364,7 +376,16 @@ class RotaryKnob: NSControl {
         pointer.lineWidth = 2
         pointer.lineCap = .round
         face.addSublayer(pointer)
-        if Theme.look.controls == .drafted { layer?.addSublayer(skirt) } // Atelier: the turned part's side, under its top face
+        if Theme.look.controls == .drafted {
+            // Atelier: the turned part's side under everything, then a paper band and the light bars over it (the side
+            // used to cover the lower part of the sweep), then the top face.
+            layer?.insertSublayer(skirt, at: 0)
+            ringCase.fillColor = nil
+            ringCase.strokeColor = Theme.panelRaised.cgColor
+            ringCase.lineWidth = 4.6
+            ringCase.lineCap = .round
+            layer?.insertSublayer(ringCase, above: skirt)
+        }
         layer?.addSublayer(face)
         if Theme.look.hardwareControls {
             // Discrete LED dots instead of a continuous ring (dash of zero length + round caps).
@@ -432,6 +453,7 @@ class RotaryKnob: NSControl {
         let track = CGMutablePath()
         track.addArc(center: c, radius: ringR, startAngle: angle(bipolar ? -1 : 0), endAngle: angle(1), clockwise: false)
         haloTrack.path = track
+        ringCase.path = track
         let showingLevel = showsMeter && meterDb > -60 && !hovering && !tracking
         let displayed = showingLevel ? Double(max(0, min(1, (meterDb + 60) / 60))) : value
         let from = bipolar ? min(0, displayed) : 0, to = bipolar ? max(0, displayed) : displayed

@@ -10,6 +10,18 @@ import DalnokEngine
 struct ClipView {
     var fields: ClipFields
     var notes: [DalnokNote] = [] // MIDI clips only
+    /// Audio quantize: (source frame, frames from the clip's start) anchors; empty when the clip plays at one speed.
+    var warp: [(source: Int64, time: Int64)] = []
+    /// The source frame playing `t` frames into the clip (follows the warp).
+    func sourceFrame(atClipTime t: Double) -> Double {
+        guard warp.count >= 2 else { return Double(fields.offset) + t * fields.rate }
+        if t <= 0 { return Double(warp[0].source) + t }
+        for i in 1..<warp.count where t <= Double(warp[i].time) {
+            let a = warp[i - 1], b = warp[i]
+            return Double(a.source) + (t - Double(a.time)) * Double(b.source - a.source) / Double(b.time - a.time)
+        }
+        return Double(warp[warp.count - 1].source) + (t - Double(warp[warp.count - 1].time))
+    }
     subscript<T>(dynamicMember key: KeyPath<ClipFields, T>) -> T { fields[keyPath: key] }
     var end: Int64 { fields.start + fields.length }
     var isStretched: Bool { abs(fields.rate - 1) > 1e-9 || fields.pitch != 0 }
@@ -138,6 +150,10 @@ final class Session {
                 if ci.midi {
                     clip.notes = [DalnokNote](repeating: DalnokNote(), count: Int(ci.note_count))
                     _ = dalnok_midi_clip_notes(h, ci.id, &clip.notes, ci.note_count)
+                } else if ci.warp_points > 0 {
+                    var src = [Int64](repeating: 0, count: Int(ci.warp_points)), tm = src
+                    let n = Int(dalnok_clip_warp(h, ci.id, &src, &tm, ci.warp_points))
+                    clip.warp = (0..<max(0, min(n, src.count))).map { (src[$0], tm[$0]) }
                 }
                 clips.append(clip)
             }

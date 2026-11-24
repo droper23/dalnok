@@ -51,6 +51,7 @@ private:
         int64_t start = 0, offset = 0, length = 0, fadeIn = 0, fadeOut = 0;
         float gainDb = 0, pitch = 0;
         double rate = 1.0;
+        WarpMap warp;
     };
     struct ContentEntry {
         bool instrument = false;

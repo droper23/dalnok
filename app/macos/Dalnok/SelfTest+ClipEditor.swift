@@ -98,6 +98,12 @@ extension SelfTest {
         check(s.clip(midi)?.notes.contains { $0.pitch == 64 && $0.start == pasteAt - c.start + c.offset } == true, "at the playhead")
         check(key("d", 2) && s.clip(midi)?.notes.count == n0 + 2, "⌘D repeats the selected notes")
 
+        // The piano roll's playhead follows the transport.
+        let into = c.start + Int64(beat)
+        e.seek(into); _ = await waitUntil { e.position == into }
+        w.clipEditor.tick()
+        check(!roll.playheadLayer.isHidden && abs(roll.playheadLayer.frame.midX - roll.x(Double(into))) <= 2,
+              "the piano roll shows the playhead (\(roll.playheadLayer.frame.midX) vs \(roll.x(Double(into))))")
         // Q quantizes the selected notes with the quantize value; Play starts at the selected notes.
         let off = Int64(roll.snapFrames * 0.3)
         let sixteenth = beat / 4
@@ -171,8 +177,18 @@ extension SelfTest {
         try? w.snapshot(to: workdir.appendingPathComponent("clip-editor-audio.png"))
         w.timeline.selectClips([audioClip])
         w.clipEditor.focused = false
-        check(perform("Quantize Selection", exact: true) && s.clip(audioClip) == nil && (s.track(drums)?.clips.count ?? 0) > 7,
-              "Q quantizes audio: the clip is cut at its transients (\(s.track(drums)?.clips.count ?? 0) pieces, \(e.undoName))")
+        check(perform("Quantize Selection", exact: true) && s.track(drums)?.clips.count == 1 && (s.clip(audioClip)?.warp.count ?? 0) > 2,
+              "Q quantizes audio in place: one clip, warped (\(s.track(drums)?.clips.count ?? 0) clips, \(s.clip(audioClip)?.warp.count ?? 0) anchors)")
+        // The sample view's playhead follows the transport through the warp.
+        let inside = Int64(step * 3 + step / 2)
+        e.seek(inside); _ = await waitUntil { e.position == inside }
+        w.openInClipEditor(audioClip)
+        w.clipEditor.tick()
+        let av = w.clipEditor.audio
+        if let qc = s.clip(audioClip) {
+            let want = av.x(qc.sourceFrame(atClipTime: Double(inside - qc.start)))
+            check(!av.playheadLayer.isHidden && abs(av.playheadLayer.frame.midX - want) <= 2, "the audio editor shows the playhead (\(av.playheadLayer.frame.midX) vs \(want))")
+        }
         s.setSolo(drums, true) // only the drums in the offline mix
         var l = [Float](repeating: 0, count: total), r = l
         _ = dalnok_render_offline(e.handle, 0, Int64(total), &l, &r) // only this track plays here? the mix: check the track's own peaks
@@ -183,8 +199,8 @@ extension SelfTest {
         check(hits.enumerated().allSatisfy { abs($0.element - ($0.offset + 1) * step) <= Int(rate * 0.001) },
               "every hit sounds on its eighth note within 1 ms (\(hits.enumerated().map { $0.element - ($0.offset + 1) * step }))")
         s.setSolo(drums, false)
-        for _ in 0..<3 where s.clip(audioClip) == nil { _ = perform("Undo") } // Unsolo, Solo, then the quantize
-        check(s.clip(audioClip) != nil, "undo restores the clip")
+        for _ in 0..<3 where (s.clip(audioClip)?.warp.count ?? 0) > 0 { _ = perform("Undo") } // Unsolo, Solo, then the quantize
+        check(s.clip(audioClip)?.warp.isEmpty == true, "undo restores the clip as recorded")
 
         // The hover playhead follows the mouse over the arrangement.
         if let hp = lanePoint(drums, frame: bar * 2) {
@@ -203,6 +219,17 @@ extension SelfTest {
             _ = await waitUntil { e.position < Int64(bar) }
             check(e.position < Int64(bar), "Play starts at the selected clip, not the playhead (\(e.position))")
             e.pause()
+        }
+        // Input Monitoring with no input chosen: a connected interface, not the Mac's own microphone.
+        let devices = Engine.recordingDevices()
+        if devices.contains(where: { !MainWindowController.isBuiltInOrPhone($0) }) && !MainWindowController.simulatedInput {
+            let chosen = MainWindowController.recordingInputUID
+            MainWindowController.recordingInputUID = nil
+            check(w.recordingDevice.map { !MainWindowController.isBuiltInOrPhone($0) } == true,
+                  "with no input chosen, monitoring uses the audio interface (\(w.recordingDevice?.name ?? "none"))")
+            MainWindowController.recordingInputUID = chosen
+        } else {
+            print("SKIP  interface preferred for monitoring (no audio interface connected)")
         }
         for t in s.tracks.map(\.id) where !tracksBefore.contains(t) { s.removeTrack(t) }
     }

@@ -26,3 +26,4 @@ out->slot = c->slot;
 out->follow = c->follow;
 out->follow_loops = c->followLoops;
 out->muted = c->muted;
+out->warp_points = c->warped() ? static_cast<int32_t>(c->warp->size()) : 0;

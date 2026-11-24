@@ -210,10 +210,7 @@ const CommandDef kCommands[] = {
     {"audio.quantize", "Quantize Audio", "{clip, grid (quarter notes, default 0.25), strength (0-1], sensitivity (0-1)}", [](ARGS) {
          DalnokClipId c;
          if (!needInt(a, "clip", c, err)) return DALNOK_ERR_INVALID_ARG;
-         const auto ids = e.quantizeAudio(c, a.getNumber("grid", 0.25), a.getNumber("strength", 1), a.getNumber("sensitivity", 0.5), err);
-         if (ids.empty()) return DALNOK_ERR_INVALID_ARG;
-         r.set("slices", static_cast<double>(ids.size()));
-         return DALNOK_OK;
+         return status(e.quantizeAudio(c, a.getNumber("grid", 0.25), a.getNumber("strength", 1), a.getNumber("sensitivity", 0.5), err), err);
      }},
     {"plugins.copy", "Paste Plug-ins", "{from, slots: [slot…], to, index (-1 = end)}", [](ARGS) {
          DalnokTrackId from, to;

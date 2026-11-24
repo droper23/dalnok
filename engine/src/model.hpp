@@ -6,6 +6,7 @@
 #include "dalnok/dalnok.h"
 #include "render.hpp"
 #include "tempo_map.hpp"
+#include "warp.hpp"
 
 #include <cstdint>
 #include <map>
@@ -127,7 +128,9 @@ struct ClipState {
     double rate = 1.0;               // source frames per timeline frame (≠1: time-stretched)
     float pitch = 0;                 // transposition in semitones (preservePitch only)
     bool preservePitch = true;       // false: varispeed (pitch follows rate)
-    bool stretched() const { return std::fabs(rate - 1.0) > 1e-9 || pitch != 0; }
+    WarpMap warp;                    // audio quantize: segments at their own speeds (null: one speed, `rate`)
+    bool warped() const { return warp && !warp->empty(); }
+    bool stretched() const { return std::fabs(rate - 1.0) > 1e-9 || pitch != 0 || warped(); }
     int64_t sourceLength() const { return static_cast<int64_t>(std::llround(static_cast<double>(length) * rate)); }
     std::string name;
     bool operator==(const ClipState &) const = default; // note lists compare by identity (they are immutable)

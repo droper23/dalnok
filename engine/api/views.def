@@ -59,4 +59,5 @@ int32_t       slot           | slot          | c->slot                          
 int32_t       follow         | follow        | c->follow                                                | launcher follow action: 0 none, 1 next filled slot, 2 stop
 int32_t       follow_loops   | followLoops   | c->followLoops                                           | after this many loops
 bool          muted          | muted         | c->muted                                                 | clip muted
+int32_t       warp_points    | warpPoints    | c->warped() ? static_cast<int32_t>(c->warp->size()) : 0  | audio quantize: warp anchors (dalnok_clip_warp)
 end

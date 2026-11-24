@@ -1,6 +1,6 @@
 {
  "$comment": "Every key a Dalnok project file can hold (A-16): its JSON type(s), the format version that introduced it, and whether an older build may ignore it and still play the project the same (view or transport state). Arrays of objects are written name[]. ProjectFormat tests check saved files against this; update it with every format change.",
- "version": 14,
+ "version": 15,
  "keys": {
   "cycle": {
    "type": "array",
@@ -223,6 +223,11 @@
   "tracks[].clips[].rate": {
    "type": "number",
    "since": 1
+  },
+  "tracks[].clips[].warp": {
+   "type": "array",
+   "since": 15,
+   "note": "audio quantize: [[source frame, frames from the clip's start], ...] anchors; each segment plays at its own speed"
   },
   "tracks[].clips[].slot": {
    "type": "number",

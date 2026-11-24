@@ -86,7 +86,7 @@ final class PianoRollView: NSView {
     var onStatus: ((String) -> Void)?
     var onFocus: (() -> Void)?
     var rowHeight: CGFloat = 12
-    var framesPerPoint: Double = 200 { didSet { needsDisplay = true; if snapBeats != shownSnap { updateSubtitle() } } }
+    var framesPerPoint: Double = 200 { didSet { needsDisplay = true; shownPlayhead = .nan; updatePlayhead(); if snapBeats != shownSnap { updateSubtitle() } } }
     private var shownSnap = 0.0
 
     /// Window subtitle: the snap value and what's selected, so state isn't hidden.
@@ -108,19 +108,39 @@ final class PianoRollView: NSView {
         }
         if let onStatus { onStatus(parts.joined(separator: "  ·  ")) } else { window?.subtitle = parts.joined(separator: "  ·  ") }
     }
-    var scrollX: Double = 0 { didSet { needsDisplay = true } }   // timeline frame at the grid's left edge
+    var scrollX: Double = 0 { didSet { needsDisplay = true; shownPlayhead = .nan; updatePlayhead() } }   // timeline frame at the grid's left edge
     var scrollY: CGFloat = 0 { didSet { needsDisplay = true } }  // points from the top (pitch 127)
+
+    /// The playhead: a layer moved every display tick (no redraw of the notes).
+    let playheadLayer = CALayer()
+    private var shownPlayhead: CGFloat = .nan
+    /// Moves the playhead line to the engine's position; hidden outside the grid.
+    func updatePlayhead() {
+        let g = grid
+        let px = x(Double(session.engine.position)).rounded()
+        guard px != shownPlayhead || playheadLayer.frame.height != g.height + Self.rulerHeight else { return }
+        shownPlayhead = px
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        playheadLayer.frame = CGRect(x: px - 0.5, y: 0, width: 1.5, height: g.maxY)
+        playheadLayer.isHidden = clip == nil || px < g.minX || px > g.maxX
+        CATransaction.commit()
+    }
 
     init(session: Session) {
         self.session = session
         super.init(frame: .zero)
         clipsToBounds = true
         wantsLayer = true
+        playheadLayer.backgroundColor = Theme.playhead.cgColor
+        playheadLayer.zPosition = 10
+        playheadLayer.isHidden = true
+        layer?.addSublayer(playheadLayer)
         toolTip = "Drag empty space to select notes. Option-arrow keys move the entry cursor; Return inserts a note."
     }
     required init?(coder: NSCoder) { fatalError() }
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
+    override func layout() { super.layout(); shownPlayhead = .nan; updatePlayhead() }
 
     var clip: ClipView? { session.clip(clipId).flatMap { $0.isMidi ? $0 : nil } }
     var track: TrackView? { clip.flatMap { session.track($0.track) } }

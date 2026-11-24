@@ -690,7 +690,7 @@ final class LibraryFigure: NSView {
 /// Tabs drawn as ruled cells in Atelier: the choices set in the serif, the chosen one on a wash with a red rule under
 /// it (the audit: the system's segmented control broke the page). Elsewhere the system's control. Behaviour unchanged.
 @MainActor
-final class RuledTabs: NSSegmentedControl {
+class RuledTabs: NSSegmentedControl {
     override func draw(_ dirtyRect: NSRect) {
         guard Theme.look.mixer == .instrument, let ctx = NSGraphicsContext.current?.cgContext else { return super.draw(dirtyRect) }
         let r = bounds.insetBy(dx: 0.5, dy: 1.5)

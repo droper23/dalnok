@@ -21,6 +21,8 @@ final class InspectorPanel: SidePanelView {
     var track: DalnokTrackId? { didSet { if track != oldValue { showAllInserts = false; reload() } } }
     var onOpenPlugin: ((DalnokTrackId, Int32) -> Void)?
     var onAddPlugin: ((DalnokTrackId) -> Void)?
+    /// Input Monitoring on or off (the main window opens the right input device and says which one it is).
+    var onSetMonitor: ((DalnokTrackId, Bool) -> Void)?
     /// A plug-in dragged from the Library or the browser and dropped anywhere on the Inspector: insert it last.
     var onDropPlugin: (([String], DalnokTrackId) -> Void)?
     /// The recording device's inputs ("Input 1 — Scarlett Solo"…); empty when there is none.
@@ -408,7 +410,11 @@ final class InspectorPanel: SidePanelView {
         if !session.setOutput(t, DalnokTrackId(output.selectedTag())) { session.onMessage?("That output would feed the bus back into itself"); reload() }
     }
     @objc private func inputChosen() { if let t = track { session.setInput(t, Int32(input.indexOfSelectedItem)) } }
-    @objc private func monitorChosen() { if let t = track { session.setInputMonitor(t, monitor.indexOfSelectedItem == 1) } }
+    @objc private func monitorChosen() {
+        guard let t = track else { return }
+        let on = monitor.indexOfSelectedItem == 1
+        if let onSetMonitor { onSetMonitor(t, on) } else { session.setInputMonitor(t, on) }
+    }
     @objc private func addInsert() { if let t = track { onAddPlugin?(t) } }
     @objc private func addSendChosen(_ sender: NSMenuItem) {
         guard let t = track else { return }

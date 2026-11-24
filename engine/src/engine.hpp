@@ -258,10 +258,11 @@ public:
                              std::vector<MidiNote> notes = {}, const char *undoName = "New MIDI Clip");
     bool setNotes(DalnokClipId id, std::vector<MidiNote> notes, std::string &err);
     bool quantize(DalnokClipId id, double gridBeats, double strength, std::string &err);
-    // Audio quantize (API 47, audio_quantize.cpp): the clip's transients (source frames), and the clip cut into
-    // slices whose transients move to the grid by `strength`, each stretched to meet the next (one undo step).
+    // Audio quantize (API 47, audio_quantize.cpp): the clip's transients (source frames), and a warp map that moves
+    // them to the grid by `strength` (attacks at their own speed, the rest stretched to fit; one undo step).
     std::vector<int64_t> audioTransients(DalnokClipId id, double sensitivity, std::string &err) const;
-    std::vector<DalnokClipId> quantizeAudio(DalnokClipId id, double gridBeats, double strength, double sensitivity, std::string &err);
+    bool quantizeAudio(DalnokClipId id, double gridBeats, double strength, double sensitivity, std::string &err);
+    bool setClipWarp(DalnokClipId id, WarpList warp, std::string &err); // empty: remove (one speed again)
     // Plugins (ADR-0009 stage 3). Loading runs plugin code in this process (control thread).
     int32_t addPlugin(DalnokTrackId track, const std::string &path, const std::string &classId, std::string &err);
     bool removePlugin(DalnokTrackId track, int32_t slot, std::string &err);

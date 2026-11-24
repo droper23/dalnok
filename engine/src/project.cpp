@@ -11,6 +11,7 @@
 // Positions are frames at "sampleRate"; loading into an engine at another
 // rate rescales them.
 #include "engine.hpp"
+#include "render_compiler.hpp"
 #include "import/import.hpp"
 
 #include <algorithm>
@@ -30,7 +31,7 @@ namespace fs = std::filesystem;
 namespace dalnok {
 
 namespace {
-constexpr int kFormatVersion = 14;
+constexpr int kFormatVersion = 15;
 constexpr int kConstantTempoVersion = 3; // written when there are no tempo or meter changes, so older builds still open it
 
 // Format history (A-16), one step per version. Loading runs every step from the file's version up to
@@ -57,6 +58,7 @@ constexpr Migration kMigrations[] = {
     {12, "clip mute", nullptr},
     {13, "built-in plug-ins", nullptr},
     {14, "phase invert", nullptr},
+    {15, "audio warp maps (audio quantize)", nullptr},
 };
 constexpr bool migrationsCover() {
     int v = 1;
@@ -332,6 +334,16 @@ json::Value Engine::describe() const {
             if (c.follow) { cv.set("follow", c.follow); cv.set("followLoops", c.followLoops); }
             if (c.alt) cv.set("alt", true);
             if (c.muted) cv.set("muted", true);
+            if (c.warped()) {
+                json::Value wv = json::Value::makeArray();
+                for (const auto &p : *c.warp) {
+                    json::Value pt = json::Value::makeArray();
+                    pt.push(json::Value(static_cast<double>(p.source)));
+                    pt.push(json::Value(static_cast<double>(p.time)));
+                    wv.push(std::move(pt));
+                }
+                cv.set("warp", std::move(wv));
+            }
             if (c.stretched()) {
                 cv.set("rate", c.rate);
                 if (c.pitch != 0) cv.set("pitch", static_cast<double>(c.pitch));
@@ -471,6 +483,7 @@ bool Engine::saveProject(const std::string &path, std::string &err, bool copyMed
     }
     const bool phase = std::any_of(model_.tracks.begin(), model_.tracks.end(), [](const TrackState &t) { return t.phaseInvert; });
     const bool clipMute = std::any_of(model_.clips.begin(), model_.clips.end(), [](const ClipState &c) { return c.muted; });
+    const bool warp = std::any_of(model_.clips.begin(), model_.clips.end(), [](const ClipState &c) { return c.warped(); });
     const bool builtin = std::any_of(model_.tracks.begin(), model_.tracks.end(), [](const TrackState &t) {
         return std::any_of(t.plugins.begin(), t.plugins.end(), [](const PluginSlot &p) { return p.format == "dalnok"; });
     });
@@ -479,7 +492,7 @@ bool Engine::saveProject(const std::string &path, std::string &err, bool copyMed
     bool sidechain = false;
     for (const auto &t : model_.tracks) for (const auto &p : t.plugins) sidechain = sidechain || p.sidechain;
     const bool masterGain = model_.masterGainDb != 0;
-    doc.set("version", phase ? 14 : builtin ? 13 : clipMute ? 12 : !model_.markers.empty() ? 11 : bypass ? 10 : launcher || sidechain ? 9 : pluginAutomation ? 8 : !model_.folders.empty() || masterGain ? 7 : automation ? 6 : routing ? 5 : model_.tempo.size() > 1 || model_.meters.size() > 1 ? 4 : kConstantTempoVersion);
+    doc.set("version", warp ? 15 : phase ? 14 : builtin ? 13 : clipMute ? 12 : !model_.markers.empty() ? 11 : bypass ? 10 : launcher || sidechain ? 9 : pluginAutomation ? 8 : !model_.folders.empty() || masterGain ? 7 : automation ? 6 : routing ? 5 : model_.tempo.size() > 1 || model_.meters.size() > 1 ? 4 : kConstantTempoVersion);
     json::Value body = describe();
     for (auto &[key, value] : body.object) {
         if (key != "media") continue;
@@ -736,6 +749,21 @@ std::unique_ptr<Engine::PreparedProject> Engine::readDocument(const json::Value 
                     c.rate = std::clamp(cv.getNumber("rate", 1.0), 0.05, 20.0);
                     c.pitch = static_cast<float>(std::clamp(cv.getNumber("pitch", 0.0), -48.0, 48.0));
                     c.preservePitch = cv.getBool("preservePitch", true);
+                    if (const json::Value *wv = cv.get("warp"); wv && wv->isArray()) {
+                        WarpList w;
+                        for (const auto &pt : wv->array)
+                            if (pt.isArray() && pt.array.size() == 2 && pt.array[0].isNumber() && pt.array[1].isNumber() &&
+                                std::isfinite(pt.array[0].number) && std::isfinite(pt.array[1].number) &&
+                                std::fabs(pt.array[0].number) < 9e15 && std::fabs(pt.array[1].number) < 9e15)
+                                w.push_back({scale(static_cast<int64_t>(pt.array[0].number)), scale(static_cast<int64_t>(pt.array[1].number))});
+                        // Rounding at another sample rate may move the ends by a frame: they belong to the clip.
+                        if (w.size() >= 2 && std::llabs(w.front().source - c.offset) <= 2 && std::llabs(w.back().time - c.length) <= 2) {
+                            w.front().source = c.offset;
+                            w.back().time = c.length;
+                        }
+                        if (!warpValid(w) || w.front().source != c.offset || w.back().time != c.length) { err = "invalid clip warp"; return nullptr; }
+                        c.warp = std::make_shared<const WarpList>(std::move(w));
+                    }
                     c.fadeIn = std::max<int64_t>(0, scale(toInt(cv, "fadeIn")));
                     c.fadeOut = std::max<int64_t>(0, scale(toInt(cv, "fadeOut")));
                     c.fadeCurve = cv.getString("fadeCurve", "linear") == "equalPower" ? kFadeEqualPower : kFadeLinear;
@@ -894,11 +922,11 @@ std::unique_ptr<Engine::PreparedProject> Engine::readDocument(const json::Value 
         if (!c.stretched()) continue;
         const auto pe = pool.find(c.media);
         if (pe == pool.end() || !pe->second.handle->impl) continue;
-        const StretchKey key{c.media, c.offset, c.sourceLength(), c.length, static_cast<int32_t>(std::lround(c.pitch * 100)), c.preservePitch};
+        const StretchKey key = stretchKeyOf(c);
         bool have = false;
         for (const auto &s : prepared->stretched) have |= !(s.first < key) && !(key < s.first);
         if (!have)
-            if (auto m = renderStretch({key, pe->second.handle->impl, 0})) prepared->stretched.emplace_back(key, std::move(m));
+            if (auto m = renderStretch({key, pe->second.handle->impl, 0, c.warped() ? c.warp : nullptr})) prepared->stretched.emplace_back(key, std::move(m));
     }
     prepared->model = std::move(model);
     prepared->pool = std::move(pool);

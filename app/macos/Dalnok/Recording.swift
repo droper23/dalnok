@@ -31,7 +31,15 @@ extension MainWindowController {
         let devices = Engine.recordingDevices()
         if let uid = Self.recordingInputUID, let d = devices.first(where: { $0.uid == uid }) { return d }
         if let d = devices.first(where: { $0.uid == session.engine.outputDeviceUid }) { return d }
+        // Nothing chosen: a connected audio interface before the Mac's own microphone or a phone's (macOS's default
+        // input is usually the built-in mic, so monitoring a guitar in an interface heard nothing).
+        if let d = devices.first(where: { !Self.isBuiltInOrPhone($0) }) { return d }
         return devices.first(where: \.isDefault) ?? devices.first
+    }
+    static func isBuiltInOrPhone(_ d: Engine.InputDevice) -> Bool {
+        let n = d.name.lowercased(), u = d.uid.lowercased()
+        return u.contains("builtin") || n.contains("macbook") || n.contains("imac") || n.contains("iphone") || n.contains("ipad")
+            || n.contains("continuity") || n.contains("studio display") || n.contains("airpods")
     }
 
     /// Tells the engine which input monitored tracks hear (it opens the device only while something monitors).
@@ -531,29 +539,23 @@ extension MainWindowController {
         quantizeSelection(sender)
     }
     /// Q (Logic's Quantize): the selected notes in the piano roll, else every selected clip, to the quantize value at
-    /// the quantize strength, as one undo step. MIDI clips move their notes; audio clips are cut at their transients
-    /// and each slice is moved to the grid and time-stretched to meet the next (`dalnok_audio_quantize`).
+    /// the quantize strength, as one undo step. MIDI clips move their notes; audio clips stay whole and are warped so
+    /// their transients land on the grid (`dalnok_audio_quantize`: attacks at their own speed, the rest stretched).
     @objc func quantizeSelection(_ sender: Any?) {
         if pianoRollIsKey { return activeRoll.quantizeSelection() }
         var clips = timeline.selectedClips.compactMap { session.clip($0) }.filter { $0.folder == 0 }
         if !clipEditor.isHidden, clipEditor.focused, let c = clipEditor.clip { clips = [c] } // the docked editor's clip
         guard !clips.isEmpty else { return flash("Select clips (or notes) to quantize") }
         let grid = QuantizeSetting.grid, strength = QuantizeSetting.strength
-        var slices: [DalnokClipId] = [], untouched = 0, audio = 0
+        var untouched = 0, audio = 0
         session.engine.beginGroup("Quantize")
         for c in clips {
-            if c.isMidi { dalnok_midi_quantize(session.engine.handle, c.id, grid, strength); slices.append(c.id); continue }
+            if c.isMidi { dalnok_midi_quantize(session.engine.handle, c.id, grid, strength); continue }
             audio += 1
-            var out = [DalnokClipId](repeating: 0, count: 4096)
-            let n = Int(dalnok_audio_quantize(session.engine.handle, c.id, grid, strength, QuantizeSetting.sensitivity, &out, Int32(out.count)))
-            if n > 0 { slices += out.prefix(min(n, out.count)) } else { untouched += 1; slices.append(c.id) }
+            if dalnok_audio_quantize(session.engine.handle, c.id, grid, strength, QuantizeSetting.sensitivity) != DALNOK_OK { untouched += 1 }
         }
         session.engine.endGroup()
         session.refresh()
-        timeline.selectClips(slices)
-        if let open = clipEditor.clipId, session.clip(open) == nil, let first = slices.first(where: { session.clip($0) != nil }) {
-            clipEditor.show(clip: first) // the docked editor follows the quantized audio
-        }
         let what = clips.count == 1 ? "1 clip" : "\(clips.count) clips"
         var msg = "Quantized \(what) to \(QuantizeSetting.name)\(strength < 1 ? " at \(Int((strength * 100).rounded()))%" : "")"
         if audio > 0 && untouched == audio { msg = "No transients to quantize in \(audio == 1 ? "that clip" : "those clips")" }
