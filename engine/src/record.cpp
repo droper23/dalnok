@@ -283,11 +283,19 @@ bool Engine::stopRecording(RecordResult &r, std::string &err) {
 
     // ---- MIDI: pair note-on/off into notes ----
     std::vector<MidiNote> notes;
+    std::vector<MidiCC> controllers;
     if (rec_.recordMidiTrack && r.start >= 0 && end > r.start) {
         struct Held { int64_t at = -1; uint8_t velocity = 0; };
         Held held[16][128];
         for (const auto &e : rec_.midiTake) {
             const uint8_t type = e.status & 0xf0, ch = e.status & 0x0f, pitch = e.data1 & 0x7f;
+            if (type == 0xb0 || type == 0xe0) { // controllers and pitch bend (any channel) go into the clip as they came
+                const int64_t at = std::max<int64_t>(0, e.pos - r.start);
+                if (type == 0xb0) controllers.push_back({at, pitch, static_cast<uint16_t>(e.data2 & 0x7f)});
+                else controllers.push_back({at, kPitchBendController, static_cast<uint16_t>((e.data1 & 0x7f) | ((e.data2 & 0x7f) << 7))});
+                continue;
+            }
+            if (type != 0x80 && type != 0x90) continue;
             Held &h = held[ch][pitch];
             const bool on = type == 0x90 && e.data2 > 0;
             if (h.at >= 0) { // a note-off, or a repeated note-on, ends the held note
@@ -353,10 +361,12 @@ bool Engine::stopRecording(RecordResult &r, std::string &err) {
             r.audioClips.push_back(trackTakes.front());
         }
     }
-    if (!notes.empty()) {
+    if (!notes.empty() || !controllers.empty()) {
         r.notes = static_cast<int32_t>(notes.size());
         r.midiClip = addMidiClip(rec_.recordMidiTrack, r.start, end - r.start, placeErr, std::move(notes), "Record");
         if (!r.midiClip) problems.push_back("could not place the MIDI take: " + placeErr);
+        else if (!controllers.empty() && !setControllers(r.midiClip, std::move(controllers), placeErr))
+            problems.push_back("could not keep the recorded controllers: " + placeErr);
         else if (rec_.recordSlot.load() >= 0) {
             r.midiClip = takeToSlot({r.midiClip}, rec_.recordSlot.load(), placeErr);
             if (!r.midiClip) problems.push_back("could not put the MIDI take in the launcher slot: " + placeErr);

@@ -147,6 +147,35 @@ func oneNoteSession(pitch: UInt8 = 69, velocity: UInt8 = 127) -> (OpaquePointer,
         #expect(dalnok_track_clip_at(e, t, 0) == 0)
     }
 
+    @Test func recordsControllersAndPitchBendWithTheNotes() {
+        let e = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(e) }
+        _ = dalnok_track_add_instrument(e, "Keys")
+        var err = [CChar](repeating: 0, count: 256)
+        #expect(dalnok_record_start(e, nil, nil, &err, 256) == DALNOK_OK, "\(cstr(err))")
+        var l = [Float](repeating: 0, count: 512), r = l
+        func pump(_ n: Int) { for _ in 0..<n { dalnok_engine_pump(e, &l, &r, 512) } }
+        pump(2)
+        dalnok_midi_inject(e, 0xB0, 64, 127) // sustain down
+        dalnok_midi_inject(e, 0x90, 60, 100)
+        pump(4)
+        dalnok_midi_inject(e, 0xE0, 0x7F, 0x7F) // full bend up
+        dalnok_midi_inject(e, 0x80, 60, 0)
+        pump(2)
+        dalnok_midi_inject(e, 0xB0, 64, 0)
+        pump(2)
+        var result = DalnokRecordResult()
+        #expect(dalnok_record_stop(e, &result, &err, 256) == DALNOK_OK, "\(cstr(err))")
+        #expect(result.notes == 1 && undoName(e) == "Record")
+        var cc = [DalnokMidiCC](repeating: DalnokMidiCC(), count: 8)
+        let n = Int(dalnok_midi_clip_controllers(e, result.midi_clip, &cc, 8))
+        #expect(n == 3, "\(n) controller events")
+        #expect(cc[0].start == 1_024 && cc[0].controller == 64 && cc[0].value == 127)
+        #expect(cc[1].start == 3_072 && cc[1].controller == Int32(DALNOK_PITCH_BEND) && cc[1].value == 16_383)
+        #expect(cc[2].start == 4_096 && cc[2].controller == 64 && cc[2].value == 0)
+        dalnok_undo(e)
+        #expect(dalnok_track_clip_at(e, dalnok_track_at(e, 0), 0) == 0, "one undo removes the take with its controllers")
+    }
+
     @Test func quantizeMovesStartsTowardTheGrid() {
         let e = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(e) }
         let t = dalnok_track_add_instrument(e, nil)
