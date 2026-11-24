@@ -5,7 +5,23 @@ milestone: 0.4.0 released 2026-11-23 (four themes in six looks with their own fi
 ---
 # Current State
 
-## Latest (2026-11-24): ten-tester bug hunt
+## Latest (2026-11-24, day): open bugs fixed, parity features
+Same branch (API 47). Every bug from the ten-tester hunt fixed; then features toward Logic/Ableton parity.
+- **Fixed:** tempo changes move markers, automation and the cycle with the beats (`remapMidi`, `cycleFollowsTempo`, also on
+  undo); same start+pitch notes merge (`sortedNotes`, later wins); velocity lane draws chords loudest first; 16-bit
+  export TPDF dither; `textFaint` ≥ 4.5:1 everywhere (self-test checks all palettes); commands reject out-of-range
+  values; CLI warning on stderr; Logic preset ⌘T = split (Dalnok's ⌥⌘N already matches Logic's New Tracks).
+- **New:** Dalnok Delay / Reverb / Gate (`fx/time_fx.*`); Bounce Track in Place (`Engine::bounceInPlace`, ⌃⌘B);
+  BS.1770 loudness (`loudness.*`, master strip, `dalnok_render_loudness`); seven export formats (`openAudioWriter`,
+  `dalnok_render_to_file`); Export Stems (`Scratch::stemL`, `dalnok_export_stems`); MIDI Functions
+  (`Engine::transformNotes`, `dalnok_midi_transform`). Offline renders share `Engine::renderBlocks`.
+- **Verified:** `swift test` 330 pass; self-test matrix 12/12 PASS after each UI change.
+- **Not reproduced:** "a hit near a trimmed audio clip's start isn't quantized" (two tests added, both pass before and after).
+- **Next for parity (ranked):** clip loop brace per clip; CC / pitch-bend lanes; sampler / drum instrument; warp
+  markers editable + warp modes; region inspector; step input; MP3 export (needs an encoder library); render queue;
+  spectrum and correlation meters; racks / macros; capture MIDI; groove pool.
+
+## Earlier (2026-11-24): ten-tester bug hunt
 Same branch. Ten agents (one on real input), 12 fix commits; journal 2026-11-24 has the list.
 - **Fixed:** transpose kept a quantized clip's warp; export rings out to silence (`dalnok_render_to_wav_tail`, trimmed
   to the last audible block); notes stay inside their clip on quantize/drag/nudge; strength 0 no-op; clip lamp with DC

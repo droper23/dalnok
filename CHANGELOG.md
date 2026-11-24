@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+- **Stock effects:** Dalnok Delay (stereo or ping-pong, filtered feedback), Dalnok Reverb (predelay, decay, size, damping, width) and Dalnok Gate (threshold, range, hold, hysteresis, sidechain key).
+- **Bounce Track in Place** (Track menu, ⌃⌘B): the track through its plug-ins becomes audio on a new track below, with the same fader, pan and output; the original is muted. One undo step.
+- **Loudness meter:** the mixer's master strip shows integrated LUFS, short-term loudness and true peak while playing (EBU R128; red above −1 dBTP; click to start over).
+- **Export formats:** WAV 16-bit (now dithered), 24-bit and 32-bit float, AIFF, FLAC, Apple Lossless and AAC, chosen in the export panel.
+- **Export Stems** (File menu, ⇧⌘B): one file per track, post-fader, all the same length.
+- **MIDI Functions** (Clip menu): Legato, Fixed Length, Scale Quantize (8 scales in every key), Humanize, and set, louder or softer velocity, on the selected notes or whole clips.
+- Tempo changes keep markers, automation and the cycle range on their bars (also when undone).
+- Two notes on the same pitch at the same time merge (the one moved or added wins); chords show every velocity stem.
+- Commands report out-of-range volume, pan, positions and fades as errors instead of clamping them silently; `dalnok-cli` prints its offline-media warning on stderr.
+- Faint text reaches 4.5:1 contrast in every look. The Logic shortcut preset splits at the playhead with ⌘T.
 - Exports of the whole arrangement ring out: synth releases and effect tails play until silence (at most 10 s) instead of being cut at the last clip; a mix that already ends in silence exports at its exact length. `dalnok-cli render-project --tail <s>`.
 - Fixed: transposing a quantized audio clip lost its quantize.
 - Fixed: quantizing, dragging or nudging notes could push them outside their clip, where they went silent and disappeared; quantize strength 0 is now a valid no-op.
