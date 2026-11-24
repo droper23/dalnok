@@ -1087,6 +1087,10 @@ int32_t dalnok_export_stems(DalnokEngine *e, const char *folder, int32_t format,
     }
     return static_cast<int32_t>(paths.size());
 }
+DalnokStatus dalnok_clip_set_loop(DalnokEngine *e, DalnokClipId c, bool looped) {
+    std::string err;
+    return e ? statusFor(e->impl.setClipLoop(c, looped, err), err) : DALNOK_ERR_INVALID_ARG;
+}
 DalnokTrackId dalnok_track_bounce_in_place(DalnokEngine *e, DalnokTrackId track, const char *path, char *err, size_t err_len) {
     if (!e || !path) return 0;
     std::string msg;

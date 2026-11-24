@@ -1289,6 +1289,22 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         session.setClipMuted(clip.id, !clip.muted)
     }
 
+    /// Clip ▸ Loop Clip (L, as in Logic): the selected clips repeat their window when their right edge is dragged out.
+    @objc func toggleClipLoop(_ sender: Any?) {
+        let clips = timeline.selectedClips.compactMap { session.clip($0) }
+        guard !clips.isEmpty else { return flash("Select clips to loop") }
+        let on = !clips.allSatisfy { $0.loopLength > 0 }
+        session.engine.beginGroup(on ? "Loop" : "Unloop")
+        var refused = 0
+        for c in clips where (c.loopLength > 0) != on {
+            if dalnok_clip_set_loop(session.engine.handle, c.id, on) != DALNOK_OK { refused += 1 }
+        }
+        session.engine.endGroup()
+        session.refresh()
+        if refused > 0 { flash("Time-stretched or quantized audio can't loop (reset its speed first)") }
+        else { flash(on ? "Looped: drag the clip's end to repeat it" : "Loop off") }
+    }
+
     @objc func setFadeCurveLinear(_ sender: Any?) { setCurve(DALNOK_FADE_LINEAR) }
     @objc func setFadeCurveEqualPower(_ sender: Any?) { setCurve(DALNOK_FADE_EQUAL_POWER) }
     private func setCurve(_ curve: DalnokFadeCurve) {
@@ -2527,6 +2543,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         case #selector(toggleSoloTrack(_:)):
             item.state = selectedTrack.flatMap { session.track($0) }?.solo == true ? .on : .off
             return selectedTrack != nil
+        case #selector(toggleClipLoop(_:)):
+            let sel = timeline.selectedClips.compactMap { session.clip($0) }
+            item.state = !sel.isEmpty && sel.allSatisfy { $0.loopLength > 0 } ? .on : .off
+            return !sel.isEmpty
         case #selector(toggleClipMute(_:)):
             item.title = selectedClipView?.muted == true ? "Unmute Clip" : "Mute Clip"
             return selectedClipView != nil

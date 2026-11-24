@@ -467,6 +467,7 @@ func buildMenu(target: MainWindowController) -> NSMenu {
         item("Open Take Folder", #selector(W.openTakeFolder(_:)), ""),
         item("Make Take Folder", #selector(W.makeTakeFolder(_:)), ""),
         item("Mute Clip", #selector(W.toggleClipMute(_:)), ""),
+        item("Loop Clip", #selector(W.toggleClipLoop(_:)), "l", []),
         quantize,
         functions,
         .separator(),

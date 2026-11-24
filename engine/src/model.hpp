@@ -122,6 +122,11 @@ struct ClipState {
     DalnokTrackId track = 0;
     DalnokMediaId media = 0;
     int64_t start = 0, offset = 0, length = 0;
+    // Loop (Logic's region Loop, Ableton's clip loop): when loopLength > 0 the clip repeats the source window
+    // [offset, offset + loopLength) for its whole length, starting loopPhase frames into that window (a split's
+    // right part, a trimmed left edge). Not for time-stretched or warped audio.
+    int64_t loopLength = 0, loopPhase = 0;
+    bool looped() const { return loopLength > 0; }
     int64_t fadeIn = 0, fadeOut = 0; // frames
     int32_t fadeCurve = 0;           // FadeCurve
     float gainDb = 0;                // clip (region/item) gain

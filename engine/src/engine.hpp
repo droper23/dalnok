@@ -283,6 +283,7 @@ public:
     DalnokClipId addClip(DalnokTrackId track, DalnokMediaId media, int64_t start, int64_t offset, int64_t length,
                          std::string &err);
     bool removeClip(DalnokClipId id, std::string &err);
+    bool setClipLoop(DalnokClipId id, bool on, std::string &err); // see ClipState::loopLength
     bool moveClip(DalnokClipId id, DalnokTrackId track, int64_t start, std::string &err);
     bool setClipRegion(DalnokClipId id, int64_t start, int64_t offset, int64_t length, std::string &err);
     DalnokClipId splitClip(DalnokClipId id, int64_t at, std::string &err);

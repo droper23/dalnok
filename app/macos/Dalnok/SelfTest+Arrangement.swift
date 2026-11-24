@@ -178,6 +178,31 @@ extension SelfTest {
             _ = perform("Undo")
             check(s.tracks.count == n && s.tracks.first(where: { $0.id == t.id })?.muted == false, "undo removes the bounce and unmutes")
         }
+        // Clip ▸ Loop Clip (L): the clip repeats past its audio when its end is dragged out; drawn pass by pass.
+        if let c = s.tracks.flatMap(\.clips).first(where: { !$0.isMidi && $0.rate == 1 && $0.warp.isEmpty && $0.slot < 0 }) {
+            tl.selectClips([c.id])
+            check(perform("Loop Clip", exact: true) && s.clip(c.id)?.loopLength == c.length, "Clip ▸ Loop Clip loops the selected clip")
+            tl.glide(framesPerPoint: Double(c.length) * 2 / Double(max(200, tl.bounds.width)),
+                     scrollFrame: Double(max(0, c.start - c.length / 10)), duration: 0) // the whole clip and room to its right
+            if let a = tl.windowPoint(ofClip: c.id, zone: "right"), let win = tl.window {
+                // ⌃ ignores the grid: drag the right edge out by half the clip's length again.
+                let b = CGPoint(x: a.x + (tl.xPos(forFrame: Double(c.start + c.length)) - tl.xPos(forFrame: Double(c.start))) / 2, y: a.y)
+                func mouse(_ type: NSEvent.EventType, _ p: CGPoint) -> NSEvent {
+                    NSEvent.mouseEvent(with: type, location: p, modifierFlags: type == .leftMouseDown ? [] : .control,
+                                       timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: win.windowNumber,
+                                       context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!
+                }
+                tl.mouseDown(with: mouse(.leftMouseDown, a)); tl.mouseDragged(with: mouse(.leftMouseDragged, b)); tl.mouseUp(with: mouse(.leftMouseUp, b))
+                s.refresh()
+            }
+            let looped = s.clip(c.id)
+            let want = c.length + c.length / 2
+            check(abs((looped?.length ?? 0) - want) <= c.length / 50 && looped?.loopLength == c.length,
+                  "dragging a looped clip's end repeats its window (\(looped?.length ?? 0), about \(want); window \(looped?.loopLength ?? 0))")
+            try? w.snapshot(to: workdir.appendingPathComponent("clip-loop.png"))
+            _ = perform("Undo"); _ = perform("Undo")
+            check(s.clip(c.id)?.loopLength == 0 && s.clip(c.id)?.length == c.length, "undo takes back the drag and the loop")
+        }
         // Hide Track / Show All Tracks: out of view, still playing; the header title counts them.
         if let t = s.tracks.first {
             w.headers.select(t.id)

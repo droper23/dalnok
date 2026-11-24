@@ -768,7 +768,44 @@ final class TimelineView: NSView {
     }
 
     /// MIDI clips: notes as bars, vertical position by pitch within the clip's own range.
+    /// A looped clip as one plain (unlooped) clip per pass of its loop window, in timeline order.
+    func loopPasses(_ clip: ClipView) -> [ClipView] {
+        let period = clip.loopLength
+        guard period > 0 else { return [clip] }
+        var parts: [ClipView] = [], p: Int64 = 0
+        while p < clip.length {
+            let src = clip.offset + (clip.loopPhase + p) % period, seg = min(clip.offset + period - src, clip.length - p)
+            var part = clip
+            part.fields.start = clip.start + p
+            part.fields.offset = src
+            part.fields.length = seg
+            part.fields.loopLength = 0
+            part.fields.loopPhase = 0
+            parts.append(part)
+            p += seg
+        }
+        return parts
+    }
+    private func drawLoopSeam(_ ctx: CGContext, x: CGFloat, rect: CGRect, top: CGFloat, color: NSColor) {
+        ctx.saveGState()
+        ctx.setStrokeColor(color.withAlphaComponent(0.55).cgColor)
+        ctx.setLineWidth(1)
+        ctx.setLineDash(phase: 0, lengths: [2, 2])
+        ctx.move(to: CGPoint(x: x.rounded() + 0.5, y: top)); ctx.addLine(to: CGPoint(x: x.rounded() + 0.5, y: rect.maxY - 2))
+        ctx.strokePath()
+        ctx.restoreGState()
+    }
+
     private func drawNotes(_ ctx: CGContext, _ clip: ClipView, rect: CGRect, color: NSColor, dim: Bool) {
+        if clip.loopLength > 0 {
+            for part in loopPasses(clip) {
+                drawNotes(ctx, part, rect: rect, color: color, dim: dim)
+                if part.start > clip.start {
+                    drawLoopSeam(ctx, x: xPos(forFrame: Double(part.start)), rect: rect, top: rect.minY + titleH + 2, color: color)
+                }
+            }
+            return
+        }
         let visible = clip.notes.filter { $0.start >= clip.offset && $0.start < clip.offset + clip.length }
         guard let lo = visible.map(\.pitch).min(), let hi = visible.map(\.pitch).max() else { return }
         let top = rect.minY + titleH + 4, height = rect.maxY - 4 - top
@@ -1438,6 +1475,16 @@ final class TimelineView: NSView {
         let visX0 = max(rect.minX, 0), visX1 = min(rect.maxX, bounds.width)
         let columns = Int(((visX1 - visX0) * scale).rounded(.up))
         guard columns > 0 else { return }
+        if clip.loopLength > 0 { // a looped clip: each pass drawn as its own clip, a faint line where the loop restarts
+            for part in loopPasses(clip) {
+                let x0 = max(visX0, xPos(forFrame: Double(part.start))), x1 = min(visX1, xPos(forFrame: Double(part.end)))
+                guard x1 > x0 else { continue }
+                drawWaveform(ctx, media: media, clip: part, rect: CGRect(x: x0, y: rect.minY, width: x1 - x0, height: rect.height),
+                             top: top, color: color, dim: dim, scale: scale)
+                if part.start > clip.start { drawLoopSeam(ctx, x: xPos(forFrame: Double(part.start)), rect: rect, top: top, color: color) }
+            }
+            return
+        }
         if clip.warp.count >= 2 { // a quantized clip: each warp segment drawn at its own speed
             for i in 1..<clip.warp.count {
                 let a = clip.warp[i - 1], b = clip.warp[i]
@@ -1683,7 +1730,7 @@ final class TimelineView: NSView {
         case .leftEdge:
             // Keep the right edge fixed; reveal or hide audio on the left.
             var start = snap(Double(c.start) + delta, bypass: bypass)
-            start = max(start, c.start - c.offset)            // can't reveal before media start
+            start = max(start, c.loopLength > 0 ? 0 : c.start - c.offset) // can't reveal before media start (a loop repeats)
             start = min(start, c.end - 1)                      // keep at least one frame
             let offset = c.offset + (start - c.start)
             if start != current.start {
@@ -1721,7 +1768,7 @@ final class TimelineView: NSView {
             }
         case .rightEdge:
             var end = snap(Double(c.end) + delta, bypass: bypass)
-            if !c.isMidi { end = min(end, c.start + (c.mediaFrames - c.offset)) } // audio can't extend past its media; MIDI can
+            if !c.isMidi && c.loopLength == 0 { end = min(end, c.start + (c.mediaFrames - c.offset)) } // audio can't extend past its media; MIDI and loops can
             end = max(end, c.start + 1)
             if end != current.end {
                 session.setRegion(c.id, start: c.start, offset: c.offset, length: end - c.start)

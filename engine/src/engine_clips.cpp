@@ -162,12 +162,39 @@ bool Engine::setClipRegion(DalnokClipId id, int64_t start, int64_t offset, int64
             c->warp = w.empty() ? nullptr : std::make_shared<const WarpList>(std::move(w));
             return true;
         }
+        if (c->looped()) { // a looped clip extends freely; its left edge moves through the loop, not the source
+            if (start < 0 || length <= 0) return fail(err, "region out of range");
+            c->loopPhase = ((c->loopPhase + (start - c->start)) % c->loopLength + c->loopLength) % c->loopLength;
+            c->start = start;
+            c->length = length;
+            return true;
+        }
         const auto span = static_cast<int64_t>(std::llround(static_cast<double>(length) * c->rate));
         if (start < 0 || offset < 0 || length <= 0 || offset + span > frames)
             return fail(err, "region out of range");
         c->start = start;
         c->offset = offset;
         c->length = length;
+        return true;
+    });
+}
+
+bool Engine::setClipLoop(DalnokClipId id, bool on, std::string &err) {
+    return edit("Loop", true, [&](Model &m) {
+        ClipState *c = m.clip(id);
+        if (!c) return fail(err, "no such clip");
+        if (c->slot >= 0) return fail(err, "launcher slots always loop");
+        if (on == c->looped()) return true;
+        if (on) {
+            if (c->stretched()) return fail(err, "time-stretched or quantized audio can't loop (reset its speed first)");
+            c->loopLength = c->length; // the window as it is now repeats from here on
+            c->loopPhase = 0;
+            return true;
+        }
+        // Off: the clip plays its window once, from where its first pass starts.
+        c->offset += c->loopPhase;
+        c->length = std::min(c->length, c->loopLength - c->loopPhase);
+        c->loopLength = c->loopPhase = 0;
         return true;
     });
 }
@@ -183,7 +210,8 @@ DalnokClipId Engine::splitClip(DalnokClipId id, int64_t at, std::string &err) {
         it->length = leftLen;
         right.id = rightId;
         right.start = at;
-        right.offset += static_cast<int64_t>(std::llround(static_cast<double>(leftLen) * it->rate));
+        if (it->looped()) right.loopPhase = (it->loopPhase + leftLen) % it->loopLength; // same window, later in it
+        else right.offset += static_cast<int64_t>(std::llround(static_cast<double>(leftLen) * it->rate));
         right.length -= leftLen;
         if (it->warped()) { // each side keeps its part of the warp map
             const WarpList whole = *it->warp;

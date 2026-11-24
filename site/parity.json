@@ -641,9 +641,13 @@
         [
           "Multi-select and keyboard nudge",
           "verified"
+        ],
+        [
+          "Clip loop (L): a clip repeats its window when its end is dragged out; split and trim keep the loop",
+          "verified"
         ]
       ],
-      "evidence": "UndoAndEditing and Fades tests (crossfade weights checked numerically); self-test drives real drags, fade handles, and menu items. GUI self-test verifies shift-selection, marquee selection across tracks, group nudge/drag/delete and undo; group drag is horizontal only.",
+      "evidence": "UndoAndEditing and Fades tests (crossfade weights checked numerically); self-test drives real drags, fade handles, and menu items. GUI self-test verifies shift-selection, marquee selection across tracks, group nudge/drag/delete and undo; group drag is horizontal only. ClipLoops: a looped 1,000-frame ramp extended to 3.5 passes renders the ramp repeated exactly (1e-6), unchanged after a split, after save/reopen, and a left trim moves through the loop; MIDI loops repeat their notes a beat apart; stretched audio refuses. Self-test: Clip ▸ Loop Clip, drag the end out by half, undo.",
       "screenshot": "screenshots/arrangement.png"
     },
     {

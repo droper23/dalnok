@@ -31,7 +31,7 @@ namespace fs = std::filesystem;
 namespace dalnok {
 
 namespace {
-constexpr int kFormatVersion = 15;
+constexpr int kFormatVersion = 16;
 constexpr int kConstantTempoVersion = 3; // written when there are no tempo or meter changes, so older builds still open it
 
 // Format history (A-16), one step per version. Loading runs every step from the file's version up to
@@ -59,6 +59,7 @@ constexpr Migration kMigrations[] = {
     {13, "built-in plug-ins", nullptr},
     {14, "phase invert", nullptr},
     {15, "audio warp maps (audio quantize)", nullptr},
+    {16, "clip loops", nullptr},
 };
 constexpr bool migrationsCover() {
     int v = 1;
@@ -353,6 +354,10 @@ json::Value Engine::describe() const {
             if (c.fadeIn > 0) cv.set("fadeIn", c.fadeIn);
             if (c.fadeOut > 0) cv.set("fadeOut", c.fadeOut);
             if (c.fadeCurve != 0) cv.set("fadeCurve", c.fadeCurve == kFadeEqualPower ? "equalPower" : "linear");
+            if (c.looped()) {
+                cv.set("loopLength", c.loopLength);
+                if (c.loopPhase) cv.set("loopPhase", c.loopPhase);
+            }
             clips.push(std::move(cv));
         }
         tv.set("clips", std::move(clips));
@@ -492,7 +497,8 @@ bool Engine::saveProject(const std::string &path, std::string &err, bool copyMed
     bool sidechain = false;
     for (const auto &t : model_.tracks) for (const auto &p : t.plugins) sidechain = sidechain || p.sidechain;
     const bool masterGain = model_.masterGainDb != 0;
-    doc.set("version", warp ? 15 : phase ? 14 : builtin ? 13 : clipMute ? 12 : !model_.markers.empty() ? 11 : bypass ? 10 : launcher || sidechain ? 9 : pluginAutomation ? 8 : !model_.folders.empty() || masterGain ? 7 : automation ? 6 : routing ? 5 : model_.tempo.size() > 1 || model_.meters.size() > 1 ? 4 : kConstantTempoVersion);
+    const bool loops = std::any_of(model_.clips.begin(), model_.clips.end(), [](const ClipState &c) { return c.looped(); });
+    doc.set("version", loops ? 16 : warp ? 15 : phase ? 14 : builtin ? 13 : clipMute ? 12 : !model_.markers.empty() ? 11 : bypass ? 10 : launcher || sidechain ? 9 : pluginAutomation ? 8 : !model_.folders.empty() || masterGain ? 7 : automation ? 6 : routing ? 5 : model_.tempo.size() > 1 || model_.meters.size() > 1 ? 4 : kConstantTempoVersion);
     json::Value body = describe();
     for (auto &[key, value] : body.object) {
         if (key != "media") continue;
@@ -699,6 +705,8 @@ std::unique_ptr<Engine::PreparedProject> Engine::readDocument(const json::Value 
                     c.followLoops = static_cast<int32_t>(std::clamp<int64_t>(cv.get("followLoops") ? toInt(cv, "followLoops") : 1, 1, 1024));
                     c.alt = cv.getBool("alt", false);
                     c.muted = cv.getBool("muted", false);
+                    c.loopLength = std::max<int64_t>(0, scale(toInt(cv, "loopLength")));
+                    c.loopPhase = c.loopLength ? std::clamp<int64_t>(scale(toInt(cv, "loopPhase")), 0, c.loopLength - 1) : 0;
                     if (cv.getString("kind", "audio") == "midi") {
                         std::vector<MidiNote> notes;
                         if (const json::Value *nv = cv.get("notes"); nv && nv->isArray())
@@ -775,11 +783,16 @@ std::unique_ptr<Engine::PreparedProject> Engine::readDocument(const json::Value 
                     }
                     // Rounding from rate conversion can overshoot by a frame. Offline media has no
                     // trustworthy length, so its clips keep the lengths stored in the project.
-                    if (pe->second.handle->impl)
+                    // A looped clip's window is what must lie inside the media; its length can be anything.
+                    if (c.looped() && pe->second.handle->impl) {
+                        c.loopLength = std::max<int64_t>(1, std::min(c.loopLength, pe->second.frames - c.offset));
+                        c.loopPhase %= c.loopLength;
+                    } else if (pe->second.handle->impl) {
                         c.length = std::min(c.length, std::max<int64_t>(1, static_cast<int64_t>(
                             static_cast<double>(pe->second.frames - c.offset) / c.rate)));
-                    else
-                        pe->second.frames = std::max(pe->second.frames, c.offset + c.length);
+                    } else {
+                        pe->second.frames = std::max(pe->second.frames, c.offset + (c.looped() ? c.loopLength : c.length));
+                    }
                     maxClip = std::max(maxClip, c.id);
                     model.clips.push_back(std::move(c));
                 }

@@ -464,6 +464,13 @@ const CommandDef kCommands[] = {
              return err = "fades are longer than the clip", DALNOK_ERR_INVALID_ARG;
          return status(e.setClipFades(c, fi, fo, curve == "equalPower" ? kFadeEqualPower : kFadeLinear, err), err);
      }},
+    {"clip.setLoop", "Loop Clip", "{clip, looped}", [](ARGS) {
+         DalnokClipId c;
+         if (!needInt(a, "clip", c, err)) return DALNOK_ERR_INVALID_ARG;
+         const Value *v = a.get("looped");
+         if (!v || !v->isBool()) return err = "missing bool argument 'looped'", DALNOK_ERR_INVALID_ARG;
+         return status(e.setClipLoop(c, v->boolean, err), err);
+     }},
     {"clip.setGain", "Set Clip Gain", "{clip, db}", [](ARGS) {
          DalnokClipId c;
          double db;

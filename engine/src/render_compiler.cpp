@@ -77,6 +77,20 @@ std::shared_ptr<const TrackContent> RenderCompiler::buildContent(const std::vect
             out->slots.push_back(std::move(sl));
             continue;
         }
+        if (c.midi() && c.looped()) { // each pass of the loop plays the notes of the loop window again
+            if (!instrument) continue;
+            const int64_t L = c.loopLength;
+            for (int64_t p = 0; p < c.length;) {
+                const int64_t src = c.offset + (c.loopPhase + p) % L, seg = std::min(c.offset + L - src, c.length - p);
+                for (const auto &n : *c.notes) {
+                    if (n.start < src || n.start >= src + seg) continue;
+                    const int64_t at = c.start + p + (n.start - src);
+                    out->notes.push_back({at, at + std::min(n.length, c.start + p + seg - at), n.pitch, n.velocity});
+                }
+                p += seg;
+            }
+            continue;
+        }
         if (c.midi()) {
             if (!instrument) continue;
             for (const auto &n : *c.notes) {
@@ -134,6 +148,18 @@ std::shared_ptr<const TrackContent> RenderCompiler::buildContent(const std::vect
             sl.hasAudio = true;
             sl.clip = {media, 0, offset, len, fi, fo, c.fadeCurve, dbToGain(c.gainDb)};
             out->slots.push_back(std::move(sl));
+            continue;
+        }
+        if (c.looped() && !c.stretched()) { // one rendered clip per pass; the fade in on the first, the fade out on the last
+            const int64_t L = std::min(c.loopLength, media->frames() - c.offset);
+            if (L <= 0) continue;
+            for (int64_t p = 0; p < c.length;) {
+                const int64_t src = c.offset + (c.loopPhase + p) % L, seg = std::min(c.offset + L - src, c.length - p);
+                out->clips.push_back({media, c.start + p, src, seg, p == 0 ? std::min(c.fadeIn, seg) : 0,
+                                      p + seg >= c.length ? std::min(c.fadeOut, seg) : 0, c.fadeCurve, dbToGain(c.gainDb)});
+                p += seg;
+            }
+            if (media->channelCount() > 1) out->stereoClip = true;
             continue;
         }
         out->clips.push_back({media, c.start, offset, len, fi, fo, c.fadeCurve, dbToGain(c.gainDb)});

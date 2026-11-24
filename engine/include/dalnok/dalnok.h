@@ -544,6 +544,8 @@ typedef struct {
     int32_t follow_loops;          /* after this many loops */
     bool muted;                    /* clip muted */
     int32_t warp_points;           /* audio quantize: warp anchors (dalnok_clip_warp) */
+    int64_t loop_length;           /* clip loop: the repeating window (0 = not looped) */
+    int64_t loop_phase;            /* clip loop: where its first pass starts in the window */
 } DalnokClipInfo;
 /* END GENERATED DalnokClipInfo */
 DalnokStatus dalnok_clip_info(const DalnokEngine *engine, DalnokClipId clip, DalnokClipInfo *out);
@@ -1015,6 +1017,9 @@ DalnokStatus dalnok_render_to_file(DalnokEngine *engine, const char *path, int64
  * Returns the number of files written, or -1 with a message in `err`. */
 int32_t dalnok_export_stems(DalnokEngine *engine, const char *folder, int32_t format, int64_t start_frame, int64_t frames,
                             int64_t max_tail, char *err, size_t err_len);
+/* Clip loop (API 47): on, the clip's current window repeats for as long as the clip is extended (drag its right
+ * edge); off, it plays its window once. Not for time-stretched or quantized audio or launcher slots. One undo step. */
+DalnokStatus dalnok_clip_set_loop(DalnokEngine *engine, DalnokClipId clip, bool looped);
 DalnokTrackId dalnok_track_bounce_in_place(DalnokEngine *engine, DalnokTrackId track, const char *path, char *err,
                                            size_t err_len);
 
