@@ -164,3 +164,33 @@ private func notes(_ e: OpaquePointer, _ clip: DalnokClipId) -> [DalnokNote] {
         #expect(runCommand(e, "project.setTempoMap", #"{"tempo":[[2,100]]}"#).0 != DALNOK_OK)
     }
 }
+
+@Suite struct TempoChangeFollowers {
+    @Test func markersAutomationAndCycleStayOnTheirBeats() {
+        // 120 BPM at 48 kHz: one beat = 24,000 frames. At 60 BPM it is 48,000.
+        let e = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(e) }
+        let t = dalnok_track_add_instrument(e, nil)
+        #expect(dalnok_marker_add(e, 96_000, "Chorus") != 0) // bar 2
+        var pts = [DalnokAutoPoint(frame: 24_000, value: -6), DalnokAutoPoint(frame: 72_000, value: 0)]
+        #expect(dalnok_track_set_automation(e, t, 0, &pts, 2) == DALNOK_OK)
+        #expect(dalnok_cycle_set(e, true, 96_000, 192_000) == DALNOK_OK)
+        #expect(dalnok_tempo_set(e, 60, 4, 4) == DALNOK_OK)
+
+        func state() -> (Int64, [Int64], Int64, Int64) {
+            var m = DalnokMarker(); _ = dalnok_marker_at(e, 0, &m)
+            var out = [DalnokAutoPoint](repeating: DalnokAutoPoint(), count: 4)
+            let n = Int(dalnok_track_automation(e, t, 0, &out, 4))
+            var on = false; var a: Int64 = 0, b: Int64 = 0
+            dalnok_cycle_get(e, &on, &a, &b)
+            return (m.frame, out.prefix(n).map(\.frame), a, b)
+        }
+        var s = state()
+        #expect(s.0 == 192_000 && s.1 == [48_000, 144_000] && s.2 == 192_000 && s.3 == 384_000, "\(s)")
+        #expect(dalnok_undo(e))
+        s = state()
+        #expect(s.0 == 96_000 && s.1 == [24_000, 72_000] && s.2 == 96_000 && s.3 == 192_000, "undo: \(s)")
+        #expect(dalnok_redo(e))
+        s = state()
+        #expect(s.0 == 192_000 && s.2 == 192_000 && s.3 == 384_000, "redo: \(s)")
+    }
+}

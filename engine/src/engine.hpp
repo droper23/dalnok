@@ -380,6 +380,7 @@ private:
     float parameterValue(DalnokTrackId track, ParameterField field) const;
     void applyParameter(const ParameterValue &value);
     void applyUndo(bool undo); // undo (or redo) the top step of its stack
+    void cycleFollowsTempo(const TempoMap &from); // keep the cycle on its beats after a tempo map change
 
     // Runs `fn` against the model; on success records an undo step and publishes.
     template <typename F>

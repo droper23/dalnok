@@ -457,7 +457,13 @@ final class PianoRollView: NSView {
         ("VELOCITY" as NSString).draw(at: CGPoint(x: 6, y: lane.minY + 6), withAttributes: attrs)
         ctx.saveGState()
         ctx.clip(to: lane)
-        for n in visibleNotes(c) {
+        // A chord's stems share one x: the loudest is drawn first and selected ones last, so every head stays visible
+        // above the stems in front of it.
+        let order = visibleNotes(c).sorted { a, b in
+            let sa = selection.contains(key(a)), sb = selection.contains(key(b))
+            return sa != sb ? !sa : a.velocity > b.velocity
+        }
+        for n in order {
             let sx = x(timeline(n, c))
             guard sx >= lane.minX - 4, sx <= lane.maxX + 4 else { continue }
             let h = (lane.height - 12) * CGFloat(n.velocity) / 127
@@ -629,13 +635,15 @@ final class PianoRollView: NSView {
             let latest = moving.map(\.start).max() ?? earliest
             let dt = max(lo - earliest, min(hi - latest, Int64(bypass ? dxFrames.rounded() : snap(t0 + dxFrames, bypass: false) - t0)))
             let dp = max(-Int(low), min(127 - Int(high), -Int(((p.y - d.start.y) / rowHeight).rounded())))
+            var landed: [DalnokNote] = [] // after the others, so a note dropped on an identical one replaces it
             for n in d.original {
                 guard d.moving.contains(key(n)) else { result.append(n); continue }
                 let m = DalnokNote(start: n.start + dt, length: n.length,
                                    pitch: UInt8(Int(n.pitch) + dp), velocity: n.velocity)
-                result.append(m)
+                landed.append(m)
                 moved.insert(key(m))
             }
+            result += landed
             // The grabbed note sounds at its new pitch as it moves.
             if let grabbed = d.previewed, let now = UInt8(exactly: Int(grabbed) + dp), heldPreview?.pitch != now,
                let n = result.first(where: { moved.contains(key($0)) }) {
@@ -765,8 +773,7 @@ final class PianoRollView: NSView {
         let delta = max(-Int(low), min(127 - Int(high), semitones))
         guard delta != 0 else { return }
         var sel: Set<NoteKey> = []
-        let notes = c.notes.map { n -> DalnokNote in
-            guard selection.contains(key(n)) else { return n }
+        let notes = c.notes.filter { !selection.contains(key($0)) } + c.notes.filter { selection.contains(key($0)) }.map { n -> DalnokNote in
             let m = DalnokNote(start: n.start, length: n.length, pitch: UInt8(Int(n.pitch) + delta), velocity: n.velocity)
             sel.insert(key(m)); return m
         }
@@ -781,8 +788,7 @@ final class PianoRollView: NSView {
         let delta = max(c.offset - earliest, min(c.offset + c.length - 1 - latest, frames))
         guard delta != 0 else { return }
         var sel: Set<NoteKey> = []
-        let notes = c.notes.map { n -> DalnokNote in
-            guard selection.contains(key(n)) else { return n }
+        let notes = c.notes.filter { !selection.contains(key($0)) } + c.notes.filter { selection.contains(key($0)) }.map { n -> DalnokNote in
             let m = DalnokNote(start: n.start + delta, length: n.length, pitch: n.pitch, velocity: n.velocity)
             sel.insert(key(m)); return m
         }
@@ -795,8 +801,8 @@ final class PianoRollView: NSView {
         let all = selection.isEmpty
         let grid = QuantizeSetting.grid, strength = QuantizeSetting.strength
         var sel: Set<NoteKey> = []
-        let notes = c.notes.map { n -> DalnokNote in
-            guard all || selection.contains(key(n)) else { return n }
+        let picked = { (n: DalnokNote) in all || self.selection.contains(self.key(n)) } // quantized notes go last (they win a collision)
+        let notes = c.notes.filter { !picked($0) } + c.notes.filter(picked).map { n -> DalnokNote in
             guard n.start >= c.offset, n.start < c.offset + c.length else { return n } // outside the window: not shown, not touched
             let t = timeline(n, c), target = session.beatToFrame((session.frameToBeat(t) / grid).rounded() * grid)
             let at = min(max(n.start + Int64(((target - t) * strength).rounded()), c.offset), c.offset + c.length - 1)

@@ -194,7 +194,12 @@ void Engine::applyUndo(bool undo) {
     if (step.snapshot()) {
         Model target = UndoStack::target(step, model_);
         history_.pushInverse(undo, UndoStack::Step(step.name, std::make_unique<Model>(model_), {}), model_);
+        const bool tempoChanges = target.tempo.size() != model_.tempo.size() ||
+            !std::equal(target.tempo.begin(), target.tempo.end(), model_.tempo.begin(),
+                        [](const TempoPoint &a, const TempoPoint &b) { return a.beat == b.beat && a.bpm == b.bpm; });
+        const TempoMap before = map_;
         restore(std::move(target));
+        if (tempoChanges) cycleFollowsTempo(before);
     } else {
         UndoStack::Step inverse(step.name, nullptr, {});
         inverse.parameters.reserve(step.parameters.size());
@@ -417,9 +422,42 @@ bool remapMidi(Model &m, const TempoMap &from, const TempoMap &to, std::string &
         clip.length = std::max<int64_t>(1, end - start);
         clip.notes = found->second;
     }
+    // Markers and automation are bar landmarks: they stay on their beat, as in Logic (audio stays time-locked).
+    auto points = [&](std::vector<AutoPoint> &list) {
+        for (auto &p : list) {
+            int64_t f;
+            if (!remap(p.frame, f)) return false;
+            p.frame = std::max<int64_t>(0, f);
+        }
+        return true;
+    };
+    for (auto &marker : m.markers) {
+        int64_t f;
+        if (!remap(marker.frame, f)) return fail(err, "tempo change would move a marker beyond the supported timeline");
+        marker.frame = std::max<int64_t>(0, f);
+    }
+    for (auto &t : m.tracks) {
+        bool ok = points(t.volumeAuto) && points(t.panAuto);
+        for (auto &lane : t.pluginAuto) ok = ok && points(lane.points);
+        if (!ok) return fail(err, "tempo change would move automation beyond the supported timeline");
+    }
     return true;
 }
 } // namespace detail
+
+// The cycle is transport state (not in the model, not undoable): after the tempo map changes, by an edit or its undo,
+// it moves to the same beats so it still spans the bars it was set on.
+void Engine::cycleFollowsTempo(const TempoMap &from) {
+    bool on;
+    int64_t start, end, a, b;
+    double sb, eb;
+    transport_.cycle(on, start, end);
+    if (end <= start || !from.frameToBeat(start, sb) || !from.frameToBeat(end, eb) || !map_.beatToFrame(sb, a) ||
+        !map_.beatToFrame(eb, b) || a < 0 || b <= a)
+        return;
+    std::string ignored;
+    transport_.setCycle(on, a, b, ignored);
+}
 
 bool Engine::setTempo(double bpm, int32_t num, int32_t den, std::string &err) {
     auto tempo = model_.tempo;
@@ -435,12 +473,15 @@ bool Engine::setTempoMap(std::vector<TempoPoint> tempo, std::vector<MeterChange>
     if (!TempoMap::build(sampleRate_, tempo, next, err)) return false;
     if (!validMeters(meters, err)) return false;
     if (tempo.size() > 10000 || meters.size() > 10000) return fail(err, "too many tempo or meter changes");
-    return edit("Tempo", true, [&](Model &m) {
+    const TempoMap before = map_;
+    const bool ok = edit("Tempo", true, [&](Model &m) {
         if (!remapMidi(m, map_, next, err)) return false;
         m.tempo = std::move(tempo);
         m.meters = std::move(meters);
         return true;
     });
+    if (ok) cycleFollowsTempo(before);
+    return ok;
 }
 
 bool Engine::validNotes(const std::vector<MidiNote> &notes, std::string &err) const {
@@ -455,6 +496,16 @@ NoteList sortedNotes(std::vector<MidiNote> notes) {
     std::stable_sort(notes.begin(), notes.end(), [](const MidiNote &a, const MidiNote &b) {
         return a.start < b.start || (a.start == b.start && a.pitch < b.pitch);
     });
+    // Two notes on the same pitch at the same moment would sound as one doubled note and can't be told apart in an
+    // editor: the later one in the list wins (callers put moved or new notes last, so a note dropped on another
+    // replaces it, as in Logic).
+    std::vector<MidiNote> unique;
+    unique.reserve(notes.size());
+    for (const auto &n : notes) {
+        if (!unique.empty() && unique.back().start == n.start && unique.back().pitch == n.pitch) unique.back() = n;
+        else unique.push_back(n);
+    }
+    notes = std::move(unique);
     return std::make_shared<const std::vector<MidiNote>>(std::move(notes));
 }
 } // namespace detail

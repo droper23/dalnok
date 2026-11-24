@@ -181,6 +181,24 @@ func oneNoteSession(pitch: UInt8 = 69, velocity: UInt8 = 127) -> (OpaquePointer,
         #expect(notes[1].start == 89_999) // the last frame of the clip, not 95,000
     }
 
+    @Test func notesOnTheSamePitchAndStartMergeAndTheLaterWins() {
+        let e = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(e) }
+        let c = dalnok_midi_clip_add(e, dalnok_track_add_instrument(e, nil), 0, 96_000)
+        var notes = [DalnokNote(start: 1_000, length: 100, pitch: 60, velocity: 50),
+                     DalnokNote(start: 1_000, length: 900, pitch: 64, velocity: 80),
+                     DalnokNote(start: 1_000, length: 500, pitch: 60, velocity: 110)] // dropped on the first: replaces it
+        #expect(dalnok_midi_clip_set_notes(e, c, &notes, 3) == DALNOK_OK)
+        var got = [DalnokNote](repeating: DalnokNote(), count: 4)
+        #expect(dalnok_midi_clip_notes(e, c, &got, 4) == 2)
+        #expect(got[0].pitch == 60 && got[0].length == 500 && got[0].velocity == 110 && got[1].pitch == 64)
+        // Quantize pulling two notes onto one grid line leaves one note there.
+        var near = [DalnokNote(start: 23_900, length: 100, pitch: 60, velocity: 100),
+                    DalnokNote(start: 24_100, length: 100, pitch: 60, velocity: 100)]
+        #expect(dalnok_midi_clip_set_notes(e, c, &near, 2) == DALNOK_OK)
+        #expect(dalnok_midi_quantize(e, c, 1, 1) == DALNOK_OK)
+        #expect(dalnok_midi_clip_notes(e, c, &got, 4) == 1 && got[0].start == 24_000)
+    }
+
     @Test func quantizeStrengthZeroChangesNothingAndTripletsLandOnThirds() {
         let e = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(e) }
         let t = dalnok_track_add_instrument(e, nil)
