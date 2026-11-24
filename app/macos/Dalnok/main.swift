@@ -336,6 +336,15 @@ func buildMenu(target: MainWindowController) -> NSMenu {
         item("Import Audio…", #selector(W.importAudio), "i"),
         item("Export Mix…", #selector(W.exportMix(_:)), "b"),
         item("Export Stems…", #selector(W.exportStems(_:)), "b", [.command, .shift]),
+        { () -> NSMenuItem in
+            let q = NSMenuItem(title: "Export Queue", action: nil, keyEquivalent: "")
+            q.submenu = NSMenu(title: "Export Queue")
+            for (t, s) in [("Add Mix to Queue…", #selector(W.queueMixExport(_:))), ("Add Stems to Queue…", #selector(W.queueStemsExport(_:))),
+                           ("Render Queue", #selector(W.renderQueue(_:))), ("Clear Queue", #selector(W.clearQueue(_:)))] {
+                let it = NSMenuItem(title: t, action: s, keyEquivalent: ""); it.target = target; q.submenu?.addItem(it)
+            }
+            return q
+        }(),
         item("Export as DAWproject…", #selector(W.exportDawproject(_:)), ""),
         .separator(),
         item("Relink Missing Audio…", #selector(W.relinkMissingAudio(_:)), ""),

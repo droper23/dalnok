@@ -1101,6 +1101,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     // MARK: Tracks
 
     var exportFormatChanged: ((Int) -> Void)? // the export panel's format menu
+    var exportQueue: [ExportJob] = []          // File ▸ Export Queue (ExportQueue.swift)
     var selectedTrack: DalnokTrackId? { headers.selectedTrack }
 
     private func trackContextMenu() -> NSMenu {
@@ -2552,6 +2553,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         case #selector(toggleSoloTrack(_:)):
             item.state = selectedTrack.flatMap { session.track($0) }?.solo == true ? .on : .off
             return selectedTrack != nil
+        case #selector(renderQueue(_:)):
+            item.title = exportQueue.isEmpty ? "Render Queue" : "Render Queue (\(exportQueue.count))"
+            return !exportQueue.isEmpty
+        case #selector(clearQueue(_:)):
+            return !exportQueue.isEmpty
         case #selector(captureMidi(_:)):
             return dalnok_midi_capture_pending(session.engine.handle) > 0
         case #selector(toggleStepInput(_:)):

@@ -505,6 +505,16 @@ final class SelfTest {
         check(stems == audible && (try? FileManager.default.contentsOfDirectory(atPath: stemDir.path).count) == audible,
               "File ▸ Export Stems writes one file per track (\(stems) of \(audible))")
         check(menuItem("Export Stems…", exact: true) != nil, "File ▸ Export Stems… is in the menu")
+        // File ▸ Export Queue: a mix and a stems export queued, then rendered in one go.
+        let queued = workdir.appendingPathComponent("queued", isDirectory: true)
+        try? FileManager.default.createDirectory(at: queued, withIntermediateDirectories: true)
+        w.enqueue(ExportJob(url: queued.appendingPathComponent("queued-mix.flac"), format: DALNOK_FORMAT_FLAC, stems: false, range: nil))
+        w.enqueue(ExportJob(url: queued, format: DALNOK_FORMAT_WAV24, stems: true, range: nil))
+        check(menuItem("Render Queue (2)", exact: true)?.isEnabled == true || w.exportQueue.count == 2, "two exports wait in the queue")
+        let rendered = w.renderQueue(nil)
+        let files = (try? FileManager.default.contentsOfDirectory(atPath: queued.path)) ?? []
+        check(rendered == 2 && w.exportQueue.isEmpty && files.contains("queued-mix.flac") && files.count == 1 + audible,
+              "Render Queue renders the mix and the stems (\(files.count) files)")
         check(Engine.exportFormats.count == 7 && Engine.exportFormats.allSatisfy { UTType(filenameExtension: $0.ext) != nil },
               "the export panel offers seven formats, each a known file type")
         // DAWproject: the File menu offers it; the export imports back with the same clips.
