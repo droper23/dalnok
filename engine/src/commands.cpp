@@ -481,6 +481,22 @@ const CommandDef kCommands[] = {
              return err = "fades are longer than the clip", DALNOK_ERR_INVALID_ARG;
          return status(e.setClipFades(c, fi, fo, curve == "equalPower" ? kFadeEqualPower : kFadeLinear, err), err);
      }},
+    {"clip.normalize", "Normalize", "{clip, db?: peak target (default -0.1)}", [](ARGS) {
+         DalnokClipId c;
+         if (!needInt(a, "clip", c, err)) return DALNOK_ERR_INVALID_ARG;
+         const double db = a.getNumber("db", -0.1);
+         if (!(db <= 0 && db >= -60)) return err = "db must be -60..0", DALNOK_ERR_INVALID_ARG;
+         return status(e.normalizeClip(c, db, err), err);
+     }},
+    {"clip.stripSilence", "Strip Silence", "{clip, threshold?: dB (default -50), minSilence?: seconds (default 0.15)}", [](ARGS) {
+         DalnokClipId c;
+         if (!needInt(a, "clip", c, err)) return DALNOK_ERR_INVALID_ARG;
+         const double thr = a.getNumber("threshold", -50), gap = a.getNumber("minSilence", 0.15);
+         if (!(thr <= 0 && thr >= -100) || !(gap >= 0 && gap <= 10)) return err = "threshold -100..0 dB, minSilence 0..10 s", DALNOK_ERR_INVALID_ARG;
+         const auto ids = e.stripSilence(c, thr, gap, err);
+         r.set("clips", static_cast<double>(ids.size()));
+         return status(!ids.empty(), err);
+     }},
     {"clip.setLoop", "Loop Clip", "{clip, looped}", [](ARGS) {
          DalnokClipId c;
          if (!needInt(a, "clip", c, err)) return DALNOK_ERR_INVALID_ARG;

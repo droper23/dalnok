@@ -1150,6 +1150,36 @@ DalnokClipId dalnok_midi_capture(DalnokEngine *e, DalnokTrackId track, char *err
     return c;
 }
 int32_t dalnok_midi_capture_pending(DalnokEngine *e) { return e ? e->impl.capturePending() : 0; }
+DalnokStatus dalnok_clip_normalize(DalnokEngine *e, DalnokClipId c, double target, char *err, size_t err_len) {
+    if (!e) return DALNOK_ERR_INVALID_ARG;
+    std::string msg;
+    if (e->impl.normalizeClip(c, target, msg)) return DALNOK_OK;
+    copyOut(err, err_len, msg);
+    return DALNOK_ERR_INVALID_ARG;
+}
+DalnokStatus dalnok_clip_reverse(DalnokEngine *e, DalnokClipId c, const char *path, char *err, size_t err_len) {
+    if (!e || !path) return DALNOK_ERR_INVALID_ARG;
+    std::string msg;
+    if (e->impl.reverseClip(c, path, msg)) return DALNOK_OK;
+    copyOut(err, err_len, msg);
+    return DALNOK_ERR_INVALID_ARG;
+}
+int32_t dalnok_clip_strip_silence(DalnokEngine *e, DalnokClipId c, double threshold, double minSilence, DalnokClipId *out,
+                                  int32_t capacity, char *err, size_t err_len) {
+    if (!e) return 0;
+    std::string msg;
+    const auto ids = e->impl.stripSilence(c, threshold, minSilence, msg);
+    if (ids.empty()) { copyOut(err, err_len, msg); return 0; }
+    for (size_t i = 0; out && i < ids.size() && i < static_cast<size_t>(std::max(0, capacity)); ++i) out[i] = ids[i];
+    return static_cast<int32_t>(ids.size());
+}
+DalnokClipId dalnok_clips_join(DalnokEngine *e, const DalnokClipId *clips, int32_t count, const char *path, char *err, size_t err_len) {
+    if (!e || !clips || count < 0) return 0;
+    std::string msg;
+    const DalnokClipId j = e->impl.joinClips(std::vector<DalnokClipId>(clips, clips + count), path ? path : "", msg);
+    if (!j) copyOut(err, err_len, msg);
+    return j;
+}
 DalnokStatus dalnok_clip_set_follow_tempo(DalnokEngine *e, DalnokClipId c, bool follow) {
     std::string err;
     return e ? statusFor(e->impl.setClipFollowsTempo(c, follow, err), err) : DALNOK_ERR_INVALID_ARG;

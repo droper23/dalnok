@@ -1053,6 +1053,16 @@ size_t dalnok_plugin_sample_path(const DalnokEngine *engine, int32_t slot, int32
 /* Clip loop (API 47): on, the clip's current window repeats for as long as the clip is extended (drag its right
  * edge); off, it plays its window once. Not for time-stretched or quantized audio or launcher slots. One undo step. */
 DalnokStatus dalnok_clip_set_loop(DalnokEngine *engine, DalnokClipId clip, bool looped);
+/* Clip tools (API 47), each one undo step. Normalize sets the clip gain so its peak is target_db. Reverse plays the
+ * clip's audio backwards (written to `path`). Strip Silence keeps the parts louder than threshold_db (quieter gaps
+ * longer than min_silence seconds go), as separate clips with 5 ms fades; returns how many clips there are now
+ * (ids to `out`). Join makes one clip of several on one track: MIDI merges the notes; audio mixes them as they
+ * play (gain, fades, overlaps) into `path`. */
+DalnokStatus dalnok_clip_normalize(DalnokEngine *engine, DalnokClipId clip, double target_db, char *err, size_t err_len);
+DalnokStatus dalnok_clip_reverse(DalnokEngine *engine, DalnokClipId clip, const char *path, char *err, size_t err_len);
+int32_t dalnok_clip_strip_silence(DalnokEngine *engine, DalnokClipId clip, double threshold_db, double min_silence,
+                                  DalnokClipId *out, int32_t capacity, char *err, size_t err_len);
+DalnokClipId dalnok_clips_join(DalnokEngine *engine, const DalnokClipId *clips, int32_t count, const char *path, char *err, size_t err_len);
 /* Audio follows tempo (Ableton's warp, API 47): tempo changes keep the clip on its beats and time-stretch it, pitch
  * kept (format 18). Not for varispeed clips. One undo step. */
 DalnokStatus dalnok_clip_set_follow_tempo(DalnokEngine *engine, DalnokClipId clip, bool follow);

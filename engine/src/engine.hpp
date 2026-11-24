@@ -292,6 +292,11 @@ public:
                          std::string &err);
     bool removeClip(DalnokClipId id, std::string &err);
     bool setClipLoop(DalnokClipId id, bool on, std::string &err); // see ClipState::loopLength
+    // Clip tools (engine_cliptools.cpp), each one undo step. Reverse and Join write a new audio file at `path`.
+    bool normalizeClip(DalnokClipId id, double targetDb, std::string &err);  // clip gain: its peak at targetDb
+    bool reverseClip(DalnokClipId id, const std::string &path, std::string &err);
+    std::vector<DalnokClipId> stripSilence(DalnokClipId id, double thresholdDb, double minSilence, std::string &err);
+    DalnokClipId joinClips(const std::vector<DalnokClipId> &ids, const std::string &path, std::string &err);
     bool setClipFollowsTempo(DalnokClipId id, bool on, std::string &err); // see ClipState::followsTempo
     bool moveClip(DalnokClipId id, DalnokTrackId track, int64_t start, std::string &err);
     bool setClipRegion(DalnokClipId id, int64_t start, int64_t offset, int64_t length, std::string &err);

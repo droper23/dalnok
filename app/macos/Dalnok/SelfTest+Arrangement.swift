@@ -203,6 +203,29 @@ extension SelfTest {
             _ = perform("Undo"); _ = perform("Undo")
             check(s.clip(c.id)?.loopLength == 0 && s.clip(c.id)?.length == c.length, "undo takes back the drag and the loop")
         }
+        // Clip ▸ Normalize, Reverse, Join Clips (⌘J), on the Glass sound (not silent).
+        if let c = s.tracks.flatMap(\.clips).first(where: { $0.name.hasPrefix("Glass") && !$0.isMidi && $0.rate == 1 && $0.pitch == 0 && $0.warp.isEmpty && $0.loopLength == 0 && !$0.offline && $0.slot < 0 }) {
+            tl.selectClips([c.id])
+            // A sound already near full scale moves very little; the step and its undo name are what's checked here (the
+            // level itself is measured in ClipToolTests).
+            check(perform("Normalize", exact: true) && e.undoName == "Normalize" && (s.clip(c.id)?.gainDb ?? 99) <= 24,
+                  "Clip ▸ Normalize sets the clip's gain (\(s.clip(c.id)?.gainDb ?? 0) dB)")
+            _ = perform("Undo")
+            check(perform("Reverse", exact: true) && s.clip(c.id)?.media != c.media && e.undoName == "Reverse", "Clip ▸ Reverse plays a reversed file")
+            _ = perform("Undo")
+            check(s.clip(c.id)?.media == c.media, "undo plays the clip forwards again")
+            if let t = s.tracks.first(where: { $0.clips.contains { $0.id == c.id } })?.id {
+                let n = s.track(t)?.clips.count ?? 0
+                var right: DalnokClipId = 0
+                _ = dalnok_clip_split(e.handle, c.id, c.start + c.length / 2, &right)
+                s.refresh()
+                tl.selectClips([c.id, right])
+                check(perform("Join Clips", exact: true) && s.track(t)?.clips.count == n && e.undoName == "Join Clips",
+                      "Clip ▸ Join Clips makes one clip of the two halves")
+                _ = perform("Undo"); _ = perform("Undo")
+                check(s.track(t)?.clips.count == n && s.clip(c.id)?.length == c.length, "undo restores the clip")
+            }
+        }
         // Clip ▸ Slice to Drums: a new Drums track below with a MIDI clip of the slices; the clip muted; one undo.
         if let c = s.tracks.flatMap(\.clips).first(where: { !$0.isMidi && $0.rate == 1 && $0.pitch == 0 && $0.warp.isEmpty && $0.loopLength == 0 && !$0.offline && $0.slot < 0 }) {
             tl.selectClips([c.id])

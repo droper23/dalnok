@@ -1315,6 +1315,55 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         else { flash(on ? "Looped: drag the clip's end to repeat it" : "Loop off") }
     }
 
+    // MARK: Clip tools (Join, Normalize, Reverse, Strip Silence)
+
+    private var selectedClipViews: [ClipView] { timeline.selectedClips.compactMap { session.clip($0) }.sorted { $0.start < $1.start } }
+    /// A new audio file beside the project's recordings for a clip tool's result.
+    private func toolFile(_ base: String, _ what: String) -> URL {
+        let folder = recordingFolder
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let safe = String(base.map { "/:\\".contains($0) ? "-" : $0 })
+        return folder.appendingPathComponent("\(safe) \(what) \(Int(Date().timeIntervalSince1970 * 1000) % 100_000_000).wav")
+    }
+    @objc func joinClips(_ sender: Any?) {
+        let clips = selectedClipViews
+        guard clips.count >= 2 else { return flash("Select two or more clips on one track to join") }
+        var ids = clips.map(\.id), err = [CChar](repeating: 0, count: 256)
+        let j = dalnok_clips_join(session.engine.handle, &ids, Int32(ids.count), toolFile(clips[0].name, "Join").path, &err, err.count)
+        session.refresh()
+        if j != 0 { timeline.selectClips([j]); flash("Joined \(clips.count) clips") } else { flash(String(cString: err)) }
+    }
+    @objc func normalizeClips(_ sender: Any?) {
+        let clips = selectedClipViews.filter { !$0.isMidi }
+        guard !clips.isEmpty else { return flash("Select audio clips to normalize") }
+        session.engine.beginGroup("Normalize")
+        var err = [CChar](repeating: 0, count: 256), done = 0
+        for c in clips where dalnok_clip_normalize(session.engine.handle, c.id, -0.1, &err, err.count) == DALNOK_OK { done += 1 }
+        session.engine.endGroup()
+        session.refresh()
+        flash(done > 0 ? "Normalized \(done) clip\(done == 1 ? "" : "s") to −0.1 dBFS" : String(cString: err))
+    }
+    @objc func reverseClips(_ sender: Any?) {
+        let clips = selectedClipViews.filter { !$0.isMidi }
+        guard !clips.isEmpty else { return flash("Select audio clips to reverse") }
+        session.engine.beginGroup("Reverse")
+        var err = [CChar](repeating: 0, count: 256), done = 0
+        for c in clips where dalnok_clip_reverse(session.engine.handle, c.id, toolFile(c.name, "Reversed").path, &err, err.count) == DALNOK_OK { done += 1 }
+        session.engine.endGroup()
+        session.refresh()
+        flash(done > 0 ? "Reversed \(done) clip\(done == 1 ? "" : "s")" : String(cString: err))
+    }
+    @objc func stripSilence(_ sender: Any?) {
+        let clips = selectedClipViews.filter { !$0.isMidi }
+        guard !clips.isEmpty else { return flash("Select audio clips to strip silence from") }
+        session.engine.beginGroup("Strip Silence")
+        var err = [CChar](repeating: 0, count: 256), parts = 0
+        for c in clips { parts += Int(dalnok_clip_strip_silence(session.engine.handle, c.id, -50, 0.15, nil, 0, &err, err.count)) }
+        session.engine.endGroup()
+        session.refresh()
+        flash(parts > 0 ? "Kept \(parts) parts above −50 dB" : String(cString: err))
+    }
+
     /// Clip ▸ Slice to Drums (Ableton's Slice to New MIDI Track): the clip's hits onto Dalnok Drums pads on a new track,
     /// with a MIDI clip that plays them back where they were.
     @objc func sliceToDrums(_ sender: Any?) {
