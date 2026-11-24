@@ -232,6 +232,13 @@ extension SelfTest {
             _ = dalnok_render_offline(e.handle, 0, 24_000, &l, &r)
             s.setSolo(kit, false)
             check(l[0..<1_000].allSatisfy { $0 == 0 } && l[1_000..<6_000].map(abs).max()! > 0.01, "note 36 plays the Glass pad from its frame")
+            check(unit.padGrid != nil, "Dalnok Drums shows its 16 pads")
+            w.setBottomMode(.devices)
+            try? w.snapshot(to: workdir.appendingPathComponent("drum-pads.png"))
+            s.refresh()
+            w.openInClipEditor(clip)
+            w.clipEditor.roll.scrollY = max(0, CGFloat(127 - 52) * w.clipEditor.roll.rowHeight) // the pads in view
+            try? w.snapshot(to: workdir.appendingPathComponent("drum-roll.png"))
         } else { check(false, "the Drums unit is in the device chain") }
         s.removeTrack(kit)
 

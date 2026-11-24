@@ -505,6 +505,11 @@ final class SelfTest {
         check(stems == audible && (try? FileManager.default.contentsOfDirectory(atPath: stemDir.path).count) == audible,
               "File ▸ Export Stems writes one file per track (\(stems) of \(audible))")
         check(menuItem("Export Stems…", exact: true) != nil, "File ▸ Export Stems… is in the menu")
+        let withBuses = workdir.appendingPathComponent("exported-stems-buses", isDirectory: true)
+        try? FileManager.default.createDirectory(at: withBuses, withIntermediateDirectories: true)
+        let busCount = s.tracks.filter { $0.isBus && !$0.muted }.count
+        check(w.exportStems(to: withBuses, format: DALNOK_FORMAT_WAV24, buses: true) == audible + busCount,
+              "Export Stems with buses adds their submixes (\(audible) tracks + \(busCount) buses)")
         // Standard MIDI Files: a MIDI clip exported, then File ▸ Import MIDI File's path brings it back on a new track.
         let midiTrack = dalnok_track_add_instrument(e.handle, "Selftest MIDI File")
         let madeClip = dalnok_midi_clip_add(e.handle, midiTrack, 0, Int64(e.sampleRate * 2))

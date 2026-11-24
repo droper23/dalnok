@@ -659,6 +659,8 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
     private var instrument = false
     private weak var faceRow: NSStackView?
     private let path: String
+    /// Dalnok Drums: the pad grid (DeviceView+Samples.swift).
+    var padGrid: DrumPadGrid?
     private let power = PlateButton(title: "", label: "")
     /// The unit's power key (Graphite), for tests.
     var powerKey: PlateButton? { Theme.look.pedalboard ? nil : power }
@@ -781,7 +783,7 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         let header = NSStackView(views: [foldButton, power, title, etchedTitle, NSView(), sidechain, openButton])
         header.spacing = 6
         header.setContentHuggingPriority(.required, for: .vertical) // stays at the top whatever the controls' height
-        if Theme.look.pedalboard {
+        if Theme.look.pedalboard && !isDrums { // Dalnok Drums keeps its pad grid on a faceplate in every look
             title.isHidden = true // the name is lettered on the pedal
             for b in [editButton, openButton] { b.contentTintColor = Theme.textDim; b.font = Theme.ui(9.5, .semibold) }
             let p = PedalBody(name: name)
@@ -1117,6 +1119,11 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         }
         if !loaded { return note(unavailableMessage) }
         if ids.isEmpty { return note("No automatable parameters. Use Open for the plug-in's own window.") }
+        if isDrums { // the pads first, then each pad's level and tune
+            let grid = DrumPadGrid(device: self)
+            padGrid = grid
+            sectionsRow.addArrangedSubview(grid)
+        }
         let params = ids.compactMap { id in current(id).map { (id: id, p: $0) } }
         let rows = Self.knobRows(params.count)
         if let display {

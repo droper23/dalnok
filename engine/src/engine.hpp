@@ -419,7 +419,8 @@ public:
     // out), one file each in `folder` named "NN Name.ext", all the same length (the range plus the mix's tail).
     // Returns the paths written.
     bool exportStems(const std::string &folder, int32_t format, int64_t start, int64_t frames, int64_t maxTail,
-                     std::vector<std::string> &paths, std::string &err);
+                     std::vector<std::string> &paths, std::string &err, const std::vector<DalnokTrackId> &only = {},
+                     bool buses = false);
 
     void stats(DalnokStats &out) const;
     void resetStats();

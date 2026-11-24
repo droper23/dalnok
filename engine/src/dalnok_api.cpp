@@ -1204,6 +1204,17 @@ DalnokStatus dalnok_clip_set_loop(DalnokEngine *e, DalnokClipId c, bool looped) 
     std::string err;
     return e ? statusFor(e->impl.setClipLoop(c, looped, err), err) : DALNOK_ERR_INVALID_ARG;
 }
+int32_t dalnok_export_stems_of(DalnokEngine *e, const char *folder, int32_t format, int64_t start, int64_t frames,
+                               int64_t max_tail, const DalnokTrackId *tracks, int32_t count, bool buses, char *err, size_t err_len) {
+    if (!e || !folder || frames <= 0 || max_tail < 0 || count < 0 || (count > 0 && !tracks)) return -1;
+    std::vector<std::string> paths;
+    std::string msg;
+    if (!e->impl.exportStems(folder, format, start, frames, max_tail, paths, msg, std::vector<DalnokTrackId>(tracks, tracks + count), buses)) {
+        copyOut(err, err_len, msg);
+        return -1;
+    }
+    return static_cast<int32_t>(paths.size());
+}
 DalnokTrackId dalnok_track_bounce_in_place(DalnokEngine *e, DalnokTrackId track, const char *path, char *err, size_t err_len) {
     if (!e || !path) return 0;
     std::string msg;

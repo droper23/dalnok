@@ -175,7 +175,8 @@ bool Engine::renderBlocks(int64_t start, int64_t frames, int64_t maxTail, int64_
 }
 
 bool Engine::exportStems(const std::string &folder, int32_t format, int64_t start, int64_t frames, int64_t maxTail,
-                         std::vector<std::string> &paths, std::string &err) {
+                         std::vector<std::string> &paths, std::string &err, const std::vector<DalnokTrackId> &only,
+                         bool buses) {
     static const char *const kExt[] = {"wav", "wav", "wav", "aif", "m4a", "m4a", "flac"};
     if (format < 0 || format > 6) return fail(err, "unknown export format");
     struct Stem { DalnokTrackId id; std::unique_ptr<WavWriter> writer; size_t index = 0; };
@@ -183,7 +184,8 @@ bool Engine::exportStems(const std::string &folder, int32_t format, int64_t star
     int n = 0;
     for (const auto &t : model_.tracks) {
         ++n;
-        if (t.kind == kTrackBus || t.muted) continue;
+        if (t.muted || (t.kind == kTrackBus && !buses)) continue;
+        if (!only.empty() && std::find(only.begin(), only.end(), t.id) == only.end()) continue;
         std::string name;
         for (char ch : t.name) name += (ch == '/' || ch == ':' || ch == '\\') ? '-' : ch;
         char prefix[8];
@@ -194,7 +196,7 @@ bool Engine::exportStems(const std::string &folder, int32_t format, int64_t star
         paths.push_back(path);
         stems.push_back({t.id, std::move(w)});
     }
-    if (stems.empty()) return fail(err, "no tracks to export (buses and muted tracks are left out)");
+    if (stems.empty()) return fail(err, buses ? "no tracks to export (muted tracks are left out)" : "no tracks to export (buses and muted tracks are left out)");
     std::vector<float> bufL, bufR;
     bool failed = false;
     const bool ok = renderBlocks(start, frames, maxTail, nullptr, err,

@@ -392,9 +392,18 @@ final class PianoRollView: NSView {
         let names = ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B"]
         // Pitch classes this clip uses (from its notes): marked in the keyboard's margin, to see the material at a glance.
         let used = Set((clip?.notes ?? []).map { Int($0.pitch) % 12 })
+        // A track playing Dalnok Drums: its pads' names on notes 36-51 (Drum Rack's and Logic's drum names).
+        let drums = clip.flatMap { c in session.track(c.track) }?.plugins.first.map { $0.path.hasSuffix("drums") } ?? false
+        let padNameAttrs: [NSAttributedString.Key: Any] = [.font: Theme.ui(8.5, .medium), .foregroundColor: Theme.text]
         for p in 0...127 {
             let ry = y(p)
             guard ry + rowHeight >= g.minY, ry <= g.maxY else { continue }
+            if drums, (36..<52).contains(p), rowHeight >= 9 { // a pad's name across its key, instead of the key itself
+                ctx.setFillColor(Theme.panelRaised.cgColor); ctx.fill(CGRect(x: 0, y: ry, width: Self.keyWidth - 1, height: rowHeight))
+                ctx.setFillColor(Theme.separator.cgColor); ctx.fill(CGRect(x: 0, y: ry + rowHeight - 0.5, width: Self.keyWidth, height: 0.5))
+                (DeviceView.padNames[p - 36] as NSString).draw(at: CGPoint(x: 3, y: ry + (rowHeight - 11) / 2), withAttributes: padNameAttrs)
+                continue
+            }
             let black = [1, 3, 6, 8, 10].contains(p % 12)
             if family == .glass || family == .engraved {
                 if black {

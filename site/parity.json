@@ -1407,9 +1407,13 @@
         [
           "Sampler loop points and multi-sample zones",
           "todo"
+        ],
+        [
+          "Drum pad grid (16 pads with their samples: click to hear, drop to load) and pad names on the piano roll's keys",
+          "verified"
         ]
       ],
-      "evidence": "MidiTests measure pitch (440 Hz within 0.5 Hz), onset, release and velocity scaling; a mutation check confirmed the pitch test catches a 2 Hz error. Most instruments are expected to come from plugins (ADR-0009), so the stock set stays small. SamplerTests: the Sampler plays a 440 Hz sample at 440 Hz on its root key and 880 Hz an octave up (±1/±2 Hz), at its level (±0.01) and releases to silence; Drums play each pad's sample from the note's exact frame, sample for sample (1e-5), an empty pad is silent, and a saved kit reopens identical. Self-test: dropping two sounds on Dalnok Drums fills pads 1 and 2 and note 36 plays. SliceToDrums: four bursts sliced at their hits onto five pads replay the clip sample for sample (1e-5) with the clip muted; one undo. Self-test: Clip ▸ Slice to Drums. DalnokSynth: a sine A4 at 440 Hz (±1) at -6 dB × 70 % sustain (±0.01), silent after its 200 ms release; a 400 Hz low-pass cuts a saw's 36th harmonic by over 30 dB; a 12-semitone pitch envelope starts high and settles at 220 Hz; mono glide passes between 220 and 440 Hz and lands on 440."
+      "evidence": "MidiTests measure pitch (440 Hz within 0.5 Hz), onset, release and velocity scaling; a mutation check confirmed the pitch test catches a 2 Hz error. Most instruments are expected to come from plugins (ADR-0009), so the stock set stays small. SamplerTests: the Sampler plays a 440 Hz sample at 440 Hz on its root key and 880 Hz an octave up (±1/±2 Hz), at its level (±0.01) and releases to silence; Drums play each pad's sample from the note's exact frame, sample for sample (1e-5), an empty pad is silent, and a saved kit reopens identical. Self-test: dropping two sounds on Dalnok Drums fills pads 1 and 2 and note 36 plays. SliceToDrums: four bursts sliced at their hits onto five pads replay the clip sample for sample (1e-5) with the clip muted; one undo. Self-test: Clip ▸ Slice to Drums. DalnokSynth: a sine A4 at 440 Hz (±1) at -6 dB × 70 % sustain (±0.01), silent after its 200 ms release; a 400 Hz low-pass cuts a saw's 36th harmonic by over 30 dB; a 12-semitone pitch envelope starts high and settles at 220 Hz; mono glide passes between 220 and 440 Hz and lands on 440. Self-test: Dalnok Drums shows its 16 pads in every look; snapshots of the pads (with loaded sample names) and of the piano roll with pad names."
     },
     {
       "id": "midi",
@@ -1831,9 +1835,13 @@
         [
           "Render queue (File ▸ Export Queue: mixes and stems, each with its range and format)",
           "verified"
+        ],
+        [
+          "Stems with buses (submixes) or only chosen tracks",
+          "verified"
         ]
       ],
-      "evidence": "renderToWavRoundTrips; self-test export decodes to the session length. ExportDither recovers a 0.4 LSB sine at 16 bits; ExportTail renders a synth release past the last clip and keeps silent endings exact. BounceInPlace: the bounced track (fader −6 dB, pan 0.3, a delay tail past the clip) renders the same mix within 1e-5 once the source is muted; one undo. Self-test: Track ▸ Bounce Track in Place in all six looks at 48 and 44.1 kHz. ExportFormats: WAV, AIFF, FLAC and ALAC decode back sample-exact (within 1e-6) at the same length; AAC keeps the level within 0.2 dB. Self-test exports FLAC from the app. ExportStems: two stems (fader, pan, a delay) sum to the mix within 1e-5; buses and muted tracks are left out; names are sanitized. Self-test: File ▸ Export Stems. Self-test: a FLAC mix and WAV stems queued and rendered in one go."
+      "evidence": "renderToWavRoundTrips; self-test export decodes to the session length. ExportDither recovers a 0.4 LSB sine at 16 bits; ExportTail renders a synth release past the last clip and keeps silent endings exact. BounceInPlace: the bounced track (fader −6 dB, pan 0.3, a delay tail past the clip) renders the same mix within 1e-5 once the source is muted; one undo. Self-test: Track ▸ Bounce Track in Place in all six looks at 48 and 44.1 kHz. ExportFormats: WAV, AIFF, FLAC and ALAC decode back sample-exact (within 1e-6) at the same length; AAC keeps the level within 0.2 dB. Self-test exports FLAC from the app. ExportStems: two stems (fader, pan, a delay) sum to the mix within 1e-5; buses and muted tracks are left out; names are sanitized. Self-test: File ▸ Export Stems. Self-test: a FLAC mix and WAV stems queued and rendered in one go. ExportStemsChoices: buses export their submix (a kick routed into a drum bus is in the bus stem), a selection exports only its track. Self-test: stems with buses."
     },
     {
       "id": "interchange",

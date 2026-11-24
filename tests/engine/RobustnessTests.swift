@@ -183,3 +183,38 @@ import Testing
         #expect(worst < 1e-5, "stems sum to the mix within \(worst)")
     }
 }
+
+@Suite struct ExportStemsChoices {
+    @Test func busesAndASelection() throws {
+        let n = 24_000
+        let a = (0..<n).map { Float(0.3 * sin(2 * Double.pi * 220 * Double($0) / 48_000)) }
+        let e = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(e) }
+        let bus = dalnok_track_add_bus(e, "Drum Bus")
+        func track(_ name: String) -> DalnokTrackId {
+            let t = dalnok_track_add(e, name)
+            let m = makeMedia([a]); defer { dalnok_media_release(m) }
+            DalnokEngine.dalnok_clip_add(e, t, dalnok_pool_add(e, m, ""), 0, 0, 0)
+            return t
+        }
+        let kick = track("Kick"), keys = track("Keys")
+        #expect(runCommand(e, "track.setOutput", "{\"track\":\(kick),\"bus\":\(bus)}").0 == DALNOK_OK)
+        var err = [CChar](repeating: 0, count: 256)
+        let dir = tempDir().appendingPathComponent("stems2")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        #expect(dalnok_export_stems_of(e, dir.path, Int32(DALNOK_FORMAT_WAV32F.rawValue), 0, Int64(n), 0, nil, 0, true, &err, 256) == 3, "\(cstr(err))")
+        let files = try FileManager.default.contentsOfDirectory(atPath: dir.path).sorted()
+        #expect(files == ["01 Drum Bus.wav", "02 Kick.wav", "03 Keys.wav"], "\(files)")
+        // The bus stem carries the kick routed into it.
+        var media: OpaquePointer?
+        #expect(dalnok_media_load(dir.appendingPathComponent("01 Drum Bus.wav").path, 48_000, &media, &err, 256) == DALNOK_OK)
+        let m = try #require(media); defer { dalnok_media_release(m) }
+        let p = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(p) }
+        DalnokEngine.dalnok_clip_add(p, dalnok_track_add(p, "R"), dalnok_pool_add(p, m, ""), 0, 0, 0)
+        #expect(render(p, frames: n).0.map { abs($0) }.max()! > 0.2, "the bus stem holds the kick")
+        let only = tempDir().appendingPathComponent("stems3")
+        try FileManager.default.createDirectory(at: only, withIntermediateDirectories: true)
+        var pick = [keys]
+        #expect(dalnok_export_stems_of(e, only.path, Int32(DALNOK_FORMAT_WAV24.rawValue), 0, Int64(n), 0, &pick, 1, false, &err, 256) == 1)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: only.path) == ["03 Keys.wav"])
+    }
+}

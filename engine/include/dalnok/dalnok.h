@@ -1042,6 +1042,10 @@ DalnokStatus dalnok_render_to_file(DalnokEngine *engine, const char *path, int64
  * Returns the number of files written, or -1 with a message in `err`. */
 int32_t dalnok_export_stems(DalnokEngine *engine, const char *folder, int32_t format, int64_t start_frame, int64_t frames,
                             int64_t max_tail, char *err, size_t err_len);
+/* As dalnok_export_stems, for the tracks listed (count 0 = all) and, with `buses`, bus tracks too (their output
+ * after their fader: submixes for a mix engineer). */
+int32_t dalnok_export_stems_of(DalnokEngine *engine, const char *folder, int32_t format, int64_t start_frame, int64_t frames,
+                               int64_t max_tail, const DalnokTrackId *tracks, int32_t count, bool buses, char *err, size_t err_len);
 /* Dalnok Sampler and Dalnok Drums (built-in instruments "dalnok:sampler", "dalnok:drums"; API 47): load an audio
  * file into a zone (the Sampler has zone 0; Drums pads 0-15 play notes 36-51). An empty path clears it. The file's
  * path is saved in the plug-in's state. sample_path copies the zone's path (empty when none); returns its length. */

@@ -1748,19 +1748,34 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         panel.canChooseDirectories = true
         panel.canCreateDirectories = true
         panel.prompt = "Export Stems"
-        panel.message = "One \(Engine.exportFormats[Self.exportFormatIndex].title) file per track goes into this folder (buses and muted tracks are left out)."
+        panel.message = "One \(Engine.exportFormats[Self.exportFormatIndex].title) file per track goes into this folder (muted tracks are left out)."
+        let buses = NSButton(checkboxWithTitle: "Include buses (their submixes)", target: nil, action: nil)
+        buses.state = UserDefaults.standard.bool(forKey: "stemsIncludeBuses") ? .on : .off
+        let selected = NSButton(checkboxWithTitle: "Only the selected track", target: nil, action: nil)
+        selected.isEnabled = selectedTrack != nil
+        let options = NSStackView(views: [buses, selected])
+        options.orientation = .vertical; options.alignment = .leading
+        options.edgeInsets = NSEdgeInsets(top: 8, left: 12, bottom: 8, right: 12)
+        panel.accessoryView = options
+        panel.isAccessoryViewDisclosed = true
         panel.beginSheetModal(for: window!) { [weak self] resp in
             guard resp == .OK, let url = panel.url else { return }
-            MainActor.assumeIsolated { () -> Void in _ = self?.exportStems(to: url) }
+            MainActor.assumeIsolated { () -> Void in
+                UserDefaults.standard.set(buses.state == .on, forKey: "stemsIncludeBuses")
+                let only = selected.state == .on ? (self?.selectedTrack).map { [$0] } ?? [] : []
+                _ = self?.exportStems(to: url, buses: buses.state == .on, only: only)
+            }
         }
     }
-    func exportStems(to folder: URL, format: DalnokFileFormat? = nil) -> Int {
+    func exportStems(to folder: URL, format: DalnokFileFormat? = nil, buses: Bool = false, only: [DalnokTrackId] = []) -> Int {
         let c = session.cycle
         let start = c.on ? c.start : 0, frames = (c.on ? c.end : session.engine.sessionLength) - start
         let tail = c.on ? Int64(0) : Int64(10 * dalnok_engine_sample_rate(session.engine.handle))
         var err = [CChar](repeating: 0, count: 512)
         let fmt = format ?? Engine.exportFormats[Self.exportFormatIndex].format
-        let n = frames > 0 ? dalnok_export_stems(session.engine.handle, folder.path, Int32(fmt.rawValue), start, frames, tail, &err, err.count) : -1
+        var pick = only
+        let n = frames > 0 ? dalnok_export_stems_of(session.engine.handle, folder.path, Int32(fmt.rawValue), start, frames, tail, &pick,
+                                                    Int32(pick.count), buses, &err, err.count) : -1
         if n > 0 { flash("Exported \(n) stems to \(folder.lastPathComponent)") }
         else { flash(frames > 0 ? String(cString: err) : "Nothing to export") }
         return Int(n)
