@@ -75,11 +75,11 @@ enum Theme {
         var clipRed: UInt32 = 0xFF5A4F
         static let graphite = Palette(window: 0x111214, panel: 0x17181B, panelRaised: 0x1D1F23, control: 0x2A2D33, controlHi: 0x3A3E46,
                                       laneA: 0x141518, laneB: 0x16171A, laneHighlight: 0x1C1E22, lcd: 0x0B0C0E,
-                                      text: 0xE8E9EC, textDim: 0x9A9EA6, textFaint: 0x898E97, accent: 0xE8B25C, playhead: 0xF4F4F5,
+                                      text: 0xE8E9EC, textDim: 0x9A9EA6, textFaint: 0x91969E, accent: 0xE8B25C, playhead: 0xF4F4F5,
                                       cycle: 0xE9C24A, selectedHeader: 0x262930, knobHover: 0x44484F, launcher: 0x17181B)
         static let warmAnalog = Palette(window: 0x18130F, panel: 0x211A15, panelRaised: 0x2A211A, control: 0x403229, controlHi: 0x584638,
                                         laneA: 0x1C1713, laneB: 0x201A15, laneHighlight: 0x2A2019, lcd: 0x120D0A,
-                                        text: 0xF2E7D7, textDim: 0xC0AB96, textFaint: 0x9B8876, accent: 0xE6AB69, playhead: 0xF6E5CE,
+                                        text: 0xF2E7D7, textDim: 0xC0AB96, textFaint: 0xAC9C8E, accent: 0xE6AB69, playhead: 0xF6E5CE,
                                         cycle: 0xE8B54F, selectedHeader: 0x3A2B21, knobHover: 0x685344, launcher: 0x15100C)
         /// Prism: night glass. Deep blue-violet depths, cool white light, an iridescent cyan-to-violet accent.
         static let prism = Palette(window: 0x090B14, panel: 0x10131F, panelRaised: 0x151929, control: 0x232A42, controlHi: 0x323A5C,
@@ -90,7 +90,7 @@ enum Theme {
         /// Prism Light: daylight glass. Pale frosted panes over a soft pastel light field, ink-blue type.
         static let prismLight = Palette(window: 0xE9EDF8, panel: 0xEEF1FA, panelRaised: 0xF4F6FC, control: 0xD6DCEE, controlHi: 0xC3CBE4,
                                         laneA: 0xEDF0F9, laneB: 0xE9ECF7, laneHighlight: 0xDCE3F6, lcd: 0xF7F9FE,
-                                        text: 0x141A33, textDim: 0x434B6B, textFaint: 0x5F6788, accent: 0x2F6BFF, playhead: 0x1A2A6C,
+                                        text: 0x141A33, textDim: 0x434B6B, textFaint: 0x575E7C, accent: 0x2F6BFF, playhead: 0x1A2A6C,
                                         cycle: 0xC99212, selectedHeader: 0xD9E1F7, knobHover: 0xC9D2EE, launcher: 0xE7EBF7,
                                         ink: 0x141A33, shade: 0x2A3566, light: true, well: 0xD3D9EC, selection: 0x2F6BFF,
                                         muteOn: 0x2F6BFF, soloOn: 0xE0A81C, monitorOn: 0xE07B1C, recordOn: 0xE5364A, clipRed: 0xE5364A)
@@ -98,7 +98,7 @@ enum Theme {
         /// what must be seen.
         static let atelierDark = Palette(window: 0x231B10, panel: 0x2A2014, panelRaised: 0x322718, control: 0x46371F, controlHi: 0x5A4729,
                                          laneA: 0x281F13, laneB: 0x2C2216, laneHighlight: 0x3A2D1A, lcd: 0x20180E,
-                                         text: 0xF0E3C4, textDim: 0xCDB98E, textFaint: 0xA8946B, accent: 0xE2C27A, playhead: 0xF0E3C4,
+                                         text: 0xF0E3C4, textDim: 0xCDB98E, textFaint: 0xB4A380, accent: 0xE2C27A, playhead: 0xF0E3C4,
                                          cycle: 0xD4A747, selectedHeader: 0x3E301B, knobHover: 0x5A4729, launcher: 0x261D11,
                                          ink: 0xF0E3C4, well: 0x1A130A, selection: 0xF0E3C4,
                                          muteOn: 0x7FA6B8, soloOn: 0xD4A747, monitorOn: 0xD98A45, recordOn: 0xE0754E, clipRed: 0xE0754E)
@@ -106,7 +106,7 @@ enum Theme {
         /// textDim ≥ 7:1 and the ochre numerals (cycle) ≥ 5:1 on the parchment (2026-11-22 audit).
         static let atelier = Palette(window: 0xE9DEC6, panel: 0xEDE3CE, panelRaised: 0xF4ECDB, control: 0xDCCDAE, controlHi: 0xC9B78F,
                                      laneA: 0xF5EEDE, laneB: 0xF0E7D3, laneHighlight: 0xE8D9B8, lcd: 0xF6F0E2,
-                                     text: 0x3A2916, textDim: 0x54432F, textFaint: 0x715E45, accent: 0x7E5212, playhead: 0x3A2916,
+                                     text: 0x3A2916, textDim: 0x54432F, textFaint: 0x64533D, accent: 0x7E5212, playhead: 0x3A2916,
                                      cycle: 0x74561A, selectedHeader: 0xE6D6B4, knobHover: 0xD8C7A2, launcher: 0xECE2CC,
                                      ink: 0x3A2916, shade: 0x3B2F1E, light: true, well: 0xE0D2B4, selection: 0x3A2916,
                                      muteOn: 0x33607E, soloOn: 0xB48728, monitorOn: 0xA9652A, recordOn: 0xA8361F, clipRed: 0xA8361F)

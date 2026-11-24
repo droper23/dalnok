@@ -233,7 +233,29 @@ extension SelfTest {
     }
 
     /// Every window, opened the way a user opens it.
+    /// WCAG contrast of every text token on every surface it is drawn on, in all six palettes (≥ 4.5:1).
+    func contrastChecks() {
+        func lum(_ c: UInt32) -> Double {
+            func f(_ v: UInt32) -> Double { let x = Double(v & 255) / 255; return x <= 0.03928 ? x / 12.92 : pow((x + 0.055) / 1.055, 2.4) }
+            return 0.2126 * f(c >> 16) + 0.7152 * f(c >> 8) + 0.0722 * f(c)
+        }
+        func ratio(_ a: UInt32, _ b: UInt32) -> Double { let (x, y) = (lum(a), lum(b)); return (max(x, y) + 0.05) / (min(x, y) + 0.05) }
+        let palettes: [(String, Theme.Palette)] = [("Graphite", .graphite), ("Warm Analog", .warmAnalog), ("Prism", .prism),
+                                                   ("Prism Light", .prismLight), ("Atelier Dark", .atelierDark), ("Atelier", .atelier)]
+        for (name, p) in palettes {
+            var worst = (99.0, "")
+            for (tn, t) in [("text", p.text), ("textDim", p.textDim), ("textFaint", p.textFaint)] {
+                for (bn, b) in [("window", p.window), ("panel", p.panel), ("panelRaised", p.panelRaised), ("control", p.control),
+                                ("selectedHeader", p.selectedHeader)] where ratio(t, b) < worst.0 {
+                    worst = (ratio(t, b), "\(tn) on \(bn)")
+                }
+            }
+            check(worst.0 >= 4.5, "contrast: \(name) text is at least 4.5:1 (lowest \(String(format: "%.2f", worst.0)), \(worst.1))")
+        }
+    }
+
     func accessibilityPass() async {
+        contrastChecks()
         guard let main = w.window else { return check(false, "a11y: main window") }
         let showed = (MainWindowController.showMixer, MainWindowController.showLauncher, MainWindowController.showDevicePanel)
         let sides = (MainWindowController.showLibrary, MainWindowController.showInspector)

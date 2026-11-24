@@ -61,7 +61,7 @@ final class ClipEditorPanel: NSView {
         audio = AudioClipView(session: session)
         super.init(frame: .zero)
         wantsLayer = true
-        roll.velocityHeight = 48
+        roll.velocityHeight = 60
         roll.onStatus = { [weak self] s in self?.status.stringValue = s }
         roll.onFocus = { [weak self] in self?.focus() }
         audio.onFocus = { [weak self] in self?.focus() }
