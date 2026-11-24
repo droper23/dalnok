@@ -81,6 +81,9 @@ final class PianoRollView: NSView {
     static let keyWidth: CGFloat = 48, rulerHeight: CGFloat = 22, edge: CGFloat = 6
     /// The velocity lane's height (shorter when the editor is docked in the main window).
     var velocityHeight: CGFloat = 72 { didSet { needsDisplay = true } }
+    /// What the lower lane shows: -1 velocity, else a MIDI controller (128 = pitch bend). See PianoRoll+Controllers.
+    var laneController = -1
+    var drawingController = false
     /// Docked in the main window's clip editor: status text goes here instead of the window's subtitle, and a click
     /// reports focus (so editing keys and Delete act on notes).
     var onStatus: ((String) -> Void)?
@@ -454,7 +457,8 @@ final class PianoRollView: NSView {
         Theme.panel.setFill(); CGRect(x: 0, y: lane.minY, width: bounds.width, height: lane.height).fill()
         Theme.separator.setFill(); CGRect(x: 0, y: lane.minY, width: bounds.width, height: 1).fill()
         let attrs: [NSAttributedString.Key: Any] = [.font: Theme.mono(9, .medium), .foregroundColor: Theme.textDim]
-        ("VELOCITY" as NSString).draw(at: CGPoint(x: 6, y: lane.minY + 6), withAttributes: attrs)
+        ((laneTitle + " ▾") as NSString).draw(at: CGPoint(x: 6, y: lane.minY + 6), withAttributes: attrs)
+        if laneController >= 0 { return drawControllerLane(ctx, c, tint) }
         ctx.saveGState()
         ctx.clip(to: lane)
         // A chord's stems share one x: the loudest is drawn first and selected ones last, so every head stays visible
@@ -538,6 +542,16 @@ final class PianoRollView: NSView {
         onFocus?()
         guard let c = clip else { return }
         let p = convert(event.locationInWindow, from: nil)
+        if velocityLane.contains(p) || (p.y >= velocityLane.minY && p.x < Self.keyWidth) {
+            if p.x < Self.keyWidth { return showLaneMenu(at: p) } // the lane's title chooses velocity or a controller
+            if laneController >= 0 {
+                if event.modifierFlags.contains(.option) { return deleteController(near: p) }
+                session.engine.beginGroup("Draw Controller")
+                drawingController = drawController(at: p, bypass: event.modifierFlags.contains(.control))
+                if !drawingController { session.engine.endGroup() }
+                return
+            }
+        }
         if let n = hitStem(p) {
             let k = key(n)
             if !selection.contains(k) { selection = [k] }
@@ -603,6 +617,12 @@ final class PianoRollView: NSView {
     }
 
     override func mouseDragged(with event: NSEvent) {
+        if drawingController {
+            let p = convert(event.locationInWindow, from: nil)
+            let lane = velocityLane
+            drawController(at: CGPoint(x: p.x, y: min(max(p.y, lane.minY), lane.maxY)), bypass: event.modifierFlags.contains(.control))
+            return
+        }
         if playingKeys {
             let p = convert(event.locationInWindow, from: nil)
             holdPreview(UInt8(max(0, min(127, pitch(atY: min(max(p.y, grid.minY), grid.maxY))))), 100)
@@ -687,6 +707,7 @@ final class PianoRollView: NSView {
     }
 
     override func mouseUp(with event: NSEvent) {
+        if drawingController { drawingController = false; session.engine.endGroup() }
         releasePreview()
         playingKeys = false
         if drag != nil { session.engine.endGroup() }

@@ -1454,9 +1454,17 @@
         [
           "MIDI Functions: legato, fixed length, scale quantize (8 scales), humanize, set and scale velocity",
           "verified"
+        ],
+        [
+          "Controller and pitch-bend lanes in the piano roll; controllers reach plug-in instruments (clips and live)",
+          "verified"
+        ],
+        [
+          "Recording controllers from a keyboard into clips",
+          "todo"
         ]
       ],
-      "evidence": "MidiTests: recording, quantize, persistence, split rendering, and a Core MIDI virtual source driving the instrument through a real input port (TSan clean). The app self-test plays live MIDI through the running device, records a note through the menus and quantizes. Input events are stamped at the start of the audio callback that receives them, so timing is up to one buffer late. The Arturia MiniLab has not been played into a recording yet. The piano roll is driven by the GUI self-test with synthesized mouse and key events (add, drag, resize, velocity, transpose, nudge, delete, undo, select all). GUI self-test also covers marquee and keyboard step entry. GUI self-test checks group movement at pitch and time boundaries. MidiFunctions: legato joins each note to the next start (chords share it), fixed length in beats, D minor scale quantize maps all 12 pitches to the nearest degree (ties down), humanize stays within ±10 ms and ±8 and varies, velocity set/scale clamps 1-127; self-test runs Set Velocity on one selected note and Legato on all with undo."
+      "evidence": "MidiTests: recording, quantize, persistence, split rendering, and a Core MIDI virtual source driving the instrument through a real input port (TSan clean). The app self-test plays live MIDI through the running device, records a note through the menus and quantizes. Input events are stamped at the start of the audio callback that receives them, so timing is up to one buffer late. The Arturia MiniLab has not been played into a recording yet. The piano roll is driven by the GUI self-test with synthesized mouse and key events (add, drag, resize, velocity, transpose, nudge, delete, undo, select all). GUI self-test also covers marquee and keyboard step entry. GUI self-test checks group movement at pitch and time boundaries. MidiFunctions: legato joins each note to the next start (chords share it), fixed length in beats, D minor scale quantize maps all 12 pitches to the nearest degree (ties down), humanize stays within ±10 ms and ±8 and varies, velocity set/scale clamps 1-127; self-test runs Set Velocity on one selected note and Legato on all with undo. Controllers: the test VST3 synth (CC 1 mapped to its level through IMidiMapping) follows a clip's mod wheel in-process and isolated; controllers follow tempo changes and splits; format 17 fixture round-trips. Self-test draws in the mod wheel lane (high to low) and undoes it in one step."
     },
     {
       "id": "tempo",

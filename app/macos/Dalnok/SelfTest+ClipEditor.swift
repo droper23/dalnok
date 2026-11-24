@@ -132,6 +132,22 @@ extension SelfTest {
               "MIDI Functions ▸ Legato joins every note to the next (\(s.clip(midi)?.notes.first?.length ?? -1))")
         _ = perform("Undo")
         check(s.clip(midi)?.notes.first?.length == 100, "undo restores the lengths")
+        // The lower lane as a controller lane (mod wheel): click sets a point, a drag draws more, one undo step.
+        roll.laneController = 1
+        roll.layoutSubtreeIfNeeded()
+        let lane = roll.velocityLane
+        let x0 = roll.x(Double(c.start) + beat), x1 = roll.x(Double(c.start) + beat * 2)
+        let top = roll.convert(CGPoint(x: x0, y: lane.minY + 8), to: nil), low = roll.convert(CGPoint(x: x1, y: lane.maxY - 6), to: nil)
+        roll.mouseDown(with: ev(.leftMouseDown, top))
+        roll.mouseDragged(with: ev(.leftMouseDragged, low))
+        roll.mouseUp(with: ev(.leftMouseUp, low))
+        let modPoints = roll.controllerEvents().filter { $0.controller == 1 }
+        check(modPoints.count >= 2 && (modPoints.first?.value ?? 0) > 100 && (modPoints.last?.value ?? 127) < 20 && e.undoName == "Draw Controller",
+              "the mod wheel lane draws points high to low (\(modPoints.map(\.value)))")
+        try? w.snapshot(to: workdir.appendingPathComponent("controller-lane.png"))
+        _ = perform("Undo")
+        check(roll.controllerEvents().isEmpty, "one undo removes the drawn controller points")
+        roll.laneController = -1
 
         // The Clip / Devices switch.
         w.bottomTabs.selectedSegment = 1
