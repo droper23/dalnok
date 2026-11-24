@@ -18,7 +18,8 @@
 namespace dalnok {
 
 // An armed audio track in the take: spool channel `channel` becomes `wav`.
-struct RecordAudio { DalnokTrackId track; std::string name; int channel; std::string wav; };
+// part: 0 a mono take; 1 and 2 the left and right of a stereo track (merged into one stereo file after recording).
+struct RecordAudio { DalnokTrackId track; std::string name; int channel; std::string wav; int part = 0; };
 // A MIDI event captured during a take, at its timeline position.
 struct RecordedMidi { int64_t pos; uint8_t status, data1, data2; };
 // Live waveform while recording: the peak of `kLivePeakFrames` captured frames of one spool channel. `index` counts

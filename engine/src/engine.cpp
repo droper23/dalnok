@@ -352,6 +352,18 @@ bool Engine::setInputChannel(DalnokTrackId id, int32_t channel, std::string &err
     });
 }
 
+bool Engine::setInputStereo(DalnokTrackId id, bool stereo, std::string &err) {
+    if (rec_.active) return fail(err, "cannot change input while recording");
+    return edit("Track Input", true, [&](Model &m) {
+        TrackState *t = m.track(id);
+        if (!t) return fail(err, "no such track");
+        if (t->kind != kTrackAudio) return fail(err, "only audio tracks have an audio input");
+        if (stereo && t->inputChannel > 62) return fail(err, "a stereo input needs the next input too");
+        t->inputStereo = stereo;
+        return true;
+    });
+}
+
 bool Engine::removeClips(const std::vector<DalnokClipId> &ids, std::string &err) {
     if (ids.empty()) return fail(err, "no clips selected");
     std::set<DalnokClipId> unique;

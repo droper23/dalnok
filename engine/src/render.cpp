@@ -431,7 +431,8 @@ void renderBlock(const RenderState &state, int64_t pos, int frames, float *left,
             if (!synths && monitorsInput(t, s)) {
                 if (!st.any) { clear(L, frames); clear(R, frames); st.any = true; }
                 const float *in = s.liveInputs[t.inputChannel];
-                for (int k = 0; k < frames; ++k) { L[k] += in[k]; R[k] += in[k]; }
+                const float *inR = t.inputStereo && t.inputChannel + 1 < s.liveInputCount ? s.liveInputs[t.inputChannel + 1] : in;
+                for (int k = 0; k < frames; ++k) { L[k] += in[k]; R[k] += inR[k]; }
             }
             // Live input on the built-in synth: through the track's inserts, fader and routing like everything else.
             if (!synths && static_cast<int32_t>(i) == s.liveTrack && t.instrument && !t.instrumentPlugin && rt.live.active()) {

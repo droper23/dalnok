@@ -807,6 +807,10 @@ DalnokStatus dalnok_track_set_input_monitor(DalnokEngine *e, DalnokTrackId t, bo
     std::string err;
     return e ? statusFor(e->impl.setInputMonitor(t, on, err), err) : DALNOK_ERR_INVALID_ARG;
 }
+DalnokStatus dalnok_track_set_input_stereo(DalnokEngine *e, DalnokTrackId t, bool stereo) {
+    std::string err;
+    return e ? statusFor(e->impl.setInputStereo(t, stereo, err), err) : DALNOK_ERR_INVALID_ARG;
+}
 DalnokStatus dalnok_track_set_input(DalnokEngine *e, DalnokTrackId t, int32_t ch) {
     std::string err;
     return e ? statusFor(e->impl.setInputChannel(t, ch, err), err) : DALNOK_ERR_INVALID_ARG;

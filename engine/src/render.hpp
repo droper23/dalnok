@@ -188,6 +188,7 @@ struct RenderTrack {
     bool monoSource = true;        // every clip is mono -> constant-power pan law
     uint64_t mutedMidiSignature = 0;
     int32_t inputChannel = -1;     // audio tracks: the device input they monitor (-1 = cannot monitor)
+    bool inputStereo = false;      // and the next input as the right side
     bool inputMonitor = false, armed = false; // Input Monitoring on; record-enabled (monitors when armed monitoring is on)
     bool instrument = false;       // MIDI track (built-in synth unless instrumentPlugin is set)
     bool invert = false;           // phase (polarity) inverted before the inserts

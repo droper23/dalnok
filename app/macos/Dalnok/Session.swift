@@ -380,6 +380,7 @@ final class Session {
         refresh()
     }
     func setInput(_ t: DalnokTrackId, _ channel: Int32) { dalnok_track_set_input(h, t, channel); refresh() }
+    func setInputStereo(_ t: DalnokTrackId, _ on: Bool) { dalnok_track_set_input_stereo(h, t, on); refresh() }
     func setInputMonitor(_ t: DalnokTrackId, _ on: Bool) { dalnok_track_set_input_monitor(h, t, on); refresh() }
     func setPhaseInvert(_ t: DalnokTrackId, _ on: Bool) { dalnok_track_set_phase_invert(h, t, on); refresh() }
     // Track groups

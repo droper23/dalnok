@@ -274,9 +274,12 @@ final class InspectorPanel: SidePanelView {
         if audio {
             var names = inputNames()
             if names.isEmpty { names = ["Input 1", "Input 2"] }
-            while names.count <= Int(t.inputChannel) { names.append("Input \(names.count + 1)") }
-            if input.itemTitles != names { input.removeAllItems(); input.addItems(withTitles: names) }
-            input.selectItem(at: Int(t.inputChannel))
+            while names.count <= Int(t.inputChannel) + (t.inputStereo ? 1 : 0) { names.append("Input \(names.count + 1)") }
+            // Then the stereo pairs (1+2, 3+4, …): index names.count + k is the pair starting at input 2k + 1.
+            let mono = names.count
+            let pairs = stride(from: 0, to: mono - 1, by: 2).map { "Inputs \($0 + 1)+\($0 + 2) (stereo)" }
+            if input.itemTitles != names + pairs { input.removeAllItems(); input.addItems(withTitles: names + pairs) }
+            input.selectItem(at: t.inputStereo && t.inputChannel % 2 == 0 ? mono + Int(t.inputChannel) / 2 : Int(t.inputChannel))
             monitor.selectItem(at: t.inputMonitor ? 1 : 0)
         }
         let buses = session.buses.filter { $0.id != t.id }
@@ -415,7 +418,14 @@ final class InspectorPanel: SidePanelView {
         guard let t = track else { return }
         if !session.setOutput(t, DalnokTrackId(output.selectedTag())) { session.onMessage?("That output would feed the bus back into itself"); reload() }
     }
-    @objc private func inputChosen() { if let t = track { session.setInput(t, Int32(input.indexOfSelectedItem)) } }
+    @objc private func inputChosen() {
+        guard let t = track else { return }
+        let i = input.indexOfSelectedItem, mono = input.itemTitles.filter { !$0.hasSuffix("(stereo)") }.count
+        session.engine.beginGroup("Track Input")
+        if i >= mono { session.setInput(t, Int32((i - mono) * 2)); session.setInputStereo(t, true) }
+        else { session.setInputStereo(t, false); session.setInput(t, Int32(i)) }
+        session.engine.endGroup()
+    }
     @objc private func monitorChosen() {
         guard let t = track else { return }
         let on = monitor.indexOfSelectedItem == 1

@@ -31,7 +31,7 @@ namespace fs = std::filesystem;
 namespace dalnok {
 
 namespace {
-constexpr int kFormatVersion = 19;
+constexpr int kFormatVersion = 20;
 constexpr int kConstantTempoVersion = 3; // written when there are no tempo or meter changes, so older builds still open it
 
 // Format history (A-16), one step per version. Loading runs every step from the file's version up to
@@ -63,6 +63,7 @@ constexpr Migration kMigrations[] = {
     {17, "MIDI controllers and pitch bend in clips", nullptr},
     {18, "audio that follows tempo", nullptr},
     {19, "mute and send automation", nullptr},
+    {20, "stereo inputs", nullptr},
 };
 constexpr bool migrationsCover() {
     int v = 1;
@@ -287,6 +288,7 @@ json::Value Engine::describe() const {
         }
         if (t.armed) tv.set("armed", true);
         if (t.inputChannel != 0) tv.set("input", t.inputChannel);
+        if (t.inputStereo) tv.set("inputStereo", true);
         if (t.inputMonitor) tv.set("monitor", true);
         if (t.phaseInvert) tv.set("phaseInvert", true);
         if (t.group) tv.set("group", t.group);
@@ -533,7 +535,8 @@ bool Engine::saveProject(const std::string &path, std::string &err, bool copyMed
         return !t.muteAuto.empty() || std::any_of(t.sends.begin(), t.sends.end(), [](const Send &s) { return !s.automation.empty(); });
     });
     const bool follow = std::any_of(model_.clips.begin(), model_.clips.end(), [](const ClipState &c) { return c.followsTempo; });
-    doc.set("version", moreAuto ? 19 : follow ? 18 : controllers ? 17 : loops ? 16 : warp ? 15 : phase ? 14 : builtin ? 13 : clipMute ? 12 : !model_.markers.empty() ? 11 : bypass ? 10 : launcher || sidechain ? 9 : pluginAutomation ? 8 : !model_.folders.empty() || masterGain ? 7 : automation ? 6 : routing ? 5 : model_.tempo.size() > 1 || model_.meters.size() > 1 ? 4 : kConstantTempoVersion);
+    const bool stereoIn = std::any_of(model_.tracks.begin(), model_.tracks.end(), [](const TrackState &t) { return t.inputStereo; });
+    doc.set("version", stereoIn ? 20 : moreAuto ? 19 : follow ? 18 : controllers ? 17 : loops ? 16 : warp ? 15 : phase ? 14 : builtin ? 13 : clipMute ? 12 : !model_.markers.empty() ? 11 : bypass ? 10 : launcher || sidechain ? 9 : pluginAutomation ? 8 : !model_.folders.empty() || masterGain ? 7 : automation ? 6 : routing ? 5 : model_.tempo.size() > 1 || model_.meters.size() > 1 ? 4 : kConstantTempoVersion);
     json::Value body = describe();
     for (auto &[key, value] : body.object) {
         if (key != "media") continue;
@@ -697,6 +700,7 @@ std::unique_ptr<Engine::PreparedProject> Engine::readDocument(const json::Value 
                 }
             t.armed = tv.getBool("armed", false);
             t.inputChannel = static_cast<int32_t>(std::clamp<int64_t>(toInt(tv, "input"), 0, 63));
+            t.inputStereo = t.kind == kTrackAudio && tv.getBool("inputStereo", false) && t.inputChannel < 63;
             t.inputMonitor = t.kind == kTrackAudio && tv.getBool("monitor", false);
             t.phaseInvert = tv.getBool("phaseInvert", false);
             t.group = static_cast<int32_t>(std::max<int64_t>(0, toInt(tv, "group")));

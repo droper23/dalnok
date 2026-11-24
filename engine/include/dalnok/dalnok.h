@@ -385,6 +385,7 @@ typedef struct {
     bool armed;                    /* record-enabled */
     int32_t input_channel;         /* zero-based audio input (audio tracks) */
     bool input_monitor;            /* Input Monitoring: the input plays through the track (audio tracks) */
+    bool input_stereo;             /* the input and the next one, as left and right (audio tracks) */
     int32_t group;                 /* track group (0 = none) */
     DalnokTrackId stack;           /* the summing stack this track belongs to (0 = none) */
     bool is_stack;                 /* a bus that is a summing stack */
@@ -761,6 +762,9 @@ DalnokTrackId dalnok_track_add_instrument(DalnokEngine *engine, const char *name
 /* Record-enable. Arming a track disarms other tracks of the same kind. */
 DalnokStatus dalnok_track_set_armed(DalnokEngine *engine, DalnokTrackId track, bool armed);
 DalnokStatus dalnok_track_set_input(DalnokEngine *engine, DalnokTrackId track, int32_t input_channel);
+/* Stereo input (API 47): the input and the next one record and monitor as the left and right of one stereo take
+ * (format 20). */
+DalnokStatus dalnok_track_set_input_stereo(DalnokEngine *engine, DalnokTrackId track, bool stereo);
 /* ---- Track groups (Logic's Groups) ---------------------------------------
  * Members share the linked settings: a change on one applies to the others in the same undo step. Volume and pan
  * move relatively (in dB / pan units; a fader at -inf stays there), mute, solo, record enable (audio tracks) and

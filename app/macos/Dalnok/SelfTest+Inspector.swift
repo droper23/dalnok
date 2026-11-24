@@ -85,6 +85,13 @@ extension SelfTest {
             check(ins.track == other.id && ins.nameLabel.stringValue == other.name, "selecting another track refreshes the inspector")
             w.headers.select(t.id)
         }
+        // Input: a stereo pair from the input menu (Inputs 1+2), back to a single input.
+        if let pair = ins.input.itemTitles.firstIndex(where: { $0.hasSuffix("(stereo)") }) {
+            ins.input.selectItem(at: pair); ins.input.sendAction(ins.input.action, to: ins.input.target)
+            check(s.track(t.id)?.inputStereo == true && s.track(t.id)?.inputChannel == 0, "choosing Inputs 1+2 makes the track record in stereo")
+            ins.input.selectItem(at: 0); ins.input.sendAction(ins.input.action, to: ins.input.target)
+            check(s.track(t.id)?.inputStereo == false, "choosing Input 1 makes it mono again")
+        }
         // Clip section (Region Inspector): shown for one selected clip; gain, fades, loop and mute edit the clip.
         if let c = t.clips.first(where: { $0.rate == 1 && $0.pitch == 0 && $0.warp.isEmpty && $0.loopLength == 0 }) {
             let cs = ins.clipSection

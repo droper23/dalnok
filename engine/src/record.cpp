@@ -109,7 +109,13 @@ bool Engine::startRecording(const std::string &inputUid, const std::string &dire
             // Two armed tracks with the same name: keep their files apart.
             for (int k = 2; std::any_of(rec_.recordAudio.begin(), rec_.recordAudio.end(), [&](const RecordAudio &r) { return r.wav == wav; }); ++k)
                 wav = (dir / (safeName(t->name) + " Take " + std::to_string(take) + " (" + std::to_string(k) + ")")).string() + ".wav";
-            rec_.recordAudio.push_back({t->id, t->name, t->inputChannel, wav});
+            if (t->inputStereo) { // two spool channels, merged into one stereo file when the take is finished
+                const std::string stem = wav.substr(0, wav.size() - 4);
+                rec_.recordAudio.push_back({t->id, t->name, t->inputChannel, stem + " L.wav", 1});
+                rec_.recordAudio.push_back({t->id, t->name, t->inputChannel + 1, stem + " R.wav", 2});
+            } else {
+                rec_.recordAudio.push_back({t->id, t->name, t->inputChannel, wav});
+            }
         }
         rec_.recordSpool = base + ".dlncap";
         rec_.recordWav = rec_.recordAudio.front().wav;
@@ -243,6 +249,35 @@ bool Engine::stopRecording(RecordResult &r, std::string &err) {
                 audioOK = false;
                 problems.push_back("the finished take could not be read back");
             }
+        }
+        // Stereo tracks: their left and right takes become one stereo file (the mono halves are removed).
+        for (size_t i = 0; audioOK && i + 1 < rec_.recordAudio.size(); ++i) {
+            if (rec_.recordAudio[i].part != 1 || rec_.recordAudio[i + 1].part != 2) continue;
+            const std::string left = rec_.recordAudio[i].wav, right = rec_.recordAudio[i + 1].wav;
+            std::string stereo = left.size() > 6 && left.compare(left.size() - 6, 6, " L.wav") == 0 ? left.substr(0, left.size() - 6) + ".wav" : left + ".stereo.wav";
+            std::string mergeErr;
+            std::unique_ptr<WavWriter> w(openWavWriter(stereo, sampleRate_, 32, mergeErr));
+            bool ok = w != nullptr;
+            const int64_t total = takes[i]->frames();
+            std::vector<float> l(65536), r(65536), dropL(65536), dropR(65536);
+            for (int64_t done = 0; ok && done < total;) {
+                const int64_t n = std::min<int64_t>(65536, total - done);
+                takes[i]->read(done, n, l.data(), dropL.data());
+                takes[i + 1]->read(done, n, r.data(), dropR.data());
+                ok = w->write(l.data(), r.data(), n, mergeErr);
+                done += n;
+            }
+            ok = ok && w->close(mergeErr);
+            auto merged = ok ? Media::loadFile(stereo, sampleRate_, mergeErr) : nullptr;
+            if (!merged) { problems.push_back("could not join the stereo take: " + mergeErr); audioOK = false; break; }
+            takes[i] = merged;
+            takes.erase(takes.begin() + static_cast<std::ptrdiff_t>(i) + 1);
+            rec_.recordAudio[i].wav = stereo;
+            rec_.recordAudio[i].part = 0;
+            rec_.recordAudio.erase(rec_.recordAudio.begin() + static_cast<std::ptrdiff_t>(i) + 1);
+            std::error_code ec;
+            fs::remove(left, ec);
+            fs::remove(right, ec);
         }
         if (audioOK) media = takes.front();
         const std::string target = rec_.recordAudio.front().wav;

@@ -83,3 +83,31 @@ func channelSample(_ channel: Int, _ n: Int) -> Float { Float(((n + channel * 97
         #expect(frames > 0 && mins == (0..<frames).map { channelSample(1, $0) }, "B's file holds input 2 (\(frames) frames)")
     }
 }
+
+@Suite struct StereoInput {
+    @Test func aStereoTrackRecordsTwoInputsAsOneStereoTake() throws {
+        let e = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(e) }
+        let dir = tempDir()
+        let keys = dalnok_track_add(e, "Keys")
+        #expect(dalnok_track_set_input(e, keys, 2) == DALNOK_OK && dalnok_track_set_input_stereo(e, keys, true) == DALNOK_OK)
+        var info = DalnokTrackInfo(); _ = dalnok_track_info(e, keys, &info)
+        #expect(info.input_stereo && info.input_channel == 2)
+        _ = dalnok_track_set_armed(e, keys, true)
+        dalnok_record_set_simulated_latency(e, 0)
+        var err = [CChar](repeating: 0, count: 512)
+        #expect(dalnok_record_start(e, DALNOK_SIMULATED_INPUT, dir.path, &err, 512) == DALNOK_OK, "\(cstr(err))")
+        var frame = 0
+        MultiInput().pump(e, from: &frame, blocks: 20)
+        var result = DalnokRecordResult()
+        #expect(dalnok_record_stop(e, &result, &err, 512) == DALNOK_OK, "\(cstr(err))")
+        #expect(result.audio_clip_count == 1 && files(dir) == ["Keys Take 1.wav"], "\(files(dir))")
+        let clip = clipInfo(e, result.audio_clip)
+        guard let m = dalnok_pool_media(e, clip.media) else { Issue.record("no media"); return }
+        #expect(dalnok_media_channels(m) == 2)
+        var mins = [Float](repeating: 0, count: 20 * 512), maxs = mins
+        _ = dalnok_media_peaks(m, 0, 0, 1, &mins, &maxs, Int64(mins.count))
+        #expect(mins == (0..<(20 * 512)).map { channelSample(2, $0) }, "left is input 3")
+        _ = dalnok_media_peaks(m, 1, 0, 1, &mins, &maxs, Int64(mins.count))
+        #expect(mins == (0..<(20 * 512)).map { channelSample(3, $0) }, "right is input 4")
+    }
+}

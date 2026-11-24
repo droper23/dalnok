@@ -14,6 +14,7 @@ out->kind = t->kind;
 out->armed = t->armed;
 out->input_channel = t->inputChannel;
 out->input_monitor = t->inputMonitor;
+out->input_stereo = t->inputStereo;
 out->group = t->group;
 out->stack = t->stack;
 out->is_stack = t->isStack;

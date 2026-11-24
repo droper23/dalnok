@@ -247,6 +247,7 @@ public:
     // Replaces a track's automation lane (sorted by frame; an empty list removes it). One undo step.
     bool setAutomation(DalnokTrackId track, int32_t target, std::vector<AutoPoint> points, std::string &err);
     bool setArmed(DalnokTrackId id, bool armed, std::string &err);
+    bool setInputStereo(DalnokTrackId id, bool stereo, std::string &err); // the input and the next one, as left and right
     bool setInputChannel(DalnokTrackId id, int32_t channel, std::string &err);
     // Sets the first tempo and meter; later changes keep their beat and bar positions.
     bool setTempo(double bpm, int32_t num, int32_t den, std::string &err);
