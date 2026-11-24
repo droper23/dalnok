@@ -75,6 +75,10 @@ bool parseRpp(std::istream &in, Node &root, std::string &err) {
         const auto first = raw.find_first_not_of(" \t");
         if (first == std::string::npos) continue;
         if (raw[first] == '<') {
+            if (stack.size() > 256) {
+                err = "blocks nested too deeply at line " + std::to_string(lineNo);
+                return false;
+            }
             auto n = std::make_unique<Node>();
             n->head = tokenize(raw.substr(first + 1));
             Node *ptr = n.get();

@@ -6,6 +6,7 @@
 #include <CoreFoundation/CoreFoundation.h>
 
 #include <algorithm>
+#include <cmath>
 
 namespace dalnok {
 
@@ -90,6 +91,14 @@ bool decodeAudioFileChunked(const std::string &path, double sampleRate,
         }
         if (frames == 0) break;
         total += frames;
+        // Float files can carry NaN, Inf and absurd peaks; one poisoned sample would turn the whole mix to NaN.
+        for (UInt32 c = 0; c < channels; ++c) {
+            float *p = tmp[c].data();
+            for (UInt32 i = 0; i < frames; ++i) {
+                const float v = p[i];
+                p[i] = std::isfinite(v) ? std::clamp(v, -1000.0f, 1000.0f) : 0.0f;
+            }
+        }
         if (!sink(planes, static_cast<int32_t>(channels), frames)) break;
     }
     ExtAudioFileDispose(file);
