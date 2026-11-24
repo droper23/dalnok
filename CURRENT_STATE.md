@@ -5,6 +5,13 @@ milestone: 0.4.0 released 2026-11-23 (four themes in six looks with their own fi
 ---
 # Current State
 
+## Guitar processors (2026-11-24)
+- Added Guitar Tune (recorded single-note correction) and Guitar Studio (guitar effects chain), as native built-ins; see ADR-0017.
+- GuitarTuneTests / GuitarStudioTests: 11 tests pass, including 44.1/48 kHz pitch correction within 5 cents, stereo consistency, compensated unity, scales, bend tolerance, state/save/load, delay/room, cabinet and alias attenuation.
+- Self-test (`SelfTest+Guitar`, all six looks at 48 and 44.1 kHz, 37 checks each): insertion, the pitch display, Tune then Studio, all six factory presets through the real device menu with every parameter replaced and the prior settings restorable.
+- Factory presets (device ▸ right-click ▸ Factory Presets) are not undo steps: plug-in parameters live outside the undoable model, like knob moves. Undoable plug-in state would be an engine change (ADR needed).
+- Intended order: clean DI → Guitar Tune → Guitar Studio. Commercial sound parity and listening validation remain unproven; no chord correction, formant preservation or cabinet IR loader.
+
 ## Latest (2026-11-24, day): open bugs fixed, parity features
 Same branch (API 47). Every bug from the ten-tester hunt fixed; then features toward Logic/Ableton parity.
 - **Fixed:** tempo changes move markers, automation and the cycle with the beats (`remapMidi`, `cycleFollowsTempo`, also on

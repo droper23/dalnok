@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- **Guitar Tune / Guitar Studio:** native single-note guitar pitch correction with scale targets, adjustable strength/speed/bend tolerance and pitch display; guitar gate, compression, amp drive, tone, cabinet voicings, chorus, tremolo, echo and room. Independent inserts with factory starting presets.
+
 - **Clip loop** (Clip ▸ Loop Clip, L): a looped clip repeats its audio or notes for as long as its end is dragged out; splitting and trimming keep the loop. Project format 16.
 - **MIDI controllers and pitch bend:** the piano roll's lower lane can show mod wheel, breath, volume, pan, expression, sustain or pitch bend instead of velocity (choose it from the lane's title); click or drag to draw. Plug-in instruments play them, and a plug-in instrument played live now gets the keyboard's sustain pedal, mod wheel and pitch bend. Project format 17.
 - **Stock effects:** Dalnok Delay (stereo or ping-pong, filtered feedback), Dalnok Reverb (predelay, decay, size, damping, width) and Dalnok Gate (threshold, range, hold, hysteresis, sidechain key).

@@ -30,6 +30,8 @@ enum FaceplateDisplay {
     /// Every step is a fixed rule, so any plug-in, known or not, gets the same answer every time.
     static func kind(name: String, path: String, instrument: Bool, declared: [String] = [], parameters: [String] = []) -> Kind {
         if let chosen = override(name) { return chosen }
+        if path == "guitar-tune" || path == "dalnok:guitar-tune" { return .analyzer }
+        if path == "guitar-studio" || path == "dalnok:guitar-studio" { return .transfer }
         if instrument { return .scope }
         let parts = path.split(separator: ":")
         let format = parts.count == 3 && parts.allSatisfy({ $0.count == 4 }) ? "AU" : path.hasSuffix(".clap") ? "CLAP" : "VST3"

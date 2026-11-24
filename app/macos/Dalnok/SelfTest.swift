@@ -132,6 +132,7 @@ final class SelfTest {
         switch ProcessInfo.processInfo.environment["DALNOK_SELFTEST_ONLY"] {
         case "panels": await sidePanels(); return finish()
         case "plugins": devicePanel(); return finish()
+        case "guitar": guitarPlugins(); return finish()
         default: break
         }
         check(s.tracks.count == files.count, "import \(files.count) files -> \(s.tracks.count) tracks")
@@ -601,6 +602,7 @@ final class SelfTest {
         await clipEditing()
         await clipEditorSteps()
         deadControls()
+        guitarPlugins()
         await sidePanels()
         await tapeMachine()
         await markersAndTrackTools()

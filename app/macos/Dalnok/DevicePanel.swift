@@ -656,6 +656,7 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
     private var displaySize: [NSLayoutConstraint] = []
     private var analyzer: SpectrumAnalyzer?
     private var tick = 0
+    private var isGuitarTune: Bool { path == "guitar-tune" || path == "dalnok:guitar-tune" }
     private var instrument = false
     private weak var faceRow: NSStackView?
     private let path: String
@@ -1238,6 +1239,19 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         }
         tick += 1
         let screen = pedal.screen
+        if let tuner = screen.subviews.first(where: { $0 is GuitarTuneDisplay }) { tuner.isHidden = true }
+        if isGuitarTune && FaceplateDisplay.override(title.stringValue) == nil {
+            let tuner: GuitarTuneDisplay
+            if let existing = screen.subviews.first(where: { $0 is GuitarTuneDisplay }) as? GuitarTuneDisplay { tuner = existing }
+            else {
+                tuner = GuitarTuneDisplay(frame: screen.bounds)
+                tuner.autoresizingMask = [.width, .height]
+                screen.addSubview(tuner)
+            }
+            tuner.isHidden = screen.showingValue
+            tuner.update(guitarTuneReading())
+            if !screen.showingValue { return }
+        }
         if screen.showingValue { screen.needsDisplay = true; return } // let it time out
         guard tick % 2 == 0, !bypassed else { return }
         switch automaticKind() {
@@ -1286,9 +1300,18 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         }
     }
 
+    private func guitarTuneReading() -> GuitarTuneDisplay.Reading {
+        .init(hz: (current(7)?.value ?? 0) * 1500,
+              cents: (current(8)?.value ?? 0.5) * 200 - 100,
+              confidence: (current(9)?.value ?? 0) * 100,
+              reference: 430 + (current(3)?.value ?? 0.5) * 20,
+              bypassed: bypassed)
+    }
+
     /// The display's data: gain reduction (reported or measured), the response curve and spectrum, or the scope trace.
     private func updateDisplay() {
         guard let display else { return }
+        if let tuner = display as? GuitarTuneDisplay { tuner.update(guitarTuneReading()); return }
         let h = session.engine.handle
         let off = bypassed
         switch displayKind {
@@ -1375,6 +1398,9 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
     private func makeDisplay(_ kind: FaceplateDisplay.Kind) -> NSView {
         displayKind = kind
         analyzer = nil
+        if isGuitarTune && FaceplateDisplay.override(title.stringValue) == nil {
+            return GuitarTuneDisplay(frame: .zero)
+        }
         let d: NSView = switch kind {
         case .gainReduction: MovingCoilMeter(mode: .gainReduction)
         case .vu: MovingCoilMeter(mode: .output)
@@ -2000,6 +2026,7 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         let chain = session.track(trackId)?.plugins.map(\.id) ?? []
         let i = chain.firstIndex(of: slot) ?? 0
         if isSampler { sampleMenuItems(m); m.addItem(.separator()) }
+        if let presets = guitarPresetMenu() { m.addItem(presets); m.addItem(.separator()) }
         m.addItem(item(bypassed ? "Turn On" : "Bypass", { [weak self] in self?.toggleBypass() }, enabled: loaded))
         m.addItem(item("Open Plug-in Window", { [weak self] in self?.onOpen?() }, enabled: loaded))
         m.addItem(item("Show Controls", { [weak self] in self?.onShowControls?() }, enabled: loaded))
