@@ -5,7 +5,18 @@ milestone: 0.4.0 released 2026-11-23 (four themes in six looks with their own fi
 ---
 # Current State
 
-## Latest (2026-11-23, evening): plug-in multi-select, figure motion, fuller Atelier keys, folded strips
+## Latest (2026-11-23, night): Scarlett hardware tests
+Owner connected the Scarlett Solo 4th Gen. No engine change.
+- **Loopback** (`DALNOK_TEST_LOOPBACK="Scarlett Solo 4th Gen:3" swift test --filter HardwareLoopback`): 2/2 pass.
+  Measured 1143 vs 1200 reported; per stream 1137, 1137, 1143, 1137, 1137, 1143 (one frame above 2026-11-21's 1136/1142,
+  same 6-frame step); every take placed on the sample (error 0 in 6 of 6).
+- **Self-test with real input** (`DALNOK_TEST_AUDIO_INPUT="Scarlett Solo 4th Gen"`, renamed copy, 48 and 44.1 kHz): all 10
+  real-input checks pass at both rates (monitoring opens the input and keeps the output, meter moves, take placed,
+  input closes). It first failed one later check ("a track with two clips for clip selection"): the hardware step
+  always stopped the device, so a later seek never landed. It now leaves the device as it found it; both rates PASS.
+- **Still not verified:** the Scarlett's two inputs recorded at once; monitoring by ear (system output stayed muted).
+
+## Earlier (2026-11-23, evening): plug-in multi-select, figure motion, fuller Atelier keys, folded strips
 PR #21 merged (`main` a37d3c2); `dist/Dalnok.app` rebuilt from it. No engine change.
 - **Multi-select:** ⌘/⇧-click units in the chain, ⌫ removes them (one undo step), right-click "Remove N Plug-ins",
   a click outside the units or Esc deselects (`DevicePanel.select`, `deselectIfOutside`, `KeyOwner`). Several rows in
@@ -22,7 +33,7 @@ PR #21 merged (`main` a37d3c2); `dist/Dalnok.app` rebuilt from it. No engine cha
   passed alone), a fresh-preferences run PASS, CI 6/6 (build-test passed on a re-run: `record-crash.sh` reported an
   invalid capture spool once; this PR touches no engine code; not investigated).
 - **Open:** the early clip-drag flake under parallel load and the `record-crash.sh` flake; pan traveller still has no
-  still; Scarlett hardware tests (ask the owner); fuzz.
+  still; fuzz.
 
 ## Earlier (2026-11-23, afternoon): Atelier seismograph, clearer controls, plain dials, fast self-test
 PRs #18 (plug-in looks revert, fold, OPEN, matrix script) and #19 (seismograph) merged; `main` 3b8dadf. No engine change.
