@@ -207,6 +207,23 @@ const CommandDef kCommands[] = {
          if (!needInt(a, "track", t, err)) return DALNOK_ERR_INVALID_ARG;
          return e.duplicateTrack(t, err) ? DALNOK_OK : DALNOK_ERR_INVALID_ARG;
      }},
+    {"audio.quantize", "Quantize Audio", "{clip, grid (quarter notes, default 0.25), strength (0-1], sensitivity (0-1)}", [](ARGS) {
+         DalnokClipId c;
+         if (!needInt(a, "clip", c, err)) return DALNOK_ERR_INVALID_ARG;
+         const auto ids = e.quantizeAudio(c, a.getNumber("grid", 0.25), a.getNumber("strength", 1), a.getNumber("sensitivity", 0.5), err);
+         if (ids.empty()) return DALNOK_ERR_INVALID_ARG;
+         r.set("slices", static_cast<double>(ids.size()));
+         return DALNOK_OK;
+     }},
+    {"plugins.copy", "Paste Plug-ins", "{from, slots: [slot…], to, index (-1 = end)}", [](ARGS) {
+         DalnokTrackId from, to;
+         if (!needInt(a, "from", from, err) || !needInt(a, "to", to, err)) return DALNOK_ERR_INVALID_ARG;
+         std::vector<int32_t> slots;
+         if (const json::Value *list = a.get("slots"); list && list->isArray())
+             for (const auto &v : list->array) if (v.isNumber()) slots.push_back(static_cast<int32_t>(v.number));
+         if (slots.empty()) return err = "slots: a list of plug-in slot ids", DALNOK_ERR_INVALID_ARG;
+         return e.copyPlugins(from, slots, to, static_cast<int32_t>(a.getNumber("index", -1)), err).empty() ? DALNOK_ERR_INVALID_ARG : DALNOK_OK;
+     }},
     {"plugin.move", "Move Plug-in", "{track, slot, index}", [](ARGS) {
          DalnokTrackId t; int32_t slot, index;
          if (!needInt(a, "track", t, err) || !needInt(a, "slot", slot, err) || !needInt(a, "index", index, err)) return DALNOK_ERR_INVALID_ARG;

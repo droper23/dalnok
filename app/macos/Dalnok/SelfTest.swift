@@ -574,6 +574,7 @@ final class SelfTest {
         await trackHeaderScrolling()
         if ProcessInfo.processInfo.environment["DALNOK_SKIP_SHORTCUT_TEST"] == nil { await shortcutSystem() }
         await clipEditing()
+        await clipEditorSteps()
         deadControls()
         await sidePanels()
         await tapeMachine()

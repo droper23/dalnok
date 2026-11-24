@@ -200,6 +200,11 @@ public:
     // Duplicates a track right below it: settings, routing, sends, automation, clips (new ids) and plug-ins (new
     // instances with the same state; missing plug-ins keep their saved state). Stacks can't be duplicated yet.
     DalnokTrackId duplicateTrack(DalnokTrackId track, std::string &err);
+    // Copies plug-ins (`ids`, in their chain order) from one track to another at `index` (-1 = the end): new instances
+    // with the same state, one undo step. An instrument replaces the target's (an empty audio track becomes an
+    // instrument track). Returns the new slot ids (empty on failure). API 47.
+    std::vector<int32_t> copyPlugins(DalnokTrackId from, const std::vector<int32_t> &ids, DalnokTrackId to, int32_t index,
+                                     std::string &err);
     // Hide tracks from view (they keep playing). `track` 0 with hidden=false shows every track. Undoable.
     bool setTrackHidden(DalnokTrackId track, bool hidden, std::string &err);
     // Phase (polarity) invert at the head of the strip. Undoable (API 46).
@@ -253,6 +258,10 @@ public:
                              std::vector<MidiNote> notes = {}, const char *undoName = "New MIDI Clip");
     bool setNotes(DalnokClipId id, std::vector<MidiNote> notes, std::string &err);
     bool quantize(DalnokClipId id, double gridBeats, double strength, std::string &err);
+    // Audio quantize (API 47, audio_quantize.cpp): the clip's transients (source frames), and the clip cut into
+    // slices whose transients move to the grid by `strength`, each stretched to meet the next (one undo step).
+    std::vector<int64_t> audioTransients(DalnokClipId id, double sensitivity, std::string &err) const;
+    std::vector<DalnokClipId> quantizeAudio(DalnokClipId id, double gridBeats, double strength, double sensitivity, std::string &err);
     // Plugins (ADR-0009 stage 3). Loading runs plugin code in this process (control thread).
     int32_t addPlugin(DalnokTrackId track, const std::string &path, const std::string &classId, std::string &err);
     bool removePlugin(DalnokTrackId track, int32_t slot, std::string &err);

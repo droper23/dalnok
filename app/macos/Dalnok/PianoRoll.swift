@@ -1,6 +1,7 @@
 // Piano roll: edit the notes of one MIDI clip. Every gesture is one undo step through the
 // engine's midi.setNotes command; the view never caches notes beyond the current gesture.
-//   Double-click empty grid: add a note (grid length). Drag empty grid: select notes (⇧ adds).
+//   Double-click empty grid: add a note (grid length; keep dragging to set its length). Drag empty grid: select
+//   notes (⇧ adds). ⌘C / ⌘X / ⌘V / ⌘D copy, cut, paste (at the playhead) and duplicate notes.
 //   Drag a note: move in time and pitch (snapped; ⌃ bypasses). Drag its right edge: resize.
 //   Velocity lane: drag a stem. Delete removes, ↑/↓ transpose (⇧ = octave), ←/→ move by the grid,
 //   ⌘A selects all, Q quantizes the selection. Scroll to pan, ⌘-scroll or pinch to zoom.
@@ -77,7 +78,13 @@ final class PianoRollView: NSView {
     var entryPitch = 60 { didSet { needsDisplay = true } }
 
     // Layout
-    static let keyWidth: CGFloat = 48, rulerHeight: CGFloat = 22, velocityHeight: CGFloat = 72, edge: CGFloat = 6
+    static let keyWidth: CGFloat = 48, rulerHeight: CGFloat = 22, edge: CGFloat = 6
+    /// The velocity lane's height (shorter when the editor is docked in the main window).
+    var velocityHeight: CGFloat = 72 { didSet { needsDisplay = true } }
+    /// Docked in the main window's clip editor: status text goes here instead of the window's subtitle, and a click
+    /// reports focus (so editing keys and Delete act on notes).
+    var onStatus: ((String) -> Void)?
+    var onFocus: (() -> Void)?
     var rowHeight: CGFloat = 12
     var framesPerPoint: Double = 200 { didSet { needsDisplay = true; if snapBeats != shownSnap { updateSubtitle() } } }
     private var shownSnap = 0.0
@@ -99,7 +106,7 @@ final class PianoRollView: NSView {
                 if let lo = vels.min(), let hi = vels.max() { parts.append(lo == hi ? "velocity \(lo)" : "velocity \(lo)–\(hi)") }
             }
         }
-        window?.subtitle = parts.joined(separator: "  ·  ")
+        if let onStatus { onStatus(parts.joined(separator: "  ·  ")) } else { window?.subtitle = parts.joined(separator: "  ·  ") }
     }
     var scrollX: Double = 0 { didSet { needsDisplay = true } }   // timeline frame at the grid's left edge
     var scrollY: CGFloat = 0 { didSet { needsDisplay = true } }  // points from the top (pitch 127)
@@ -119,9 +126,9 @@ final class PianoRollView: NSView {
     var track: TrackView? { clip.flatMap { session.track($0.track) } }
     var grid: CGRect {
         CGRect(x: Self.keyWidth, y: Self.rulerHeight, width: max(0, bounds.width - Self.keyWidth),
-               height: max(0, bounds.height - Self.rulerHeight - Self.velocityHeight))
+               height: max(0, bounds.height - Self.rulerHeight - velocityHeight))
     }
-    var velocityLane: CGRect { CGRect(x: Self.keyWidth, y: bounds.height - Self.velocityHeight, width: grid.width, height: Self.velocityHeight) }
+    var velocityLane: CGRect { CGRect(x: Self.keyWidth, y: bounds.height - velocityHeight, width: grid.width, height: velocityHeight) }
 
     // MARK: Coordinates (timeline frames and MIDI pitch)
 
@@ -456,7 +463,7 @@ final class PianoRollView: NSView {
     // MARK: Editing
 
     private struct Drag {
-        enum Kind { case move, resize, velocity }
+        enum Kind { case move, resize, velocity, create }
         let kind: Kind
         let start: CGPoint
         let original: [DalnokNote] // all notes at gesture start
@@ -494,6 +501,7 @@ final class PianoRollView: NSView {
     override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
         (window?.windowController as? PianoRollController)?.focused = true
+        onFocus?()
         guard let c = clip else { return }
         let p = convert(event.locationInWindow, from: nil)
         if let n = hitStem(p) {
@@ -525,7 +533,15 @@ final class PianoRollView: NSView {
             return
         }
         if event.clickCount == 2 {
-            addNote(at: p, bypass: event.modifierFlags.contains(.control))
+            // Double-click adds a note; dragging on stretches it to where the mouse is (one undo step).
+            session.engine.beginGroup("Add Note")
+            if let n = addNote(at: p, bypass: event.modifierFlags.contains(.control)), let cur = clip {
+                drag = Drag(kind: .create, start: p, original: cur.notes, moving: [key(n)], previewed: n.pitch)
+                holdPreview(n.pitch, n.velocity)
+                NSCursor.resizeLeftRight.set()
+            } else {
+                session.engine.endGroup()
+            }
         } else {
             let initial = event.modifierFlags.contains(.shift) ? selection : []
             selection = initial
@@ -533,15 +549,23 @@ final class PianoRollView: NSView {
         }
     }
 
-    func addNote(at p: CGPoint, bypass: Bool = false) {
-        guard let c = clip else { return }
+    /// Snaps down to the grid (the cell the point is in), so a double-click lands a note where it was clicked.
+    func snapDown(_ f: Double, bypass: Bool) -> Double {
+        guard !bypass else { return f.rounded() }
+        let q = snapBeats
+        return session.beatToFrame((session.frameToBeat(f) / q + 1e-9).rounded(.down) * q).rounded()
+    }
+
+    @discardableResult func addNote(at p: CGPoint, bypass: Bool = false) -> DalnokNote? {
+        guard let c = clip else { return nil }
         let start = snap(frame(atX: p.x), bypass: bypass)
         let length = Int64(snapFrames)
         let rel = Int64(start) - c.start + c.offset
-        guard rel >= c.offset, rel < c.offset + c.length else { return }
+        guard rel >= c.offset, rel < c.offset + c.length else { return nil }
         let n = DalnokNote(start: rel, length: length, pitch: UInt8(pitch(atY: p.y)), velocity: 100)
         commit(c.notes.filter { key($0) != key(n) } + [n], select: [key(n)])
-        previewNote(n.pitch, n.velocity)
+        if drag == nil { previewNote(n.pitch, n.velocity) }
+        return n
     }
 
     override func mouseDragged(with event: NSEvent) {
@@ -593,8 +617,23 @@ final class PianoRollView: NSView {
                 result.append(DalnokNote(start: n.start, length: max(Int64(snapFrames / 4), n.length + dl), pitch: n.pitch, velocity: n.velocity))
                 moved.insert(key(n))
             }
+        case .create:
+            // The new note runs from its start to the grid line nearest the mouse (at least one grid step).
+            guard let n = d.original.first(where: { d.moving.contains(key($0)) }), let c = clip else { return }
+            let startFrame = timeline(n, c), at = frame(atX: p.x)
+            let end = bypass ? at.rounded() : snap(at, bypass: false)
+            let minLen = bypass ? max(1, snapFrames / 4) : snapFrames
+            let len = Int64(max(minLen, end - startFrame).rounded())
+            for o in d.original {
+                guard d.moving.contains(key(o)) else { result.append(o); continue }
+                result.append(DalnokNote(start: o.start, length: len, pitch: o.pitch, velocity: o.velocity))
+                moved.insert(key(o))
+            }
+            if result.first(where: { moved.contains(key($0)) })?.length == clip?.notes.first(where: { moved.contains(key($0)) })?.length {
+                drag = d; return
+            }
         case .velocity:
-            let dv = Int(((d.start.y - p.y) / (Self.velocityHeight - 12) * 127).rounded())
+            let dv = Int(((d.start.y - p.y) / (velocityHeight - 12) * 127).rounded())
             for n in d.original {
                 guard d.moving.contains(key(n)) else { result.append(n); continue }
                 result.append(DalnokNote(start: n.start, length: n.length, pitch: n.pitch, velocity: UInt8(max(1, min(127, Int(n.velocity) + dv)))))
@@ -693,19 +732,74 @@ final class PianoRollView: NSView {
         commit(notes, select: sel)
     }
 
-    /// Quantizes the selected notes (or all) to the current snap grid.
+    /// Quantizes the selected notes (or all) to the quantize value and strength (Clip ▸ Quantize, the editor's bar).
     func quantizeSelection() {
         guard let c = clip else { return }
         let all = selection.isEmpty
+        let grid = QuantizeSetting.grid, strength = QuantizeSetting.strength
         var sel: Set<NoteKey> = []
         let notes = c.notes.map { n -> DalnokNote in
             guard all || selection.contains(key(n)) else { return n }
-            let t = timeline(n, c), snapped = snap(t, bypass: false)
-            let m = DalnokNote(start: max(0, n.start + Int64(snapped - t)), length: n.length, pitch: n.pitch, velocity: n.velocity)
+            let t = timeline(n, c), target = session.beatToFrame((session.frameToBeat(t) / grid).rounded() * grid)
+            let m = DalnokNote(start: max(0, n.start + Int64(((target - t) * strength).rounded())), length: n.length, pitch: n.pitch, velocity: n.velocity)
             if !all { sel.insert(key(m)) }
             return m
         }
+        session.engine.beginGroup("Quantize")
         commit(notes, select: sel)
+        session.engine.endGroup()
+        session.onMessage?("Quantized \(all ? "every note" : sel.count == 1 ? "1 note" : "\(sel.count) notes") to \(QuantizeSetting.name)\(strength < 1 ? " at \(Int((strength * 100).rounded()))%" : "")")
+    }
+
+    // MARK: Copy and paste
+
+    /// Copied notes, relative to the earliest (start 0); shared by every piano roll.
+    static var clipboard: [DalnokNote] = []
+    var selectedNotes: [DalnokNote] { clip.map { c in c.notes.filter { selection.contains(key($0)) } } ?? [] }
+    /// The timeline frame where the selection starts (Play starts there).
+    var selectionStartFrame: Int64? {
+        guard let c = clip, let first = selectedNotes.map(\.start).min() else { return nil }
+        return c.start + first - c.offset
+    }
+    @discardableResult func copySelection() -> Int {
+        let notes = selectedNotes
+        guard let first = notes.map(\.start).min() else { return 0 }
+        Self.clipboard = notes.map { DalnokNote(start: $0.start - first, length: $0.length, pitch: $0.pitch, velocity: $0.velocity) }
+        return notes.count
+    }
+    func cutSelection() {
+        guard copySelection() > 0 else { return }
+        session.engine.beginGroup("Cut Notes")
+        deleteSelection()
+        session.engine.endGroup()
+    }
+    /// Pastes at the playhead when it is inside the clip, else right after the selection (or at the clip's start).
+    func paste() {
+        guard let c = clip, !Self.clipboard.isEmpty else { NSSound.beep(); return }
+        let pos = session.engine.position
+        let at: Int64 = pos >= c.start && pos < c.end ? pos - c.start + c.offset
+            : selectedNotes.map { $0.start + $0.length }.max() ?? c.offset
+        place(Self.clipboard, at: at, name: "Paste Notes")
+    }
+    /// A copy of the selection right after it (rounded up to the grid), selected.
+    func duplicateSelection() {
+        let notes = selectedNotes
+        guard let first = notes.map(\.start).min(), let last = notes.map({ $0.start + $0.length }).max() else { NSSound.beep(); return }
+        let span = Double(last - first), step = max(snapFrames, (span / snapFrames).rounded(.up) * snapFrames)
+        place(notes.map { DalnokNote(start: $0.start - first, length: $0.length, pitch: $0.pitch, velocity: $0.velocity) },
+              at: first + Int64(step.rounded()), name: "Duplicate Notes")
+    }
+    /// Places relative notes at source frame `at` (one undo step), lengthening the clip when they run past its end.
+    private func place(_ relative: [DalnokNote], at: Int64, name: String) {
+        guard let c = clip else { return }
+        let placed = relative.map { DalnokNote(start: at + $0.start, length: $0.length, pitch: $0.pitch, velocity: $0.velocity) }
+        let keys = Set(placed.map(key))
+        session.engine.beginGroup(name)
+        commit(c.notes.filter { !keys.contains(key($0)) } + placed, select: keys)
+        if let end = placed.map({ $0.start + $0.length }).max(), end > c.offset + c.length {
+            session.setRegion(c.id, start: c.start, offset: c.offset, length: end - c.offset)
+        }
+        session.engine.endGroup()
     }
 
     /// Plays the note on the instrument when this clip's track is the armed (live) one.

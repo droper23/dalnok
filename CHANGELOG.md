@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+- **Clip editor at the bottom of the window** (as in Ableton and Logic): double-click a clip and it opens below the arrangement — MIDI in a piano roll, audio in a sample view with its transients marked and draggable region edges. A Clip / Devices switch (and View ▸ Clip Editor, ⌥⌘E) flips the space between the clip and the track's plug-ins; its top edge resizes it.
+- **Quantize like Logic:** Q quantizes the selected notes, or the selected clips, to the quantize value (1/4 to 1/32, with 1/8 and 1/16 triplets) at the quantize strength, both chosen in the clip editor's bar or Clip ▸ Quantize.
+- **Audio quantize:** Q on an audio clip finds its transients, cuts it just before each one, moves each slice so its transient lands on the grid and time-stretches the slice's tail (pitch kept) to meet the next — no gaps, no doubled hits, a short crossfade at each cut. Attacks are never stretched, so they stay sharp; slices that barely move aren't processed at all. One undo step.
+- MIDI: double-click empty space in a lane to add a one-bar MIDI clip (an empty audio track becomes an instrument track); double-click and drag in the piano roll to draw a note as long as the drag; ⌘C / ⌘X / ⌘V / ⌘D copy, cut, paste (at the playhead) and duplicate notes.
+- Fixed: resizing a MIDI clip from its right edge made it disappear.
+- Plug-ins: copy plug-ins (⌘C or right-click ▸ Copy) and paste them on any track (⌘V or right-click ▸ Paste After) with their settings, in one undo step. An instrument added to an empty audio track turns it into an instrument track.
+- Tracks: Duplicate Track is in the track's right-click menu.
+- Hovering over the arrangement shows a faint playhead line where a click would put the playhead.
+- Play starts at a selection made since the playhead was last placed: selected notes, the selected clips, or a section dragged out in the arrangement.
+- Fixed: ⌘C, ⌘X, ⌘V and ⌘D did nothing while the piano roll had focus.
+
 - Recording: a take killed in the instant between starting and capturing its first sample now recovers as an empty take instead of reporting an invalid capture file.
 - Atelier: the balanced traveller reads L · C · R only for pan and balance; other centred controls (a pitch shift, for one) read − · 0 · +.
 - `dalnok-cli record` takes several input channels (`1,2`): one armed track and one take per input, with each take's level per second.

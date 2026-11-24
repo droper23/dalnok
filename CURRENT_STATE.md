@@ -5,7 +5,20 @@ milestone: 0.4.0 released 2026-11-23 (four themes in six looks with their own fi
 ---
 # Current State
 
-## Latest (2026-11-23, late): flakes fixed, fuzz clean, two-input recording on the Scarlett, stills
+## Latest (2026-11-23, late night): clip editor, Logic-style quantize, audio quantize, editing fixes
+Branch `feat/clip-editor-quantize` (API 47). See the journal for details.
+- **Docked clip editor:** double-click a clip → it opens at the bottom (piano roll / audio sample view with transients);
+  Clip / Devices switch, View ▸ Clip Editor (⌥⌘E). `ClipEditorPanel.swift`.
+- **Q quantizes** notes or clips with the quantize value and strength (clip editor bar, Clip ▸ Quantize).
+  **Audio Q** (`audio_quantize.cpp`): transient slices moved to the grid, tails stretched, attacks untouched.
+- Double-click a lane → one-bar MIDI clip (empty audio tracks become instrument tracks, also on adding an instrument
+  plug-in); double-click-drag draws notes; ⌘C/⌘X/⌘V/⌘D for notes; plug-in copy/paste (`dalnok_plugins_copy`);
+  Duplicate Track in the track menu; hover playhead; Play from a selection.
+- **Fixed:** MIDI clip right-edge resize made it vanish; ⌘C/⌘V/⌘X/⌘D never reached the piano roll.
+- **Verified:** `swift test` all pass, AudioQuantizeTests (hits within 0.5 ms of the grid), self-test matrix 12/12 PASS.
+- **Open:** audio quantize not yet heard on the owner's real drums; the docked piano roll is short at the default height.
+
+## Earlier (2026-11-23, late): flakes fixed, fuzz clean, two-input recording on the Scarlett, stills
 No new feature. Branch `chore/flakes-and-checks`.
 - **CI `record-crash.sh` flake fixed:** a take killed after its journal was written but before capture created the spool
   could not be recovered ("invalid capture spool"). It now recovers as an empty take (`recoverCapture` emptyRate/emptyChannels);

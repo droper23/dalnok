@@ -241,3 +241,56 @@ private func cascade(_ x: [Float], _ sections: [([Double], [Double])]) -> [Doubl
         #expect(!dalnok_project_dirty(e2))
     }
 }
+
+/// Plug-in copy and paste between tracks (API 47) and empty tracks becoming instrument tracks.
+@Suite struct PluginCopyTests {
+    func slots(_ e: OpaquePointer, _ t: DalnokTrackId) -> [DalnokPluginSlotInfo] {
+        (0..<dalnok_track_plugin_count(e, t)).map { i in var s = DalnokPluginSlotInfo(); _ = dalnok_track_plugin_info(e, t, i, &s); return s }
+    }
+    func value(_ e: OpaquePointer, _ slot: Int32, _ id: UInt32) -> Double {
+        for i in 0..<dalnok_plugin_parameter_count(e, slot) {
+            var p = DalnokPluginParameter()
+            if dalnok_plugin_parameter(e, slot, i, &p) == DALNOK_OK, p.id == id { return p.value }
+        }
+        return -1
+    }
+
+    @Test func pastedPluginsKeepTheirStateAndProcessTheSame() {
+        let (e, a) = audioSession(); defer { dalnok_engine_destroy(e) }
+        let first = dalnok_plugin_add(e, a, "dalnok:channel-eq", nil, nil, 0)
+        let second = dalnok_plugin_add(e, a, "dalnok:channel-eq", nil, nil, 0)
+        #expect(dalnok_plugin_set_parameter(e, first, 18, 0.875) == DALNOK_OK) // peak 3 at +18 dB
+        let b = dalnok_track_add(e, "B")
+        let tail = dalnok_plugin_add(e, b, "dalnok:channel-eq", nil, nil, 0)
+        var src = [second, first] // any order: pasted in their chain order
+        var out = [Int32](repeating: 0, count: 4)
+        #expect(dalnok_plugins_copy(e, a, &src, 2, b, 0, &out, 4) == 2)
+        #expect(undoName(e) == "Paste Plug-ins")
+        let pasted = slots(e, b).map(\.id)
+        #expect(pasted == [out[0], out[1], tail], "pasted at index 0, in chain order, before the existing unit")
+        #expect(abs(value(e, out[0], 18) - 0.875) < 1e-9 && abs(value(e, out[1], 18) - value(e, second, 18)) < 1e-9,
+                "the copies carry the originals' settings")
+        #expect(slots(e, a).map(\.id) == [first, second], "the source chain is unchanged")
+        dalnok_undo(e)
+        #expect(slots(e, b).map(\.id) == [tail], "one undo removes every pasted unit")
+        #expect(dalnok_plugins_copy(e, a, &src, 2, 999, -1, nil, 0) == 0, "no such track")
+    }
+
+    @Test func emptyAudioTrackBecomesAnInstrumentTrackForAMidiClip() {
+        let e = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(e) }
+        let t = dalnok_track_add(e, "New")
+        var info = DalnokTrackInfo()
+        let c = dalnok_midi_clip_add(e, t, 0, 48_000)
+        #expect(c != 0)
+        #expect(dalnok_track_info(e, t, &info) == DALNOK_OK && info.kind == Int32(DALNOK_TRACK_INSTRUMENT.rawValue) && info.armed)
+        var note = DalnokNote(start: 0, length: 24_000, pitch: 69, velocity: 127)
+        _ = dalnok_midi_clip_set_notes(e, c, &note, 1)
+        #expect(rms(render(e, 0, 9_600)[4_800...]) > 0.01, "the built-in synth plays the clip")
+        dalnok_undo(e); dalnok_undo(e)
+        #expect(dalnok_track_info(e, t, &info) == DALNOK_OK && info.kind == Int32(DALNOK_TRACK_AUDIO.rawValue) && !info.armed,
+                "undo makes it an empty audio track again")
+        // A track with audio stays an audio track.
+        let (f, audio) = audioSession(); defer { dalnok_engine_destroy(f) }
+        #expect(dalnok_midi_clip_add(f, audio, 0, 48_000) == 0)
+    }
+}

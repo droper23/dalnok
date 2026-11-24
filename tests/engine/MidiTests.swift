@@ -256,8 +256,14 @@ func oneNoteSession(pitch: UInt8 = 69, velocity: UInt8 = 127) -> (OpaquePointer,
     @Test func modelRulesAndPersistence() throws {
         let e = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(e) }
         let audio = dalnok_track_add(e, "Audio")
+        let url = tempDir().appendingPathComponent("rules.wav")
+        _ = try? writeTestWav(url, frames: 4_800)
+        var media: OpaquePointer?
+        _ = dalnok_media_load(url.path, 48_000, &media, nil, 0)
+        _ = DalnokEngine.dalnok_clip_add(e, audio, dalnok_pool_add(e, media, url.path), 50_000, 0, 0)
+        dalnok_media_release(media)
         let keys = dalnok_track_add_instrument(e, "Keys")
-        #expect(dalnok_midi_clip_add(e, audio, 0, 100) == 0) // MIDI only on instrument tracks
+        #expect(dalnok_midi_clip_add(e, audio, 0, 100) == 0) // MIDI only on instrument tracks (or empty audio tracks)
         let c = dalnok_midi_clip_add(e, keys, 0, 10_000)
         #expect(dalnok_clip_move(e, c, audio, 0) != DALNOK_OK)
         #expect(dalnok_clip_set_stretch(e, c, 5_000, 2, 0, true) != DALNOK_OK)

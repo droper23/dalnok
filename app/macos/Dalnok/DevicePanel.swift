@@ -253,6 +253,16 @@ final class DevicePanel: NSView, KeyOwner {
                 d.onSelect = { [weak self] flags, right in self?.select(p.id, flags, contextClick: right) }
                 d.selectionCount = { [weak self] in self?.selectedSlots.count ?? 0 }
                 d.onRemoveSelected = { [weak self] in self?.removeSelected() }
+                d.onCopy = { [weak self, weak d] in
+                    guard let self, let d else { return }
+                    if !self.selectedSlots.contains(d.slot) { self.selectedSlot = d.slot }
+                    let n = self.copySelected(orSlot: d.slot)
+                    self.onMessage?(n == 1 ? "Copied 1 plug-in" : "Copied \(n) plug-ins")
+                }
+                d.onPaste = { [weak self, weak d] in
+                    guard let self else { return }
+                    if let err = self.pasteCopied(after: d?.slot) { self.onMessage?(err) }
+                }
                 d.onMove = { [weak self] delta in
                     guard let self, let from = self.devices.firstIndex(where: { $0.slot == p.id }) else { return }
                     self.move(p.id, toDropIndex: delta > 0 ? from + 2 : from - 1)
@@ -368,6 +378,40 @@ final class DevicePanel: NSView, KeyOwner {
         selectedSlot = nil
         session.refresh()
     }
+    /// Plug-ins copied with ⌘C or the unit menu: the track and its slots (chain order). Pasting makes new instances
+    /// with the same state (`dalnok_plugins_copy`), on any track.
+    static var copied: (track: DalnokTrackId, slots: [Int32])?
+    /// Copies the selected units (or `slot` when none is selected); returns how many.
+    @discardableResult func copySelected(orSlot slot: Int32? = nil) -> Int {
+        guard let t = track else { return 0 }
+        var slots = devices.map(\.slot).filter { selectedSlots.contains($0) }
+        if slots.isEmpty, let slot { slots = [slot] }
+        guard !slots.isEmpty else { return 0 }
+        Self.copied = (t, slots)
+        return slots.count
+    }
+    /// Pastes the copied plug-ins on this panel's track, after the last selected unit (or at the end), as one undo
+    /// step, and selects them. Returns an error to show, or nil.
+    func pasteCopied(after slot: Int32? = nil) -> String? {
+        guard let t = track else { return "Select a track first" }
+        guard let c = Self.copied else { return "No plug-ins copied" }
+        let chain = devices.map(\.slot)
+        let anchor = slot ?? chain.last { selectedSlots.contains($0) }
+        let index = anchor.flatMap { chain.firstIndex(of: $0) }.map { Int32($0 + 1) } ?? -1
+        var src = c.slots, out = [Int32](repeating: 0, count: c.slots.count)
+        let n = Int(dalnok_plugins_copy(session.engine.handle, c.track, &src, Int32(src.count), t, index, &out, Int32(out.count)))
+        session.refresh()
+        guard n > 0 else {
+            return session.track(t)?.isBus == true ? "Instruments can't go on a bus"
+                : "Those plug-ins can't go here (an instrument needs an instrument track or an empty one)"
+        }
+        rebuild()
+        selectedSlot = out.first
+        selectedSlots = Set(out.prefix(n))
+        showSelection()
+        return nil
+    }
+    var onMessage: ((String) -> Void)?
     func deselectIfOutside(_ e: NSEvent) {
         guard !selectedSlots.isEmpty, let w = window, e.window === w else { return }
         let hit = w.contentView?.hitTest(w.contentView!.convert(e.locationInWindow, from: nil))
@@ -629,6 +673,8 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
     /// How many units are selected, and removing them all (the menu of a unit in a multiple selection).
     var selectionCount: (() -> Int)?
     var onRemoveSelected: (() -> Void)?
+    var onCopy: (() -> Void)?
+    var onPaste: (() -> Void)?
     var isSelected = false { didSet { if isSelected != oldValue { applySelection() } } }
     /// Bypassed in Graphite: the unit sits back slightly (drawn at this scale about its centre).
     private var recessed = false
@@ -1962,6 +2008,12 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         m.addItem(.separator())
         m.addItem(item("Move Left (Earlier in Chain)", { [weak self] in self?.onMove?(-1) }, enabled: i > 0))
         m.addItem(item("Move Right (Later in Chain)", { [weak self] in self?.onMove?(1) }, enabled: i < chain.count - 1))
+        m.addItem(.separator())
+        let many = isSelected ? (selectionCount?() ?? 1) : 1
+        m.addItem(item(many > 1 ? "Copy \(many) Plug-ins" : "Copy Plug-in", { [weak self] in self?.onCopy?() }))
+        let pasteCount = DevicePanel.copied?.slots.count ?? 0
+        m.addItem(item(pasteCount > 1 ? "Paste \(pasteCount) Plug-ins After" : "Paste Plug-in After", { [weak self] in self?.onPaste?() },
+                       enabled: pasteCount > 0))
         if isSelected, let n = selectionCount?(), n > 1 { // the menu of one of several selected units acts on all of them
             m.addItem(item("Remove \(n) Plug-ins", { [weak self] in self?.onRemoveSelected?() }))
         } else {

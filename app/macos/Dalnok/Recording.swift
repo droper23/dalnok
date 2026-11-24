@@ -524,9 +524,41 @@ extension MainWindowController {
         if clip != 0 { timeline.selectedClip = clip }
     }
 
+    /// Clip ▸ Quantize ▸ a value: makes it the quantize value and quantizes the selection with it.
     @objc func quantizeClip(_ sender: NSMenuItem) {
-        guard let c = timeline.selectedClip, session.clip(c)?.isMidi == true else { return }
-        session.quantize(c, grid: 4.0 / Double(sender.tag))
+        QuantizeSetting.grid = 4.0 / Double(sender.tag)
+        clipEditor.syncQuantizeControls()
+        quantizeSelection(sender)
+    }
+    /// Q (Logic's Quantize): the selected notes in the piano roll, else every selected clip, to the quantize value at
+    /// the quantize strength, as one undo step. MIDI clips move their notes; audio clips are cut at their transients
+    /// and each slice is moved to the grid and time-stretched to meet the next (`dalnok_audio_quantize`).
+    @objc func quantizeSelection(_ sender: Any?) {
+        if pianoRollIsKey { return activeRoll.quantizeSelection() }
+        var clips = timeline.selectedClips.compactMap { session.clip($0) }.filter { $0.folder == 0 }
+        if !clipEditor.isHidden, clipEditor.focused, let c = clipEditor.clip { clips = [c] } // the docked editor's clip
+        guard !clips.isEmpty else { return flash("Select clips (or notes) to quantize") }
+        let grid = QuantizeSetting.grid, strength = QuantizeSetting.strength
+        var slices: [DalnokClipId] = [], untouched = 0, audio = 0
+        session.engine.beginGroup("Quantize")
+        for c in clips {
+            if c.isMidi { dalnok_midi_quantize(session.engine.handle, c.id, grid, strength); slices.append(c.id); continue }
+            audio += 1
+            var out = [DalnokClipId](repeating: 0, count: 4096)
+            let n = Int(dalnok_audio_quantize(session.engine.handle, c.id, grid, strength, QuantizeSetting.sensitivity, &out, Int32(out.count)))
+            if n > 0 { slices += out.prefix(min(n, out.count)) } else { untouched += 1; slices.append(c.id) }
+        }
+        session.engine.endGroup()
+        session.refresh()
+        timeline.selectClips(slices)
+        if let open = clipEditor.clipId, session.clip(open) == nil, let first = slices.first(where: { session.clip($0) != nil }) {
+            clipEditor.show(clip: first) // the docked editor follows the quantized audio
+        }
+        let what = clips.count == 1 ? "1 clip" : "\(clips.count) clips"
+        var msg = "Quantized \(what) to \(QuantizeSetting.name)\(strength < 1 ? " at \(Int((strength * 100).rounded()))%" : "")"
+        if audio > 0 && untouched == audio { msg = "No transients to quantize in \(audio == 1 ? "that clip" : "those clips")" }
+        else if untouched > 0 { msg += " (\(untouched) without transients unchanged)" }
+        flash(msg)
     }
 
     // MARK: Recovery

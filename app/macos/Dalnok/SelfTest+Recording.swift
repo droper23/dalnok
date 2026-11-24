@@ -369,7 +369,7 @@ extension SelfTest {
         roll.mouseUp(with: ev(.leftMouseUp, p, clicks: 2))
         let added = s.clip(clip)?.notes.first { $0.pitch == 74 }
         check(s.clip(clip)?.notes.count == before + 1 && added?.start == c.offset + 2 * beat, "double-click adds a snapped note (\(added?.start ?? -1))")
-        check(e.undoName == "Edit Notes", "adding a note is one undo step")
+        check(e.undoName == "Add Note", "adding a note is one undo step")
         guard let n = added, let cur = s.clip(clip) else { return }
         // Drag the note up two rows and right one beat: one undo step "Move Notes".
         let r = roll.rect(n, cur)

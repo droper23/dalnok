@@ -143,9 +143,15 @@ struct PluginHosting {
         dalnok_midi_inject(e, 0x80, 67, 0)
         pumpAnswered("note-off")
         #expect(lb.allSatisfy { $0 == 0 })
-        // Instrument plugins only go on instrument tracks.
-        let audio = dalnok_track_add(e, "Audio")
-        #expect(dalnok_plugin_add(e, audio, testVst3, synthClass, &err, 256) == 0 && cstr(err).contains("instrument"))
+        // Instrument plugins go on instrument tracks; an empty audio track becomes one (API 47), one with clips refuses.
+        let (busy, audio) = audioSession(); defer { dalnok_engine_destroy(busy) }
+        #expect(dalnok_plugin_add(busy, audio, testVst3, synthClass, &err, 256) == 0 && cstr(err).contains("instrument"))
+        let empty = dalnok_track_add(e, "Empty")
+        #expect(dalnok_plugin_add(e, empty, testVst3, synthClass, &err, 256) != 0, "\(cstr(err))")
+        var info = DalnokTrackInfo()
+        #expect(dalnok_track_info(e, empty, &info) == DALNOK_OK && info.kind == Int32(DALNOK_TRACK_INSTRUMENT.rawValue))
+        dalnok_undo(e)
+        #expect(dalnok_track_info(e, empty, &info) == DALNOK_OK && info.kind == Int32(DALNOK_TRACK_AUDIO.rawValue), "undo makes it an audio track again")
     }
 
     @Test func bypassedOrMissingInstrumentDoesNotSubstituteTheBuiltInSynth() throws {

@@ -28,7 +28,7 @@
 extern "C" {
 #endif
 
-#define DALNOK_API_VERSION 46
+#define DALNOK_API_VERSION 47
 
 typedef enum {
     DALNOK_OK = 0,
@@ -468,6 +468,12 @@ DalnokStatus dalnok_marker_rename(DalnokEngine *engine, int32_t id, const char *
 DalnokTrackId dalnok_track_duplicate(DalnokEngine *engine, DalnokTrackId track);
 /* Reorders a track's plug-ins (API 26): moves `slot` to `index` (0 = first in the chain). Undoable. */
 DalnokStatus dalnok_plugin_move(DalnokEngine *engine, DalnokTrackId track, int32_t slot, int32_t index);
+/* Copies plug-ins to another track (or the same one) at `index` in its chain (-1 = the end), in their chain order:
+ * new instances with the same state, one undo step (API 47). An instrument replaces the target's instrument; an empty
+ * audio track (no clips) becomes an instrument track. Writes up to `capacity` new slot ids to `out` (may be null) and
+ * returns how many were pasted (0 on failure). */
+int32_t dalnok_plugins_copy(DalnokEngine *engine, DalnokTrackId from, const int32_t *slots, int32_t count,
+                            DalnokTrackId to, int32_t index, int32_t *out, int32_t capacity);
 bool dalnok_plugin_bypassed(const DalnokEngine *engine, DalnokTrackId track, int32_t slot);
 /* Folding (API 40): the device chain shows a folded plug-in as a narrow strip (name, bypass, meter). Saved with
  * the project; undoable; no effect on audio. */
@@ -765,6 +771,7 @@ typedef struct {
     int64_t start, length;
     uint8_t pitch, velocity; /* 0-127, 1-127 */
 } DalnokNote;
+/* An empty audio track (no clips) becomes an instrument track (API 47). */
 DalnokClipId dalnok_midi_clip_add(DalnokEngine *engine, DalnokTrackId track, int64_t start, int64_t length);
 /* Replaces all notes (one undo step). */
 DalnokStatus dalnok_midi_clip_set_notes(DalnokEngine *engine, DalnokClipId clip, const DalnokNote *notes, int32_t count);
@@ -772,6 +779,15 @@ DalnokStatus dalnok_midi_clip_set_notes(DalnokEngine *engine, DalnokClipId clip,
 int32_t dalnok_midi_clip_notes(const DalnokEngine *engine, DalnokClipId clip, DalnokNote *out, int32_t capacity);
 /* Moves note starts toward a grid of `grid_beats` anchored at frame 0 (strength 0-1). */
 DalnokStatus dalnok_midi_quantize(DalnokEngine *engine, DalnokClipId clip, double grid_beats, double strength);
+/* Audio quantize (API 47; Logic's Flex quantize, with slices). The clip's transients (attack starts, in source frames;
+ * `sensitivity` 0-1, 0.5 typical): returns the total count, writes up to `capacity`, -1 if not an audio clip. */
+int32_t dalnok_audio_transients(const DalnokEngine *engine, DalnokClipId clip, double sensitivity, int64_t *out, int32_t capacity);
+/* Cuts the clip just before each transient, moves each slice so its transient goes toward the grid of `grid_beats`
+ * (tempo map) by `strength` (0-1], and time-stretches each slice (pitch kept) to run to the next: no gaps, a short
+ * crossfade at each cut, the clip's end in place. Slices that barely move stay unstretched. One undo step. Writes up
+ * to `capacity` new clip ids; returns the slice count, 0 on failure (no transients, MIDI, offline). */
+int32_t dalnok_audio_quantize(DalnokEngine *engine, DalnokClipId clip, double grid_beats, double strength, double sensitivity,
+                              DalnokClipId *out, int32_t capacity);
 /* Tempo and meter maps. Beats are quarter notes from the timeline origin; bars are zero-based
  * (bar 1 on screen = 0). Tempo is constant between points; meter changes start on a bar.
  * Any tempo change keeps MIDI clips and notes on their beats; audio clips keep their time.

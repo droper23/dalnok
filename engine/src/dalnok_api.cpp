@@ -557,6 +557,30 @@ DalnokTrackId dalnok_track_duplicate(DalnokEngine *e, DalnokTrackId t) {
     std::string err;
     return e ? e->impl.duplicateTrack(t, err) : 0;
 }
+int32_t dalnok_audio_transients(const DalnokEngine *e, DalnokClipId clip, double sensitivity, int64_t *out, int32_t capacity) {
+    if (!e) return -1;
+    std::string err;
+    const auto t = e->impl.audioTransients(clip, sensitivity, err);
+    if (!err.empty()) return -1;
+    for (int32_t i = 0; out && i < capacity && i < static_cast<int32_t>(t.size()); ++i) out[i] = t[static_cast<size_t>(i)];
+    return static_cast<int32_t>(t.size());
+}
+int32_t dalnok_audio_quantize(DalnokEngine *e, DalnokClipId clip, double grid, double strength, double sensitivity, DalnokClipId *out,
+                              int32_t capacity) {
+    if (!e) return 0;
+    std::string err;
+    const auto ids = e->impl.quantizeAudio(clip, grid, strength, sensitivity, err);
+    for (int32_t i = 0; out && i < capacity && i < static_cast<int32_t>(ids.size()); ++i) out[i] = ids[static_cast<size_t>(i)];
+    return static_cast<int32_t>(ids.size());
+}
+int32_t dalnok_plugins_copy(DalnokEngine *e, DalnokTrackId from, const int32_t *slots, int32_t count, DalnokTrackId to,
+                            int32_t index, int32_t *out, int32_t capacity) {
+    if (!e || !slots || count <= 0) return 0;
+    std::string err;
+    const auto ids = e->impl.copyPlugins(from, std::vector<int32_t>(slots, slots + count), to, index, err);
+    for (int32_t i = 0; out && i < capacity && i < static_cast<int32_t>(ids.size()); ++i) out[i] = ids[i];
+    return static_cast<int32_t>(ids.size());
+}
 DalnokStatus dalnok_plugin_move(DalnokEngine *e, DalnokTrackId t, int32_t slot, int32_t index) {
     std::string err;
     return e ? statusFor(e->impl.movePlugin(t, slot, index, err), err) : DALNOK_ERR_INVALID_ARG;

@@ -263,6 +263,21 @@ std::string stem(const std::string &path) {
 }
 } // namespace detail
 
+// An audio track with no clips anywhere (timeline, takes, launcher) that is not a bus or in a stack can become an
+// instrument track: a new, empty track turns into what is put on it (an instrument plug-in or a MIDI clip).
+static bool convertibleToInstrument(const Model &m, DalnokTrackId track) {
+    const TrackState *t = m.track(track);
+    if (!t || t->kind != kTrackAudio || t->stack != 0) return false;
+    return std::none_of(m.clips.begin(), m.clips.end(), [track](const ClipState &c) { return c.track == track; });
+}
+static void makeInstrumentTrack(Model &m, TrackState &t) {
+    t.kind = kTrackInstrument;
+    t.inputMonitor = false;
+    // It plays live MIDI input right away, as a new instrument track does (one armed instrument track).
+    for (auto &other : m.tracks) if (other.kind == kTrackInstrument && other.id != t.id) other.armed = false;
+    t.armed = true;
+}
+
 DalnokTrackId Engine::addTrack(const std::string &name, std::string &err) {
     const auto id = nextTrack_;
     const bool ok = edit("New Track", true, [&](Model &m) {
@@ -451,8 +466,11 @@ DalnokClipId Engine::addMidiClip(DalnokTrackId track, int64_t start, int64_t len
     const bool ok = edit(undoName, true, [&](Model &m) {
         const TrackState *t = m.track(track);
         if (!t) return fail(err, "no such track");
-        if (t->kind != kTrackInstrument) return fail(err, "MIDI clips go on instrument tracks");
         if (start < 0 || length <= 0) return fail(err, "start must be >= 0 and length > 0");
+        if (t->kind != kTrackInstrument) {
+            if (!convertibleToInstrument(m, track)) return fail(err, "MIDI clips go on instrument tracks (or an empty audio track)");
+            makeInstrumentTrack(m, *m.track(track)); // an empty audio track becomes an instrument track (API 47)
+        }
         ClipState c;
         c.id = id;
         c.track = track;
@@ -516,7 +534,10 @@ int32_t Engine::addPlugin(DalnokTrackId track, const std::string &path, const st
     const std::string location = au ? path.substr(3) : builtin ? path.substr(7) : path;
     std::shared_ptr<PluginProcessor> instance(pluginHost_.create(format, location, classId, false, err));
     if (!instance) return 0;
-    if (instance->instrument() && t->kind != kTrackInstrument) return fail(err, "instrument plug-ins go on instrument tracks"), 0;
+    // An instrument on an empty audio track makes it an instrument track (API 47): a new track becomes whatever it gets.
+    const bool convert = instance->instrument() && t->kind != kTrackInstrument && convertibleToInstrument(model_, track);
+    if (instance->instrument() && t->kind != kTrackInstrument && !convert)
+        return fail(err, "instrument plug-ins go on instrument tracks (or an empty audio track)"), 0;
     const int32_t id = nextPlugin_;
     PluginSlot slot;
     slot.id = id;
@@ -533,6 +554,7 @@ int32_t Engine::addPlugin(DalnokTrackId track, const std::string &path, const st
     const bool ok = edit(slot.instrument ? "Set Instrument" : "Add Plug-in", true, [&](Model &m) {
         TrackState *tr = m.track(track);
         if (!tr) return fail(err, "no such track");
+        if (convert) makeInstrumentTrack(m, *tr);
         if (slot.instrument) {
             std::erase_if(tr->plugins, [](const PluginSlot &p) { return p.instrument; }); // replaces the instrument
             tr->plugins.insert(tr->plugins.begin(), slot);
@@ -659,6 +681,67 @@ DalnokTrackId Engine::duplicateTrack(DalnokTrackId track, std::string &err) {
     syncRuntimes();
     bumpRevisionAll();
     return id;
+}
+
+std::vector<int32_t> Engine::copyPlugins(DalnokTrackId from, const std::vector<int32_t> &ids, DalnokTrackId to, int32_t index,
+                                         std::string &err) {
+    const TrackState *src = model_.track(from), *dst = model_.track(to);
+    if (!src || !dst) return fail(err, "no such track"), std::vector<int32_t>{};
+    if (dst->kind == kTrackBus && std::any_of(src->plugins.begin(), src->plugins.end(), [&](const PluginSlot &p) {
+            return p.instrument && std::find(ids.begin(), ids.end(), p.id) != ids.end(); }))
+        return fail(err, "an instrument can't go on a bus"), std::vector<int32_t>{};
+    // In chain order; new instances with the same state first (loading plug-in code can't happen inside a model edit).
+    std::vector<PluginSlot> slots;
+    std::vector<std::pair<int32_t, std::shared_ptr<PluginProcessor>>> made;
+    int32_t nextSlot = nextPlugin_;
+    bool instrument = false;
+    for (const auto &p : src->plugins) {
+        if (std::find(ids.begin(), ids.end(), p.id) == ids.end()) continue;
+        if (p.instrument && instrument) continue; // one instrument per track
+        instrument = instrument || p.instrument;
+        PluginSlot s = p;
+        s.id = nextSlot++;
+        std::string state;
+        if (!pluginState(p.id, state)) state = p.state.str();
+        s.state.assign(state);
+        std::string loadErr;
+        if (pluginInstance(p.id)) {
+            std::shared_ptr<PluginProcessor> inst(pluginHost_.create(p.format, p.path, p.classId, false, loadErr));
+            if (inst) { if (!state.empty()) inst->setState(state); made.emplace_back(s.id, std::move(inst)); }
+        }
+        slots.push_back(std::move(s));
+    }
+    if (slots.empty()) return fail(err, "no such plug-in"), std::vector<int32_t>{};
+    const bool convert = instrument && dst->kind != kTrackInstrument && convertibleToInstrument(model_, to);
+    if (instrument && dst->kind != kTrackInstrument && !convert)
+        return fail(err, "instrument plug-ins go on instrument tracks (or an empty audio track)"), std::vector<int32_t>{};
+    for (auto &[sid, inst] : made) pluginHost_.insert(sid, inst); // before the edit: it compiles the new render state
+    const bool ok = edit(slots.size() == 1 ? "Paste Plug-in" : "Paste Plug-ins", true, [&](Model &m) {
+        TrackState *t = m.track(to);
+        if (!t) return fail(err, "no such track");
+        if (convert) makeInstrumentTrack(m, *t);
+        int32_t at = index < 0 ? static_cast<int32_t>(t->plugins.size()) : std::min<int32_t>(index, static_cast<int32_t>(t->plugins.size()));
+        for (const auto &s : slots) {
+            if (s.instrument) {
+                const auto before = t->plugins.size();
+                std::erase_if(t->plugins, [](const PluginSlot &p) { return p.instrument; }); // replaces the instrument
+                if (t->plugins.size() < before && at > 0) --at;
+                t->plugins.insert(t->plugins.begin(), s);
+                ++at;
+            } else {
+                const bool hasInstrument = !t->plugins.empty() && t->plugins.front().instrument;
+                at = std::max<int32_t>(at, hasInstrument ? 1 : 0); // effects follow the instrument
+                t->plugins.insert(t->plugins.begin() + at, s);
+                ++at;
+            }
+        }
+        return true;
+    });
+    if (!ok) { for (auto &[sid, inst] : made) pluginHost_.erase(sid); return {}; }
+    nextPlugin_ = nextSlot;
+    std::vector<int32_t> out;
+    for (const auto &s : slots) out.push_back(s.id);
+    return out;
 }
 
 bool Engine::removePlugin(DalnokTrackId track, int32_t id, std::string &err) {

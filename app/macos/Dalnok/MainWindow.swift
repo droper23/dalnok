@@ -195,7 +195,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     }
     /// True while the piano roll is the window the user is working in (it was opened or clicked last),
     /// so Edit ▸ Delete removes notes there instead of the selected timeline clip.
-    var pianoRollIsKey: Bool { pianoRoll.window?.isVisible == true && pianoRoll.focused }
+    var pianoRollIsKey: Bool { (pianoRoll.window?.isVisible == true && pianoRoll.focused) || clipEditorEditsNotes }
+    /// The docked clip editor shows a MIDI clip and was clicked last.
+    var clipEditorEditsNotes: Bool { !clipEditor.isHidden && clipEditor.focused && clipEditor.clip?.isMidi == true }
+    /// The piano roll keys and Edit commands act on: the docked one when it has focus, else the window.
+    var activeRoll: PianoRollView { clipEditorEditsNotes ? clipEditor.roll : pianoRoll.roll }
 
     func windowDidBecomeKey(_ notification: Notification) { pianoRoll.focused = false }
     lazy var conceptGuide = ConceptGuideController()
@@ -210,6 +214,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     let headers: TrackHeaderColumn
     let timeline: TimelineView
     let devicePanel: DevicePanel
+    /// The clip editor shares the bottom area with the device chain (Ableton's Clip and Device views).
+    let clipEditor: ClipEditorPanel
+    let bottomTabs = NSSegmentedControl(labels: ["Clip", "Devices"], trackingMode: .selectOne, target: nil, action: nil)
+    enum BottomMode: Int { case clip = 0, devices = 1 }
+    static var bottomMode: BottomMode {
+        get { BottomMode(rawValue: UserDefaults.standard.integer(forKey: "bottomMode") == 1 ? 0 : 1) ?? .devices }
+        set { UserDefaults.standard.set(newValue == .clip ? 1 : 0, forKey: "bottomMode") }
+    }
+    /// The bottom area's height for its mode.
+    var bottomHeight: CGFloat { Self.bottomMode == .clip ? ClipEditorPanel.height : DevicePanel.height }
     private var devicePanelHeight: NSLayoutConstraint!
     let mixer: MixerPanel
     let launcher: LauncherView
@@ -267,6 +281,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         headers = TrackHeaderColumn(session: session)
         timeline = TimelineView(session: session)
         devicePanel = DevicePanel(session: session)
+        clipEditor = ClipEditorPanel(session: session)
         mixer = MixerPanel(session: session)
         launcher = LauncherView(session: session)
         inspector = InspectorPanel(session: session)
@@ -295,7 +310,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             }
         }
         window.contentView = root
-        for v in [transport, library, inspector, headers, launcher, timeline, mixer, devicePanel, emptyState, overview, countInOverlay, toast] as [NSView] {
+        for v in [transport, library, inspector, headers, launcher, timeline, mixer, devicePanel, clipEditor, bottomTabs, emptyState, overview, countInOverlay, toast] as [NSView] {
             v.translatesAutoresizingMaskIntoConstraints = false
             root.addSubview(v)
         }
@@ -332,6 +347,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             devicePanel.leadingAnchor.constraint(equalTo: library.trailingAnchor),
             devicePanel.trailingAnchor.constraint(equalTo: inspector.leadingAnchor),
             devicePanel.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            clipEditor.leadingAnchor.constraint(equalTo: devicePanel.leadingAnchor),
+            clipEditor.trailingAnchor.constraint(equalTo: devicePanel.trailingAnchor),
+            clipEditor.bottomAnchor.constraint(equalTo: devicePanel.bottomAnchor),
+            clipEditor.heightAnchor.constraint(equalTo: devicePanel.heightAnchor),
+            bottomTabs.topAnchor.constraint(equalTo: devicePanel.topAnchor, constant: 4),
+            bottomTabs.trailingAnchor.constraint(equalTo: devicePanel.trailingAnchor, constant: -10),
             emptyState.topAnchor.constraint(equalTo: transport.bottomAnchor),
             emptyState.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             emptyState.trailingAnchor.constraint(equalTo: root.trailingAnchor),
@@ -347,9 +368,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             toast.centerXAnchor.constraint(equalTo: timeline.centerXAnchor),
             toast.bottomAnchor.constraint(equalTo: timeline.bottomAnchor, constant: -22),
         ])
-        devicePanelHeight = devicePanel.heightAnchor.constraint(equalToConstant: Self.showDevicePanel ? DevicePanel.height : 0)
+        devicePanelHeight = devicePanel.heightAnchor.constraint(equalToConstant: Self.showDevicePanel ? bottomHeight : 0)
         devicePanelHeight.isActive = true
-        devicePanel.isHidden = !Self.showDevicePanel
+        bottomTabs.controlSize = .small
+        bottomTabs.font = Theme.ui(11)
+        bottomTabs.target = self
+        bottomTabs.action = #selector(bottomTabChosen(_:))
+        bottomTabs.setToolTip("The clip open for editing (double-click a clip)", forSegment: 0)
+        bottomTabs.setToolTip("The selected track's plug-ins", forSegment: 1)
+        bottomTabs.setAccessibilityLabel("Bottom panel")
+        applyBottomMode()
         launcherWidth = launcher.widthAnchor.constraint(equalToConstant: Self.showLauncher ? launcher.width : 0)
         launcherWidth.isActive = true
         launcher.isHidden = !Self.showLauncher
@@ -471,9 +499,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         launcher.onScroll = { [weak self] e in self?.timeline.scroll(with: e, zoomAnchorX: 0) }
         timeline.onClipSelected = { [weak self] clip in self?.headers.selectedTrack = clip.track }
         timeline.onOpenClip = { [weak self] clip in
-            if clip.folder != 0 { self?.compEditor.show(folder: clip.folder) } else { self?.pianoRoll.show(clip: clip.id) }
+            if clip.folder != 0 { self?.compEditor.show(folder: clip.folder) } else { self?.openInClipEditor(clip.id) }
         }
-        timeline.onActivate = { [weak self] in self?.pianoRoll.focused = false }
+        timeline.onActivate = { [weak self] in self?.pianoRoll.focused = false; self?.clipEditor.focused = false }
+        clipEditor.onFocus = { [weak self] in self?.pianoRoll.focused = false }
+        clipEditor.onQuantizeAudio = { [weak self] in self?.quantizeSelection(nil) }
+        devicePanel.onMessage = { [weak self] m in self?.flash(m) }
         headers.contextMenu = trackContextMenu()
         headers.onSelect = { [weak self] id in
             self?.timeline.highlightedTrack = id
@@ -686,7 +717,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         timeline.clampScrollY()
         // Show the empty state or the arrangement; crossfade only when that actually changes.
         let empty = session.tracks.isEmpty
-        devicePanel.isHidden = empty || !Self.showDevicePanel
+        applyBottomMode(empty: empty)
         let showingEmpty = !emptyState.isHidden && timeline.isHidden
         if showingEmpty != empty || sidePanelsSuppressed != empty { applySidePanelsForStartPage(empty, animated: didShowContent) }
         if showingEmpty != empty {
@@ -725,6 +756,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         updateTempoDisplay()
         applyCycle()
         pianoRoll.modelChanged()
+        if !clipEditor.isHidden || clipEditor.clipId != nil { clipEditor.modelChanged() }
         if compEditor.window?.isVisible == true { compEditor.modelChanged() }
         if devicePanel.track == nil, let first = session.tracks.first?.id { headers.select(first) }
         devicePanel.rebuild()
@@ -962,11 +994,23 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     @objc func togglePlay() {
         let e = session.engine
         if e.isRecording { return finishRecording() } // Space stops a take cleanly
-        e.isPlaying ? e.pause() : e.play()
+        if e.isPlaying { return e.pause() }
+        // With a selection (notes in the clip editor, or clips or a section of the arrangement) made since the
+        // playhead was last placed, playback starts where the selection starts.
+        if let start = playStartForSelection {
+            e.seek(start)
+            timeline.updatePlayhead()
+        }
+        e.play()
+    }
+    var playStartForSelection: Int64? {
+        if pianoRollIsKey { return activeRoll.selectionStartFrame }
+        return timeline.playStartForSelection
     }
 
     @objc func goToStart() {
         if session.engine.isRecording { return } // a jump would end the take
+        timeline.clearPlayFromSelection()
         session.engine.seek(0)
         timeline.glide(framesPerPoint: timeline.framesPerPoint, scrollFrame: 0, duration: 0.3, curve: .easeInOut)
     }
@@ -1052,6 +1096,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             it.target = self
             m.addItem(it)
         }
+        let dup = NSMenuItem(title: "Duplicate Track", action: #selector(duplicateTrack(_:)), keyEquivalent: "")
+        dup.target = self
+        m.addItem(dup)
         let arm = NSMenuItem(title: "Record Enable", action: #selector(toggleArmTrack(_:)), keyEquivalent: "")
         arm.target = self
         m.addItem(arm)
@@ -1337,7 +1384,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     }
 
     @objc func delete(_ sender: Any?) {
-        if pianoRollIsKey { return pianoRoll.roll.deleteSelection() }
+        if pianoRollIsKey { return activeRoll.deleteSelection() }
         let ids = timeline.selectedClips.sorted()
         guard !ids.isEmpty else { return }
         if !session.removeClips(ids) { NSSound.beep() }
@@ -1653,16 +1700,51 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         Self.showDevicePanel.toggle()
         syncViewButtons()
         let show = Self.showDevicePanel
-        if show { devicePanel.isHidden = false }
-        let panel = devicePanel
+        if show { applyBottomMode() } else { bottomTabs.isHidden = true }
         if Motion.reduced {
-            devicePanelHeight.constant = show ? DevicePanel.height : 0
-            devicePanel.isHidden = !show
+            devicePanelHeight.constant = show ? bottomHeight : 0
+            applyBottomMode()
             return
         }
-        Motion.panels({ devicePanelHeight.animator().constant = show ? DevicePanel.height : 0 }, completion: {
-            DispatchQueue.main.async { if !show { panel.isHidden = true } }
+        let height = bottomHeight
+        Motion.panels({ devicePanelHeight.animator().constant = show ? height : 0 }, completion: {
+            DispatchQueue.main.async { [weak self] in if !show { self?.applyBottomMode() } }
         })
+    }
+
+    /// Shows the bottom area's current mode (Clip or Devices), or nothing when it is closed or the project is empty.
+    func applyBottomMode(empty: Bool? = nil) {
+        let isEmpty = empty ?? session.tracks.isEmpty
+        let show = Self.showDevicePanel && !isEmpty
+        let clip = Self.bottomMode == .clip
+        devicePanel.isHidden = !show || clip
+        clipEditor.isHidden = !show || !clip
+        bottomTabs.isHidden = !show
+        bottomTabs.selectedSegment = Self.bottomMode.rawValue
+        if Self.showDevicePanel, devicePanelHeight.constant > 0, abs(devicePanelHeight.constant - bottomHeight) > 0.5 {
+            devicePanelHeight.constant = bottomHeight
+        }
+    }
+    /// Switches the bottom area to the clip editor or the device chain (opening it if closed).
+    func setBottomMode(_ mode: BottomMode) {
+        Self.bottomMode = mode
+        if !Self.showDevicePanel {
+            Self.showDevicePanel = true
+            syncViewButtons()
+            devicePanelHeight.constant = bottomHeight
+        }
+        applyBottomMode()
+        if mode == .devices { devicePanel.rebuild() } else { clipEditor.modelChanged() }
+    }
+    @objc func bottomTabChosen(_ sender: NSSegmentedControl) { setBottomMode(sender.selectedSegment == 0 ? .clip : .devices) }
+    /// View ▸ Clip Editor / Devices: flips the bottom area between the two.
+    @objc func toggleClipEditor(_ sender: Any?) { setBottomMode(Self.bottomMode == .clip && Self.showDevicePanel ? .devices : .clip) }
+    /// Double-clicking a clip: it opens in the bottom area, which switches to the clip editor.
+    func openInClipEditor(_ id: DalnokClipId) {
+        clipEditor.show(clip: id)
+        setBottomMode(.clip)
+        clipEditor.focus()
+        window?.makeFirstResponder(clipEditor.clip?.isMidi == true ? clipEditor.roll : clipEditor.audio)
     }
 
     /// View ▸ Library (Y) and View ▸ Inspector (I): the side panels. Each slides open like the mixer (instantly under
@@ -1753,6 +1835,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             self.devicePanel.applyHeight()
         }
         edge.onEnd = { [weak self] in self?.devicePanel.rebuildAll() }
+        let clipEdge = clipEditor.resizeEdge
+        clipEdge.currentHeight = { [weak self] in self?.devicePanelHeight.constant ?? ClipEditorPanel.height }
+        clipEdge.onDrag = { [weak self] h in
+            guard let self, Self.showDevicePanel else { return }
+            let spare = max(0, self.timeline.frame.height - 140) + self.devicePanelHeight.constant
+            ClipEditorPanel.height = min(h, spare)
+            self.devicePanelHeight.constant = ClipEditorPanel.height
+        }
     }
     private func wireSidePanels() {
         library.onInsert = { [weak self] paths in
@@ -1842,12 +1932,27 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     private var selectedClipIds: [DalnokClipId] {
         timeline.selectedClips.compactMap { session.clip($0) }.sorted { ($0.start, $0.id) < ($1.start, $1.id) }.map(\.id)
     }
+    /// What ⌘C copied last: ⌘V pastes that kind (plug-ins onto the selected track; notes in the piano roll).
+    private enum CopiedKind { case clips, plugins }
+    private var lastCopied: CopiedKind = .clips
+    private var devicePanelHasFocus: Bool { !devicePanel.isHidden && window?.firstResponder === devicePanel && devicePanel.selectedSlot != nil }
     @objc func copy(_ sender: Any?) {
+        if pianoRollIsKey {
+            let n = activeRoll.copySelection()
+            return n > 0 ? flash(n == 1 ? "Copied 1 note" : "Copied \(n) notes") : NSSound.beep()
+        }
+        if devicePanelHasFocus {
+            let n = devicePanel.copySelected()
+            lastCopied = .plugins
+            return flash(n == 1 ? "Copied 1 plug-in" : "Copied \(n) plug-ins")
+        }
         let ids = selectedClipIds
         guard !ids.isEmpty, dalnok_clipboard_copy(session.engine.handle, ids, Int32(ids.count)) == DALNOK_OK else { return NSSound.beep() }
+        lastCopied = .clips
         flash(ids.count == 1 ? "Copied 1 clip" : "Copied \(ids.count) clips")
     }
     @objc func cut(_ sender: Any?) {
+        if pianoRollIsKey { return activeRoll.cutSelection() }
         let ids = selectedClipIds
         guard !ids.isEmpty, dalnok_clipboard_copy(session.engine.handle, ids, Int32(ids.count)) == DALNOK_OK else { return NSSound.beep() }
         session.engine.beginGroup(ids.count == 1 ? "Cut Clip" : "Cut Clips")
@@ -1858,6 +1963,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     }
     /// Pastes at the playhead on the selected track (copies from several tracks keep their spacing below it).
     @objc func paste(_ sender: Any?) {
+        if pianoRollIsKey { return activeRoll.paste() }
+        if DevicePanel.copied != nil, devicePanelHasFocus || lastCopied == .plugins || dalnok_clipboard_count(session.engine.handle) == 0 {
+            if let err = devicePanel.pasteCopied() { flash(err) } else if devicePanel.isHidden { setBottomMode(.devices) }
+            return
+        }
         guard let track = selectedTrack ?? session.tracks.first?.id else { return NSSound.beep() }
         var out = [DalnokClipId](repeating: 0, count: 256)
         let n = Int(dalnok_clipboard_paste(session.engine.handle, track, max(0, session.engine.position), &out, 256))
@@ -1871,6 +1981,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     }
     /// Edit ▸ Duplicate (⌘D): a copy of the selection placed right after it, on the same tracks.
     @objc func duplicateClips(_ sender: Any?) {
+        if pianoRollIsKey { return activeRoll.duplicateSelection() }
         let ids = selectedClipIds
         let clips = ids.compactMap { session.clip($0) }
         guard let end = clips.map(\.end).max() else { return NSSound.beep() }
@@ -1905,6 +2016,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         let pos = session.engine.position
         let target = d > 0 ? session.markers.first { $0.frame > pos } : session.markers.last { $0.frame < pos }
         guard let m = target else { return NSSound.beep() }
+        timeline.clearPlayFromSelection()
         session.engine.seek(m.frame)
         timeline.updatePlayhead()
         flash(fixedString(m.name))
@@ -2313,7 +2425,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             item.title = session.engine.canRedo ? "Redo \(session.engine.redoName)" : "Redo"
             return session.engine.canRedo
         case #selector(delete(_:)):
-            return pianoRollIsKey ? !pianoRoll.roll.selection.isEmpty : timeline.selectedClip != nil
+            return pianoRollIsKey ? !activeRoll.selection.isEmpty : timeline.selectedClip != nil
         case #selector(nudgeClipsLeft(_:)), #selector(nudgeClipsRight(_:)):
             return !pianoRollIsKey && !timeline.selectedClips.isEmpty
         case #selector(openTakeFolder(_:)):
@@ -2407,9 +2519,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             item.state = Self.showInspector ? .on : .off
             return !sidePanelsSuppressed
         case #selector(copy(_:)), #selector(cut(_:)), #selector(duplicateClips(_:)):
-            return !pianoRollIsKey && !timeline.selectedClips.isEmpty
+            if pianoRollIsKey { return !activeRoll.selection.isEmpty }
+            if item.action == #selector(copy(_:)), devicePanelHasFocus { return true }
+            return !timeline.selectedClips.isEmpty
         case #selector(paste(_:)):
-            return !pianoRollIsKey && dalnok_clipboard_count(session.engine.handle) > 0 && !session.tracks.isEmpty
+            if pianoRollIsKey { return !PianoRollView.clipboard.isEmpty }
+            return (dalnok_clipboard_count(session.engine.handle) > 0 || DevicePanel.copied != nil) && !session.tracks.isEmpty
+        case #selector(toggleClipEditor(_:)):
+            item.state = Self.showDevicePanel && Self.bottomMode == .clip ? .on : .off
+            return !session.tracks.isEmpty
+        case #selector(quantizeSelection(_:)):
+            return pianoRollIsKey || !timeline.selectedClips.isEmpty || (clipEditor.focused && clipEditor.clip != nil)
         case #selector(selectAll(_:)):
             return !pianoRollIsKey && session.tracks.contains { !$0.clips.isEmpty }
         case #selector(previousMarker(_:)), #selector(nextMarker(_:)):

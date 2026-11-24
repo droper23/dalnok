@@ -417,8 +417,13 @@ func buildMenu(target: MainWindowController) -> NSMenu {
     }
     let quantize = NSMenuItem(title: "Quantize", action: nil, keyEquivalent: "")
     quantize.submenu = NSMenu(title: "Quantize")
-    for division in [4, 8, 16, 32] {
-        let it = NSMenuItem(title: "1/\(division) Notes", action: #selector(W.quantizeClip(_:)), keyEquivalent: "")
+    let qNow = NSMenuItem(title: "Quantize Selection", action: #selector(W.quantizeSelection(_:)), keyEquivalent: "q")
+    qNow.keyEquivalentModifierMask = []
+    qNow.target = target
+    quantize.submenu?.addItem(qNow)
+    quantize.submenu?.addItem(.separator())
+    for division in [4, 8, 12, 16, 24, 32] {
+        let it = NSMenuItem(title: division % 3 == 0 ? "1/\(division / 3 * 2) Triplets" : "1/\(division) Notes", action: #selector(W.quantizeClip(_:)), keyEquivalent: "")
         it.tag = division
         it.target = target
         quantize.submenu?.addItem(it)
@@ -491,6 +496,7 @@ func buildMenu(target: MainWindowController) -> NSMenu {
         item("Bars and Beats Ruler", #selector(W.toggleBarsAndBeats(_:)), "b", [.command, .option]),
         item("Secondary Clock", #selector(W.toggleSecondaryClock(_:)), "", []),
         item("Device Panel", #selector(W.toggleDevicePanel(_:)), "d", [.command, .option]),
+        item("Clip Editor", #selector(W.toggleClipEditor(_:)), "e", [.command, .option]),
         item("Library", #selector(W.toggleLibrary(_:)), "y", []),
         item("Inspector", #selector(W.toggleInspector(_:)), "i", []),
         item("Mixer", #selector(W.toggleMixer(_:)), "x", []),

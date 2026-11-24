@@ -58,6 +58,32 @@ final class TimelineView: NSView {
     private var hoveredClip: DalnokClipId? { didSet { if hoveredClip != oldValue { needsDisplay = true } } }
 
     private let playheadLayer = CALayer()
+    let hoverLine = CALayer()
+    /// A selection made since the playhead was last placed: Play starts at it. A section dragged out with the marquee
+    /// starts where the drag began; clicked clips start at the earliest selected clip.
+    private enum PlayFrom { case range(Int64), clips }
+    private var playFrom: PlayFrom?
+    func clearPlayFromSelection() { playFrom = nil }
+    var playStartForSelection: Int64? {
+        guard let p = playFrom, !selectedClips.isEmpty else { return nil }
+        switch p {
+        case .range(let f): return f
+        case .clips: return selectedClips.compactMap { session.clip($0) }.map(\.start).min()
+        }
+    }
+    /// The timeline frame the hover line marks (nil: hidden). Snapped like a click (⌃ bypasses).
+    private(set) var hoverFrame: Int64?
+    func showHoverLine(atX x: CGFloat?, bypass: Bool = false) {
+        CATransaction.begin(); CATransaction.setDisableActions(true); defer { CATransaction.commit() }
+        guard let x, x >= 0, x <= bounds.width, drag == nil, marquee == nil, rulerDrag == nil, !scrubbing else {
+            hoverFrame = nil; hoverLine.isHidden = true; return
+        }
+        let f = snap(max(0, frame(forX: x)), bypass: bypass)
+        hoverFrame = f
+        let px = xPos(forFrame: Double(f)).rounded() + 0.5
+        hoverLine.frame = CGRect(x: px - 0.5, y: 0, width: 1, height: bounds.height)
+        hoverLine.isHidden = false
+    }
     private let playheadCap = CAShapeLayer()
     private let playheadHalo = CAGradientLayer()  // Prism: the column of light around the playhead
     /// Graphite and Warm Analog: the afterglow behind the playhead while it runs (a phosphor trace's persistence; a
@@ -282,6 +308,12 @@ final class TimelineView: NSView {
             playheadLayer.shadowOffset = .zero
         }
         layer?.addSublayer(playheadLayer)
+        // The hover playhead: a faint line where a click would put the playhead (as video editors show), wherever
+        // the real playhead is.
+        hoverLine.backgroundColor = Theme.playhead.withAlphaComponent(0.38).cgColor
+        hoverLine.zPosition = 9
+        hoverLine.isHidden = true
+        layer?.addSublayer(hoverLine)
         let cap = CGMutablePath() // pentagon pointing down (view is flipped)
         cap.move(to: CGPoint(x: -6, y: 0)); cap.addLine(to: CGPoint(x: 6, y: 0)); cap.addLine(to: CGPoint(x: 6, y: 6))
         cap.addLine(to: CGPoint(x: 0, y: 12)); cap.addLine(to: CGPoint(x: -6, y: 6)); cap.closeSubpath()
@@ -1444,12 +1476,15 @@ final class TimelineView: NSView {
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         trackingAreas.forEach(removeTrackingArea)
-        addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseMoved, .activeInKeyWindow, .inVisibleRect],
+        addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
                                        owner: self))
     }
 
+    override func mouseExited(with event: NSEvent) { showHoverLine(atX: nil) }
+
     override func mouseMoved(with event: NSEvent) {
         let p = convert(event.locationInWindow, from: nil)
+        showHoverLine(atX: p.x, bypass: event.modifierFlags.contains(.control))
         let h = hit(p)
         hoveredClip = h?.0.id
         hoverHint = hint(p, h)
@@ -1465,6 +1500,7 @@ final class TimelineView: NSView {
         if window?.firstResponder is KeyOwner { window?.makeFirstResponder(nil) } // the arrangement keys come back
         onActivate?()
         let p = convert(event.locationInWindow, from: nil)
+        hoverLine.isHidden = true
         if p.y < Theme.rulerHeight, let m = marker(atPoint: p) {
             if event.clickCount == 2 { onRenameMarker?(m.id); return }
             markerDrag = (m.id, p.x, m.frame, false, m.frame)
@@ -1481,6 +1517,7 @@ final class TimelineView: NSView {
             return
         }
         guard let (clip, zone) = hit(p) else {
+            if event.clickCount == 2, let i = trackIndex(atY: p.y), createMidiClip(onTrackAt: i, atX: p.x) { return }
             let initial = event.modifierFlags.contains(.shift) ? selectedClips : []
             if initial.isEmpty { selectedClip = nil }
             marquee = Marquee(start: p, end: p, initial: initial)
@@ -1500,8 +1537,9 @@ final class TimelineView: NSView {
             selectedClip = clip.id
         }
         onClipSelected?(clip)
-        if event.clickCount == 2 && (clip.isMidi || clip.folder != 0) { onOpenClip?(clip); return }
-        let stretch = zone == .rightEdge && event.modifierFlags.contains(.option)
+        playFrom = .clips
+        if event.clickCount == 2 { onOpenClip?(clip); return }
+        let stretch = zone == .rightEdge && event.modifierFlags.contains(.option) && !clip.isMidi
         let moving = zone == .body ? selectedClips.compactMap { session.clip($0) } : [clip]
         drag = Drag(clip: clip, moving: moving, zone: zone, startX: p.x, startY: p.y, stretch: stretch)
         session.engine.beginGroup(stretch ? "Time Stretch" : zone == .body ? "Move Clip"
@@ -1618,7 +1656,7 @@ final class TimelineView: NSView {
             }
         case .rightEdge:
             var end = snap(Double(c.end) + delta, bypass: bypass)
-            end = min(end, c.start + (c.mediaFrames - c.offset)) // can't extend past media end
+            if !c.isMidi { end = min(end, c.start + (c.mediaFrames - c.offset)) } // audio can't extend past its media; MIDI can
             end = max(end, c.start + 1)
             if end != current.end {
                 session.setRegion(c.id, start: c.start, offset: c.offset, length: end - c.start)
@@ -1632,7 +1670,7 @@ final class TimelineView: NSView {
         if let d = markerDrag {
             markerDrag = nil
             if d.moved, d.preview != d.frame { session.moveMarker(d.id, to: d.preview) }
-            else { session.engine.seek(d.frame); updatePlayhead(); onSeek?() }
+            else { playFrom = nil; session.engine.seek(d.frame); updatePlayhead(); onSeek?() }
             needsDisplay = true
             return
         }
@@ -1646,7 +1684,10 @@ final class TimelineView: NSView {
         if let m = marquee {
             marquee = nil; needsDisplay = true
             if !m.moved { seek(toX: m.start.x) }
-            else if let id = selectedClip, let clip = session.clip(id) { onClipSelected?(clip) }
+            else {
+                playFrom = .range(snap(max(0, frame(forX: min(m.start.x, m.end.x))), bypass: event.modifierFlags.contains(.control)))
+                if let id = selectedClip, let clip = session.clip(id) { onClipSelected?(clip) }
+            }
             return
         }
         guard let d = drag else { return }
@@ -1664,8 +1705,26 @@ final class TimelineView: NSView {
         onSelectionChange?()
     }
 
+    /// Double-clicking empty space in a lane adds a one-bar MIDI clip at that bar (instrument tracks, and empty audio
+    /// tracks, which become instrument tracks) and opens it in the clip editor.
+    @discardableResult func createMidiClip(onTrackAt index: Int, atX x: CGFloat) -> Bool {
+        guard session.tracks.indices.contains(index) else { return false }
+        let t = session.tracks[index]
+        guard t.isInstrument || (!t.isBus && t.clips.isEmpty && t.stack == 0) else { return false }
+        let bar = session.bar(atBeat: session.frameToBeat(max(0, frame(forX: x)))).bar
+        let start = Int64(session.beatToFrame(session.barToBeat(bar)).rounded())
+        let end = Int64(session.beatToFrame(session.barToBeat(bar + 1)).rounded())
+        let id = session.addMidiClip(t.id, start: max(0, start), length: max(1, end - start))
+        guard id != 0, let clip = session.clip(id) else { return false }
+        selectedClip = id
+        onClipSelected?(clip)
+        onOpenClip?(clip)
+        return true
+    }
+
     /// Clicks place the playhead on the snap grid (hold Control for an exact position).
     private func seek(toX x: CGFloat) {
+        playFrom = nil
         let bypass = NSApp.currentEvent?.modifierFlags.contains(.control) ?? false
         session.engine.seek(snap(max(0, frame(forX: x)), bypass: bypass))
         updatePlayhead()
