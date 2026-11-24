@@ -343,7 +343,7 @@ final class WelcomeController: NSObject, NSTableViewDataSource, NSTableViewDeleg
         other.identifier = .init("none")
         other.isBordered = false // a quiet secondary choice under the three big ones
         other.attributedTitle = NSAttributedString(string: "Something else, or start fresh →",
-                                                   attributes: [.font: Theme.ui(13, .medium), .foregroundColor: Theme.accent])
+                                                   attributes: [.font: Theme.ui(13, .medium), .foregroundColor: Theme.accentText])
         let row = NSStackView(views: buttons)
         row.spacing = 12
         // This step is short: centre it in the window (the next step's table uses the full height).

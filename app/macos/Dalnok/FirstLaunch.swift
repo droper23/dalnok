@@ -155,7 +155,7 @@ final class ShortcutChooserController: NSObject, NSWindowDelegate {
         own.identifier = NSUserInterfaceItemIdentifier("dalnok")
         own.isBordered = false
         own.attributedTitle = NSAttributedString(string: "None of these: use Dalnok's own →",
-                                                 attributes: [.font: Theme.ui(13, .medium), .foregroundColor: Theme.accent])
+                                                 attributes: [.font: Theme.ui(13, .medium), .foregroundColor: Theme.accentText])
         own.setAccessibilityLabel("Use Dalnok's own shortcuts")
         let note = NSTextField(wrappingLabelWithString: "Each set approximates that app's documented macOS defaults where Dalnok has the same command.")
         note.font = Theme.ui(11)

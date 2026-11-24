@@ -375,7 +375,7 @@ final class PianoRollView: NSView {
         // Ivory keys with hairlines where white keys meet (between E–F and B–C, and around black keys),
         // then black keys inset from the left like a real keyboard seen from above.
         let family = Theme.look.editors
-        ctx.setFillColor((family == .glass ? Theme.hex(0x3A4366) : family == .engraved ? Theme.panelRaised : Theme.hex(0xE9E4DA)).cgColor)
+        ctx.setFillColor((family == .glass ? (Theme.isLight ? Theme.panelRaised : Theme.hex(0x3A4366)) : family == .engraved ? Theme.panelRaised : Theme.hex(0xE9E4DA)).cgColor)
         ctx.fill(column)
         let names = ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B"]
         // Pitch classes this clip uses (from its notes): marked in the keyboard's margin, to see the material at a glance.

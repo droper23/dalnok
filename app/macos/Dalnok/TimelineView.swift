@@ -218,7 +218,7 @@ final class TimelineView: NSView {
             let pts = lanePoints(track, lane)
             let color = TrackTint(base: track.color).waveform
             if case let .plugin(_, _, name) = lane { // which parameter this lane shows
-                (name.uppercased() as NSString).draw(at: CGPoint(x: 8, y: y + 4), withAttributes: [.font: Theme.mono(9, .semibold), .foregroundColor: Theme.accent])
+                (name.uppercased() as NSString).draw(at: CGPoint(x: 8, y: y + 4), withAttributes: [.font: Theme.mono(9, .semibold), .foregroundColor: Theme.accentText])
             }
             if pts.isEmpty { // the static value, dashed
                 let v = staticValue(track, lane)
@@ -245,7 +245,7 @@ final class TimelineView: NSView {
         }
         let name = Self.automationTarget == 1 ? "PAN AUTOMATION" : "VOLUME AUTOMATION"
         (name as NSString).draw(at: CGPoint(x: bounds.width - 140, y: Theme.rulerHeight + 4),
-                                withAttributes: [.font: Theme.mono(9, .semibold), .foregroundColor: Theme.accent])
+                                withAttributes: [.font: Theme.mono(9, .semibold), .foregroundColor: Theme.accentText])
     }
 
     /// Automation gestures: click empty lane space adds a point (and drags it), drag a point to move it,

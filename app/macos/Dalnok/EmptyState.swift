@@ -193,7 +193,7 @@ final class EmptyStateView: NSView, NSTextFieldDelegate {
         func link(_ title: String, _ sel: Selector) -> NSButton {
             let b = NSButton(title: title, target: self, action: sel)
             b.isBordered = false
-            b.attributedTitle = NSAttributedString(string: title, attributes: [.font: Theme.ui(12.5), .foregroundColor: Theme.accent])
+            b.attributedTitle = NSAttributedString(string: title, attributes: [.font: Theme.ui(12.5), .foregroundColor: Theme.accentText])
             b.setAccessibilityLabel(title)
             return b
         }

@@ -324,7 +324,7 @@ final class CommandPalette: NSObject, NSTableViewDataSource, NSTableViewDelegate
         path.textColor = Theme.textDim
         let key = NSTextField(labelWithString: e.shortcut)
         key.font = Theme.mono(12, .medium)
-        key.textColor = Theme.accent
+        key.textColor = Theme.accentText
         for v in [title, path, key] {
             v.translatesAutoresizingMaskIntoConstraints = false
             cell.addSubview(v)

@@ -216,6 +216,8 @@ enum Theme {
 
     // MARK: Reserved state colors (never used for tracks alone; always paired with form)
     static var accent: NSColor { tone(\.accent) }        // time display / brand
+    /// Accent for small text: prism light's brand blue is 3.8:1 on its panes, so type uses a deeper blue (>= 4.9:1).
+    static var accentText: NSColor { activeStyle == .prism && isLight ? hex(0x1D4FD6) : accent }
     static var playhead: NSColor { tone(\.playhead) }
     static var selection: NSColor { tone(\.selection) }
     static var cycle: NSColor { tone(\.cycle) } // cycle region in the ruler (Logic users know it as yellow)

@@ -120,7 +120,7 @@ final class CompView: NSView {
         // The comp: which take plays where.
         let top = compTop
         Theme.panel.setFill(); CGRect(x: 0, y: top, width: bounds.width, height: Self.compLane).fill()
-        ("COMP" as NSString).draw(at: CGPoint(x: 12, y: top + 12), withAttributes: [.font: Theme.mono(10, .semibold), .foregroundColor: Theme.accent])
+        ("COMP" as NSString).draw(at: CGPoint(x: 12, y: top + 12), withAttributes: [.font: Theme.mono(10, .semibold), .foregroundColor: Theme.accentText])
         if Theme.look.tapeEditors { // the splicing block the comp is assembled on
             let block = CGRect(x: Self.header, y: top + 3, width: bounds.width - Self.header, height: Self.compLane - 6)
             ctx.setFillColor(Theme.hex(0x6E665D).cgColor); ctx.fill(block)

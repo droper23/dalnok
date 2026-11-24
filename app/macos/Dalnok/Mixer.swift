@@ -590,7 +590,7 @@ final class MasterStrip: NSView {
         fader.setAccessibilityLabel("Master volume")
         meter.vertical = true
         dbLabel.font = Theme.mono(10); dbLabel.textColor = Theme.textDim; dbLabel.alignment = .center
-        name.font = Theme.title(11.5, .semibold); name.textColor = Theme.accent; name.alignment = .center
+        name.font = Theme.title(11.5, .semibold); name.textColor = Theme.accentText; name.alignment = .center
         let row = NSStackView(views: [fader, meter])
         row.spacing = 4
         for v in [needle, row, dbLabel, name] as [NSView] { v.translatesAutoresizingMaskIntoConstraints = false; addSubview(v) }
