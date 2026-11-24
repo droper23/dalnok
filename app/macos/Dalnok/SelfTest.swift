@@ -528,6 +528,29 @@ final class SelfTest {
             check(s.tracks.count == n, "undo removes the imported track")
         }
         s.removeTrack(midiTrack)
+        // Presets and templates, in this run's folder.
+        setenv("DALNOK_PRESETS_DIR", workdir.appendingPathComponent("presets").path, 1)
+        setenv("DALNOK_TEMPLATES_DIR", workdir.appendingPathComponent("templates").path, 1)
+        if let t = s.tracks.first(where: { !$0.isBus })?.id, let comp = try? s.addPlugin(t, path: "dalnok:compressor") {
+            _ = dalnok_plugin_set_parameter(e.handle, comp, 0, 0.25)
+            check(UserLibrary.savePreset(s.engine, slot: comp, plugin: "Dalnok Compressor", name: "Selftest Squash")
+                  && UserLibrary.presets("Dalnok Compressor") == ["Selftest Squash"], "a plug-in's settings save as a preset")
+            _ = dalnok_plugin_set_parameter(e.handle, comp, 0, 0.9)
+            var p = DalnokPluginParameter()
+            check(UserLibrary.loadPreset(s.engine, slot: comp, plugin: "Dalnok Compressor", name: "Selftest Squash")
+                  && dalnok_plugin_parameter(e.handle, comp, 0, &p) == DALNOK_OK && abs(p.value - 0.25) < 1e-6, "loading the preset restores them (\(p.value))")
+            _ = perform("Undo")
+        }
+        let dirtyBefore = e.hasUnsavedChanges, urlBefore = s.projectURL
+        check(w.saveTemplate(named: "Selftest Template") && UserLibrary.templates() == ["Selftest Template"], "File ▸ Save as Template writes a template")
+        check(e.hasUnsavedChanges == dirtyBefore && s.projectURL == urlBefore, "saving a template leaves the project as it was")
+        let tmenu = NSMenu(); templateFiller.menuNeedsUpdate(tmenu)
+        check(tmenu.items.map(\.title) == ["Selftest Template"], "File ▸ New from Template lists it")
+        let probe = dalnok_engine_create(e.sampleRate)!
+        var terr = [CChar](repeating: 0, count: 256), missingT: Int32 = 0
+        check(dalnok_project_load(probe, UserLibrary.templateURL("Selftest Template").path, &missingT, &terr, terr.count) == DALNOK_OK
+              && Int(dalnok_track_count(probe)) == s.allTracks.count, "the template opens with the project's tracks")
+        dalnok_engine_destroy(probe)
         // File ▸ Export Queue: a mix and a stems export queued, then rendered in one go.
         let queued = workdir.appendingPathComponent("queued", isDirectory: true)
         try? FileManager.default.createDirectory(at: queued, withIntermediateDirectories: true)

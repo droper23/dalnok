@@ -290,6 +290,9 @@ final class MainMenu: NSMenu {
     }
 }
 
+/// Keeps File ▸ New from Template's delegate alive.
+let templateFiller = TemplateMenuFiller()
+
 @MainActor
 /// Window commands target the (single) window controller directly, so they work
 /// and validate regardless of which window is key.
@@ -324,14 +327,20 @@ func buildMenu(target: MainWindowController) -> NSMenu {
         item("Hide Dalnok", #selector(NSApplication.hide(_:)), "h"),
         item("Quit Dalnok", #selector(NSApplication.terminate(_:)), "q"),
     ])
+    let fromTemplate = NSMenuItem(title: "New from Template", action: nil, keyEquivalent: "")
+    fromTemplate.submenu = NSMenu(title: "New from Template")
+    templateFiller.target = target
+    fromTemplate.submenu?.delegate = templateFiller
     menu("File", [
         item("New", #selector(W.newDocument(_:)), "n"),
+        fromTemplate,
         item("Open…", #selector(W.openDocument(_:)), "o"),
         item("Recover Snapshot…", #selector(W.recoverSnapshot(_:)), ""),
         item("Recover Recordings…", #selector(W.recoverRecordings(_:)), ""),
         .separator(),
         item("Save", #selector(W.saveDocument(_:)), "s"),
         item("Save As…", #selector(W.saveDocumentAs(_:)), "s", [.command, .shift]),
+        item("Save as Template…", #selector(W.saveAsTemplate(_:)), ""),
         .separator(),
         item("Import Audio…", #selector(W.importAudio), "i"),
         item("Import MIDI File…", #selector(W.importMidiFile(_:)), "i", [.command, .option]),

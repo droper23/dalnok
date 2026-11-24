@@ -2007,6 +2007,7 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         let chain = session.track(trackId)?.plugins.map(\.id) ?? []
         let i = chain.firstIndex(of: slot) ?? 0
         if isSampler { sampleMenuItems(m); m.addItem(.separator()) }
+        if loaded { presetMenuItems(m); m.addItem(.separator()) }
         m.addItem(item(bypassed ? "Turn On" : "Bypass", { [weak self] in self?.toggleBypass() }, enabled: loaded))
         m.addItem(item("Open Plug-in Window", { [weak self] in self?.onOpen?() }, enabled: loaded))
         m.addItem(item("Show Controls", { [weak self] in self?.onShowControls?() }, enabled: loaded))

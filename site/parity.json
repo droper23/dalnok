@@ -1369,9 +1369,13 @@
         [
           "Limiter (look-ahead brickwall), Saturator (soft, hard, tube), Filter (SVF LP/HP/BP/notch), Chorus, Utility (gain, width, mono, polarity, balance)",
           "verified"
+        ],
+        [
+          "User presets for any plug-in (Save Preset… / Presets in the unit's menu)",
+          "verified"
         ]
       ],
-      "evidence": "BuiltinPluginTests: Dalnok Channel EQ renders match the Logic-derived reference designs (peak, shelf, cut) within 2e-6 to 1e-5. CompressorTests: Dalnok Compressor offline renders match an independent reference within 2e-6 (peak/RMS, hard/soft knee, auto gain, mix), the static curve and meter within 0.01 dB, attack and release reach 1-1/e in one time constant (0.01 dB), and a muted track keys it sample-accurately through the sidechain (filter and listen included); self-test drives the sidechain menu. TimeEffectTests: Delay echo lands on the sample at its time, feedback 50 % gives -6 dB (±1 dB) per repeat, ping-pong alternates sides; Reverb's measured T60 is within 0.3 s of the setting and its sides decorrelate, Mix 0 is transparent (1e-6); Gate passes at unity (±0.1 dB), closes to silence (<1e-6) and its Range attenuates by the set dB (±0.2). MixEffects: a +6 dBFS sine through the Limiter never passes a -1 dB ceiling and holds there (±0.1 dB); quiet audio passes bit-exact and on time (latency compensated); the Saturator's 3rd harmonic is above -20 dB at 24 dB drive and mix 0 is transparent; the Filter passes 100 Hz at a 1 kHz low-pass (±0.5 dB) and cuts 10 kHz (and a high-pass cuts 100 Hz) by more than 35 dB; Chorus at mix 0 is dry, at 100 % keeps noise within 4 dB with different sides; Utility gain -6 dB (±0.05), mono, left polarity and width 0 exact."
+      "evidence": "BuiltinPluginTests: Dalnok Channel EQ renders match the Logic-derived reference designs (peak, shelf, cut) within 2e-6 to 1e-5. CompressorTests: Dalnok Compressor offline renders match an independent reference within 2e-6 (peak/RMS, hard/soft knee, auto gain, mix), the static curve and meter within 0.01 dB, attack and release reach 1-1/e in one time constant (0.01 dB), and a muted track keys it sample-accurately through the sidechain (filter and listen included); self-test drives the sidechain menu. TimeEffectTests: Delay echo lands on the sample at its time, feedback 50 % gives -6 dB (±1 dB) per repeat, ping-pong alternates sides; Reverb's measured T60 is within 0.3 s of the setting and its sides decorrelate, Mix 0 is transparent (1e-6); Gate passes at unity (±0.1 dB), closes to silence (<1e-6) and its Range attenuates by the set dB (±0.2). MixEffects: a +6 dBFS sine through the Limiter never passes a -1 dB ceiling and holds there (±0.1 dB); quiet audio passes bit-exact and on time (latency compensated); the Saturator's 3rd harmonic is above -20 dB at 24 dB drive and mix 0 is transparent; the Filter passes 100 Hz at a 1 kHz low-pass (±0.5 dB) and cuts 10 kHz (and a high-pass cuts 100 Hz) by more than 35 dB; Chorus at mix 0 is dry, at 100 % keeps noise within 4 dB with different sides; Utility gain -6 dB (±0.05), mono, left polarity and width 0 exact. Self-test: a Dalnok Compressor setting saved as a preset and loaded back after a change."
     },
     {
       "id": "sampler",
@@ -1787,9 +1791,13 @@
         [
           "Periodic recovery snapshots and manual restore after process crash",
           "verified"
+        ],
+        [
+          "Project templates (File ▸ Save as Template…, New from Template)",
+          "verified"
         ]
       ],
-      "evidence": "Persistence and TwoPhaseLoad tests; self-test save, New, and reopen. relinkBringsOfflineClipsBack; self-test relinks by searching a folder. Recovery snapshot and manual restore are covered by the app self-test; scripts/ci/recovery-smoke.sh verifies automatic timing and reload after force-stopping an isolated process. Power-loss durability and automatic recovery prompting remain unverified."
+      "evidence": "Persistence and TwoPhaseLoad tests; self-test save, New, and reopen. relinkBringsOfflineClipsBack; self-test relinks by searching a folder. Recovery snapshot and manual restore are covered by the app self-test; scripts/ci/recovery-smoke.sh verifies automatic timing and reload after force-stopping an isolated process. Power-loss durability and automatic recovery prompting remain unverified. Self-test: a template saves without touching the project's file or saved state, is listed under New from Template, and opens with the project's tracks."
     },
     {
       "id": "export",
