@@ -39,7 +39,8 @@ float blockMeter(const float *v, int n, float &dc) DALNOK_NONBLOCKING {
     }
     float lo, hi;
     vec::minMax(v, n, lo, hi);
-    const float peak = std::max(std::fabs(hi - dc), std::fabs(lo - dc));
+    const float raw = std::max(std::fabs(hi), std::fabs(lo)); // full scale or over reads as itself (see meterLevel)
+    const float peak = raw >= 1.0f ? raw : std::max(std::fabs(hi - dc), std::fabs(lo - dc));
     dc = kMeterTables.decay[n] * dc + vec::dot(v, kMeterTables.weight + (kMaxBlock - n), n);
     return peak;
 }

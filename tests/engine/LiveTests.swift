@@ -167,6 +167,21 @@ private func handoffSaturationFixture(_ out: UnsafeMutablePointer<UInt64>)
         #expect(abs(l - 0.25) < 0.01, "a 440 Hz tone on the offset reads its own peak (\(l))")
     }
 
+    /// A sample at or over full scale is clipped by the file and the converter whatever its offset: the meter must show it.
+    @Test func metersShowClippingOnDcOffset() {
+        let (e, t, m) = liveEngine((0..<48_000).map { 0.5 + 0.6 * Float(sin(Double($0) * 2 * .pi * 440 / 48_000)) }) // peaks 1.1
+        defer { dalnok_media_release(m); dalnok_engine_destroy(e) }
+        dalnok_transport_play(e)
+        _ = pump(e, 24_000)
+        var l: Float = 0, r: Float = 0
+        dalnok_meter_track(e, t, &l, &r); dalnok_meter_master(e, &l, &r)
+        _ = pump(e, 4_096)
+        dalnok_meter_track(e, t, &l, &r)
+        #expect(l >= 1.0 && abs(l - 1.1) < 0.02, "peak 1.1 on a 0.5 offset reads as itself (\(l))")
+        dalnok_meter_master(e, &l, &r)
+        #expect(l >= 1.0, "master too (\(l))")
+    }
+
     @Test func pluginMetersReportInputAndOutputPeaks() {
         let (e, t, m) = liveEngine([Float](repeating: 0.25, count: 48_000))
         defer { dalnok_media_release(m); dalnok_engine_destroy(e) }

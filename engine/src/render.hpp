@@ -55,10 +55,13 @@ inline void raisePeak(std::atomic<float> &a, float v) DALNOK_NONBLOCKING {
 // One sample's meter level with its DC offset removed, updating the tracked offset `dc` (one pole, about 40 ms at
 // 48 kHz, so a cutoff near 4 Hz). A constant offset in a recording is inaudible and must not light the track and
 // master meters (or the gain-knob rings that follow them); every audible frequency passes unchanged in level.
+// A sample at or over full scale reads as itself: the file (and the converter) clip it, offset or not, so the clip
+// lamp must light.
 inline float meterLevel(float v, float &dc) DALNOK_NONBLOCKING {
     constexpr float k = 5e-4f;
     dc += k * (v - dc);
-    return std::fabs(v - dc);
+    const float a = std::fabs(v);
+    return a >= 1.0f ? a : std::fabs(v - dc);
 }
 
 // Raises a stereo meter pair (a plug-in's input or output) to the block's peaks.
