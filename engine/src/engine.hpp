@@ -362,7 +362,9 @@ public:
 
     // Offline
     bool renderOffline(int64_t start, int64_t frames, float *left, float *right);
-    bool renderToWav(const std::string &path, int64_t start, int64_t frames, int32_t bits, std::string &err);
+    // maxTail > 0 keeps rendering after `frames` until the output has decayed to silence (or maxTail frames).
+    bool renderToWav(const std::string &path, int64_t start, int64_t frames, int32_t bits, std::string &err,
+                     int64_t maxTail = 0, int64_t *tailWritten = nullptr);
 
     void stats(DalnokStats &out) const;
     void resetStats();

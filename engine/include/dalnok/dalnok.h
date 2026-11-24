@@ -967,6 +967,12 @@ DalnokStatus dalnok_render_offline(DalnokEngine *engine, int64_t start_frame, in
  * bits: 16, 24 (integer PCM) or 32 (float). */
 DalnokStatus dalnok_render_to_wav(DalnokEngine *engine, const char *path, int64_t start_frame,
                                   int64_t frames, int32_t bits, char *err, size_t err_len);
+/* As dalnok_render_to_wav, then keeps rendering past the end (synth releases, delay and reverb tails) until the
+ * output stays below -100 dBFS for half a second or max_tail frames were written. *tail_written (optional) gets
+ * the number of extra frames. Use it for whole-arrangement exports (API 47). */
+DalnokStatus dalnok_render_to_wav_tail(DalnokEngine *engine, const char *path, int64_t start_frame, int64_t frames,
+                                       int32_t bits, int64_t max_tail, int64_t *tail_written, char *err,
+                                       size_t err_len);
 
 /* ---- Diagnostics ----------------------------------------------------- */
 

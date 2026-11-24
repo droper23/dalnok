@@ -1032,6 +1032,17 @@ DalnokStatus dalnok_render_to_wav(DalnokEngine *e, const char *path, int64_t sta
     return DALNOK_OK;
 }
 
+DalnokStatus dalnok_render_to_wav_tail(DalnokEngine *e, const char *path, int64_t start, int64_t frames, int32_t bits,
+                                       int64_t max_tail, int64_t *tail_written, char *err, size_t err_len) {
+    if (!e || !path || max_tail < 0) return DALNOK_ERR_INVALID_ARG;
+    std::string msg;
+    if (!e->impl.renderToWav(path, start, frames, bits, msg, max_tail, tail_written)) {
+        copyOut(err, err_len, msg);
+        return DALNOK_ERR_IO;
+    }
+    return DALNOK_OK;
+}
+
 // ---- Diagnostics --------------------------------------------------------------
 
 void dalnok_engine_stats(const DalnokEngine *e, DalnokStats *out) {

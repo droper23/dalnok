@@ -147,7 +147,9 @@ final class Engine {
         var err = [CChar](repeating: 0, count: 512)
         let start = range?.start ?? 0, frames = (range?.end ?? sessionLength) - start
         guard frames > 0 else { throw EngineError(description: "Nothing to export") }
-        guard dalnok_render_to_wav(handle, url.path, start, frames, bits, &err, 512) == DALNOK_OK else {
+        // A whole-arrangement export rings out (synth releases, effect tails, up to 10 s); a chosen range ends where it says.
+        let tail = range == nil ? Int64(10 * dalnok_engine_sample_rate(handle)) : 0
+        guard dalnok_render_to_wav_tail(handle, url.path, start, frames, bits, tail, nil, &err, 512) == DALNOK_OK else {
             throw EngineError(description: cString(err))
         }
     }

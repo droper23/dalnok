@@ -415,3 +415,41 @@ func oneNoteSession(pitch: UInt8 = 69, velocity: UInt8 = 127) -> (OpaquePointer,
         #expect(abs(accent - 1_600) < 40 && abs(normal - 1_000) < 40)
     }
 }
+
+@Suite struct ExportTail {
+    @Test func exportRingsOutPastTheLastClip() throws {
+        // A note held to the very end of its clip: a plain export stops mid-note, an export with a tail plays the release.
+        let e = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(e) }
+        let t = dalnok_track_add_instrument(e, "Keys")
+        let c = dalnok_midi_clip_add(e, t, 0, 20_000)
+        var note = DalnokNote(start: 0, length: 20_000, pitch: 69, velocity: 100)
+        _ = dalnok_midi_clip_set_notes(e, c, &note, 1)
+        let dir = tempDir()
+        var err = [CChar](repeating: 0, count: 256)
+        func load(_ path: String) throws -> (OpaquePointer, Int) {
+            var m: OpaquePointer?
+            #expect(dalnok_media_load(path, 48_000, &m, &err, 256) == DALNOK_OK, "\(cstr(err))")
+            let media = try #require(m)
+            return (media, Int(dalnok_media_frames(media)))
+        }
+        let plain = dir.appendingPathComponent("plain.wav").path, tailed = dir.appendingPathComponent("tail.wav").path
+        #expect(dalnok_render_to_wav(e, plain, 0, 20_000, 32, &err, 256) == DALNOK_OK)
+        var written: Int64 = 0
+        #expect(dalnok_render_to_wav_tail(e, tailed, 0, 20_000, 32, 10 * 48_000, &written, &err, 256) == DALNOK_OK, "\(cstr(err))")
+        let (pm, pn) = try load(plain), (tm, tn) = try load(tailed)
+        defer { dalnok_media_release(pm); dalnok_media_release(tm) }
+        #expect(pn == 20_000)
+        #expect(written > 4_800 && written < 10 * 48_000 && tn == 20_000 + Int(written), "tail of \(written) frames")
+        // Read both back through a project and compare.
+        func samples(_ media: OpaquePointer, _ n: Int) -> [Float] {
+            let p = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(p) }
+            _ = dalnok_clip_add(p, dalnok_track_add(p, "R"), media, 0, 0, 0)
+            return render(p, 0, n)
+        }
+        let a = samples(pm, pn), b = samples(tm, tn)
+        #expect(abs(a[pn - 1]) > 0.01, "the plain export ends in a hard cut at \(a[pn - 1])")
+        #expect(zip(a, b).allSatisfy { abs($0 - $1) < 1e-6 }, "the first 20,000 frames are identical")
+        #expect(abs(b[tn - 1]) < 1e-4, "the tailed export ends in silence (\(b[tn - 1]))")
+        #expect(rms(b[20_000..<24_800]) > 0, "release is audible after the clip ends")
+    }
+}

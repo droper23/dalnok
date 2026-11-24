@@ -58,7 +58,8 @@ int32_t Engine::compensation() const {
     return compile(nullptr, &pluginHost_.instances())->compensation; // a throwaway snapshot with fresh delay lines (no live state touched)
 }
 
-bool Engine::renderToWav(const std::string &path, int64_t start, int64_t frames, int32_t bits, std::string &err) {
+bool Engine::renderToWav(const std::string &path, int64_t start, int64_t frames, int32_t bits, std::string &err,
+                         int64_t maxTail, int64_t *tailWritten) {
     [[maybe_unused]] const FlushDenormals flushDenormals;
     if (start < 0 || frames <= 0) {
         err = "invalid range";
@@ -100,6 +101,22 @@ bool Engine::renderToWav(const std::string &path, int64_t start, int64_t frames,
         if (!w->write(l.data(), r.data(), chunk, err)) return false;
         done += chunk;
     }
+    // Tail: keep rendering past the end (synth releases, delay and reverb decay, compressor release) until half a
+    // second stays below -100 dBFS or `maxTail` frames are written, so an export never ends in a hard cut.
+    int64_t tail = 0, quiet = 0;
+    const int64_t quietNeeded = static_cast<int64_t>(sampleRate_ * 0.5);
+    while (tail < maxTail && quiet < quietNeeded) {
+        const int n = static_cast<int>(std::min<int64_t>({kMaxBlock, maxTail - tail}));
+        lease_(start + m + frames + tail, n);
+        renderBlock(*state, start + m + frames + tail, n, l.data(), r.data(), *scratch, false, soloCount_.load() > 0,
+                    synths.data());
+        float peak = 0;
+        for (int i = 0; i < n; ++i) peak = std::max({peak, std::fabs(l[i]), std::fabs(r[i])});
+        quiet = peak < 1e-5f ? quiet + n : 0;
+        if (!w->write(l.data(), r.data(), n, err)) return false;
+        tail += n;
+    }
+    if (tailWritten) *tailWritten = tail;
     return w->close(err);
 }
 

@@ -580,9 +580,11 @@ case "render-project":
     var err = [CChar](repeating: 0, count: 512)
     let frames = dalnok_session_length(engine)
     guard frames > 0 else { fail("project is empty") }
-    guard dalnok_render_to_wav(engine, args[2], 0, frames, Int32(opt("--bits") ?? "24") ?? 24, &err, 512) == DALNOK_OK
+    var tail: Int64 = 0
+    let maxTail = Int64((Double(opt("--tail") ?? "10") ?? 10) * dalnok_engine_sample_rate(engine))
+    guard dalnok_render_to_wav_tail(engine, args[2], 0, frames, Int32(opt("--bits") ?? "24") ?? 24, maxTail, &tail, &err, 512) == DALNOK_OK
     else { fail(cstr(err)) }
-    print("rendered \(frames) frames to \(args[2])")
+    print("rendered \(frames) frames (+\(tail) tail) to \(args[2])")
     dalnok_engine_destroy(engine)
 
 case "export-dawproject":
