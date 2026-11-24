@@ -72,6 +72,33 @@ private func attacks(_ x: [Float], rate: Double = 48_000) -> [Int] {
         }
     }
 
+    @Test func aHitJustAfterATrimmedStartIsFound() {
+        // Trimmed so the clip's audio starts 1,500 frames (31 ms) before a hit: that first hit is still found.
+        let truth = [3_000, 14_400, 27_100, 37_000]
+        let (e, _, c) = session(hits(at: truth, frames: 50_000)); defer { dalnok_engine_destroy(e) }
+        #expect(dalnok_clip_set_region(e, c, 12_900, 12_900, 37_000) == DALNOK_OK)
+        var out = [Int64](repeating: 0, count: 64)
+        let n = Int(dalnok_audio_transients(e, c, 0.5, &out, 64))
+        let found = Array(out.prefix(n))
+        #expect(n == 3 && abs(Int(found[0]) - 14_400) <= 48, "found \(found)")
+        #expect(found.allSatisfy { $0 >= 12_900 }, "nothing before the trim")
+    }
+
+    @Test func trimmedAndMovedClipQuantizesItsFirstHit() {
+        let jitter = [0, 900, -1_100, 1_400, -600, 1_200, -1_300, 700, -900, 0]
+        let grid = (1...10).map { $0 * 12_000 }
+        let truth = zip(grid, jitter).map { $0 + $1 }
+        let total = 132_000
+        let (e, _, c) = session(hits(at: truth, frames: total)); defer { dalnok_engine_destroy(e) }
+        #expect(dalnok_clip_set_region(e, c, 20_000, 20_000, Int64(total - 20_000)) == DALNOK_OK)
+        #expect(dalnok_clip_move(e, c, clipInfo(e, c).track, 30_000) == DALNOK_OK)
+        #expect(dalnok_audio_quantize(e, c, 0.5, 1, 0.5) == DALNOK_OK)
+        let found = attacks(renderAll(e, total + 20_000))
+        // Hits in the clip: source 24,900 -> timeline 34,900 (grid 36,000), 34,900 -> 44,900 (48,000), ...
+        #expect(found.count >= 8 && abs(found[0] - 36_000) <= 24, "first hits \(found.prefix(3))")
+        #expect(found.allSatisfy { $0 % 12_000 <= 24 || $0 % 12_000 >= 11_976 }, "all on the grid: \(found)")
+    }
+
     @Test func quietOrSteadyAudioHasNoFalseTransients() {
         let steady = (0..<96_000).map { Float(0.4 * sin(2 * Double.pi * 220 * Double($0) / 48_000)) }
         let (e, _, c) = session(steady); defer { dalnok_engine_destroy(e) }

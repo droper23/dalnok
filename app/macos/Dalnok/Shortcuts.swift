@@ -279,7 +279,7 @@ private let specs: [String: Spec] = [
 
 /// Actions handled inside a view (no menu item): the piano roll's editing keys.
 private let viewActions: [(id: String, title: String, detail: String, keys: [KeyCombo])] = [
-    ("midi.quantize", "Quantize Selected Notes", "Snap the selected notes to the grid.", [KeyCombo("q")]),
+    ("midi.quantize", "Quantize Selection", "Snap the selected notes or clips to the quantize value.", [KeyCombo("q")]),
     ("midi.select_all", "Select All Notes", "Select every note in the clip.", [KeyCombo("a", .command)]),
     ("midi.select_next", "Select Next Note", "Select the note after the selected one (keyboard-only editing).", [KeyCombo("]")]),
     ("midi.select_previous", "Select Previous Note", "Select the note before the selected one.", [KeyCombo("[")]),

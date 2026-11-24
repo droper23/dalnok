@@ -430,7 +430,7 @@ const CommandDef kCommands[] = {
              for (const auto &x : n.array)
                  if (!x.isNumber() || x.number != std::floor(x.number)) { err = "note values must be integers"; return DALNOK_ERR_INVALID_ARG; }
              if (n.array[2].number < 0 || n.array[2].number > 127 || n.array[3].number < 1 || n.array[3].number > 127) {
-                 err = "pitch must be 0-127 and velocity 1-127";
+                 err = "notes need start >= 0, length > 0, pitch 0-127, velocity 1-127";
                  return DALNOK_ERR_INVALID_ARG;
              }
              notes.push_back({static_cast<int64_t>(n.array[0].number), static_cast<int64_t>(n.array[1].number),
@@ -507,7 +507,7 @@ const CommandDef kCommands[] = {
          const auto track = static_cast<DalnokTrackId>(a.getNumber("track", cs->track));
          return status(e.moveClip(c, track, start, err), err);
      }},
-    {"clips.copy", "Paste Clips", "{clips: [id, ...], start: frame, trackShift?: places}", [](ARGS) {
+    {"clips.copy", "Copy Clips", "{clips: [id, ...], start: frame, trackShift?: places}", [](ARGS) {
          std::vector<DalnokClipId> ids;
          double start;
          if (!clipIds(a, ids, err) || !needNumber(a, "start", start, err) || !std::isfinite(start) || start < 0)

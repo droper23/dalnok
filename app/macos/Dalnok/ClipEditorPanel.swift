@@ -362,7 +362,7 @@ final class AudioClipView: NSView {
         while x(sec * rate) < bounds.width {
             let px = x(sec * rate).rounded()
             Theme.textFaint.setFill(); CGRect(x: px, y: 6, width: 1, height: Self.ruler - 7).fill()
-            let label = step < 1 ? String(format: "%.2fs", sec) : sec >= 60 ? String(format: "%d:%02d", Int(sec) / 60, Int(sec) % 60) : "\(Int(sec))s"
+            let label = step < 1 ? String(format: "%.2f s", sec) : sec >= 60 ? String(format: "%d:%02d", Int(sec) / 60, Int(sec) % 60) : "\(Int(sec)) s"
             (label as NSString).draw(at: CGPoint(x: px + 3, y: 3), withAttributes: attrs)
             sec += step
         }
