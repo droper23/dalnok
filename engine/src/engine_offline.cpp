@@ -102,17 +102,33 @@ bool Engine::renderToWav(const std::string &path, int64_t start, int64_t frames,
         done += chunk;
     }
     // Tail: keep rendering past the end (synth releases, delay and reverb decay, compressor release) until half a
-    // second stays below -100 dBFS or `maxTail` frames are written, so an export never ends in a hard cut.
-    int64_t tail = 0, quiet = 0;
+    // second stays below -100 dBFS or `maxTail` frames are rendered, so an export never ends in a hard cut. Quiet
+    // blocks are held back and only written once something audible follows, so the file ends at the last audible
+    // block: a mix that already ends in silence exports at exactly its length.
+    int64_t tail = 0, rendered = 0, quiet = 0;
     const int64_t quietNeeded = static_cast<int64_t>(sampleRate_ * 0.5);
-    while (tail < maxTail && quiet < quietNeeded) {
-        const int n = static_cast<int>(std::min<int64_t>({kMaxBlock, maxTail - tail}));
-        lease_(start + m + frames + tail, n);
-        renderBlock(*state, start + m + frames + tail, n, l.data(), r.data(), *scratch, false, soloCount_.load() > 0,
-                    synths.data());
+    std::vector<float> heldL, heldR;
+    while (rendered < maxTail && quiet < quietNeeded) {
+        const int n = static_cast<int>(std::min<int64_t>({kMaxBlock, maxTail - rendered}));
+        lease_(start + m + frames + rendered, n);
+        renderBlock(*state, start + m + frames + rendered, n, l.data(), r.data(), *scratch, false,
+                    soloCount_.load() > 0, synths.data());
+        rendered += n;
         float peak = 0;
         for (int i = 0; i < n; ++i) peak = std::max({peak, std::fabs(l[i]), std::fabs(r[i])});
-        quiet = peak < 1e-5f ? quiet + n : 0;
+        if (peak < 1e-5f) {
+            quiet += n;
+            heldL.insert(heldL.end(), l.data(), l.data() + n);
+            heldR.insert(heldR.end(), r.data(), r.data() + n);
+            continue;
+        }
+        quiet = 0;
+        if (!heldL.empty()) {
+            if (!w->write(heldL.data(), heldR.data(), static_cast<int64_t>(heldL.size()), err)) return false;
+            tail += static_cast<int64_t>(heldL.size());
+            heldL.clear();
+            heldR.clear();
+        }
         if (!w->write(l.data(), r.data(), n, err)) return false;
         tail += n;
     }

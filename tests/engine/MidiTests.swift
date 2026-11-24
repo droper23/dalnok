@@ -452,4 +452,21 @@ func oneNoteSession(pitch: UInt8 = 69, velocity: UInt8 = 127) -> (OpaquePointer,
         #expect(abs(b[tn - 1]) < 1e-4, "the tailed export ends in silence (\(b[tn - 1]))")
         #expect(rms(b[20_000..<24_800]) > 0, "release is audible after the clip ends")
     }
+
+    @Test func exportThatEndsInSilenceGetsNoTail() throws {
+        // The note and its release end well before the range does: the tail adds nothing, the file is exactly the range.
+        let e = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(e) }
+        let t = dalnok_track_add_instrument(e, "Keys")
+        let c = dalnok_midi_clip_add(e, t, 0, 48_000)
+        var note = DalnokNote(start: 0, length: 4_800, pitch: 69, velocity: 100)
+        _ = dalnok_midi_clip_set_notes(e, c, &note, 1)
+        var err = [CChar](repeating: 0, count: 256)
+        let path = tempDir().appendingPathComponent("quiet.wav").path
+        var written: Int64 = -1
+        #expect(dalnok_render_to_wav_tail(e, path, 0, 48_000, 32, 10 * 48_000, &written, &err, 256) == DALNOK_OK, "\(cstr(err))")
+        var m: OpaquePointer?
+        #expect(dalnok_media_load(path, 48_000, &m, &err, 256) == DALNOK_OK)
+        let media = try #require(m); defer { dalnok_media_release(media) }
+        #expect(written == 0 && dalnok_media_frames(media) == 48_000, "tail \(written), \(dalnok_media_frames(media)) frames")
+    }
 }
