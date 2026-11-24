@@ -19,10 +19,12 @@
 #include "render.hpp"
 #include "stretch_cache.hpp"
 #include "tempo_map.hpp"
+#include "loudness.hpp"
 
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <functional>
 #include <chrono>
 #include <cmath>
 #include <filesystem>
@@ -370,6 +372,14 @@ public:
     // with their tail) into a 32-bit float WAV at `path`, puts it on a new audio track right below with the same
     // fader, pan and output, and mutes the original. One undo step. Returns the new track (0 on failure).
     DalnokTrackId bounceInPlace(DalnokTrackId track, const std::string &path, std::string &err);
+    // Loudness: live (the master while playing; reset clears it) and of an offline render of [start, start+frames).
+    LoudnessReading loudness() const { return loudness_->reading(); }
+    void resetLoudness() { loudness_->reset(); }
+    bool renderLoudness(int64_t start, int64_t frames, LoudnessReading &out, std::string &err);
+    // The offline render loop behind renderToWav and renderLoudness: blocks of [start, start+frames) (plus the
+    // tail, see renderToWav) go to `sink` in order; a false return stops it.
+    bool renderBlocks(int64_t start, int64_t frames, int64_t maxTail, int64_t *tailWritten, std::string &err,
+                      const std::function<bool(const float *, const float *, int64_t)> &sink);
 
     void stats(DalnokStats &out) const;
     void resetStats();
@@ -522,6 +532,7 @@ private:
     int rtPreviewHeld_ = 0;
     int64_t rtPreviewHoldFrames_ = 0;
     std::atomic<float> masterPeakL_{0.0f}, masterPeakR_{0.0f};
+    std::unique_ptr<LoudnessMeter> loudness_; // the master while playing (BS.1770; metronome excluded)
     float masterDcL_ = 0, masterDcR_ = 0; // audio thread (meterLevel)
 
     // Shared atomics.

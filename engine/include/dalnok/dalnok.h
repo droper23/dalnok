@@ -251,6 +251,17 @@ DalnokStatus dalnok_engine_pump(DalnokEngine *engine, float *left, float *right,
  * Only the live path (device or pump) feeds meters. */
 DalnokStatus dalnok_meter_track(DalnokEngine *engine, DalnokTrackId track, float *left, float *right);
 void dalnok_meter_master(DalnokEngine *engine, float *left, float *right);
+/* Loudness after ITU-R BS.1770-4 / EBU R128 (API 47): momentary (400 ms), short-term (3 s) and gated integrated
+ * loudness in LUFS, their maxima, and true peak (4x oversampled) in dBTP; -INFINITY until there is a value.
+ * Live: the master while playing (the metronome is left out); reset starts a new measurement. */
+typedef struct {
+    float momentary, short_term, integrated, true_peak, max_momentary, max_short_term;
+} DalnokLoudness;
+void dalnok_loudness_live(const DalnokEngine *engine, DalnokLoudness *out);
+void dalnok_loudness_reset(DalnokEngine *engine);
+/* Loudness of an offline render of [start_frame, start_frame + frames) (what an export of that range contains). */
+DalnokStatus dalnok_render_loudness(DalnokEngine *engine, int64_t start_frame, int64_t frames, DalnokLoudness *out,
+                                    char *err, size_t err_len);
 /* A plug-in slot's peak input and output (linear) since the last read; the read resets them.
  * Instruments report output only. Any pointer may be NULL. */
 DalnokStatus dalnok_meter_plugin(DalnokEngine *engine, int32_t slot, float *in_left, float *in_right,

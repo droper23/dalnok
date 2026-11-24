@@ -4,6 +4,7 @@
 #include "engine_internal.hpp"
 
 #include <algorithm>
+#include <functional>
 #include <cmath>
 #include <set>
 #include <unordered_map>
@@ -60,13 +61,25 @@ int32_t Engine::compensation() const {
 
 bool Engine::renderToWav(const std::string &path, int64_t start, int64_t frames, int32_t bits, std::string &err,
                          int64_t maxTail, int64_t *tailWritten) {
-    [[maybe_unused]] const FlushDenormals flushDenormals;
     if (start < 0 || frames <= 0) {
         err = "invalid range";
         return false;
     }
     std::unique_ptr<WavWriter> w(openWavWriter(path, sampleRate_, bits, err));
     if (!w) return false;
+    if (!renderBlocks(start, frames, maxTail, tailWritten, err,
+                      [&](const float *l, const float *r, int64_t n) { return w->write(l, r, n, err); }))
+        return false;
+    return w->close(err);
+}
+
+bool Engine::renderBlocks(int64_t start, int64_t frames, int64_t maxTail, int64_t *tailWritten, std::string &err,
+                          const std::function<bool(const float *, const float *, int64_t)> &sink) {
+    [[maybe_unused]] const FlushDenormals flushDenormals;
+    if (start < 0 || frames <= 0) {
+        err = "invalid range";
+        return false;
+    }
     renderPendingStretchesNow();
     const auto offline = pluginHost_.offlineCopies(model_);
     const auto state = compile(nullptr, &offline);
@@ -98,7 +111,7 @@ bool Engine::renderToWav(const std::string &path, int64_t start, int64_t frames,
                         synths.data());
             o += n;
         }
-        if (!w->write(l.data(), r.data(), chunk, err)) return false;
+        if (!sink(l.data(), r.data(), chunk)) return false;
         done += chunk;
     }
     // Tail: keep rendering past the end (synth releases, delay and reverb decay, compressor release) until half a
@@ -124,16 +137,28 @@ bool Engine::renderToWav(const std::string &path, int64_t start, int64_t frames,
         }
         quiet = 0;
         if (!heldL.empty()) {
-            if (!w->write(heldL.data(), heldR.data(), static_cast<int64_t>(heldL.size()), err)) return false;
+            if (!sink(heldL.data(), heldR.data(), static_cast<int64_t>(heldL.size()))) return false;
             tail += static_cast<int64_t>(heldL.size());
             heldL.clear();
             heldR.clear();
         }
-        if (!w->write(l.data(), r.data(), n, err)) return false;
+        if (!sink(l.data(), r.data(), n)) return false;
         tail += n;
     }
     if (tailWritten) *tailWritten = tail;
-    return w->close(err);
+    return true;
+}
+
+bool Engine::renderLoudness(int64_t start, int64_t frames, LoudnessReading &out, std::string &err) {
+    if (start < 0 || frames <= 0) return fail(err, "invalid range");
+    LoudnessMeter meter(sampleRate_);
+    if (!renderBlocks(start, frames, 0, nullptr, err, [&](const float *l, const float *r, int64_t n) {
+            meter.process(l, r, static_cast<int>(n));
+            return true;
+        }))
+        return false;
+    out = meter.reading();
+    return true;
 }
 
 DalnokTrackId Engine::bounceInPlace(DalnokTrackId track, const std::string &path, std::string &err) {

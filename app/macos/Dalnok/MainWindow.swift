@@ -960,7 +960,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             if row.gain.showsMeter != GainKnob.showsLevel { row.gain.showsMeter = GainKnob.showsLevel }
             row.gain.updateMeter(max(row.meter.levelDb.0, row.meter.levelDb.1))
         }
-        if !mixer.isHidden { mixer.pushMeters { levels[$0] ?? (0, 0) }; mixer.master.meter.push(ml0, mr0); if Theme.look.consoleMixer { mixer.master.needle.push(ml0, mr0) } }
+        if !mixer.isHidden { mixer.pushMeters { levels[$0] ?? (0, 0) }; mixer.master.meter.push(ml0, mr0); var lu = DalnokLoudness(); dalnok_loudness_live(e.handle, &lu); mixer.master.setLoudness(lu.momentary.isFinite || lu.true_peak.isFinite ? lu : nil); if Theme.look.consoleMixer { mixer.master.needle.push(ml0, mr0) } }
         if !inspector.isHidden, let id = inspector.track { let (l, r) = levels[id] ?? (0, 0); inspector.meter.push(l, r) }
         // Automated tracks: knobs and faders show the automated value at the playhead.
         for t in session.tracks where !t.volumeAuto.isEmpty || !t.panAuto.isEmpty {

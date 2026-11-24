@@ -369,6 +369,7 @@ void Engine::process(float *left, float *right, int frames) DALNOK_NONBLOCKING {
             }
             transportGain_ = g;
         }
+        if (play && pendingSeek_ < 0) loudness_->process(l, r, n); // before the click: it is never part of the mix
         if (play && pendingSeek_ < 0 && (clickLeft_ > 0 || transport_.metronome.load(std::memory_order_relaxed) ||
                                          rtPosition_ < transport_.countInUntil.load(std::memory_order_relaxed)))
             renderClick(l, r, n, rtPosition_);

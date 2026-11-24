@@ -42,6 +42,7 @@ Engine::Engine(double sampleRate) : sampleRate_(sampleRate) {
     if (sampleRate_ <= 0) sampleRate_ = defaultOutputSampleRate();
     if (sampleRate_ <= 0) sampleRate_ = 48000.0;
     pluginHost_.setSampleRate(sampleRate_);
+    loudness_ = std::make_unique<LoudnessMeter>(sampleRate_);
     streamPlan_ = std::make_shared<StreamPlan>();
     streamPlan_->position = &transport_.position;
     StreamCache::shared().addPlan(streamPlan_);

@@ -964,9 +964,13 @@
         [
           "Spectrum and correlation",
           "todo"
+        ],
+        [
+          "Loudness (EBU R128): momentary, short-term, integrated LUFS and true peak on the master; offline for exports",
+          "verified"
         ]
       ],
-      "evidence": "metersReportPostFaderPeaksAndReset; self-test checks the meters during playback.",
+      "evidence": "metersReportPostFaderPeaksAndReset; self-test checks the meters during playback. LoudnessTests (EBU Tech 3341-style signals): 1 kHz at -23 dBFS reads -23.0 LUFS (±0.1) at 44.1 and 48 kHz for M, S and I; the relative gate leaves out quiet passages (I -23.0); the absolute gate and silence; a quarter-rate sine 45° off its peaks reads 0 dBTP (+0.2/-0.4) where samples peak at -3.01. Mutation-checked (offset and interpolator).",
       "screenshot": "screenshots/arrangement.png"
     },
     {

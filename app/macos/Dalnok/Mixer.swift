@@ -43,6 +43,7 @@ final class MixerPanel: NSView {
         master.fader.onBegin = { [weak self] in self?.session.engine.beginGroup("Master Volume") }
         master.fader.onChange = { [weak self] db in self?.session.setMasterGain(db); self?.master.dbLabel.stringValue = FaderControl.format(db) }
         master.fader.onEnd = { [weak self] in self?.session.engine.endGroup() }
+        master.onResetLoudness = { [weak self] in self.map { dalnok_loudness_reset($0.session.engine.handle) } }
         addBusButton.bezelStyle = .inline
         addBusButton.controlSize = .small
         addBusButton.target = self
@@ -588,6 +589,10 @@ final class MasterStrip: NSView {
     let meter = MeterView()
     let dbLabel = NSTextField(labelWithString: "")
     let needle = NeedleMeter() // Warm Analog only
+    /// Loudness (EBU R128): integrated LUFS large, short-term and true peak below; click to start a new measurement.
+    let loudness = NSTextField(labelWithString: "")
+    var onResetLoudness: (() -> Void)?
+    private var shownLoudness = ""
     private let name = NSTextField(labelWithString: "Master")
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -601,7 +606,13 @@ final class MasterStrip: NSView {
         name.font = Theme.title(11.5, .semibold); name.textColor = Theme.accentText; name.alignment = .center
         let row = NSStackView(views: [fader, meter])
         row.spacing = 4
-        for v in [needle, row, dbLabel, name] as [NSView] { v.translatesAutoresizingMaskIntoConstraints = false; addSubview(v) }
+        loudness.font = Theme.mono(9); loudness.textColor = Theme.textDim; loudness.alignment = .center
+        loudness.maximumNumberOfLines = 2
+        loudness.toolTip = "Loudness while playing (EBU R128): integrated LUFS, short-term (S) and true peak (TP). Click to start over."
+        loudness.setAccessibilityLabel("Master loudness")
+        loudness.addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(resetLoudness)))
+        setLoudness(nil)
+        for v in [needle, row, dbLabel, loudness, name] as [NSView] { v.translatesAutoresizingMaskIntoConstraints = false; addSubview(v) }
         needle.isHidden = !Theme.look.consoleMixer
         needle.setAccessibilityLabel("Master needle meter")
         NSLayoutConstraint.activate([
@@ -611,11 +622,23 @@ final class MasterStrip: NSView {
             row.topAnchor.constraint(equalTo: needle.bottomAnchor, constant: Theme.look.consoleMixer ? 10 : 20), row.centerXAnchor.constraint(equalTo: centerXAnchor),
             fader.widthAnchor.constraint(equalToConstant: 44), meter.widthAnchor.constraint(equalToConstant: 16),
             row.bottomAnchor.constraint(equalTo: dbLabel.topAnchor, constant: -2),
-            dbLabel.centerXAnchor.constraint(equalTo: centerXAnchor), dbLabel.bottomAnchor.constraint(equalTo: name.topAnchor, constant: -10),
+            dbLabel.centerXAnchor.constraint(equalTo: centerXAnchor), dbLabel.bottomAnchor.constraint(equalTo: loudness.topAnchor, constant: -6),
+            loudness.centerXAnchor.constraint(equalTo: centerXAnchor), loudness.bottomAnchor.constraint(equalTo: name.topAnchor, constant: -8),
             name.centerXAnchor.constraint(equalTo: centerXAnchor), name.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
         ])
     }
     required init?(coder: NSCoder) { fatalError() }
+    @objc private func resetLoudness() { onResetLoudness?(); setLoudness(nil) }
+    /// Shows a reading (nil: nothing measured yet). Values are LUFS / dBTP, -infinity when there is none.
+    func setLoudness(_ r: DalnokLoudness?) {
+        func v(_ x: Float) -> String { x.isFinite ? String(format: "%.1f", x).replacingOccurrences(of: "-", with: "−") : "–" }
+        let text = r.map { "\(v($0.integrated)) LUFS\nS \(v($0.short_term))  TP \(v($0.true_peak))" } ?? "– LUFS\nS –  TP –"
+        guard text != shownLoudness else { return }
+        shownLoudness = text
+        loudness.stringValue = text
+        if let r, r.true_peak > -1 { loudness.textColor = Theme.clipRed } else { loudness.textColor = Theme.textDim }
+        loudness.setAccessibilityValue(text.replacingOccurrences(of: "\n", with: ", "))
+    }
     override var isFlipped: Bool { true }
     override func draw(_ dirtyRect: NSRect) {
         if Theme.look.mixer == .glass, let ctx = NSGraphicsContext.current?.cgContext {

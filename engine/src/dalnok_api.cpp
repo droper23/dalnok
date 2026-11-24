@@ -1032,6 +1032,28 @@ DalnokStatus dalnok_render_to_wav(DalnokEngine *e, const char *path, int64_t sta
     return DALNOK_OK;
 }
 
+static void loudnessOut(const dalnok::LoudnessReading &r, DalnokLoudness *out) {
+    *out = {r.momentary, r.shortTerm, r.integrated, r.truePeak, r.maxMomentary, r.maxShortTerm};
+}
+void dalnok_loudness_live(const DalnokEngine *e, DalnokLoudness *out) {
+    if (e && out) loudnessOut(e->impl.loudness(), out);
+}
+void dalnok_loudness_reset(DalnokEngine *e) {
+    if (e) e->impl.resetLoudness();
+}
+DalnokStatus dalnok_render_loudness(DalnokEngine *e, int64_t start, int64_t frames, DalnokLoudness *out, char *err,
+                                    size_t err_len) {
+    if (!e || !out) return DALNOK_ERR_INVALID_ARG;
+    std::string msg;
+    dalnok::LoudnessReading r{};
+    if (!e->impl.renderLoudness(start, frames, r, msg)) {
+        copyOut(err, err_len, msg);
+        return DALNOK_ERR_INVALID_ARG;
+    }
+    loudnessOut(r, out);
+    return DALNOK_OK;
+}
+
 DalnokTrackId dalnok_track_bounce_in_place(DalnokEngine *e, DalnokTrackId track, const char *path, char *err, size_t err_len) {
     if (!e || !path) return 0;
     std::string msg;
