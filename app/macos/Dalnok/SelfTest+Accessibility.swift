@@ -13,6 +13,7 @@ extension SelfTest {
         var keyViews = 0               // stops in the Tab loop
         var loopCloses = false         // Tab comes back to where it started
         var focusTrap: String?         // a view Tab can't leave
+        var noHint: [String] = []      // named controls with no tooltip or help text on them or above them (hover shows nothing)
     }
 
     static let interactiveRoles: Set<NSAccessibility.Role> = [.button, .checkBox, .radioButton, .slider, .popUpButton, .menuButton,
@@ -71,6 +72,13 @@ extension SelfTest {
                     if label.trimmingCharacters(in: .whitespaces).isEmpty && title.trimmingCharacters(in: .whitespaces).isEmpty
                         && !titled && placeholder.isEmpty {
                         out.unlabeled.append("\(role.rawValue) " + describe(control ?? obj))
+                    } else if let v = (obj as? NSView) ?? control, role != .textField {
+                        var p: NSView? = v, hinted = false
+                        while let x = p, x !== content.superview { // the hover hint walks up the same way
+                            if !(x.toolTip ?? "").isEmpty || !(x.accessibilityHelp() ?? "").isEmpty { hinted = true; break }
+                            p = x.superview
+                        }
+                        if !hinted { out.noHint.append("\(role.rawValue) " + describe(v)) }
                     }
                 }
                 for c in (o.accessibilityChildren?() ?? nil) ?? [] { walk(c, depth: depth + 1) }
@@ -141,6 +149,7 @@ extension SelfTest {
         print("A11Y \(name) [\(Theme.activeStyle) \(Theme.activeVariant)]: \(a.keyViews) Tab stops, loop \(a.loopCloses ? "closes" : "open"), unlabeled \(a.unlabeled.count), unreachable \(a.unreachable.count)")
         if report {
             for u in a.unlabeled { print("A11Y-UNLABELED \(name): \(u)") }
+            for u in a.noHint { print("A11Y-NOHINT \(name): \(u)") }
             for u in a.unreachable { print("A11Y-UNREACHABLE \(name): \(u)") }
         }
         check(a.unlabeled.isEmpty, "VoiceOver: every control in \(name) has a name (\(a.unlabeled.prefix(3).joined(separator: "; ")))")

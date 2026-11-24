@@ -330,6 +330,8 @@ final class WelcomeController: NSObject, NSTableViewDataSource, NSTableViewDeleg
             let b = NSButton(title: "  " + daw.title, image: NSImage(systemSymbolName: daw.symbol, accessibilityDescription: nil)!,
                              target: self, action: #selector(pickDAW(_:)))
             b.identifier = .init(daw.rawValue)
+            b.setAccessibilityLabel(daw.title) // not the symbol's name ("Piano")
+            b.toolTip = "Use \(daw.title)'s shortcuts and words"
             b.bezelStyle = .regularSquare
             b.font = .systemFont(ofSize: 15, weight: .medium)
             b.imagePosition = .imageLeading

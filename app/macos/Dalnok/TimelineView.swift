@@ -670,22 +670,28 @@ final class TimelineView: NSView {
             let h: CGFloat = 26, r = CGRect(x: 0, y: bounds.height - h, width: bounds.width, height: h)
             NSGradient(starting: Theme.laneA.withAlphaComponent(0), ending: Theme.laneA.withAlphaComponent(0.9))?.draw(in: r, angle: 90)
         }
+        drawEmptyHint()
         drawRuler(ctx, scale: scale)
         updateSelectionGlow()
 
     }
 
-    private func drawEmptyState() {
+    /// Tracks exist but nothing is on the timeline yet: say how to put something there (the first-run dead end).
+    private func drawEmptyHint() {
+        guard recording == nil, !session.tracks.isEmpty, !session.tracks.contains(where: { !$0.clips.isEmpty }) else { return }
+        let top = max(Theme.rulerHeight, laneY(session.tracks.count - 1) + session.laneHeight(session.tracks.count - 1))
+        let free = bounds.height - top
+        guard free > 90 else { return }
         let p = NSMutableParagraphStyle()
         p.alignment = .center
         let title: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 15, weight: .medium),
                                                      .foregroundColor: Theme.textDim, .paragraphStyle: p]
         let sub: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 12),
-                                                   .foregroundColor: Theme.textDim.withAlphaComponent(0.7), .paragraphStyle: p]
-        let mid = bounds.midY
-        ("Drop audio files here" as NSString).draw(in: CGRect(x: 0, y: mid - 22, width: bounds.width, height: 22), withAttributes: title)
-        ("or press ⌘I to import  ·  ⌘O to open a project" as NSString)
-            .draw(in: CGRect(x: 0, y: mid + 4, width: bounds.width, height: 18), withAttributes: sub)
+                                                   .foregroundColor: Theme.textDim.withAlphaComponent(0.8), .paragraphStyle: p]
+        let mid = top + free / 2
+        ("Nothing recorded yet" as NSString).draw(in: CGRect(x: 0, y: mid - 26, width: bounds.width, height: 22), withAttributes: title)
+        ("Press R on a track, then the red Record button  ·  or drop audio files here  ·  or File ▸ Import Audio…" as NSString)
+            .draw(in: CGRect(x: 0, y: mid, width: bounds.width, height: 18), withAttributes: sub)
     }
 
     /// The take in progress: drawn as a growing red region on its armed tracks.
