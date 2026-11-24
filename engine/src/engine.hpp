@@ -377,6 +377,10 @@ public:
     bool renderToFile(const std::string &path, int64_t start, int64_t frames, int32_t format, std::string &err,
                       int64_t maxTail = 0, int64_t *tailWritten = nullptr);
 
+    // Dalnok Sampler / Drums: decode `path` into a zone (the Sampler has one; Drums pad 0-15 = notes 36-51). Saved with
+    // the plug-in's state (the file's path); not undoable, like other plug-in state.
+    bool setPluginSample(int32_t slot, int32_t zone, const std::string &path, std::string &err);
+    std::string pluginSample(int32_t slot, int32_t zone) const;
     // Bounce in Place (Logic) / Freeze-and-flatten (Ableton): renders `track`'s clips through its plug-ins (pre-fader,
     // with their tail) into a 32-bit float WAV at `path`, puts it on a new audio track right below with the same
     // fader, pan and output, and mutes the original. One undo step. Returns the new track (0 on failure).

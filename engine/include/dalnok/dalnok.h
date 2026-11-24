@@ -1025,6 +1025,11 @@ DalnokStatus dalnok_render_to_file(DalnokEngine *engine, const char *path, int64
  * Returns the number of files written, or -1 with a message in `err`. */
 int32_t dalnok_export_stems(DalnokEngine *engine, const char *folder, int32_t format, int64_t start_frame, int64_t frames,
                             int64_t max_tail, char *err, size_t err_len);
+/* Dalnok Sampler and Dalnok Drums (built-in instruments "dalnok:sampler", "dalnok:drums"; API 47): load an audio
+ * file into a zone (the Sampler has zone 0; Drums pads 0-15 play notes 36-51). An empty path clears it. The file's
+ * path is saved in the plug-in's state. sample_path copies the zone's path (empty when none); returns its length. */
+DalnokStatus dalnok_plugin_set_sample(DalnokEngine *engine, int32_t slot, int32_t zone, const char *path, char *err, size_t err_len);
+size_t dalnok_plugin_sample_path(const DalnokEngine *engine, int32_t slot, int32_t zone, char *out, size_t out_len);
 /* Clip loop (API 47): on, the clip's current window repeats for as long as the clip is extended (drag its right
  * edge); off, it plays its window once. Not for time-stretched or quantized audio or launcher slots. One undo step. */
 DalnokStatus dalnok_clip_set_loop(DalnokEngine *engine, DalnokClipId clip, bool looped);

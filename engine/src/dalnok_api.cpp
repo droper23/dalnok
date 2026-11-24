@@ -27,7 +27,7 @@ json::Value withBuiltins(json::Value list, bool validated) {
         v.set("name", b.name);
         v.set("vendor", "Dalnok");
         v.set("version", "1");
-        v.set("kind", "effect");
+        v.set("kind", b.instrument ? "instrument" : "effect");
         v.set("path", b.id);
         json::Value cats = json::Value::makeArray();
         cats.push(json::Value(b.category));
@@ -1104,6 +1104,20 @@ int32_t dalnok_export_stems(DalnokEngine *e, const char *folder, int32_t format,
         return -1;
     }
     return static_cast<int32_t>(paths.size());
+}
+DalnokStatus dalnok_plugin_set_sample(DalnokEngine *e, int32_t slot, int32_t zone, const char *path, char *err, size_t err_len) {
+    if (!e) return DALNOK_ERR_INVALID_ARG;
+    std::string msg;
+    if (!e->impl.setPluginSample(slot, zone, path ? path : "", msg)) {
+        copyOut(err, err_len, msg);
+        return DALNOK_ERR_INVALID_ARG;
+    }
+    return DALNOK_OK;
+}
+size_t dalnok_plugin_sample_path(const DalnokEngine *e, int32_t slot, int32_t zone, char *out, size_t out_len) {
+    const std::string p = e ? e->impl.pluginSample(slot, zone) : "";
+    copyOut(out, out_len, p);
+    return p.size();
 }
 DalnokStatus dalnok_clip_set_loop(DalnokEngine *e, DalnokClipId c, bool looped) {
     std::string err;

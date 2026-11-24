@@ -1365,19 +1365,23 @@
       "why": "Composing needs sounds out of the box.",
       "steps": [
         [
-          "Dalnok Poly: basic polyphonic synth",
+          "Dalnok Poly: basic polyphonic synth (pitch bend, sustain pedal)",
           "verified"
         ],
         [
-          "Sampler",
-          "todo"
+          "Sampler (Dalnok Sampler: root key, transpose, ADSR, velocity, one shot)",
+          "verified"
         ],
         [
-          "Drum instrument",
+          "Drum instrument (Dalnok Drums: 16 pads on notes 36-51, level and tune per pad)",
+          "verified"
+        ],
+        [
+          "Sample slicing, loop points and multi-sample zones",
           "todo"
         ]
       ],
-      "evidence": "MidiTests measure pitch (440 Hz within 0.5 Hz), onset, release and velocity scaling; a mutation check confirmed the pitch test catches a 2 Hz error. Most instruments are expected to come from plugins (ADR-0009), so the stock set stays small."
+      "evidence": "MidiTests measure pitch (440 Hz within 0.5 Hz), onset, release and velocity scaling; a mutation check confirmed the pitch test catches a 2 Hz error. Most instruments are expected to come from plugins (ADR-0009), so the stock set stays small. SamplerTests: the Sampler plays a 440 Hz sample at 440 Hz on its root key and 880 Hz an octave up (±1/±2 Hz), at its level (±0.01) and releases to silence; Drums play each pad's sample from the note's exact frame, sample for sample (1e-5), an empty pad is silent, and a saved kit reopens identical. Self-test: dropping two sounds on Dalnok Drums fills pads 1 and 2 and note 36 plays."
     },
     {
       "id": "midi",

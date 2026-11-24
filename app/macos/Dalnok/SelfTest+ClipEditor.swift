@@ -155,6 +155,30 @@ extension SelfTest {
         check(!w.devicePanel.isHidden && w.clipEditor.isHidden, "the switch shows the device chain")
         check(perform("Clip Editor", exact: true) && !w.clipEditor.isHidden && w.devicePanel.isHidden, "View ▸ Clip Editor switches back")
 
+        // Dalnok Drums: dropping audio files on the unit fills its pads in order; note 36 plays the first.
+        let kit = s.addTrack("Selftest Drums")
+        w.headers.select(kit)
+        let drumSlot = (try? s.addPlugin(kit, path: "dalnok:drums")) ?? 0
+        check(drumSlot != 0 && s.track(kit)?.plugins.first?.instrument == true, "Dalnok Drums loads as an instrument")
+        w.setBottomMode(.devices)
+        w.devicePanel.rebuild()
+        if let unit = w.devicePanel.devices.first(where: { $0.slot == drumSlot }) {
+            let files = ["/System/Library/Sounds/Glass.aiff", "/System/Library/Sounds/Ping.aiff"].map { URL(fileURLWithPath: $0) }
+            check(unit.dropSamples(files) && unit.samplePath(0).hasSuffix("Glass.aiff") && unit.samplePath(1).hasSuffix("Ping.aiff"),
+                  "dropping two sounds on Dalnok Drums loads pads 1 and 2")
+            let menu = unit.deviceMenu()
+            check(menu.items.contains { $0.title == "Load Sample into Pad" }, "the unit's menu offers Load Sample into Pad")
+            let clip = dalnok_midi_clip_add(e.handle, kit, 0, 48_000)
+            var hit = DalnokNote(start: 1_000, length: 100, pitch: 36, velocity: 127)
+            _ = dalnok_midi_clip_set_notes(e.handle, clip, &hit, 1)
+            var l = [Float](repeating: 0, count: 24_000), r = l
+            s.setSolo(kit, true)
+            _ = dalnok_render_offline(e.handle, 0, 24_000, &l, &r)
+            s.setSolo(kit, false)
+            check(l[0..<1_000].allSatisfy { $0 == 0 } && l[1_000..<6_000].map(abs).max()! > 0.01, "note 36 plays the Glass pad from its frame")
+        } else { check(false, "the Drums unit is in the device chain") }
+        s.removeTrack(kit)
+
         // Plug-ins: copy a unit on one track and paste it on another (new instance, same settings).
         let fx = s.addTrack("Selftest FX")
         w.headers.select(fx)

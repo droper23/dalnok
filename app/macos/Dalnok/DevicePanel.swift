@@ -713,6 +713,7 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         self.color = color
         self.path = path
         super.init(frame: .zero)
+        if isSampler { registerForDraggedTypes([.fileURL]) } // audio files dropped on a Sampler or Drums load into it
         wantsLayer = true
         layer?.cornerRadius = Theme.look.pedalboard ? 2 : 5
         title.stringValue = name
@@ -1998,6 +1999,7 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         m.autoenablesItems = false
         let chain = session.track(trackId)?.plugins.map(\.id) ?? []
         let i = chain.firstIndex(of: slot) ?? 0
+        if isSampler { sampleMenuItems(m); m.addItem(.separator()) }
         m.addItem(item(bypassed ? "Turn On" : "Bypass", { [weak self] in self?.toggleBypass() }, enabled: loaded))
         m.addItem(item("Open Plug-in Window", { [weak self] in self?.onOpen?() }, enabled: loaded))
         m.addItem(item("Show Controls", { [weak self] in self?.onShowControls?() }, enabled: loaded))
@@ -2031,6 +2033,10 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         return m
     }
     override func menu(for event: NSEvent) -> NSMenu? { deviceMenu() }
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        isSampler && !Self.audioURLs(sender).isEmpty ? .copy : []
+    }
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool { isSampler && dropSamples(Self.audioURLs(sender)) }
     /// Moves this unit by `delta` places in the chain (menu and keyboard alternative to dragging).
     var onMove: ((Int) -> Void)?
 

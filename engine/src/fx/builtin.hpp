@@ -10,7 +10,7 @@
 
 namespace dalnok {
 
-struct BuiltinInfo { const char *id, *name, *category; };
+struct BuiltinInfo { const char *id, *name, *category; bool instrument = false; };
 // Plug-ins this build provides. Their slot path is "dalnok:<id>".
 const std::vector<BuiltinInfo> &builtinPlugins();
 std::unique_ptr<PluginProcessor> loadBuiltin(const std::string &id, double sampleRate, int maxBlock, std::string &err);

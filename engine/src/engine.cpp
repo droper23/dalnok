@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "engine.hpp"
+#include "fx/sampler.hpp"
 #include "engine_internal.hpp"
 #include <unordered_map>
 #include "plugin_remote.hpp"
@@ -946,6 +947,18 @@ PluginProcessor *Engine::pluginInstance(int32_t id) const { return pluginHost_.i
 std::string Engine::pluginError(int32_t id) const { return pluginHost_.error(id); }
 
 bool Engine::pluginState(int32_t id, std::string &bytes) const { return pluginHost_.state(model_, id, bytes, savingRecoverySnapshot_); }
+
+bool Engine::setPluginSample(int32_t slot, int32_t zone, const std::string &path, std::string &err) {
+    auto *sampler = dynamic_cast<fx::SamplerBase *>(pluginInstance(slot));
+    if (!sampler) return fail(err, "not a Dalnok Sampler or Drums");
+    if (!sampler->loadSample(zone, path, err)) return false;
+    bumpRevisionAll();
+    return true;
+}
+std::string Engine::pluginSample(int32_t slot, int32_t zone) const {
+    auto *sampler = dynamic_cast<fx::SamplerBase *>(pluginInstance(slot));
+    return sampler ? sampler->samplePath(zone) : "";
+}
 
 bool Engine::setPluginState(int32_t id, const std::string &bytes, std::string &err) {
     PluginProcessor *p = pluginInstance(id);

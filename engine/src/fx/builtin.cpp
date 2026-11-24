@@ -5,6 +5,7 @@
 #include "fx/channel_eq.hpp"
 #include "fx/compressor.hpp"
 #include "fx/time_fx.hpp"
+#include "fx/sampler.hpp"
 #include "json.hpp"
 
 #include <algorithm>
@@ -21,6 +22,8 @@ const std::vector<BuiltinInfo> &builtinPlugins() {
         {"gate", "Dalnok Gate", "Dynamics"},
         {"delay", "Dalnok Delay", "Delay"},
         {"reverb", "Dalnok Reverb", "Reverb"},
+        {"sampler", "Dalnok Sampler", "Sampler", true},
+        {"drums", "Dalnok Drums", "Drums", true},
     };
     return list;
 }
@@ -32,12 +35,14 @@ std::unique_ptr<PluginProcessor> loadBuiltin(const std::string &id, double sampl
     if (id == "gate") return std::make_unique<fx::Gate>(sampleRate);
     if (id == "delay") return std::make_unique<fx::Delay>(sampleRate);
     if (id == "reverb") return std::make_unique<fx::Reverb>(sampleRate);
+    if (id == "sampler") return std::make_unique<fx::Sampler>(sampleRate);
+    if (id == "drums") return std::make_unique<fx::Drums>(sampleRate);
     err = "unknown built-in plug-in " + id;
     return nullptr;
 }
 
 std::string BuiltinProcessor::categories() const {
-    for (const auto &b : builtinPlugins()) if (id_ == b.id) return std::string("Fx|") + b.category;
+    for (const auto &b : builtinPlugins()) if (id_ == b.id) return std::string(b.instrument ? "Instrument|" : "Fx|") + b.category;
     return "Fx";
 }
 
