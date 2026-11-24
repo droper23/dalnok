@@ -17,6 +17,7 @@
 #include "pluginterfaces/vst/ivstattributes.h"
 #include "pluginterfaces/vst/ivstmessage.h"
 #include "pluginterfaces/vst/ivstparameterchanges.h"
+#include "pluginterfaces/vst/ivstmidicontrollers.h"
 #include "pluginterfaces/vst/vstspeaker.h"
 #include "pluginterfaces/gui/iplugview.h"
 #pragma clang diagnostic pop
@@ -468,6 +469,16 @@ public:
         if (component_->setActive(true) != kResultOk) { err = "the plugin could not be activated"; return false; }
         processor_->setProcessing(true);
         hasInput_ = audioIn > 0;
+        // MIDI controllers reach VST3 plug-ins as parameters (IMidiMapping): note which parameter each one drives.
+        midiMap_.fill(kNoMidiParam);
+        IMidiMapping *mapping = nullptr;
+        if (controller_ && controller_->queryInterface(IMidiMapping::iid, reinterpret_cast<void **>(&mapping)) == kResultOk && mapping) {
+            for (int16 cc = 0; cc < static_cast<int16>(midiMap_.size()); ++cc) {
+                ParamID id = 0;
+                if (mapping->getMidiControllerAssignment(0, 0, cc, id) == kResultOk) midiMap_[static_cast<size_t>(cc)] = id;
+            }
+            mapping->release();
+        }
         hasEvents_ = eventIn > 0;
         scratchL_.assign(static_cast<size_t>(maxBlock), 0.0f);
         scratchR_.assign(static_cast<size_t>(maxBlock), 0.0f);
@@ -494,7 +505,15 @@ public:
 
     void process(float *left, float *right, int frames, const PluginNote *notes, int noteCount) DALNOK_NONBLOCKING override {
         events_.count = 0;
+        midiCount_ = 0;
         for (int i = 0; i < noteCount && events_.count < static_cast<int32>(events_.events.size()); ++i) {
+            if (notes[i].on == kEventControl || notes[i].on == kEventPitchBend) { // to its mapped parameter, after the queue below
+                const size_t cc = notes[i].on == kEventPitchBend ? static_cast<size_t>(kPitchBend) : notes[i].pitch;
+                const double v = notes[i].on == kEventPitchBend ? (notes[i].pitch | (notes[i].velocity << 7)) / 16383.0 : notes[i].velocity / 127.0;
+                if (cc < midiMap_.size() && midiMap_[cc] != kNoMidiParam && midiCount_ < static_cast<int>(midiParams_.size()))
+                    midiParams_[static_cast<size_t>(midiCount_++)] = {midiMap_[cc], v};
+                continue;
+            }
             Event &e = events_.events[static_cast<size_t>(events_.count++)];
             e = Event{};
             e.sampleOffset = notes[i].offset;
@@ -512,6 +531,7 @@ public:
         paramChanges_.count = 0;
         ParamChange c;
         while (paramChanges_.count < static_cast<int32>(paramChanges_.queues.size()) && changes_.pop(c)) paramChanges_.set(c.id, c.value);
+        for (int i = 0; i < midiCount_; ++i) paramChanges_.set(midiParams_[static_cast<size_t>(i)].id, midiParams_[static_cast<size_t>(i)].value);
         for (int i = 0; i < autoCount_; ++i) paramChanges_.set(autoQueue_[i].id, autoQueue_[i].value); // automation wins this block
         autoCount_ = 0;
         float *inPtr[2] = {scratchL_.data(), scratchR_.data()};
@@ -668,6 +688,11 @@ private:
     PlugFrame frame_;
     SpscQueue<ParamChange, 1024> changes_;
     BlockParamChanges paramChanges_;
+    static constexpr ParamID kNoMidiParam = 0xFFFFFFFFu;
+    std::array<ParamID, 130> midiMap_{};                  // CC 0-127, aftertouch 128, pitch bend 129 -> parameter
+    struct MidiParam { ParamID id; double value; };
+    std::array<MidiParam, 256> midiParams_{};
+    int midiCount_ = 0;
     std::mutex producer_;
     std::map<uint32_t, double> touched_;
     std::atomic<uint64_t> edits_{0}, dropped_{0};

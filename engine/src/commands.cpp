@@ -428,6 +428,23 @@ const CommandDef kCommands[] = {
          r.set("id", id);
          return status(id != 0, err);
      }},
+    {"midi.setControllers", "Edit Controllers", "{clip, events: [[start, controller (128 = pitch bend), value], ...]}", [](ARGS) {
+         DalnokClipId c;
+         if (!needInt(a, "clip", c, err)) return DALNOK_ERR_INVALID_ARG;
+         const Value *list = a.get("events");
+         if (!list || !list->isArray()) return err = "missing array argument 'events'", DALNOK_ERR_INVALID_ARG;
+         std::vector<MidiCC> events;
+         for (const auto &v : list->array) {
+             if (!v.isArray() || v.array.size() != 3) return err = "each event is [start, controller, value]", DALNOK_ERR_INVALID_ARG;
+             for (const auto &x : v.array)
+                 if (!x.isNumber() || x.number != std::floor(x.number) || x.number < 0 || x.number > 1e15)
+                     return err = "event values must be non-negative integers", DALNOK_ERR_INVALID_ARG;
+             if (v.array[1].number > 128 || v.array[2].number > 16383) return err = "controller 0-128, value 0-16383", DALNOK_ERR_INVALID_ARG;
+             events.push_back({static_cast<int64_t>(v.array[0].number), static_cast<uint8_t>(v.array[1].number),
+                               static_cast<uint16_t>(v.array[2].number)});
+         }
+         return status(e.setControllers(c, std::move(events), err), err);
+     }},
     {"midi.setNotes", "Edit Notes", "{clip, notes: [[start, length, pitch, velocity], ...]}", [](ARGS) {
          DalnokClipId c;
          if (!needInt(a, "clip", c, err)) return DALNOK_ERR_INVALID_ARG;

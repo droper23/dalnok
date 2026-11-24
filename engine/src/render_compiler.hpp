@@ -46,6 +46,8 @@ private:
         int32_t slot = -1, follow = 0, followLoops = 1, fadeCurve = 0;
         bool muted = false, alt = false, preservePitch = true;
         NoteList notes;
+        CCList controllers;
+        int64_t loopLength = 0, loopPhase = 0;
         DalnokMediaId mediaId = 0;
         std::shared_ptr<const Media> media, derived; // resolved pool media; finished stretch (stretched clips)
         int64_t start = 0, offset = 0, length = 0, fadeIn = 0, fadeOut = 0;

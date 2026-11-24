@@ -259,6 +259,8 @@ public:
     DalnokClipId addMidiClip(DalnokTrackId track, int64_t start, int64_t length, std::string &err,
                              std::vector<MidiNote> notes = {}, const char *undoName = "New MIDI Clip");
     bool setNotes(DalnokClipId id, std::vector<MidiNote> notes, std::string &err);
+    // Replaces a MIDI clip's controller events (sorted here; one undo step). See MidiCC.
+    bool setControllers(DalnokClipId id, std::vector<MidiCC> events, std::string &err);
     bool quantize(DalnokClipId id, double gridBeats, double strength, std::string &err);
     // MIDI functions on `only` (empty = every note in the clip's window), one undo step; `out` gets the selected notes
     // as they are afterwards, in the same order (so an editor can keep them selected). See DalnokMidiFunction.

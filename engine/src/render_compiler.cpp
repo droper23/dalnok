@@ -36,7 +36,8 @@ std::shared_ptr<const Media> RenderCompiler::resolvedStretch(const ClipState &c,
 bool RenderCompiler::sameInputs(const ClipKey &k, const ClipState &c) {
     if (k.id != c.id || k.slot != c.slot || k.follow != c.follow || k.followLoops != c.followLoops ||
         k.fadeCurve != c.fadeCurve || k.muted != c.muted || k.alt != c.alt || k.preservePitch != c.preservePitch ||
-        k.notes != c.notes || k.mediaId != c.media || k.start != c.start || k.offset != c.offset ||
+        k.notes != c.notes || k.controllers != c.controllers || k.loopLength != c.loopLength || k.loopPhase != c.loopPhase ||
+        k.mediaId != c.media || k.start != c.start || k.offset != c.offset ||
         k.length != c.length || k.fadeIn != c.fadeIn || k.fadeOut != c.fadeOut || k.gainDb != c.gainDb ||
         k.pitch != c.pitch || k.rate != c.rate || k.warp != c.warp)
         return false;
@@ -48,6 +49,18 @@ bool RenderCompiler::sameInputs(const ClipKey &k, const ClipState &c) {
 std::shared_ptr<const TrackContent> RenderCompiler::buildContent(const std::vector<const ClipState *> &clips, bool instrument,
                                                          std::vector<StretchJob> &needed) {
     auto out = std::make_shared<TrackContent>();
+    // Controller events of the source window [src, src + len) placed from timeline frame `at`.
+    auto addControllers = [&](const ClipState &c, int64_t src, int64_t len, int64_t at) {
+        if (!c.controllers) return;
+        for (const auto &e : *c.controllers) {
+            if (e.start < src || e.start >= src + len) continue;
+            const int64_t when = at + (e.start - src);
+            if (e.controller == kPitchBendController)
+                out->controllers.push_back({when, kEventPitchBend, static_cast<uint8_t>(e.value & 0x7f), static_cast<uint8_t>((e.value >> 7) & 0x7f)});
+            else
+                out->controllers.push_back({when, kEventControl, e.controller, static_cast<uint8_t>(std::min<int>(e.value, 127))});
+        }
+    };
     for (const ClipState *cp : clips) {
         const ClipState &c = *cp;
         if (c.alt) continue; // takes in a folder don't play; the comp's pieces do
@@ -87,12 +100,14 @@ std::shared_ptr<const TrackContent> RenderCompiler::buildContent(const std::vect
                     const int64_t at = c.start + p + (n.start - src);
                     out->notes.push_back({at, at + std::min(n.length, c.start + p + seg - at), n.pitch, n.velocity});
                 }
+                addControllers(c, src, seg, c.start + p);
                 p += seg;
             }
             continue;
         }
         if (c.midi()) {
             if (!instrument) continue;
+            addControllers(c, c.offset, c.length, c.start);
             for (const auto &n : *c.notes) {
                 if (n.start < c.offset || n.start >= c.offset + c.length) continue; // outside the clip window
                 const int64_t at = c.start + (n.start - c.offset);
@@ -167,6 +182,7 @@ std::shared_ptr<const TrackContent> RenderCompiler::buildContent(const std::vect
     }
     std::stable_sort(out->notes.begin(), out->notes.end(),
                      [](const RenderNote &a, const RenderNote &b) { return a.start < b.start; });
+    std::stable_sort(out->controllers.begin(), out->controllers.end(), [](const RenderCC &a, const RenderCC &b) { return a.at < b.at; });
     out->noteEnds = out->notes;
     std::stable_sort(out->noteEnds.begin(), out->noteEnds.end(),
                      [](const RenderNote &a, const RenderNote &b) { return a.end < b.end; });
@@ -310,6 +326,7 @@ std::unique_ptr<RenderState> RenderCompiler::compile(const CompileInputs &inputs
                     ClipKey k;
                     k.id = c.id; k.slot = c.slot; k.follow = c.follow; k.followLoops = c.followLoops; k.fadeCurve = c.fadeCurve;
                     k.muted = c.muted; k.alt = c.alt; k.preservePitch = c.preservePitch; k.notes = c.notes; k.mediaId = c.media;
+                    k.controllers = c.controllers; k.loopLength = c.loopLength; k.loopPhase = c.loopPhase;
                     k.start = c.start; k.offset = c.offset; k.length = c.length; k.fadeIn = c.fadeIn; k.fadeOut = c.fadeOut;
                     k.gainDb = c.gainDb; k.pitch = c.pitch; k.rate = c.rate; k.warp = c.warp;
                     if (const PoolEntry *pe = c.midi() ? nullptr : pool(c.media); pe && pe->handle->impl) {

@@ -165,9 +165,11 @@ public:
         for (int i = 0; i < autoCount_; ++i) // automation (plain values; see automationRange)
             AudioUnitSetParameter(unit_, autoQueue_[i].id, kAudioUnitScope_Global, 0, static_cast<AudioUnitParameterValue>(autoQueue_[i].value), 0);
         autoCount_ = 0;
-        for (int i = 0; i < noteCount; ++i)
-            MusicDeviceMIDIEvent(unit_, notes[i].on ? 0x90u : 0x80u, notes[i].pitch, notes[i].on ? notes[i].velocity : 0u,
-                                 static_cast<UInt32>(notes[i].offset));
+        for (int i = 0; i < noteCount; ++i) {
+            const PluginNote &n = notes[i];
+            const UInt32 status = n.on == kEventNoteOn ? 0x90u : n.on == kEventControl ? 0xB0u : n.on == kEventPitchBend ? 0xE0u : 0x80u;
+            MusicDeviceMIDIEvent(unit_, status, n.pitch, n.on == kEventNoteOff ? 0u : n.velocity, static_cast<UInt32>(n.offset));
+        }
         const OSStatus s = AudioUnitRender(unit_, &flags, &time_, 0, static_cast<UInt32>(frames), reinterpret_cast<AudioBufferList *>(&out));
 #pragma clang diagnostic pop
         if (s != noErr) for (int i = 0; i < frames; ++i) left[i] = right[i] = 0.0f;

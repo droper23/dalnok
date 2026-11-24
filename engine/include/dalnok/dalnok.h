@@ -802,6 +802,14 @@ DalnokStatus dalnok_midi_quantize(DalnokEngine *engine, DalnokClipId clip, doubl
  *                    pentatonic, 5 minor pentatonic, 6 harmonic minor, 7 blues); nearest degree, ties go down
  *   HUMANIZE         a = timing range ± ms, b = velocity range ±
  *   SET_VELOCITY     a = 1-127;  SCALE_VELOCITY  a = percent */
+/* MIDI controller events in a clip (API 47), frames from the clip source's start like notes. controller 0-127 is a
+ * control change (value 0-127: 1 mod wheel, 7 volume, 10 pan, 11 expression, 64 sustain, ...); 128 is pitch bend
+ * (value 0-16383, 8192 = centre). Plug-in instruments get them (VST3 through the plug-in's MIDI mapping), and a
+ * plug-in instrument played live gets the keyboard's controllers and pitch bend. Saved from format 17. */
+typedef struct { int64_t start; int32_t controller; int32_t value; } DalnokMidiCC;
+#define DALNOK_PITCH_BEND 128
+DalnokStatus dalnok_midi_clip_set_controllers(DalnokEngine *engine, DalnokClipId clip, const DalnokMidiCC *events, int32_t count);
+int32_t dalnok_midi_clip_controllers(const DalnokEngine *engine, DalnokClipId clip, DalnokMidiCC *out, int32_t capacity); /* total */
 typedef enum {
     DALNOK_MIDI_LEGATO = 0, DALNOK_MIDI_FIXED_LENGTH = 1, DALNOK_MIDI_SCALE_QUANTIZE = 2, DALNOK_MIDI_HUMANIZE = 3,
     DALNOK_MIDI_SET_VELOCITY = 4, DALNOK_MIDI_SCALE_VELOCITY = 5

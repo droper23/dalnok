@@ -144,7 +144,8 @@ bool renderNotes(const std::vector<RenderNote> &notes, const SynthParams &p, Syn
 // Starts the instrument's block into outL/outR; returns true while its result is still to come (an isolated plug-in:
 // finishProcess, then afterPlugin). In-process instruments are done on return (afterPlugin has run).
 bool renderPluginNotes(PluginProcessor *plugin, const RenderNote *starts, const RenderNote *ends, size_t noteCount,
-                       SynthState &state, int64_t pos, int frames, Scratch &s, float *outL, float *outR) DALNOK_NONBLOCKING;
+                       SynthState &state, int64_t pos, int frames, Scratch &s, float *outL, float *outR,
+                       const RenderCC *ccs = nullptr, size_t ccCount = 0) DALNOK_NONBLOCKING;
 void afterPlugin(PluginProcessor *p, const float *l, const float *r, int frames) DALNOK_NONBLOCKING {
     raisePeaks(p->meterOut, l, r, frames);
     if (PluginProcessor::Tap *tap = p->tap.load(std::memory_order_acquire)) {
@@ -157,15 +158,20 @@ void beforeInsert(PluginProcessor *p, const float *l, const float *r, int frames
     if (PluginProcessor::Tap *tap = p->tap.load(std::memory_order_acquire)) writeTap(tap->in, tap->pos, l, r, frames, false);
 }
 bool renderPluginNotes(PluginProcessor *plugin, const RenderNote *starts, const RenderNote *ends, size_t noteCount,
-                       SynthState &state, int64_t pos, int frames, Scratch &s, float *outL, float *outR) DALNOK_NONBLOCKING {
+                       SynthState &state, int64_t pos, int frames, Scratch &s, float *outL, float *outR,
+                       const RenderCC *ccs, size_t ccCount) DALNOK_NONBLOCKING {
     int count = 0;
     constexpr int cap = static_cast<int>(sizeof(s.events) / sizeof(s.events[0]));
-    auto push = [&](int offset, bool on, uint8_t pitch, uint8_t velocity) DALNOK_NONBLOCKING {
-        if (count < cap) s.events[count++] = PluginNote{offset, static_cast<uint8_t>(on ? 1 : 0), pitch, velocity};
+    auto push = [&](int offset, uint8_t kind, uint8_t pitch, uint8_t velocity) DALNOK_NONBLOCKING {
+        if (count < cap) s.events[count++] = PluginNote{offset, kind, pitch, velocity};
     };
     if (state.pluginExpected != pos) { // seek or first block: end everything this render started
         for (int p = 0; p < 128; ++p)
-            if (state.pluginHeld[static_cast<size_t>(p)]) { push(0, false, static_cast<uint8_t>(p), 0); state.pluginHeld[static_cast<size_t>(p)] = 0; }
+            if (state.pluginHeld[static_cast<size_t>(p)]) { push(0, kEventNoteOff, static_cast<uint8_t>(p), 0); state.pluginHeld[static_cast<size_t>(p)] = 0; }
+        if (ccCount) { // a track with controller events starts from neutral: bend centred, sustain up
+            push(0, kEventPitchBend, 0, 64);
+            push(0, kEventControl, 64, 0);
+        }
     }
     state.pluginExpected = pos + frames;
     const auto end = pos + frames;
@@ -173,17 +179,22 @@ bool renderPluginNotes(PluginProcessor *plugin, const RenderNote *starts, const 
     for (auto it = std::lower_bound(ends, ends + noteCount, pos,
                                     [](const RenderNote &n, int64_t at) DALNOK_NONBLOCKING { return n.end < at; });
          it != ends + noteCount && it->end < end; ++it)
-        push(static_cast<int>(it->end - pos), false, it->pitch, 0);
+        push(static_cast<int>(it->end - pos), kEventNoteOff, it->pitch, 0);
     for (auto it = std::lower_bound(starts, starts + noteCount, pos,
                                     [](const RenderNote &n, int64_t at) DALNOK_NONBLOCKING { return n.start < at; });
          it != starts + noteCount && it->start < end; ++it)
-        push(static_cast<int>(it->start - pos), true, it->pitch, it->velocity);
-    // Sort timeline events before tracking held notes: an onset and its release can share a block.
+        push(static_cast<int>(it->start - pos), kEventNoteOn, it->pitch, it->velocity);
+    for (auto it = std::lower_bound(ccs, ccs + ccCount, pos, [](const RenderCC &c, int64_t at) DALNOK_NONBLOCKING { return c.at < at; });
+         it != ccs + ccCount && it->at < end; ++it)
+        push(static_cast<int>(it->at - pos), it->kind, it->d1, it->d2);
+    // Sort timeline events before tracking held notes: an onset and its release can share a block. At one frame:
+    // note-offs, then controllers (a note starts with its bend and sustain already set), then note-ons.
+    auto rank = [](uint8_t kind) DALNOK_NONBLOCKING { return kind == kEventNoteOff ? 0 : kind == kEventNoteOn ? 2 : 1; };
     auto sortEvents = [&](int begin) DALNOK_NONBLOCKING {
         for (int i = begin + 1; i < count; ++i) {
             const PluginNote e = s.events[i];
             int j = i - 1;
-            while (j >= begin && (s.events[j].offset > e.offset || (s.events[j].offset == e.offset && s.events[j].on && !e.on))) {
+            while (j >= begin && (s.events[j].offset > e.offset || (s.events[j].offset == e.offset && rank(s.events[j].on) > rank(e.on)))) {
                 s.events[j + 1] = s.events[j];
                 --j;
             }
@@ -194,9 +205,11 @@ bool renderPluginNotes(PluginProcessor *plugin, const RenderNote *starts, const 
     int written = cleanupCount;
     for (int i = cleanupCount; i < count; ++i) {
         const PluginNote e = s.events[i];
-        auto &held = state.pluginHeld[e.pitch];
-        if (e.on) { if (held < 255) ++held; }
-        else { if (!held) continue; --held; }
+        if (e.on == kEventNoteOn || e.on == kEventNoteOff) {
+            auto &held = state.pluginHeld[e.pitch];
+            if (e.on == kEventNoteOn) { if (held < 255) ++held; }
+            else { if (!held) continue; --held; }
+        }
         s.events[written++] = e;
     }
     count = written;
@@ -328,11 +341,12 @@ void renderBlock(const RenderState &state, int64_t pos, int frames, float *left,
             const RenderSlot *slot = st.slot;
             const bool liveHere = !synths && static_cast<int32_t>(i) == s.liveTrack;
             // Plugin instruments: live notes join only on the live track.
-            auto instrument = [&](const RenderNote *starts, const RenderNote *ends, size_t n, int64_t at) DALNOK_NONBLOCKING -> bool {
+            auto instrument = [&](const RenderNote *starts, const RenderNote *ends, size_t n, int64_t at,
+                                  const RenderCC *cc = nullptr, size_t ccn = 0) DALNOK_NONBLOCKING -> bool {
                 const PluginNote *live = s.liveNotes;
                 const int liveCount = s.liveNoteCount;
                 if (!liveHere) { s.liveNotes = nullptr; s.liveNoteCount = 0; }
-                const bool inflight = renderPluginNotes(t.instrumentPlugin, starts, ends, n, synth, at, frames, s, L, R);
+                const bool inflight = renderPluginNotes(t.instrumentPlugin, starts, ends, n, synth, at, frames, s, L, R, cc, ccn);
                 s.liveNotes = live;
                 s.liveNoteCount = liveCount;
                 return inflight;
@@ -373,7 +387,8 @@ void renderBlock(const RenderState &state, int64_t pos, int frames, float *left,
                 st.any = true;
             } else if (t.instrumentPlugin) {
                 // Plugin instruments run every block (tails, internal state).
-                inflight = instrument(t.content->notes.data(), t.content->noteEnds.data(), t.content->notes.size(), pos);
+                inflight = instrument(t.content->notes.data(), t.content->noteEnds.data(), t.content->notes.size(), pos,
+                                      t.content->controllers.data(), t.content->controllers.size());
                 st.any = true;
             } else if (t.instrument && renderNotes(t.content->notes, state.synth, synth, pos, frames, L)) {
                 for (int k = 0; k < frames; ++k) R[k] = L[k];

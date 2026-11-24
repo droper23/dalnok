@@ -31,5 +31,6 @@ DEF_CLASS_IID(IEditController)
 DEF_CLASS_IID(IComponentHandler)
 DEF_CLASS_IID(IComponentHandler2)
 DEF_CLASS_IID(IConnectionPoint)
+DEF_CLASS_IID(IMidiMapping)
 }
 #pragma clang diagnostic pop

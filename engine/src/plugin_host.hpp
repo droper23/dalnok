@@ -14,9 +14,13 @@
 namespace dalnok {
 
 // A note event inside one processing block.
+// One MIDI event for a plug-in instrument. `on` is the kind: 0 note-off and 1 note-on (pitch, velocity); 2 control
+// change (pitch = controller 0-127, velocity = value 0-127); 3 pitch bend (pitch = low 7 bits, velocity = high 7 bits;
+// 8192 = centre).
+enum : uint8_t { kEventNoteOff = 0, kEventNoteOn = 1, kEventControl = 2, kEventPitchBend = 3 };
 struct PluginNote {
     int32_t offset;   // frame within the block
-    uint8_t on;       // 1 = note-on, 0 = note-off
+    uint8_t on;       // kind (see above)
     uint8_t pitch, velocity;
 };
 

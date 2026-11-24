@@ -544,3 +544,23 @@ func oneNoteSession(pitch: UInt8 = 69, velocity: UInt8 = 127) -> (OpaquePointer,
         #expect(Set(shifts).count > 8 && Set(vels).count > 4, "not all the same")
     }
 }
+
+@Suite struct MidiControllers {
+    @Test func controllersFollowTempoAndSplitsAndRejectBadValues() {
+        let e = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(e) }
+        let c = dalnok_midi_clip_add(e, dalnok_track_add_instrument(e, nil), 0, 96_000)
+        var ccs = [DalnokMidiCC(start: 24_000, controller: 64, value: 127), DalnokMidiCC(start: 48_000, controller: 128, value: 16_383)]
+        #expect(dalnok_midi_clip_set_controllers(e, c, &ccs, 2) == DALNOK_OK)
+        #expect(dalnok_tempo_set(e, 60, 4, 4) == DALNOK_OK)
+        var out = [DalnokMidiCC](repeating: DalnokMidiCC(), count: 4)
+        let n = Int(dalnok_midi_clip_controllers(e, c, &out, 4))
+        #expect(n == 2 && out[0].start == 48_000 && out[1].start == 96_000 && out[1].value == 16_383, "on their beats at 60 BPM")
+        var right: DalnokClipId = 0
+        #expect(dalnok_clip_split(e, c, 60_000, &right) == DALNOK_OK)
+        #expect(dalnok_midi_clip_controllers(e, right, nil, 0) == 2, "the right part shares the clip's controller list")
+        var bad = [DalnokMidiCC(start: 0, controller: 7, value: 128)]
+        #expect(dalnok_midi_clip_set_controllers(e, c, &bad, 1) != DALNOK_OK)
+        bad = [DalnokMidiCC(start: -1, controller: 7, value: 1)]
+        #expect(dalnok_midi_clip_set_controllers(e, c, &bad, 1) != DALNOK_OK)
+    }
+}

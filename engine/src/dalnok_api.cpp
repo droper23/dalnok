@@ -826,6 +826,24 @@ DalnokStatus dalnok_midi_quantize(DalnokEngine *e, DalnokClipId c, double grid, 
     std::string err;
     return e ? statusFor(e->impl.quantize(c, grid, strength, err), err) : DALNOK_ERR_INVALID_ARG;
 }
+DalnokStatus dalnok_midi_clip_set_controllers(DalnokEngine *e, DalnokClipId c, const DalnokMidiCC *events, int32_t count) {
+    if (!e || count < 0 || (count > 0 && !events)) return DALNOK_ERR_INVALID_ARG;
+    std::vector<dalnok::MidiCC> list;
+    for (int32_t i = 0; i < count; ++i) {
+        if (events[i].controller < 0 || events[i].controller > 128 || events[i].value < 0 || events[i].value > 16383) return DALNOK_ERR_INVALID_ARG;
+        list.push_back({events[i].start, static_cast<uint8_t>(events[i].controller), static_cast<uint16_t>(events[i].value)});
+    }
+    std::string err;
+    return statusFor(e->impl.setControllers(c, std::move(list), err), err);
+}
+int32_t dalnok_midi_clip_controllers(const DalnokEngine *e, DalnokClipId c, DalnokMidiCC *out, int32_t capacity) {
+    const dalnok::ClipState *clip = e ? e->impl.model().clip(c) : nullptr;
+    if (!clip || !clip->controllers) return 0;
+    const auto &list = *clip->controllers;
+    for (size_t i = 0; out && i < list.size() && i < static_cast<size_t>(std::max(0, capacity)); ++i)
+        out[i] = {list[i].start, list[i].controller, list[i].value};
+    return static_cast<int32_t>(list.size());
+}
 DalnokStatus dalnok_midi_transform(DalnokEngine *e, DalnokClipId c, int32_t function, const DalnokNote *selected,
                                    int32_t count, double a, double b, DalnokNote *out) {
     if (!e || count < 0 || (count > 0 && !selected)) return DALNOK_ERR_INVALID_ARG;

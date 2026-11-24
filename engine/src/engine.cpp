@@ -398,6 +398,7 @@ bool remapMidi(Model &m, const TempoMap &from, const TempoMap &to, std::string &
         return from.frameToBeat(frame, beat) && to.beatToFrame(beat, out);
     };
     std::map<std::pair<const std::vector<MidiNote> *, int64_t>, NoteList> lists;
+    std::map<std::pair<const std::vector<MidiCC> *, int64_t>, CCList> ccLists;
     for (auto &clip : m.clips) {
         if (!clip.midi()) continue;
         const int64_t origin = clip.start - clip.offset;
@@ -417,6 +418,20 @@ bool remapMidi(Model &m, const TempoMap &from, const TempoMap &to, std::string &
                 note.length = std::max<int64_t>(1, b - a);
             }
             found = lists.emplace(key, std::make_shared<const std::vector<MidiNote>>(std::move(notes))).first;
+        }
+        if (clip.controllers) {
+            const auto ckey = std::make_pair(clip.controllers.get(), origin);
+            auto cf = ccLists.find(ckey);
+            if (cf == ccLists.end()) {
+                std::vector<MidiCC> events = *clip.controllers;
+                for (auto &ev : events) {
+                    int64_t a;
+                    if (!remap(origin + ev.start, a)) return fail(err, "tempo change would move MIDI beyond the supported timeline");
+                    ev.start = std::max<int64_t>(0, a - newOrigin);
+                }
+                cf = ccLists.emplace(ckey, std::make_shared<const std::vector<MidiCC>>(std::move(events))).first;
+            }
+            clip.controllers = cf->second;
         }
         clip.start = start;
         clip.offset = std::max<int64_t>(0, start - newOrigin);
@@ -536,6 +551,20 @@ DalnokClipId Engine::addMidiClip(DalnokTrackId track, int64_t start, int64_t len
     if (!ok) return 0;
     ++nextClip_;
     return id;
+}
+
+bool Engine::setControllers(DalnokClipId id, std::vector<MidiCC> events, std::string &err) {
+    for (const auto &e : events)
+        if (e.start < 0 || e.controller > kPitchBendController || e.value > (e.controller == kPitchBendController ? 16383 : 127))
+            return fail(err, "controller events need start >= 0, controller 0-127 (128 = pitch bend), value 0-127 (bend 0-16383)");
+    return edit("Edit Controllers", true, [&](Model &m) {
+        ClipState *c = m.clip(id);
+        if (!c) return fail(err, "no such clip");
+        if (!c->midi()) return fail(err, "not a MIDI clip");
+        std::stable_sort(events.begin(), events.end(), [](const MidiCC &a, const MidiCC &b) { return a.start < b.start; });
+        c->controllers = events.empty() ? nullptr : std::make_shared<const std::vector<MidiCC>>(std::move(events));
+        return true;
+    });
 }
 
 bool Engine::setNotes(DalnokClipId id, std::vector<MidiNote> notes, std::string &err) {

@@ -158,6 +158,16 @@ public:
         autoCount_ = 0;
         for (int i = 0; i < noteCount && eventCount_ < kMaxEvents; ++i) {
             Event &e = events_[eventCount_++];
+            if (notes[i].on == kEventControl || notes[i].on == kEventPitchBend) {
+                e.midi = clap_event_midi_t{};
+                e.midi.header = {sizeof(clap_event_midi_t), static_cast<uint32_t>(notes[i].offset), CLAP_CORE_EVENT_SPACE_ID,
+                                 CLAP_EVENT_MIDI, 0};
+                e.midi.port_index = 0;
+                e.midi.data[0] = notes[i].on == kEventControl ? 0xB0 : 0xE0;
+                e.midi.data[1] = notes[i].pitch;
+                e.midi.data[2] = notes[i].velocity;
+                continue;
+            }
             e.note = clap_event_note_t{};
             e.note.header = {sizeof(clap_event_note_t), static_cast<uint32_t>(notes[i].offset), CLAP_CORE_EVENT_SPACE_ID,
                              static_cast<uint16_t>(notes[i].on ? CLAP_EVENT_NOTE_ON : CLAP_EVENT_NOTE_OFF), 0};
@@ -330,6 +340,7 @@ private:
     union Event {
         clap_event_note_t note;
         clap_event_param_value_t param;
+        clap_event_midi_t midi; // controllers and pitch bend
         const clap_event_header_t &header() const { return note.header; }
     };
     // Parameter changes the plug-in reports (its editor) are edits to the project. Plug-ins also report values to

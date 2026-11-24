@@ -102,6 +102,12 @@ struct RenderClip {
     float gain = 1.0f; // linear clip gain
 };
 
+// A controller event in timeline frames (kind 2 = control change, 3 = pitch bend; data as in PluginNote).
+struct RenderCC {
+    int64_t at = 0;
+    uint8_t kind = 2, d1 = 0, d2 = 0;
+};
+
 // A note in timeline frames, already clipped to its clip's window.
 struct RenderNote {
     int64_t start = 0, end = 0;
@@ -155,6 +161,7 @@ struct TrackContent {
     std::vector<RenderClip> clips;    // z-order: later clips overwrite earlier ones
     std::vector<RenderNote> notes;    // sorted by start
     std::vector<RenderNote> noteEnds; // the same notes sorted by end (plugin note-offs)
+    std::vector<RenderCC> controllers; // sorted by time (plug-in instruments only)
     bool stereoClip = false;          // some audio clip has more than one channel
     uint64_t mutedMidiSignature = 0;
 };

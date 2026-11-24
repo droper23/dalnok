@@ -109,6 +109,15 @@ struct MidiNote {
     uint8_t pitch = 60, velocity = 100;
 };
 using NoteList = std::shared_ptr<const std::vector<MidiNote>>; // immutable; shared across undo copies
+// A MIDI controller event in a clip, in frames from the start of the clip's source (like a note). controller 0-127 is
+// a control change (value 0-127); kPitchBendController is pitch bend (value 0-16383, 8192 = centre).
+constexpr uint8_t kPitchBendController = 128;
+struct MidiCC {
+    int64_t start = 0;
+    uint8_t controller = 1;
+    uint16_t value = 0;
+};
+using CCList = std::shared_ptr<const std::vector<MidiCC>>; // sorted by start; immutable, shared like notes
 
 struct ClipState {
     DalnokClipId id = 0;
@@ -118,6 +127,7 @@ struct ClipState {
     bool muted = false; // clip is retained but does not contribute audio or MIDI
     bool alt = false;   // a take inside a folder: kept, not played (the comp's pieces play)
     NoteList notes; // non-null: MIDI clip (media = 0)
+    CCList controllers; // MIDI clips: controller events (null = none)
     bool midi() const { return notes != nullptr; }
     DalnokTrackId track = 0;
     DalnokMediaId media = 0;

@@ -183,6 +183,25 @@ struct PluginHosting {
         #expect(renderStereo(e2, 2_048).0.allSatisfy { abs($0) < 1e-6 }, "a missing instrument is silent")
     }
 
+    @Test func midiControllersReachTheInstrumentThroughItsMapping() {
+        // The test synth maps the mod wheel (CC 1) to its level. A held note; CC 1 = 64 at frame 2,000, 0 at 4,000.
+        // VST3 controllers arrive as parameter changes, which the plug-in applies per block (512 frames).
+        let e = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(e) }
+        let t = dalnok_track_add_instrument(e, "Synth")
+        var err = [CChar](repeating: 0, count: 256)
+        #expect(dalnok_plugin_add(e, t, testVst3, synthClass, &err, 256) != 0, "\(cstr(err))")
+        let c = dalnok_midi_clip_add(e, t, 0, 8_000)
+        var note = DalnokNote(start: 0, length: 7_000, pitch: 60, velocity: 127)
+        dalnok_midi_clip_set_notes(e, c, &note, 1)
+        var ccs = [DalnokMidiCC(start: 2_000, controller: 1, value: 64), DalnokMidiCC(start: 4_000, controller: 1, value: 0),
+                   DalnokMidiCC(start: 3_000, controller: Int32(DALNOK_PITCH_BEND), value: 12_000)] // unmapped: ignored
+        #expect(dalnok_midi_clip_set_controllers(e, c, &ccs, 3) == DALNOK_OK && undoName(e) == "Edit Controllers")
+        #expect(dalnok_midi_clip_controllers(e, c, nil, 0) == 3)
+        let (l, _) = renderStereo(e, 6_000)
+        #expect(l[1_000] == 1 && abs(l[2_600] - Float(64) / 127) < 1e-6 && l[4_600] == 0, "\(l[1_000]) \(l[2_600]) \(l[4_600])")
+        #expect(dalnok_midi_clip_set_controllers(e, c, nil, 0) == DALNOK_OK && renderStereo(e, 3_000).0[2_600] == 1, "cleared")
+    }
+
     @Test func shortInstrumentNotesEndWithinTheSameBlock() {
         let e = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(e) }
         let t = dalnok_track_add_instrument(e, "Short notes")

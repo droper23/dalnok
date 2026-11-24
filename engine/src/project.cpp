@@ -31,7 +31,7 @@ namespace fs = std::filesystem;
 namespace dalnok {
 
 namespace {
-constexpr int kFormatVersion = 16;
+constexpr int kFormatVersion = 17;
 constexpr int kConstantTempoVersion = 3; // written when there are no tempo or meter changes, so older builds still open it
 
 // Format history (A-16), one step per version. Loading runs every step from the file's version up to
@@ -60,6 +60,7 @@ constexpr Migration kMigrations[] = {
     {14, "phase invert", nullptr},
     {15, "audio warp maps (audio quantize)", nullptr},
     {16, "clip loops", nullptr},
+    {17, "MIDI controllers and pitch bend in clips", nullptr},
 };
 constexpr bool migrationsCover() {
     int v = 1;
@@ -323,6 +324,15 @@ json::Value Engine::describe() const {
                     notes.push(std::move(nv));
                 }
                 cv.set("notes", std::move(notes));
+                if (c.controllers && !c.controllers->empty()) {
+                    Value ccs = Value::makeArray();
+                    for (const auto &e : *c.controllers) {
+                        Value ev = Value::makeArray();
+                        ev.push(e.start); ev.push(static_cast<int>(e.controller)); ev.push(static_cast<int>(e.value));
+                        ccs.push(std::move(ev));
+                    }
+                    cv.set("controllers", std::move(ccs));
+                }
             } else {
                 cv.set("media", c.media);
             }
@@ -498,7 +508,9 @@ bool Engine::saveProject(const std::string &path, std::string &err, bool copyMed
     for (const auto &t : model_.tracks) for (const auto &p : t.plugins) sidechain = sidechain || p.sidechain;
     const bool masterGain = model_.masterGainDb != 0;
     const bool loops = std::any_of(model_.clips.begin(), model_.clips.end(), [](const ClipState &c) { return c.looped(); });
-    doc.set("version", loops ? 16 : warp ? 15 : phase ? 14 : builtin ? 13 : clipMute ? 12 : !model_.markers.empty() ? 11 : bypass ? 10 : launcher || sidechain ? 9 : pluginAutomation ? 8 : !model_.folders.empty() || masterGain ? 7 : automation ? 6 : routing ? 5 : model_.tempo.size() > 1 || model_.meters.size() > 1 ? 4 : kConstantTempoVersion);
+    const bool controllers = std::any_of(model_.clips.begin(), model_.clips.end(),
+                                         [](const ClipState &c) { return c.controllers && !c.controllers->empty(); });
+    doc.set("version", controllers ? 17 : loops ? 16 : warp ? 15 : phase ? 14 : builtin ? 13 : clipMute ? 12 : !model_.markers.empty() ? 11 : bypass ? 10 : launcher || sidechain ? 9 : pluginAutomation ? 8 : !model_.folders.empty() || masterGain ? 7 : automation ? 6 : routing ? 5 : model_.tempo.size() > 1 || model_.meters.size() > 1 ? 4 : kConstantTempoVersion);
     json::Value body = describe();
     for (auto &[key, value] : body.object) {
         if (key != "media") continue;
@@ -726,6 +738,23 @@ std::unique_ptr<Engine::PreparedProject> Engine::readDocument(const json::Value 
                             }
                         std::stable_sort(notes.begin(), notes.end(), [](const MidiNote &a, const MidiNote &b) { return a.start < b.start; });
                         c.media = 0;
+                        if (const json::Value *ccv = cv.get("controllers"); ccv && ccv->isArray()) {
+                            std::vector<MidiCC> events;
+                            for (const auto &ev : ccv->array) {
+                                if (!ev.isArray() || ev.array.size() < 3 || !ev.array[0].isNumber() || !ev.array[1].isNumber() ||
+                                    !ev.array[2].isNumber() || ev.array[0].number < 0) {
+                                    err = "invalid MIDI controller event";
+                                    return nullptr;
+                                }
+                                MidiCC e;
+                                e.start = scale(static_cast<int64_t>(std::llround(ev.array[0].number)));
+                                e.controller = static_cast<uint8_t>(std::clamp(ev.array[1].number, 0.0, 128.0));
+                                e.value = static_cast<uint16_t>(std::clamp(ev.array[2].number, 0.0, e.controller == kPitchBendController ? 16383.0 : 127.0));
+                                events.push_back(e);
+                            }
+                            std::stable_sort(events.begin(), events.end(), [](const MidiCC &a, const MidiCC &b) { return a.start < b.start; });
+                            if (!events.empty()) c.controllers = std::make_shared<const std::vector<MidiCC>>(std::move(events));
+                        }
                         const int64_t source = toInt(cv, "noteSource", 0);
                         auto it = noteSources.find(source);
                         if (source > 0 && it != noteSources.end()) {

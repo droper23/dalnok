@@ -49,6 +49,7 @@ DEF_CLASS_IID(IAttributeList)
 DEF_CLASS_IID(IParameterChanges)
 DEF_CLASS_IID(IParamValueQueue)
 DEF_CLASS_IID(IComponentHandler)
+DEF_CLASS_IID(IMidiMapping)
 DEF_CLASS_IID(IComponentHandler2)
 }
 namespace Steinberg {
@@ -158,12 +159,13 @@ void setName(String128 out, const char *s) {
     out[i] = 0;
 }
 
-class TestPlugin final : public IComponent, public IAudioProcessor, public IEditController {
+class TestPlugin final : public IComponent, public IAudioProcessor, public IEditController, public IMidiMapping {
 public:
     explicit TestPlugin(bool synth, bool delay = false, bool duck = false) : synth_(synth), delay_(delay), duck_(duck) {}
     tresult PLUGIN_API queryInterface(const TUID iid, void **obj) override {
         if (FUnknownPrivate::iidEqual(iid, IAudioProcessor::iid)) { *obj = static_cast<IAudioProcessor *>(this); addRef(); return kResultOk; }
         if (FUnknownPrivate::iidEqual(iid, IEditController::iid)) { *obj = static_cast<IEditController *>(this); addRef(); return kResultOk; }
+        if (synth_ && FUnknownPrivate::iidEqual(iid, IMidiMapping::iid)) { *obj = static_cast<IMidiMapping *>(this); addRef(); return kResultOk; }
         if (FUnknownPrivate::iidEqual(iid, IComponent::iid) || FUnknownPrivate::iidEqual(iid, IPluginBase::iid) ||
             FUnknownPrivate::iidEqual(iid, FUnknown::iid)) {
             *obj = static_cast<IComponent *>(this);
@@ -280,6 +282,12 @@ public:
         return kResultOk;
     }
     int32 PLUGIN_API getParameterCount() override { return synth_ ? 0 : 1; }
+    // The synth maps the mod wheel (CC 1) to a hidden parameter 2 that scales its level (1 until it is moved).
+    tresult PLUGIN_API getMidiControllerAssignment(int32, int16, CtrlNumber cc, ParamID &id) override {
+        if (cc != 1) return kResultFalse;
+        id = 2;
+        return kResultTrue;
+    }
     tresult PLUGIN_API getParameterInfo(int32 index, ParameterInfo &info) override {
         if (synth_ || index != 0) return kInvalidArgument;
         info = ParameterInfo{};
@@ -360,6 +368,8 @@ public:
                 ParamValue v = 0;
                 if (q && q->getParameterId() == 1 && q->getPointCount() > 0 && q->getPoint(q->getPointCount() - 1, offset, v) == kResultOk)
                     gain_ = static_cast<float>(v);
+                if (q && q->getParameterId() == 2 && q->getPointCount() > 0 && q->getPoint(q->getPointCount() - 1, offset, v) == kResultOk)
+                    mod_ = static_cast<float>(v);
             }
         }
         Sample32 **out = data.outputs[0].channelBuffers32;
@@ -397,7 +407,7 @@ public:
                 if (e.type == Event::kNoteOffEvent && e.noteOff.pitch == pitch_) level_ = 0;
                 ++next;
             }
-            out[0][i] = out[1][i] = level_;
+            out[0][i] = out[1][i] = level_ * mod_;
         }
         // Like sample players that finish loading in their first blocks: silent for the first N process calls
         // (DALNOK_TEST_SYNTH_WARMUP_BLOCKS).
@@ -414,7 +424,7 @@ private:
     int pos_ = 0;
     int blocks_ = 0, warmed_ = 0;
     long long samples_ = 0;
-    float gain_ = 0.5f, level_ = 0;
+    float gain_ = 0.5f, level_ = 0, mod_ = 1;
     double shown_ = 0.5;
     IComponentHandler *handler_ = nullptr;
     int16 pitch_ = -1;
