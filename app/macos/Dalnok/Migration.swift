@@ -62,7 +62,7 @@ enum Migration {
         // Logic Pro
         Concept(daw: .logic, term: "Region", dalnok: "Clip", status: .available, note: "Audio and MIDI regions are both clips."),
         Concept(daw: .logic, term: "Record / Record Enable", dalnok: "Record (R) · R button on the track", status: .available, note: "⌃R arms the selected track"),
-        Concept(daw: .logic, term: "Software Instrument Track", dalnok: "New Instrument Track", status: .partial("built-in Dalnok Poly; plugin instruments in Phase 4"), note: "⌥⇧⌘N"),
+        Concept(daw: .logic, term: "Software Instrument Track", dalnok: "New Instrument Track", status: .partial("built-in Dalnok Poly; plug-in instruments in Phase 4"), note: "⌥⇧⌘N"),
         Concept(daw: .logic, term: "Quantize (Q)", dalnok: "Clip ▸ Quantize", status: .available, note: "MIDI clips"),
         Concept(daw: .logic, term: "Input Monitoring", dalnok: "Audio ▸ Input Monitoring", status: .partial("while recording")),
         Concept(daw: .logic, term: "Bounce Project or Section", dalnok: "Export Mix…", status: .available),
@@ -78,7 +78,7 @@ enum Migration {
         Concept(daw: .logic, term: "Region Transpose", dalnok: "Clip ▸ Transpose Up/Down a Semitone", status: .available),
         Concept(daw: .logic, term: "Flex Pitch", dalnok: "Pitch editing", status: .planned("Phase 5")),
         Concept(daw: .logic, term: "Track Stacks", dalnok: "Groups", status: .planned("Phase 4")),
-        Concept(daw: .logic, term: "Smart Controls", dalnok: "Generic plugin panel + macros", status: .planned("Phase 4–5")),
+        Concept(daw: .logic, term: "Smart Controls", dalnok: "Generic plug-in panel + macros", status: .planned("Phase 4–5")),
         Concept(daw: .logic, term: "Piano Roll", dalnok: "Notes shown in MIDI clips", status: .partial("note editor next; quantize available")),
         Concept(daw: .logic, term: "Live Loops", dalnok: "Clip launcher on every track", status: .planned("Phase 5")),
         Concept(daw: .logic, term: "Key Commands", dalnok: "Logic shortcut preset + ⌘K", status: .partial("preset, no editor yet")),
@@ -87,7 +87,7 @@ enum Migration {
         Concept(daw: .ableton, term: "Export Audio/Video", dalnok: "Export Mix…", status: .available),
         Concept(daw: .ableton, term: "Split", dalnok: "Split at Playhead", status: .available, note: "Ableton preset maps it to ⌘E"),
         Concept(daw: .ableton, term: "Insert Audio Track", dalnok: "New Track", status: .available),
-        Concept(daw: .ableton, term: "Insert MIDI Track", dalnok: "New Instrument Track", status: .partial("built-in Dalnok Poly; plugin instruments in Phase 4")),
+        Concept(daw: .ableton, term: "Insert MIDI Track", dalnok: "New Instrument Track", status: .partial("built-in Dalnok Poly; plug-in instruments in Phase 4")),
         Concept(daw: .ableton, term: "Arm Recording / Arrangement Record", dalnok: "R button on the track · Record (R)", status: .available),
         Concept(daw: .ableton, term: "Quantize (⌘U)", dalnok: "Clip ▸ Quantize", status: .available, note: "MIDI clips"),
         Concept(daw: .ableton, term: "Track Activator", dalnok: "Mute Track", status: .available),
@@ -100,14 +100,14 @@ enum Migration {
         Concept(daw: .ableton, term: "Take Lanes / Comping", dalnok: "Comping", status: .planned("Phase 4")),
         Concept(daw: .ableton, term: "Group Track", dalnok: "Groups", status: .planned("Phase 4")),
         Concept(daw: .ableton, term: "Return Track / Sends", dalnok: "Buses and sends", status: .planned("Phase 4")),
-        Concept(daw: .ableton, term: "Device View parameters", dalnok: "Generic plugin panel", status: .planned("Phase 4")),
+        Concept(daw: .ableton, term: "Device View parameters", dalnok: "Generic plug-in panel", status: .planned("Phase 4")),
         // REAPER
         Concept(daw: .reaper, term: "Item", dalnok: "Clip", status: .available),
         Concept(daw: .reaper, term: "Render", dalnok: "Export Mix…", status: .available),
         Concept(daw: .reaper, term: "Split items at cursor", dalnok: "Split at Playhead", status: .available, note: "REAPER preset maps it to S"),
         Concept(daw: .reaper, term: "Insert new track", dalnok: "New Track", status: .available),
         Concept(daw: .reaper, term: "Record arm / Record", dalnok: "R button on the track · Record (R)", status: .available),
-        Concept(daw: .reaper, term: "Insert virtual instrument on new track", dalnok: "New Instrument Track", status: .partial("built-in Dalnok Poly; plugin instruments in Phase 4")),
+        Concept(daw: .reaper, term: "Insert virtual instrument on new track", dalnok: "New Instrument Track", status: .partial("built-in Dalnok Poly; plug-in instruments in Phase 4")),
         Concept(daw: .reaper, term: "Quantize item positions/notes", dalnok: "Clip ▸ Quantize", status: .available, note: "MIDI clips"),
         Concept(daw: .reaper, term: "Item volume", dalnok: "Clip gain", status: .available),
         Concept(daw: .reaper, term: "Action List", dalnok: "Command Palette…", status: .available, note: "⌘K; scripting through the command catalog"),
@@ -159,7 +159,7 @@ enum Migration {
         switch key {
         case "midiClips", "midiRegions": ("MIDI clips", "Dalnok has MIDI clips now, but importing MIDI from other DAWs isn't done yet.")
         case "midiTracks": ("MIDI tracks", "Importing MIDI tracks from other DAWs isn't done yet.")
-        case "plugins", "devicesAndPlugins", "masterFx", "masterDevices": ("Plugins and devices", "Plug-ins don't come over from other DAWs; add them again on each track's device panel.")
+        case "plugins", "devicesAndPlugins", "masterFx", "masterDevices": ("Plug-ins and devices", "Plug-ins don't come over from other DAWs; add them again on each track's device panel.")
         case "automationLanes": ("Automation", "Automation doesn't come over from other DAWs yet.")
         case "sends", "returnTracks": ("Sends and return/bus tracks", "Sends and buses don't come over from other DAWs yet; rebuild them in the mixer.")
         case "groupTracks", "folderStructure": ("Groups and folders", "Tracks came over flat; regroup them with Track ▸ Create Track Stack.")

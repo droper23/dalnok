@@ -371,7 +371,7 @@ final class WelcomeController: NSObject, NSTableViewDataSource, NSTableViewDeleg
     func showFinder() {
         let dawName = filter?.title ?? "other DAWs"
         let title = label("Bring your \(dawName) projects", size: 22, weight: .semibold)
-        let sub = label("Audio, clip edits, fades, levels and mutes come over. MIDI, plugins and automation are listed in the import report and will import as Dalnok gains them. Originals are never changed.", color: Theme.textDim)
+        let sub = label("Audio, clip edits, fades, levels and mutes come over. MIDI, plug-ins and automation are listed in the import report and will import as Dalnok gains them. Originals are never changed.", color: Theme.textDim)
         let cols: [(String, String, CGFloat)] = [("name", "Project", 300), ("daw", "From", 110), ("date", "Modified", 120), ("folder", "Folder", 160)]
         if table.tableColumns.isEmpty {
             for (id, t, w) in cols {

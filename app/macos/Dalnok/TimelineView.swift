@@ -1291,7 +1291,7 @@ final class TimelineView: NSView {
         if clip.pitch != 0 { tags.append(String(format: "%+g st", Double(clip.pitch))) }
         if !clip.preservePitch && abs(clip.rate - 1) > 1e-9 { tags.append("varispeed") }
         if clip.processing { tags.append("rendering…") }
-        if clip.gainDb != 0 { tags.append(clip.gainDb.isFinite ? String(format: "%+.1f dB", clip.gainDb) : "−∞ dB") }
+        if clip.gainDb != 0 { tags.append(clip.gainDb.isFinite ? String(format: "%+.1f dB", clip.gainDb).replacingOccurrences(of: "-", with: "−") : "−∞ dB") }
         // Older projects named every MIDI clip "MIDI"; show the track's name instead, as new clips are named.
         let name = clip.isMidi && clip.name == "MIDI" ? track.name : clip.name
         drawTitle(ctx, name, tags: tags.isEmpty ? "" : "   " + tags.joined(separator: "   "), fg: fg,

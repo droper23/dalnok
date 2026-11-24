@@ -93,7 +93,7 @@ final class PianoRollView: NSView {
     func updateSubtitle() {
         shownSnap = snapBeats
         let snap = snapBeats > 1 ? "\(Int(snapBeats)) quarter notes" : "1/\(Int((4 / snapBeats).rounded())) note"
-        var parts = ["Snap \(snap) (⌃ to bypass)"]
+        var parts = ["Drag snap \(snap) (⌃ bypasses)"]
         if let c = clip {
             let sel = c.notes.filter { selection.contains(NoteKey(start: $0.start, pitch: $0.pitch)) }
             if sel.isEmpty {

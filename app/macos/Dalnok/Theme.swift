@@ -20,7 +20,7 @@ enum Theme {
             switch self {
             case .graphite: "Modern digital workstation: efficient, clear, minimal"
             case .warmAnalog: "Physical recording studio: tactile hardware and warm light"
-            case .prism: "Spatial glass canvas: light, depth and colour"
+            case .prism: "Spatial glass canvas: light, depth and color"
             case .atelier: "Codex: the studio as an engraved plate from a natural-philosophy book"
             }
         }

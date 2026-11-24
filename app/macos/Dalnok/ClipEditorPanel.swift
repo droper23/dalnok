@@ -279,13 +279,13 @@ final class AudioClipView: NSView {
         let rate = session.engine.sampleRate
         func t(_ f: Int64) -> String { String(format: "%.3f s", Double(f) / rate) }
         var parts = ["Plays \(t(c.offset))–\(t(c.offset + c.sourceSpan)) of \(t(c.mediaFrames))"]
-        if c.gainDb != 0 { parts.append(c.gainDb.isFinite ? String(format: "gain %+.1f dB", c.gainDb) : "gain −∞") }
+        if c.gainDb != 0 { parts.append(c.gainDb.isFinite ? String(format: "gain %+.1f dB", c.gainDb).replacingOccurrences(of: "-", with: "−") : "gain −∞") }
         if c.warp.count > 2 { parts.append("quantized (\(c.warp.count - 2) anchors)") }
         else if c.isStretched { parts.append(String(format: "speed %.2f×", 1 / c.rate)) }
         if c.offline { parts.append("source missing") }
         refreshTransients(c)
         parts.append(transients.count == 1 ? "1 transient" : "\(transients.count) transients")
-        parts.append(c.isStretched ? "trim stretched clips in the arrangement" : "drag the region's edges to trim")
+        parts.append(c.isStretched ? "trim stretched clips in the arrangement" : "drag the clip's edges to trim")
         onStatus?(parts.joined(separator: "  ·  "))
     }
 

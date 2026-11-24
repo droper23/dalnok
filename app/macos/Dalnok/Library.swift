@@ -64,7 +64,7 @@ final class LibraryPanel: SidePanelView, NSOutlineViewDataSource, NSOutlineViewD
         placesStack.orientation = .vertical
         placesStack.alignment = .leading
         placesStack.spacing = 1
-        for (p, title, symbol) in [(Place.all, "Plug-ins", "puzzlepiece.extension"), (.favorites, "Favourites", "star"),
+        for (p, title, symbol) in [(Place.all, "Plug-ins", "puzzlepiece.extension"), (.favorites, "Favorites", "star"),
                                    (.recent, "Recently Used", "clock"), (.projects, "Projects", "folder"), (.files, "Files", "internaldrive")] {
             let b = LibraryPlaceButton(title: title, symbol: symbol)
             b.onPress = { [weak self] in self?.choose(p) }
@@ -505,7 +505,7 @@ extension LibraryPanel: NSMenuDelegate {
         }
         guard outline.clickedRow >= 0, let p = (outline.item(atRow: outline.clickedRow) as? LibraryNode)?.plugin else { return }
         let fav = PluginLibrary.favorites.contains(p.addPath)
-        let f = NSMenuItem(title: fav ? "Remove from Favourites" : "Add to Favourites", action: #selector(toggleFavorite(_:)), keyEquivalent: "")
+        let f = NSMenuItem(title: fav ? "Remove from Favorites" : "Add to Favorites", action: #selector(toggleFavorite(_:)), keyEquivalent: "")
         f.representedObject = p.addPath; f.target = self
         menu.addItem(f)
         let insert = NSMenuItem(title: "Insert on Selected Track", action: #selector(activateRow), keyEquivalent: "")

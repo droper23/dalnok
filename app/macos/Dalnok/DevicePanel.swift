@@ -1244,7 +1244,7 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
             screen.mode = .ladder
             let peak = Double(max(ol, orr)), db = peak > 0 ? 20 * log10(peak) : -96
             screen.reduction += ((max(-48, db) + 48) / 2 - screen.reduction) * 0.35 // 0…24 on the ladder's scale
-            screen.reading = peak > 1e-5 ? String(format: "%.0f dBFS", db) : "NO SIGNAL"
+            screen.reading = peak > 1e-5 ? String(format: "%.0f dBFS", db).replacingOccurrences(of: "-", with: "−") : "NO SIGNAL"
         case .gainReduction:
             screen.mode = .ladder
             var inBuf = [Float](repeating: 0, count: 1_024), outBuf = inBuf
@@ -1254,7 +1254,7 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
             let measured = ri > 1e-4 && ro > 0 ? max(0, Double(20 * log10(ri / max(ro, 1e-9)))) : 0
             let gr = reportedReduction() ?? measured
             screen.reduction += (gr - screen.reduction) * 0.35
-            screen.reading = String(format: "-%.1f dB GR", screen.reduction)
+            screen.reading = String(format: "−%.1f dB GR", screen.reduction)
         case .response, .analyzer:
             screen.mode = .curve
             guard tick % 6 == 0 else { return }
@@ -1263,7 +1263,7 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
             if dalnok_plugin_response(h, slot, freqs, Int32(freqs.count), &db) == DALNOK_OK {
                 screen.curve = db
                 let peak = db.max(by: { abs($0) < abs($1) }) ?? 0
-                screen.reading = String(format: "%+.1f dB", peak)
+                screen.reading = String(format: "%+.1f dB", peak).replacingOccurrences(of: "-", with: "−")
             } else {
                 var inBuf = [Float](repeating: 0, count: SpectrumAnalyzer.n), outBuf = inBuf
                 guard dalnok_plugin_tap(h, slot, &inBuf, &outBuf, Int32(SpectrumAnalyzer.n)) == Int32(SpectrumAnalyzer.n) else { return }
@@ -1281,7 +1281,7 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
             guard n == 1_024 else { return }
             screen.trace = stride(from: 0, to: n, by: 8).map { outBuf[$0] }
             let peak = outBuf.map(abs).max() ?? 0
-            screen.reading = peak > 1e-5 ? String(format: "%.0f dBFS", 20 * log10(peak)) : "NO SIGNAL"
+            screen.reading = peak > 1e-5 ? String(format: "%.0f dBFS", 20 * log10(peak)).replacingOccurrences(of: "-", with: "−") : "NO SIGNAL"
         }
     }
 
@@ -2080,7 +2080,7 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
             let parent = NSMenuItem(title: title, action: nil, keyEquivalent: ""); parent.submenu = s; m.addItem(parent)
         }
         let l = pedal.look
-        sub("Colour", PedalLook.enclosures.enumerated().map { ($0.element.0, String($0.offset)) }, field: "enclosure", current: String(l.enclosure))
+        sub("Color", PedalLook.enclosures.enumerated().map { ($0.element.0, String($0.offset)) }, field: "enclosure", current: String(l.enclosure))
         sub("Finish", PedalLook.Finish.allCases.map { ($0.title, $0.rawValue) }, field: "finish", current: l.finish.rawValue)
         sub("Knobs", PedalLook.Knob.allCases.map { ($0.title, $0.rawValue) }, field: "knob", current: l.knob.rawValue)
         sub("Artwork", PedalLook.Artwork.allCases.map { ($0.title, $0.rawValue) }, field: "artwork", current: l.artwork.rawValue)

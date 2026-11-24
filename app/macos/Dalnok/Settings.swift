@@ -471,7 +471,7 @@ final class SettingsController: NSWindowController, NSWindowDelegate, NSMenuDele
         isolatePlugins.target = self; isolatePlugins.action = #selector(isolationChanged(_:))
         isolatePlugins.toolTip = "Each third-party plug-in runs in its own process, so a crash or hang can't take Dalnok down"
         paneViews[.plugins] = pane(.plugins, "Plug-ins", "Where plug-ins come from and how safely they run.", [
-            ("Library", smallButton("Open Plug-in Manager…", #selector(openPlugins)), "Scan, validate, favourite and tag your VST3, CLAP and Audio Unit plug-ins."),
+            ("Library", smallButton("Open Plug-in Manager…", #selector(openPlugins)), "Scan, validate, favorite and tag your VST3, CLAP and Audio Unit plug-ins."),
             ("Safety", isolatePlugins, "A plug-in that crashes or stops responding is switched off and reported instead of stopping Dalnok; Load restarts it. Applies to plug-ins loaded from now on. Each plug-in's editor opens in its own window beside the plug-in window."),
         ])
         // Files and Library

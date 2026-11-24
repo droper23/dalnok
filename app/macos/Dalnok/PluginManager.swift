@@ -343,7 +343,7 @@ final class PluginManagerController: NSWindowController, NSTableViewDataSource, 
     }
     func reloadSidebar() {
         var r: [SideRow] = [.header("LIBRARY")]
-        for (s, t) in [(Source.all, "All Plug-ins"), (.favorites, "Favourites"), (.recent, "Recently Used"), (.mostUsed, "Most Used")] {
+        for (s, t) in [(Source.all, "All Plug-ins"), (.favorites, "Favorites"), (.recent, "Recently Used"), (.mostUsed, "Most Used")] {
             r.append(.source(s, t, count(s)))
         }
         let cols = PluginLibrary.collections.keys.sorted()
@@ -501,7 +501,7 @@ final class PluginManagerController: NSWindowController, NSTableViewDataSource, 
             b.isBordered = false
             b.contentTintColor = fav ? Theme.hex(0xE8B64A) : Theme.textFaint
             b.tag = row
-            b.toolTip = fav ? "Remove from Favourites" : "Add to Favourites"
+            b.toolTip = fav ? "Remove from Favorites" : "Add to Favorites"
             return b
         }
         var color = Theme.text
