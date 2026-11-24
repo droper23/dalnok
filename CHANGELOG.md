@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+- Exports of the whole arrangement ring out: synth releases and effect tails play until silence (at most 10 s) instead of being cut at the last clip; a mix that already ends in silence exports at its exact length. `dalnok-cli render-project --tail <s>`.
+- Fixed: transposing a quantized audio clip lost its quantize.
+- Fixed: quantizing, dragging or nudging notes could push them outside their clip, where they went silent and disappeared; quantize strength 0 is now a valid no-op.
+- Fixed: the clip lamp stayed dark on signals with a DC offset that reached full scale.
+- Fixed: NaN or infinite samples in a float audio file reached the mix (now silent); a deeply nested REAPER project crashed the importer; moving a clip past the end of the timeline and making an empty take folder were accepted (the latter saved a project that could not be reopened).
+- Mixer strips have the I (input monitor) button; toasts follow the look (they were dark in light looks); the Mixer and Devices buttons say why nothing opens on the start page.
+- An empty arrangement says how to start (record, drop audio, or import); the welcome screen's DAW buttons are named for VoiceOver.
+- Piano roll: [ and ] select the previous and next note (rebindable), and VoiceOver reads the selection.
+- Prism Light: small accent-colored text is a deeper blue that is readable on its panes; the docked piano roll's keys are no longer navy.
+- Wording: "plug-in" and US spelling throughout, a real minus sign in dB readouts, and the piano roll's drag-snap hint no longer reads like the quantize value.
 - **Clip editor at the bottom of the window** (as in Ableton and Logic): double-click a clip and it opens below the arrangement — MIDI in a piano roll, audio in a sample view with its transients marked and draggable region edges. A Clip / Devices switch (and View ▸ Clip Editor, ⌥⌘E) flips the space between the clip and the track's plug-ins; its top edge resizes it.
 - **Quantize like Logic:** Q quantizes the selected notes, or the selected clips, to the quantize value (1/4 to 1/32, with 1/8 and 1/16 triplets) at the quantize strength, both chosen in the clip editor's bar or Clip ▸ Quantize.
 - **Audio quantize:** Q on an audio clip moves its transients onto the grid without cutting it: the clip stays whole and gets a warp map. Each attack (its first 50 ms) plays at its own speed and only the audio between hits is time-stretched (pitch kept), with a 5 ms crossfade at each anchor, 6 ms before the attack. Quantizing again starts from the recorded timing; trims, splits and saved projects keep the warp; one undo step. The sample view marks the transients and anchors. Project format 15.

@@ -1,11 +1,25 @@
 ---
-updated: 2026-11-23
+updated: 2026-11-24
 phase: Phases 1, 3 and 4 complete; 2 (power-loss test) and 5 in progress
 milestone: 0.4.0 released 2026-11-23 (four themes in six looks with their own figures, Library and Inspector, Settings in nine pages)
 ---
 # Current State
 
-## Latest (2026-11-23, late night): clip editor, Logic-style quantize, audio quantize, editing fixes
+## Latest (2026-11-24): ten-tester bug hunt
+Same branch. Ten agents (one on real input), 12 fix commits; journal 2026-11-24 has the list.
+- **Fixed:** transpose kept a quantized clip's warp; export rings out to silence (`dalnok_render_to_wav_tail`, trimmed
+  to the last audible block); notes stay inside their clip on quantize/drag/nudge; strength 0 no-op; clip lamp with DC
+  offset; NaN/Inf float samples; REAPER nesting crash; `clip.move` overflow; empty take folder; mixer I chip; themed
+  toasts; empty-state hints; piano roll `[`/`]` and VoiceOver; Prism Light accent text; copy edits.
+- **Verified:** `swift test` all pass (307), self-test matrix 12/12 PASS, perf 64 tracks 0 overloads.
+- **Open (ranked):** tempo change leaves markers/automation/cycle behind (`remapMidi`, engine.cpp); same start+pitch
+  notes collide (`NoteKey`); velocity lane hides chord stems; no 16-bit dither, LUFS or true-peak; `textFaint` < 4.5:1
+  on controls; commands clamp out-of-range values silently; `session.describe` warning on stdout; no default
+  create-track key (⌘T); hit near a trimmed audio clip's start not quantized; docked piano roll Prism Light keys unseen.
+- **Gaps vs Logic/Ableton named most:** freeze/bounce-in-place, clip loop brace, warp modes, racks and Simpler, more
+  stock effects (reverb, delay, gate), CC/pitch-bend lanes, scale quantize, step input, region inspector, LUFS meter.
+
+## Earlier (2026-11-23, late night): clip editor, Logic-style quantize, audio quantize, editing fixes
 Branch `feat/clip-editor-quantize` (API 47). See the journal for details.
 - **Docked clip editor:** double-click a clip → it opens at the bottom (piano roll / audio sample view with transients);
   Clip / Devices switch, View ▸ Clip Editor (⌥⌘E). `ClipEditorPanel.swift`.
