@@ -388,6 +388,10 @@ public:
     // the plug-in's state (the file's path); not undoable, like other plug-in state.
     bool setPluginSample(int32_t slot, int32_t zone, const std::string &path, std::string &err);
     std::string pluginSample(int32_t slot, int32_t zone) const;
+    // Slice to Drums (Ableton's Slice to New MIDI Track): cuts an audio clip at its hits (up to 16 slices) onto the pads
+    // of a Dalnok Drums on a new track below, writes a MIDI clip that plays them where they were, and mutes the
+    // clip. One undo step. Returns the new track (0 on failure).
+    DalnokTrackId sliceToDrums(DalnokClipId clip, std::string &err);
     // Bounce in Place (Logic) / Freeze-and-flatten (Ableton): renders `track`'s clips through its plug-ins (pre-fader,
     // with their tail) into a 32-bit float WAV at `path`, puts it on a new audio track right below with the same
     // fader, pan and output, and mutes the original. One undo step. Returns the new track (0 on failure).

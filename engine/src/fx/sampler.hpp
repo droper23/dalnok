@@ -22,6 +22,7 @@ namespace dalnok::fx {
 struct SampleBuffer {
     std::vector<float> l, r;
     std::string path;
+    int64_t from = 0, to = -1; // the part of the file played (frames at the engine rate; to -1 = its end)
 };
 
 class SamplerBase : public BuiltinProcessor {
@@ -33,7 +34,7 @@ public:
     bool getState(std::string &bytes) override;
     bool setState(const std::string &bytes) override;
     // Control thread: decode `path` into zone `zone` (empty path clears it). Returns false with a message.
-    bool loadSample(int zone, const std::string &path, std::string &err);
+    bool loadSample(int zone, const std::string &path, std::string &err, int64_t from = 0, int64_t to = -1);
     std::string samplePath(int zone) const;
     int zoneCount() const { return zones_; }
 

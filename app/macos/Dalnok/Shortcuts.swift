@@ -232,6 +232,7 @@ private let specs: [String: Spec] = [
     "addShortFades:": Spec(id: "clip.short_fades", category: "Clips", detail: "Add short fades to the selected clip."),
     "captureMidi:": Spec(id: "transport.capture_midi", category: "Transport", detail: "Turn what was just played on a MIDI keyboard into a clip, recording or not.", keywords: ["retrospective record", "capture"]),
     "toggleStepInput:": Spec(id: "midi.step_input", category: "MIDI", detail: "Write notes played on a MIDI keyboard at the playhead, one step at a time.", keywords: ["step record", "step entry"]),
+    "sliceToDrums:": Spec(id: "clip.slice_to_drums", category: "Clips", detail: "Cut the selected audio clip at its hits onto drum pads, with a MIDI clip that plays them.", keywords: ["slice", "chop", "beat slicing"]),
     "toggleClipLoop:": Spec(id: "clip.toggle_loop", category: "Clips", detail: "Loop the selected clips: dragging the end repeats them.", keywords: ["repeat", "region loop"]),
     "toggleClipMute:": Spec(id: "clip.toggle_mute", category: "Clips", detail: "Mute or unmute the selected clip."),
     "removeFades:": Spec(id: "clip.remove_fades", category: "Clips", detail: "Remove the selected clip's fades."),

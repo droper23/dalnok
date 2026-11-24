@@ -1389,11 +1389,15 @@
           "verified"
         ],
         [
-          "Sample slicing, loop points and multi-sample zones",
+          "Slice to Drums (an audio clip's hits onto pads, with a MIDI clip that replays them)",
+          "verified"
+        ],
+        [
+          "Sampler loop points and multi-sample zones",
           "todo"
         ]
       ],
-      "evidence": "MidiTests measure pitch (440 Hz within 0.5 Hz), onset, release and velocity scaling; a mutation check confirmed the pitch test catches a 2 Hz error. Most instruments are expected to come from plugins (ADR-0009), so the stock set stays small. SamplerTests: the Sampler plays a 440 Hz sample at 440 Hz on its root key and 880 Hz an octave up (±1/±2 Hz), at its level (±0.01) and releases to silence; Drums play each pad's sample from the note's exact frame, sample for sample (1e-5), an empty pad is silent, and a saved kit reopens identical. Self-test: dropping two sounds on Dalnok Drums fills pads 1 and 2 and note 36 plays."
+      "evidence": "MidiTests measure pitch (440 Hz within 0.5 Hz), onset, release and velocity scaling; a mutation check confirmed the pitch test catches a 2 Hz error. Most instruments are expected to come from plugins (ADR-0009), so the stock set stays small. SamplerTests: the Sampler plays a 440 Hz sample at 440 Hz on its root key and 880 Hz an octave up (±1/±2 Hz), at its level (±0.01) and releases to silence; Drums play each pad's sample from the note's exact frame, sample for sample (1e-5), an empty pad is silent, and a saved kit reopens identical. Self-test: dropping two sounds on Dalnok Drums fills pads 1 and 2 and note 36 plays. SliceToDrums: four bursts sliced at their hits onto five pads replay the clip sample for sample (1e-5) with the clip muted; one undo. Self-test: Clip ▸ Slice to Drums."
     },
     {
       "id": "midi",

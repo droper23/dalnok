@@ -1315,6 +1315,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         else { flash(on ? "Looped: drag the clip's end to repeat it" : "Loop off") }
     }
 
+    /// Clip ▸ Slice to Drums (Ableton's Slice to New MIDI Track): the clip's hits onto Dalnok Drums pads on a new track,
+    /// with a MIDI clip that plays them back where they were.
+    @objc func sliceToDrums(_ sender: Any?) {
+        guard let c = selectedClipView, !c.isMidi else { return flash("Select an audio clip to slice") }
+        var err = [CChar](repeating: 0, count: 256)
+        let t = dalnok_clip_slice_to_drums(session.engine.handle, c.id, &err, err.count)
+        session.refresh()
+        if t != 0 { headers.select(t); flash("Sliced \(c.name) onto Dalnok Drums: play the pads from 36 (C1) up") }
+        else { flash(String(cString: err)) }
+    }
+
     @objc func setFadeCurveLinear(_ sender: Any?) { setCurve(DALNOK_FADE_LINEAR) }
     @objc func setFadeCurveEqualPower(_ sender: Any?) { setCurve(DALNOK_FADE_EQUAL_POWER) }
     private func setCurve(_ curve: DalnokFadeCurve) {

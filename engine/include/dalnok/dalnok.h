@@ -1046,6 +1046,9 @@ int32_t dalnok_export_stems(DalnokEngine *engine, const char *folder, int32_t fo
  * file into a zone (the Sampler has zone 0; Drums pads 0-15 play notes 36-51). An empty path clears it. The file's
  * path is saved in the plug-in's state. sample_path copies the zone's path (empty when none); returns its length. */
 DalnokStatus dalnok_plugin_set_sample(DalnokEngine *engine, int32_t slot, int32_t zone, const char *path, char *err, size_t err_len);
+/* Slice to Drums: an audio clip cut at its hits (up to 16) onto a Dalnok Drums on a new track below, with a MIDI clip
+ * playing the slices where they were; the audio clip is muted. One undo step. Returns the new track (0 on failure). */
+DalnokTrackId dalnok_clip_slice_to_drums(DalnokEngine *engine, DalnokClipId clip, char *err, size_t err_len);
 size_t dalnok_plugin_sample_path(const DalnokEngine *engine, int32_t slot, int32_t zone, char *out, size_t out_len);
 /* Clip loop (API 47): on, the clip's current window repeats for as long as the clip is extended (drag its right
  * edge); off, it plays its window once. Not for time-stretched or quantized audio or launcher slots. One undo step. */

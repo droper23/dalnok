@@ -80,3 +80,40 @@ private func wav(_ x: [Float], _ name: String) -> String {
         _ = t
     }
 }
+
+@Suite struct SliceToDrums {
+    @Test func slicesReplayTheClipSampleForSample() throws {
+        // Four decaying noise bursts at known frames, on an audio track at 10,000.
+        var seed: UInt32 = 3
+        func noise() -> Float { seed = seed &* 1_664_525 &+ 1_013_904_223; return Float(Int32(bitPattern: seed)) / Float(Int32.max) }
+        var x = [Float](repeating: 0, count: 48_000)
+        for at in [2_000, 14_000, 26_000, 38_000] { for k in 0..<6_000 { x[at + k] = 0.6 * noise() * Float(exp(-Double(k) / 800)) } }
+        let path = tempDir().appendingPathComponent("loop.wav").path
+        do {
+            let w = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(w) }
+            let m = makeMedia([x, x]); defer { dalnok_media_release(m) }
+            DalnokEngine.dalnok_clip_add(w, dalnok_track_add(w, "S"), dalnok_pool_add(w, m, ""), 0, 0, 0)
+            _ = dalnok_render_to_wav(w, path, 0, 48_000, 32, nil, 0)
+        }
+        let e = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(e) }
+        var media: OpaquePointer?
+        _ = dalnok_media_load(path, 48_000, &media, nil, 0)
+        let t = dalnok_track_add(e, "Loop")
+        let c = DalnokEngine.dalnok_clip_add(e, t, dalnok_pool_add(e, media, path), 10_000, 0, 0)
+        dalnok_media_release(media)
+        let (before, _) = render(e, frames: 60_000)
+        var err = [CChar](repeating: 0, count: 256)
+        let drums = dalnok_clip_slice_to_drums(e, c, &err, 256)
+        #expect(drums != 0, "\(cstr(err))")
+        #expect(dalnok_track_count(e) == 2 && dalnok_track_at(e, 1) == drums && clipInfo(e, c).muted && undoName(e) == "Slice to Drums")
+        let mc = dalnok_track_clip_at(e, drums, 0)
+        var notes = [DalnokNote](repeating: DalnokNote(), count: 16)
+        let n = Int(dalnok_midi_clip_notes(e, mc, &notes, 16))
+        #expect(n == 5, "a slice from the start, then one per hit (\(n): \(notes.prefix(n).map(\.start)))")
+        #expect(notes.prefix(n).map(\.pitch) == (0..<n).map { UInt8(36 + $0) })
+        let (after, _) = render(e, frames: 60_000)
+        let worst = zip(before, after).map { abs($0 - $1) }.max()!
+        #expect(worst < 1e-5, "the slices replay the clip (worst \(worst))")
+        #expect(dalnok_undo(e) && dalnok_track_count(e) == 1 && !clipInfo(e, c).muted, "one undo")
+    }
+}

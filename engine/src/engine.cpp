@@ -1035,6 +1035,55 @@ std::string Engine::pluginSample(int32_t slot, int32_t zone) const {
     return sampler ? sampler->samplePath(zone) : "";
 }
 
+DalnokTrackId Engine::sliceToDrums(DalnokClipId id, std::string &err) {
+    const ClipState *c = model_.clip(id);
+    if (!c) return fail(err, "no such clip"), 0;
+    if (c->midi()) return fail(err, "slice an audio clip"), 0;
+    if (c->stretched() || c->looped()) return fail(err, "slice a clip at its own speed (not stretched, quantized or looped)"), 0;
+    const PoolEntry *pe = poolEntry(c->media);
+    if (!pe || !pe->handle->impl || pe->path.empty()) return fail(err, "the clip's audio file is offline"), 0;
+    const ClipState clip = *c;
+    std::vector<int64_t> hits = audioTransients(id, 0.5, err);
+    if (!err.empty()) return 0;
+    // Slice boundaries: the clip's start, then each hit at least 20 ms on; up to 16 slices.
+    std::vector<int64_t> cuts{clip.offset};
+    const int64_t minGap = static_cast<int64_t>(sampleRate_ * 0.02), end = clip.offset + clip.length;
+    for (int64_t h : hits)
+        if (h > cuts.back() + minGap && h < end - minGap && cuts.size() < 16) cuts.push_back(h);
+    cuts.push_back(end);
+    const TrackState *src = model_.track(clip.track);
+    const std::string name = (src ? src->name : std::string("Audio")) + " Slices";
+    beginGroup("Slice to Drums");
+    bool ok = true;
+    const DalnokTrackId t = addTrack(name, err);
+    int32_t at = 0;
+    for (size_t i = 0; i < model_.tracks.size(); ++i) if (model_.tracks[i].id == clip.track) at = static_cast<int32_t>(i) + 1;
+    ok = t && moveTrack(t, at, err);
+    const int32_t slot = ok ? addPlugin(t, "dalnok:drums", "", err) : 0;
+    auto *drums = slot ? dynamic_cast<fx::SamplerBase *>(pluginInstance(slot)) : nullptr;
+    ok = ok && drums;
+    std::vector<MidiNote> notes;
+    for (size_t k = 0; ok && k + 1 < cuts.size(); ++k) {
+        ok = drums->loadSample(static_cast<int>(k), pe->path, err, cuts[k], cuts[k + 1]);
+        notes.push_back({cuts[k], cuts[k + 1] - cuts[k], static_cast<uint8_t>(fx::Drums::kFirstNote + static_cast<int>(k)), 127});
+    }
+    // The MIDI clip's source runs like the audio clip's: offset `clip.offset` on the same timeline place.
+    ok = ok && addMidiClip(t, clip.start, clip.length, err, {}, "Slice to Drums") != 0;
+    if (ok) {
+        const DalnokClipId mc = model_.clips.back().id;
+        std::vector<MidiNote> rel;
+        for (const auto &n : notes) rel.push_back({n.start - clip.offset, n.length, n.pitch, n.velocity});
+        ok = setNotes(mc, std::move(rel), err) && setClipMuted(id, true, err);
+    }
+    endGroup();
+    if (!ok) {
+        undo();
+        return 0;
+    }
+    bumpRevisionAll();
+    return t;
+}
+
 bool Engine::setPluginState(int32_t id, const std::string &bytes, std::string &err) {
     PluginProcessor *p = pluginInstance(id);
     if (!p) return fail(err, "no such plug-in, or it is not loaded");

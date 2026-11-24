@@ -1127,6 +1127,13 @@ DalnokStatus dalnok_plugin_set_sample(DalnokEngine *e, int32_t slot, int32_t zon
     }
     return DALNOK_OK;
 }
+DalnokTrackId dalnok_clip_slice_to_drums(DalnokEngine *e, DalnokClipId c, char *err, size_t err_len) {
+    if (!e) return 0;
+    std::string msg;
+    const DalnokTrackId t = e->impl.sliceToDrums(c, msg);
+    if (!t) copyOut(err, err_len, msg);
+    return t;
+}
 size_t dalnok_plugin_sample_path(const DalnokEngine *e, int32_t slot, int32_t zone, char *out, size_t out_len) {
     const std::string p = e ? e->impl.pluginSample(slot, zone) : "";
     copyOut(out, out_len, p);

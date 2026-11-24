@@ -203,6 +203,19 @@ extension SelfTest {
             _ = perform("Undo"); _ = perform("Undo")
             check(s.clip(c.id)?.loopLength == 0 && s.clip(c.id)?.length == c.length, "undo takes back the drag and the loop")
         }
+        // Clip ▸ Slice to Drums: a new Drums track below with a MIDI clip of the slices; the clip muted; one undo.
+        if let c = s.tracks.flatMap(\.clips).first(where: { !$0.isMidi && $0.rate == 1 && $0.pitch == 0 && $0.warp.isEmpty && $0.loopLength == 0 && !$0.offline && $0.slot < 0 }) {
+            tl.selectClips([c.id])
+            let n = s.tracks.count
+            check(perform("Slice to Drums", exact: true) && s.tracks.count == n + 1 && s.clip(c.id)?.muted == true,
+                  "Clip ▸ Slice to Drums adds a Drums track and mutes the clip")
+            if let drums = s.tracks.first(where: { $0.name.hasSuffix(" Slices") }) {
+                check(drums.plugins.first?.name == "Dalnok Drums" && (drums.clips.first?.noteCount ?? 0) >= 1,
+                      "the new track plays the slices (\(drums.clips.first?.noteCount ?? 0) notes)")
+            }
+            _ = perform("Undo")
+            check(s.tracks.count == n && s.clip(c.id)?.muted == false, "one undo takes the slicing back")
+        }
         // Hide Track / Show All Tracks: out of view, still playing; the header title counts them.
         if let t = s.tracks.first {
             w.headers.select(t.id)

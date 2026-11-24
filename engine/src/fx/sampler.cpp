@@ -62,19 +62,23 @@ SamplerBase::SamplerBase(const char *id, const char *name, std::vector<Param> pa
     for (auto &z : live_) z.store(nullptr, std::memory_order_relaxed);
 }
 
-bool SamplerBase::loadSample(int zone, const std::string &path, std::string &err) {
+bool SamplerBase::loadSample(int zone, const std::string &path, std::string &err, int64_t from, int64_t to) {
     if (zone < 0 || zone >= zones_) { err = "no such pad"; return false; }
     std::shared_ptr<SampleBuffer> buf;
     if (!path.empty()) {
         auto media = Media::loadFile(path, sampleRate_, err);
         if (!media) return false;
-        const int64_t n = std::min<int64_t>(media->frames(), static_cast<int64_t>(sampleRate_) * kMaxSampleSeconds);
+        from = std::clamp<int64_t>(from, 0, media->frames());
+        const int64_t end = to < 0 ? media->frames() : std::clamp<int64_t>(to, from, media->frames());
+        const int64_t n = std::min<int64_t>(end - from, static_cast<int64_t>(sampleRate_) * kMaxSampleSeconds);
         if (n <= 0) { err = "the file has no audio"; return false; }
         buf = std::make_shared<SampleBuffer>();
         buf->l.resize(static_cast<size_t>(n));
         buf->r.resize(static_cast<size_t>(n));
-        media->read(0, n, buf->l.data(), buf->r.data());
+        media->read(from, n, buf->l.data(), buf->r.data());
         buf->path = path;
+        buf->from = from;
+        buf->to = to < 0 ? -1 : from + n;
     }
     // The old buffer is freed only after the audio thread has stopped every voice using it (two blocks on).
     const uint64_t now = blocks_.load(std::memory_order_acquire);
@@ -95,7 +99,18 @@ bool SamplerBase::getState(std::string &bytes) {
     std::string err;
     if (!json::parse(bytes, doc, err)) return false;
     json::Value samples = json::Value::makeArray();
-    for (int z = 0; z < zones_; ++z) samples.push(json::Value(samplePath(z)));
+    for (int z = 0; z < zones_; ++z) {
+        const auto &b = owned_[static_cast<size_t>(z)];
+        if (b && (b->from > 0 || b->to >= 0)) { // a slice: the file and its range
+            json::Value v = json::Value::makeObject();
+            v.set("path", b->path);
+            v.set("from", b->from);
+            v.set("to", b->to);
+            samples.push(std::move(v));
+        } else {
+            samples.push(json::Value(samplePath(z)));
+        }
+    }
     doc.set("samples", std::move(samples));
     bytes = json::serialize(doc);
     return true;
@@ -109,10 +124,14 @@ bool SamplerBase::setState(const std::string &bytes) {
     std::string missing;
     if (const json::Value *s = doc.get("samples"); s && s->isArray())
         for (size_t z = 0; z < s->array.size() && static_cast<int>(z) < zones_; ++z) {
-            const std::string path = s->array[z].isString() ? s->array[z].string : "";
-            if (path == samplePath(static_cast<int>(z))) continue;
+            const json::Value &v = s->array[z];
+            const std::string path = v.isString() ? v.string : v.isObject() ? v.getString("path", "") : "";
+            const int64_t from = v.isObject() ? static_cast<int64_t>(v.getNumber("from", 0)) : 0;
+            const int64_t to = v.isObject() ? static_cast<int64_t>(v.getNumber("to", -1)) : -1;
+            const auto &have = owned_[z];
+            if (path == samplePath(static_cast<int>(z)) && (!have || (have->from == from && have->to == to))) continue;
             std::string e;
-            if (!loadSample(static_cast<int>(z), path, e) && !path.empty()) missing += (missing.empty() ? "" : ", ") + path;
+            if (!loadSample(static_cast<int>(z), path, e, from, to) && !path.empty()) missing += (missing.empty() ? "" : ", ") + path;
         }
     // A missing sample leaves its pad silent; the rest of the state still applies.
     (void)missing;
