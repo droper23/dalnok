@@ -17,20 +17,16 @@ final class ToastView: NSView {
         super.init(frame: frame)
         wantsLayer = true
         layer?.cornerRadius = 10
-        layer?.backgroundColor = Theme.hex(0x101114, 0.92).cgColor
-        layer?.borderColor = Theme.ink(0.10).cgColor
+        restyle()
         layer?.borderWidth = 1
         layer?.shadowColor = NSColor.black.cgColor
         layer?.shadowOpacity = 0.45
         layer?.shadowRadius = 14
         layer?.shadowOffset = CGSize(width: 0, height: -4)
         layer?.masksToBounds = false
-        icon.contentTintColor = Theme.accent
         icon.symbolConfiguration = .init(pointSize: 13, weight: .semibold)
         label.font = Theme.ui(13, .semibold)
-        label.textColor = Theme.text
         shortcut.font = Theme.ui(11, .medium)
-        shortcut.textColor = Theme.textFaint
         let row = NSStackView(views: [icon, label, shortcut])
         row.spacing = 8
         row.edgeInsets = NSEdgeInsets(top: 8, left: 14, bottom: 8, right: 16)
@@ -47,9 +43,19 @@ final class ToastView: NSView {
     required init?(coder: NSCoder) { fatalError() }
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
+    /// The toast follows the look (it was a fixed dark pill, so light looks showed dark text on it); re-applied on every show.
+    private func restyle() {
+        layer?.backgroundColor = Theme.panelRaised.withAlphaComponent(0.96).cgColor
+        layer?.borderColor = Theme.ink(0.18).cgColor
+        icon.contentTintColor = Theme.accent
+        label.textColor = Theme.text
+        shortcut.textColor = Theme.textFaint
+    }
+
     /// Shows `message` for `seconds`. `symbol` is an SF Symbol; `keys` a shortcut hint shown dimmed after the text.
     func show(_ message: String, symbol: String, keys: String = "", seconds: Double = 1.4) {
         text = message
+        restyle()
         label.stringValue = message
         shortcut.stringValue = keys
         shortcut.isHidden = keys.isEmpty

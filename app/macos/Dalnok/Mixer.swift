@@ -17,6 +17,7 @@ final class MixerPanel: NSView {
     var onSelect: ((DalnokTrackId) -> Void)?
     var onOpenPlugin: ((DalnokTrackId, Int32) -> Void)?
     var onAddPlugin: ((DalnokTrackId) -> Void)?
+    var onInputMonitor: ((DalnokTrackId) -> Void)?
 
     init(session: Session) {
         self.session = session
@@ -161,6 +162,7 @@ final class MixerPanel: NSView {
             strips = tracks.map { ChannelStrip(session: session, trackId: $0.id) }
             for s in strips {
                 s.onSelect = { [weak self] id in self?.onSelect?(id) }
+                s.onInputMonitor = { [weak self] id in self?.onInputMonitor?(id) }
                 s.onOpenPlugin = { [weak self] t, slot in self?.onOpenPlugin?(t, slot) }
                 s.onAddPlugin = { [weak self] t in self?.onAddPlugin?(t) }
                 stack.addArrangedSubview(s)
@@ -191,7 +193,7 @@ final class MixerPanel: NSView {
         var h = Hasher()
         h.combine(shared)
         h.combine(t.id); h.combine(t.name); h.combine(t.color.description); h.combine(t.customColor)
-        h.combine(t.isBus); h.combine(t.isInstrument); h.combine(t.output); h.combine(t.armed); h.combine(t.inputChannel)
+        h.combine(t.isBus); h.combine(t.isInstrument); h.combine(t.output); h.combine(t.armed); h.combine(t.inputMonitor); h.combine(t.inputChannel)
         h.combine(t.stack); h.combine(t.isStack); h.combine(t.collapsed)
         for p in t.plugins {
             h.combine(p.id); h.combine(p.name); h.combine(p.vendor); h.combine(p.loaded); h.combine(p.error)
@@ -231,6 +233,7 @@ final class ChannelStrip: NSView {
     let mute = ToggleChip("M", on: Theme.muteOn, onText: Theme.onState(Theme.muteOn), help: "Mute")
     let solo = ToggleChip("S", on: Theme.soloOn, onText: Theme.onState(Theme.soloOn), help: "Solo")
     let arm = ToggleChip("R", on: Theme.recordOn, onText: Theme.onState(Theme.recordOn), help: "Record Enable")
+    let monitor = ToggleChip("I", on: Theme.monitorOn, onText: Theme.onState(Theme.monitorOn), help: "Input Monitoring: hear this track's input now, recording or not (⌃I)")
     let name = NSTextField(labelWithString: "")
     private let scribble = ScribbleStrip()
     private var color = NSColor.gray
@@ -240,6 +243,7 @@ final class ChannelStrip: NSView {
     let insertsStack = NSStackView()
     var onOpenPlugin: ((DalnokTrackId, Int32) -> Void)?
     var onAddPlugin: ((DalnokTrackId) -> Void)?
+    var onInputMonitor: ((DalnokTrackId) -> Void)?
     private var shownInserts: [String] = []
     private var shownSendTargets: [String] = [] // the "+ Send" menu, rebuilt only when its buses change
 
@@ -272,6 +276,7 @@ final class ChannelStrip: NSView {
         mute.onToggle = { [weak self] on in guard let self else { return }; self.session.setMute(self.trackId, on) }
         solo.onToggle = { [weak self] on in guard let self else { return }; self.session.setSolo(self.trackId, on) }
         arm.onToggle = { [weak self] on in guard let self else { return }; self.session.setArmed(self.trackId, on) }
+        monitor.onToggle = { [weak self] _ in guard let self else { return }; self.onInputMonitor?(self.trackId) }
         meter.vertical = true
         dbLabel.font = Theme.mono(10)
         dbLabel.textColor = Theme.textDim
@@ -309,8 +314,8 @@ final class ChannelStrip: NSView {
         ])
         let faderRow = NSStackView(views: [fader, meter])
         faderRow.spacing = 4
-        let chips = NSStackView(views: [arm, mute, solo])
-        chips.spacing = 3
+        let chips = NSStackView(views: [arm, monitor, mute, solo])
+        chips.spacing = 1 // four chips (R I M S) must fit the 94 pt strip
         insertsStack.orientation = .vertical
         insertsStack.spacing = 1
         for v in [output, routingScroll, panLabel, pan, faderRow, dbLabel, chips, scribble, name] as [NSView] {
@@ -431,6 +436,9 @@ final class ChannelStrip: NSView {
         solo.isOn = t.solo
         arm.isOn = t.armed
         arm.isHidden = t.isBus
+        monitor.isOn = t.inputMonitor
+        monitor.isHidden = t.isBus || t.isInstrument
+        monitor.setAccessibilityLabel("Input monitoring \(t.name)")
         // Insert slots: each plug-in (click to open its window), then + to add one.
         let ids = t.plugins.map { "\($0.id):\($0.loaded):\($0.error)" } // rebuild when a plug-in finishes loading
         if ids != shownInserts || insertsStack.arrangedSubviews.isEmpty {

@@ -477,6 +477,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         transport.meterPopup.action = #selector(meterChosen(_:))
         headers.onInputMenu = { [weak self] row in self?.showInputMenu(for: row) }
         headers.onInputMonitorColumn = { [weak self] id in self?.toggleTrackInputMonitor(id) }
+        mixer.onInputMonitor = { [weak self] id in self?.toggleTrackInputMonitor(id) }
         headers.onToggleStack = { [weak self] id, closed in self?.session.setStackCollapsed(id, closed) }
         transport.onRewind = { [weak self] in self?.goToStart() }
         transport.onImport = { [weak self] in self?.importAudio() }
@@ -1704,6 +1705,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         Self.showDevicePanel.toggle()
         syncViewButtons()
         let show = Self.showDevicePanel
+        if session.tracks.isEmpty { flash(show ? "Devices open with the first track" : "Devices closed") }
         if show { applyBottomMode() } else { bottomTabs.isHidden = true }
         if Motion.reduced {
             devicePanelHeight.constant = show ? bottomHeight : 0
@@ -2211,7 +2213,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     @objc func toggleMixer(_ sender: Any?) {
         Self.showMixer.toggle()
         syncViewButtons()
-        guard !sidePanelsSuppressed else { return } // remembered; it opens with the first track
+        guard !sidePanelsSuppressed else { // remembered; it opens with the first track
+            flash(Self.showMixer ? "Mixer opens with the first track" : "Mixer closed")
+            return
+        }
         let show = Self.showMixer
         if show { mixer.isHidden = false; mixer.rebuild(); mixer.select(selectedTrack) }
         let panel = mixer
