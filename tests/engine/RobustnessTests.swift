@@ -81,3 +81,30 @@ import Testing
         #expect(abs(l[63] - 0.25) < 0.05, "ordinary samples survive")
     }
 }
+
+@Suite struct ExportDither {
+    @Test func sixteenBitExportDithersAndKeepsSilenceSilent() throws {
+        // A 1 kHz sine of 0.4 LSB at 16 bits: rounding alone writes zeros (the signal is gone); with TPDF dither it
+        // survives as noise whose correlation with the sine gives back about 0.4 LSB.
+        let lsb: Float = 1 / 32768, n = 48_000
+        let sine = (0..<n).map { i -> Float in i < 24_000 ? 0.4 * lsb * sin(2 * .pi * 1_000 * Float(i) / 48_000) : 0 }
+        let e = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(e) }
+        let m = makeMedia([sine]); defer { dalnok_media_release(m) }
+        _ = dalnok_clip_add(e, dalnok_track_add(e, "S"), m, 0, 0, 0)
+        let path = tempDir().appendingPathComponent("d16.wav").path
+        var err = [CChar](repeating: 0, count: 256)
+        #expect(dalnok_render_to_wav(e, path, 0, Int64(n), 16, &err, 256) == DALNOK_OK, "\(cstr(err))")
+        var media: OpaquePointer?
+        #expect(dalnok_media_load(path, 48_000, &media, &err, 256) == DALNOK_OK)
+        let out = try #require(media); defer { dalnok_media_release(out) }
+        let p = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(p) }
+        _ = dalnok_clip_add(p, dalnok_track_add(p, "R"), out, 0, 0, 0)
+        let (l, _) = render(p, frames: n)
+        let ref = sine.map { $0 / (0.4 * lsb) } // unit sine
+        var dot: Float = 0, refE: Float = 0
+        for i in 0..<24_000 { dot += l[i] * ref[i]; refE += ref[i] * ref[i] }
+        let amp = dot / refE / lsb
+        #expect(amp > 0.3 && amp < 0.5, "recovered \(amp) LSB of 0.4")
+        #expect(l[24_000..<n].allSatisfy { $0 == 0 }, "digital silence stays silent")
+    }
+}

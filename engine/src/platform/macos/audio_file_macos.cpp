@@ -7,6 +7,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <vector>
 
 namespace dalnok {
 
@@ -153,7 +155,7 @@ namespace {
 
 class ExtWavWriter final : public WavWriter {
 public:
-    explicit ExtWavWriter(ExtAudioFileRef f) : file_(f) {}
+    ExtWavWriter(ExtAudioFileRef f, int32_t bits) : file_(f), dither_(bits == 16) {}
     ~ExtWavWriter() override {
         std::string ignored;
         close(ignored);
@@ -162,10 +164,22 @@ public:
     bool write(const float *left, const float *right, int64_t frames, std::string &err) override {
         while (frames > 0) {
             const auto n = static_cast<UInt32>(std::min<int64_t>(frames, 65536));
+            const float *l = left, *r = right;
+            if (dither_) { // 16-bit: TPDF dither of one LSB, so quiet passages and fades decay into noise, not distortion
+                dl_.assign(left, left + n);
+                dr_.assign(right, right + n);
+                for (UInt32 i = 0; i < n; ++i) {
+                    if (dl_[i] == 0 && dr_[i] == 0) continue; // digital silence stays silent (null tests stay exact)
+                    dl_[i] += tpdf();
+                    dr_[i] += tpdf();
+                }
+                l = dl_.data();
+                r = dr_.data();
+            }
             struct {
                 UInt32 count;
                 AudioBuffer bufs[2];
-            } abl{2, {{1, n * 4, const_cast<float *>(left)}, {1, n * 4, const_cast<float *>(right)}}};
+            } abl{2, {{1, n * 4, const_cast<float *>(l)}, {1, n * 4, const_cast<float *>(r)}}};
             OSStatus s = ExtAudioFileWrite(file_, n, reinterpret_cast<AudioBufferList *>(&abl));
             if (s != noErr) {
                 err = statusErr("write audio", s);
@@ -190,7 +204,18 @@ public:
     }
 
 private:
+    // Triangular noise of +-1 LSB at 16 bits: the sum of two uniform values (xorshift, fixed seed: renders repeat).
+    float tpdf() {
+        auto next = [this] {
+            seed_ ^= seed_ << 13; seed_ ^= seed_ >> 17; seed_ ^= seed_ << 5;
+            return static_cast<float>(seed_) * (1.0f / 4294967296.0f);
+        };
+        return (next() - next()) * (1.0f / 32768.0f);
+    }
     ExtAudioFileRef file_;
+    bool dither_;
+    uint32_t seed_ = 0x9E3779B9u;
+    std::vector<float> dl_, dr_;
 };
 
 } // namespace
@@ -230,7 +255,7 @@ WavWriter *openWavWriter(const std::string &path, double sampleRate, int32_t bit
         err = statusErr("set client format", s);
         return nullptr;
     }
-    return new ExtWavWriter(file);
+    return new ExtWavWriter(file, bits);
 }
 
 } // namespace dalnok
