@@ -1,0 +1,54 @@
+{
+ "format": "dalnok-project",
+ "version": 16,
+ "sampleRate": 48000,
+ "tempo": 120,
+ "meter": [
+  4,
+  4
+ ],
+ "media": [
+  {
+   "id": 1,
+   "path": "/nonexistent/dalnok-fixture/source1.wav",
+   "relativePath": "Audio Files/source1.wav",
+   "frames": 48000,
+   "channels": 1
+  }
+ ],
+ "tracks": [
+  {
+   "id": 1,
+   "name": "Audio",
+   "color": 0,
+   "gainDb": 0,
+   "pan": 0,
+   "mute": false,
+   "height": 140,
+   "plugins": [
+    {
+     "id": 1,
+     "format": "dalnok",
+     "path": "channel-eq",
+     "class": "",
+     "name": "Dalnok Channel EQ",
+     "state": "",
+     "folded": true
+    }
+   ],
+   "clips": [
+    {
+     "id": 1,
+     "media": 1,
+     "start": 0,
+     "offset": 0,
+     "length": 14400,
+     "name": "Clip 1",
+     "loopLength": 4800,
+     "loopPhase": 1200
+    }
+   ],
+   "phaseInvert": true
+  }
+ ]
+}
