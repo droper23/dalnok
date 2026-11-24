@@ -137,6 +137,7 @@ struct DelayLine {
 struct RenderSend {
     int32_t slot = -1;
     float gain = 1.0f; // linear
+    std::vector<std::pair<int64_t, float>> autoGain; // automated level (fader taper, like volume); empty: `gain`
     bool pre = false;  // before the fader and pan
     DelayLine *delay = nullptr; // delay compensation on this connection (null = none)
 };
@@ -180,7 +181,7 @@ struct RenderTrack {
     int32_t latency = 0;           // frames added by this track's plug-ins
     std::vector<TrackRuntime *> soloLinks; // tracks upstream and downstream in the routing (solo follows them)
     // Automation (empty = none): volume as fader taper (amplitude^(1/4)), pan -1..1, linear between points.
-    std::vector<std::pair<int64_t, float>> volumeAuto, panAuto;
+    std::vector<std::pair<int64_t, float>> volumeAuto, panAuto, muteAuto;
     // Plug-in parameter automation, applied once per block (block-rate) before the plug-in runs.
     struct PluginLane { PluginProcessor *plugin = nullptr; uint32_t param = 0; double lo = 0, hi = 1; std::vector<std::pair<int64_t, float>> pts; };
     std::vector<PluginLane> pluginAuto;

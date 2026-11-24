@@ -1221,18 +1221,30 @@ bool Engine::setPluginAutomation(DalnokTrackId track, int32_t slot, uint32_t par
 }
 
 bool Engine::setAutomation(DalnokTrackId track, int32_t target, std::vector<AutoPoint> points, std::string &err) {
-    if (target != kAutoVolume && target != kAutoPan) return fail(err, "automation target must be volume (0) or pan (1)");
+    const bool send = target >= kAutoSend && target < kAutoSend + 64;
+    if (target != kAutoVolume && target != kAutoPan && target != kAutoMute && !send)
+        return fail(err, "automation target must be volume (0), pan (1), mute (2) or a send (16 + its index)");
     if (points.size() > 100000) return fail(err, "too many automation points");
     for (const auto &p : points) {
         if (p.frame < 0 || !std::isfinite(p.value)) return fail(err, "automation points need frame >= 0 and a finite value");
         if (target == kAutoPan && (p.value < -1 || p.value > 1)) return fail(err, "pan automation is -1 to 1");
-        if (target == kAutoVolume && p.value > 6) return fail(err, "volume automation is at most +6 dB");
+        if ((target == kAutoVolume || send) && p.value > 6) return fail(err, "volume and send automation are at most +6 dB");
+        if (target == kAutoMute && p.value != 0 && p.value != 1) return fail(err, "mute automation is 0 (on) or 1 (muted)");
     }
     std::stable_sort(points.begin(), points.end(), [](const AutoPoint &a, const AutoPoint &b) { return a.frame < b.frame; });
-    return edit(target == kAutoVolume ? "Volume Automation" : "Pan Automation", true, [&](Model &m) {
+    const char *name = target == kAutoVolume ? "Volume Automation" : target == kAutoPan ? "Pan Automation"
+                     : target == kAutoMute ? "Mute Automation" : "Send Automation";
+    return edit(name, true, [&](Model &m) {
         TrackState *t = m.track(track);
         if (!t) return fail(err, "no such track");
-        (target == kAutoVolume ? t->volumeAuto : t->panAuto) = std::move(points);
+        if (send) {
+            const auto k = static_cast<size_t>(target - kAutoSend);
+            if (k >= t->sends.size()) return fail(err, "no such send");
+            t->sends[k].automation.clear();
+            for (const auto &p : points) t->sends[k].automation.push_back({p.frame, p.value});
+            return true;
+        }
+        (target == kAutoVolume ? t->volumeAuto : target == kAutoPan ? t->panAuto : t->muteAuto) = std::move(points);
         return true;
     });
 }

@@ -582,6 +582,16 @@ func buildMenu(target: MainWindowController) -> NSMenu {
         item("Show Automation", #selector(W.toggleAutomation(_:)), "a", []),
         item("Automate Volume", #selector(W.automateVolume(_:)), ""),
         item("Automate Pan", #selector(W.automatePan(_:)), ""),
+        item("Automate Mute", #selector(W.automateMute(_:)), ""),
+        { () -> NSMenuItem in
+            let it = NSMenuItem(title: "Automate Send", action: nil, keyEquivalent: "")
+            it.submenu = NSMenu(title: "Automate Send")
+            for k in 0..<4 {
+                let s = NSMenuItem(title: "Send \(k + 1)", action: #selector(W.automateSend(_:)), keyEquivalent: "")
+                s.tag = k; s.target = target; it.submenu?.addItem(s)
+            }
+            return it
+        }(),
         .separator(),
         item("Composition Overview", #selector(W.toggleCompositionOverview(_:)), "o", [.command, .option]),
         themeMenu,

@@ -139,7 +139,7 @@ final class TimelineView: NSView {
     private var scrubbing = false
     // MARK: Automation view (A): curves over each lane; clips are not editable while it's on.
     var showAutomation = false { didSet { needsDisplay = true } }
-    static var automationTarget: Int32 = 0 // 0 volume, 1 pan
+    static var automationTarget: Int32 = 0 // 0 volume, 1 pan, 2 mute, 16 + k send k
     private struct AutoDrag { let track: DalnokTrackId; var points: [DalnokAutoPoint]; var index: Int; let lane: AutoLane }
     private var autoDrag: AutoDrag?
     private let autoMargin: CGFloat = 8
@@ -147,16 +147,28 @@ final class TimelineView: NSView {
     /// What a track's automation lane shows: the global volume/pan choice, or a plug-in parameter picked
     /// for that track (plug-in window ▸ Automate).
     enum AutoLane: Equatable {
-        case volume, pan
+        case volume, pan, mute
+        case send(Int)
         case plugin(slot: Int32, param: UInt32, name: String)
     }
     var pluginLanes: [DalnokTrackId: AutoLane] = [:] { didSet { needsDisplay = true } }
-    func lane(for t: TrackView) -> AutoLane { pluginLanes[t.id] ?? (Self.automationTarget == 1 ? .pan : .volume) }
-    private var globalLane: AutoLane { Self.automationTarget == 1 ? .pan : .volume }
+    /// The lane the View menu chose, for a track (a send lane on a track without that send shows its volume).
+    static func targetLane(_ t: TrackView?) -> AutoLane {
+        switch automationTarget {
+        case 1: return .pan
+        case 2: return .mute
+        case let k where k >= 16: return (t == nil || Int(k - 16) < (t?.sends.count ?? 0)) ? .send(Int(k - 16)) : .volume
+        default: return .volume
+        }
+    }
+    func lane(for t: TrackView) -> AutoLane { pluginLanes[t.id] ?? Self.targetLane(t) }
+    private var globalLane: AutoLane { Self.targetLane(nil) }
     func lanePoints(_ t: TrackView, _ lane: AutoLane) -> [DalnokAutoPoint] {
         switch lane {
         case .volume: return t.volumeAuto
         case .pan: return t.panAuto
+        case .mute: return session.automationPoints(t.id, 2)
+        case let .send(k): return session.automationPoints(t.id, Int32(16 + k))
         case let .plugin(slot, param, _): return session.pluginAutomation(t.id, slot, param)
         }
     }
@@ -164,6 +176,8 @@ final class TimelineView: NSView {
         switch lane {
         case .volume: session.setAutomation(id, 0, pts)
         case .pan: session.setAutomation(id, 1, pts)
+        case .mute: session.setAutomation(id, 2, pts.map { DalnokAutoPoint(frame: $0.frame, value: $0.value >= 0.5 ? 1 : 0) })
+        case let .send(k): session.setAutomation(id, Int32(16 + k), pts)
         case let .plugin(slot, param, _): session.setPluginAutomation(id, slot, param, pts)
         }
     }
@@ -171,6 +185,8 @@ final class TimelineView: NSView {
         switch lane {
         case .volume: return t.gainDb
         case .pan: return t.pan
+        case .mute: return t.muted ? 1 : 0
+        case let .send(k): return k < t.sends.count ? t.sends[k].db : 0
         case let .plugin(slot, param, _): return session.pluginParameterValue(slot, param) ?? 0.5
         }
     }
@@ -178,11 +194,16 @@ final class TimelineView: NSView {
         switch lane {
         case .volume: return FaderControl.format(v)
         case .pan: return PanKnob.format(Double(v))
+        case .mute: return v >= 0.5 ? "Muted" : "On"
+        case let .send(k): return "Send \(k + 1) \(FaderControl.format(v))"
         case let .plugin(_, _, name): return "\(name) \(Int((v * 100).rounded()))%"
         }
     }
     private func undoName(_ lane: AutoLane) -> String {
-        switch lane { case .volume: "Volume Automation"; case .pan: "Pan Automation"; case .plugin: "Plug-in Automation" }
+        switch lane {
+        case .volume: "Volume Automation"; case .pan: "Pan Automation"; case .mute: "Mute Automation"
+        case .send: "Send Automation"; case .plugin: "Plug-in Automation"
+        }
     }
 
     /// Lane y for an automation value (volume: fader taper, top = +6 dB; pan: top = left; plug-in: top = 100%).
@@ -190,8 +211,9 @@ final class TimelineView: NSView {
         let l = lane ?? globalLane
         let f: Double
         switch l {
-        case .volume: f = 1 - FaderControl.position(for: value)
+        case .volume, .send: f = 1 - FaderControl.position(for: value)
         case .pan: f = Double(value + 1) / 2
+        case .mute: f = value >= 0.5 ? 1 : 0 // on at the top, muted at the bottom
         case .plugin: f = 1 - Double(value)
         }
         let top = laneY + autoMargin, h = laneHeight(atLaneY: laneY) - 2 * autoMargin
@@ -201,8 +223,9 @@ final class TimelineView: NSView {
         let top = laneY + autoMargin, h = laneHeight(atLaneY: laneY) - 2 * autoMargin
         let f = Double(min(max((y - top) / h, 0), 1))
         switch lane ?? globalLane {
-        case .volume: return max(-200, FaderControl.db(for: 1 - f))
+        case .volume, .send: return max(-200, FaderControl.db(for: 1 - f))
         case .pan: return Float(f * 2 - 1)
+        case .mute: return f >= 0.5 ? 1 : 0
         case .plugin: return Float(1 - f)
         }
     }
@@ -243,7 +266,7 @@ final class TimelineView: NSView {
                 ctx.setStrokeColor(color.cgColor); ctx.setLineWidth(1.5); ctx.strokeEllipse(in: r)
             }
         }
-        let name = Self.automationTarget == 1 ? "PAN AUTOMATION" : "VOLUME AUTOMATION"
+        let name = undoName(globalLane).uppercased().replacingOccurrences(of: "SEND AUTOMATION", with: "SEND \(Self.automationTarget - 15) AUTOMATION")
         (name as NSString).draw(at: CGPoint(x: bounds.width - 140, y: Theme.rulerHeight + 4),
                                 withAttributes: [.font: Theme.mono(9, .semibold), .foregroundColor: Theme.accentText])
     }

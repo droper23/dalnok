@@ -505,7 +505,9 @@ bool dalnok_plugin_folded(const DalnokEngine *engine, DalnokTrackId track, int32
  * Breakpoints in timeline frames, linear between points and held before the first and after the last.
  * Volume values are dB (<= +6; <= -95 is silence) and follow the fader's taper between points; pan is -1..1.
  * While a lane has points it overrides the fader or knob; mute and solo still apply. */
-typedef enum { DALNOK_AUTO_VOLUME = 0, DALNOK_AUTO_PAN = 1 } DalnokAutoTarget;
+/* Mute automation (API 47): values 0 or 1, stepped. Send k's level in dB: target DALNOK_AUTO_SEND + k (sampled each
+ * block). Saved from format 19. */
+typedef enum { DALNOK_AUTO_VOLUME = 0, DALNOK_AUTO_PAN = 1, DALNOK_AUTO_MUTE = 2, DALNOK_AUTO_SEND = 16 } DalnokAutoTarget;
 typedef struct { int64_t frame; float value; } DalnokAutoPoint;
 /* Replaces the lane (one undo step); count 0 removes it. */
 DalnokStatus dalnok_track_set_automation(DalnokEngine *engine, DalnokTrackId track, int32_t target,

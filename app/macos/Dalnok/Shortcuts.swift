@@ -208,6 +208,7 @@ private let specs: [String: Spec] = [
     "automationLatch:": Spec(id: "automation.mode_latch", category: "Automation", detail: "Record from the first touch until playback stops."),
     "toggleAutomation:": Spec(id: "automation.show", category: "Automation", detail: "Show or hide automation lanes.", keywords: ["lanes"]),
     "automateVolume:": Spec(id: "automation.volume", category: "Automation", detail: "Show the selected track's volume lane."),
+    "automateMute:": Spec(id: "automation.mute", category: "Automation", detail: "Show the tracks' mute lanes (on or muted, stepped)."),
     "automatePan:": Spec(id: "automation.pan", category: "Automation", detail: "Show the selected track's pan lane."),
     // Editing
     "undo:": Spec(id: "edit.undo", category: "Editing", detail: "Undo the last change."),

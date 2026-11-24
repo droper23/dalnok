@@ -31,7 +31,7 @@ namespace fs = std::filesystem;
 namespace dalnok {
 
 namespace {
-constexpr int kFormatVersion = 18;
+constexpr int kFormatVersion = 19;
 constexpr int kConstantTempoVersion = 3; // written when there are no tempo or meter changes, so older builds still open it
 
 // Format history (A-16), one step per version. Loading runs every step from the file's version up to
@@ -62,6 +62,7 @@ constexpr Migration kMigrations[] = {
     {16, "clip loops", nullptr},
     {17, "MIDI controllers and pitch bend in clips", nullptr},
     {18, "audio that follows tempo", nullptr},
+    {19, "mute and send automation", nullptr},
 };
 constexpr bool migrationsCover() {
     int v = 1;
@@ -240,7 +241,7 @@ json::Value Engine::describe() const {
             tv.set("pluginAutomation", std::move(lanes));
         }
         for (const auto &[key, pts] : {std::pair<const char *, const std::vector<AutoPoint> *>{"volumeAutomation", &t.volumeAuto},
-                                       {"panAutomation", &t.panAuto}}) {
+                                       {"panAutomation", &t.panAuto}, {"muteAutomation", &t.muteAuto}}) {
             if (pts->empty()) continue;
             json::Value list = json::Value::makeArray();
             for (const auto &p : *pts) {
@@ -267,6 +268,22 @@ json::Value Engine::describe() const {
                 sends.push(std::move(v));
             }
             tv.set("sends", std::move(sends));
+            json::Value sendAuto = json::Value::makeArray(); // [[send index, [[frame, dB], ...]], ...]
+            for (size_t k = 0; k < t.sends.size(); ++k) {
+                if (t.sends[k].automation.empty()) continue;
+                json::Value pts = json::Value::makeArray();
+                for (const auto &[f, v] : t.sends[k].automation) {
+                    json::Value pv = json::Value::makeArray();
+                    pv.push(static_cast<double>(f));
+                    pv.push(static_cast<double>(v));
+                    pts.push(std::move(pv));
+                }
+                json::Value entry = json::Value::makeArray();
+                entry.push(static_cast<double>(k));
+                entry.push(std::move(pts));
+                sendAuto.push(std::move(entry));
+            }
+            if (!sendAuto.array.empty()) tv.set("sendAutomation", std::move(sendAuto));
         }
         if (t.armed) tv.set("armed", true);
         if (t.inputChannel != 0) tv.set("input", t.inputChannel);
@@ -512,8 +529,11 @@ bool Engine::saveProject(const std::string &path, std::string &err, bool copyMed
     const bool loops = std::any_of(model_.clips.begin(), model_.clips.end(), [](const ClipState &c) { return c.looped(); });
     const bool controllers = std::any_of(model_.clips.begin(), model_.clips.end(),
                                          [](const ClipState &c) { return c.controllers && !c.controllers->empty(); });
+    const bool moreAuto = std::any_of(model_.tracks.begin(), model_.tracks.end(), [](const TrackState &t) {
+        return !t.muteAuto.empty() || std::any_of(t.sends.begin(), t.sends.end(), [](const Send &s) { return !s.automation.empty(); });
+    });
     const bool follow = std::any_of(model_.clips.begin(), model_.clips.end(), [](const ClipState &c) { return c.followsTempo; });
-    doc.set("version", follow ? 18 : controllers ? 17 : loops ? 16 : warp ? 15 : phase ? 14 : builtin ? 13 : clipMute ? 12 : !model_.markers.empty() ? 11 : bypass ? 10 : launcher || sidechain ? 9 : pluginAutomation ? 8 : !model_.folders.empty() || masterGain ? 7 : automation ? 6 : routing ? 5 : model_.tempo.size() > 1 || model_.meters.size() > 1 ? 4 : kConstantTempoVersion);
+    doc.set("version", moreAuto ? 19 : follow ? 18 : controllers ? 17 : loops ? 16 : warp ? 15 : phase ? 14 : builtin ? 13 : clipMute ? 12 : !model_.markers.empty() ? 11 : bypass ? 10 : launcher || sidechain ? 9 : pluginAutomation ? 8 : !model_.folders.empty() || masterGain ? 7 : automation ? 6 : routing ? 5 : model_.tempo.size() > 1 || model_.meters.size() > 1 ? 4 : kConstantTempoVersion);
     json::Value body = describe();
     for (auto &[key, value] : body.object) {
         if (key != "media") continue;
@@ -638,7 +658,7 @@ std::unique_ptr<Engine::PreparedProject> Engine::readDocument(const json::Value 
             if (const double h = tv.getNumber("height", 0); std::isfinite(h) && h > 0)
                 t.height = std::clamp(static_cast<float>(h), kMinTrackHeight, kMaxTrackHeight);
             for (const auto &[key, pts] : {std::pair<const char *, std::vector<AutoPoint> *>{"volumeAutomation", &t.volumeAuto},
-                                           {"panAutomation", &t.panAuto}}) {
+                                           {"panAutomation", &t.panAuto}, {"muteAutomation", &t.muteAuto}}) {
                 const json::Value *list = tv.get(key);
                 if (!list) continue;
                 if (!list->isArray()) { err = "invalid automation"; return nullptr; }
@@ -659,6 +679,21 @@ std::unique_ptr<Engine::PreparedProject> Engine::readDocument(const json::Value 
                     }
                     t.sends.push_back({static_cast<DalnokTrackId>(sv.array[0].number), static_cast<float>(std::min(sv.array[1].number, 6.0)),
                                        sv.array[2].isBool() && sv.array[2].boolean});
+                }
+            if (const json::Value *sa = tv.get("sendAutomation"); sa && sa->isArray())
+                for (const auto &entry : sa->array) {
+                    if (!entry.isArray() || entry.array.size() != 2 || !entry.array[0].isNumber() || !entry.array[1].isArray()) {
+                        err = "invalid send automation"; return nullptr;
+                    }
+                    const auto k = static_cast<size_t>(std::max(0.0, entry.array[0].number));
+                    if (k >= t.sends.size()) continue; // a send that isn't there: its automation goes too
+                    for (const auto &pv : entry.array[1].array) {
+                        if (!pv.isArray() || pv.array.size() != 2 || !pv.array[0].isNumber() || !pv.array[1].isNumber() ||
+                            pv.array[0].number < 0 || !std::isfinite(pv.array[1].number)) {
+                            err = "invalid send automation point"; return nullptr;
+                        }
+                        t.sends[k].automation.push_back({scale(static_cast<int64_t>(pv.array[0].number)), static_cast<float>(std::min(pv.array[1].number, 6.0))});
+                    }
                 }
             t.armed = tv.getBool("armed", false);
             t.inputChannel = static_cast<int32_t>(std::clamp<int64_t>(toInt(tv, "input"), 0, 63));

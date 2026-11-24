@@ -409,6 +409,14 @@ extension SelfTest {
             _ = perform("Automation: Read")
         }
         check(perform("Automate Pan") && TimelineView.automationTarget == 1, "View > Automate Pan switches the shown parameter")
+        check(perform("Automate Mute") && TimelineView.automationTarget == 2, "View > Automate Mute shows the mute lanes")
+        if let t = s.tracks.first(where: { !$0.isBus }) {
+            s.setAutomation(t.id, 2, [DalnokAutoPoint(frame: 0, value: 0), DalnokAutoPoint(frame: 24_000, value: 1)])
+            let pts = w.timeline.lanePoints(t, w.timeline.lane(for: t))
+            check(pts.map(\.value) == [0, 1] && s.engine.undoName == "Mute Automation", "the mute lane shows its stepped points")
+            _ = perform("Undo")
+        }
+        check(perform("Send 1") && TimelineView.automationTarget == 16, "View > Automate Send ▸ Send 1 shows the first send's lane")
         TimelineView.automationTarget = 0
         _ = perform("Show Automation")
         // Master strip: dragging its fader sets the master volume as one undo step.

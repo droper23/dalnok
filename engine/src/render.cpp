@@ -267,10 +267,19 @@ float autoAt(const std::vector<std::pair<int64_t, float>> &pts, int64_t frame) D
     return a.second + (b.second - a.second) * t;
 }
 
+// The value of the last point at or before `frame` (stepped automation: mute).
+float stepAt(const std::vector<std::pair<int64_t, float>> &pts, int64_t frame) DALNOK_NONBLOCKING {
+    if (frame < pts.front().first) return pts.front().second;
+    size_t lo = 0, hi = pts.size(); // the last point at or before `frame`
+    while (hi - lo > 1) { const size_t mid = (lo + hi) / 2; (pts[mid].first <= frame ? lo : hi) = mid; }
+    return pts[lo].second;
+}
+
 // Fader and pan gains at a frame for an automated track (mute and solo still apply).
 void autoGains(const RenderTrack &t, const TrackRuntime &rt, bool mono, bool anySolo, int64_t frame,
                float &gl, float &gr) DALNOK_NONBLOCKING {
-    const bool silent = rt.muted.load(std::memory_order_relaxed) || (anySolo && !rt.solo.load(std::memory_order_relaxed));
+    bool silent = rt.muted.load(std::memory_order_relaxed) || (anySolo && !rt.solo.load(std::memory_order_relaxed));
+    if (!t.muteAuto.empty()) silent = silent || stepAt(t.muteAuto, frame) >= 0.5f; // mute automation: stepped
     float g = rt.gain.load(std::memory_order_relaxed);
     if (!t.volumeAuto.empty() && !rt.holdVolume.load(std::memory_order_relaxed)) { const float v = autoAt(t.volumeAuto, frame); g = v * v * v * v; }
     if (silent) g = 0;
@@ -512,13 +521,15 @@ void renderBlock(const RenderState &state, int64_t pos, int frames, float *left,
             for (const RenderSend &snd : t.sends) {
                 if (snd.slot < 0) continue;
                 float *dl = busL + static_cast<size_t>(snd.slot) * kMaxBlock, *dr = busR + static_cast<size_t>(snd.slot) * kMaxBlock;
-                if (snd.pre) addTo(dl, dr, L, R, silentPre ? 0.0f : snd.gain, snd.delay);
-                else addTo(dl, dr, s.fadeL, s.fadeR, snd.gain, snd.delay);
+                // Automated send level: sampled once a block (fader taper, like volume).
+                const float sg = snd.autoGain.empty() ? snd.gain : [&] { const float v = autoAt(snd.autoGain, pos); return v * v * v * v; }();
+                if (snd.pre) addTo(dl, dr, L, R, silentPre ? 0.0f : sg, snd.delay);
+                else addTo(dl, dr, s.fadeL, s.fadeR, sg, snd.delay);
             }
         };
 
         // Automated volume or pan: 32-sample linear ramps between exact automation values (same live and offline).
-        if (!t.volumeAuto.empty() || !t.panAuto.empty()) {
+        if (!t.volumeAuto.empty() || !t.panAuto.empty() || !t.muteAuto.empty()) {
             const bool mono = t.monoSource && !t.instrumentPlugin, solo = anySolo && !linkedSolo;
             // Ramps run between exact values on a fixed 32-frame grid of the timeline, so every sample depends only
             // on its position: live playback (any block size) and exports produce the same samples.

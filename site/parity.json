@@ -1126,9 +1126,13 @@
         [
           "Smooth playback on a fixed 32-frame ramp grid; live playback equals the export",
           "verified"
+        ],
+        [
+          "Mute (stepped) and send-level automation lanes (View ▸ Automate Mute / Automate Send)",
+          "verified"
         ]
       ],
-      "evidence": "AutomationTests: volume follows the fader taper between points (exact values midway and a quarter of the way), held before and after, pan automation, mute still applies, live playback in 333-frame blocks matches the offline export sample for sample, save/reopen (format 6, also at 44.1 kHz) and undo. App self-test adds, drags and deletes points through the timeline and clears a lane from the Track menu. Plug-in parameter automation and Touch/Latch writing are covered by plug-in hosting and GUI self-tests; generated-audio checks verify the live override remains active across a backward transport jump. Automation following clip moves remains open."
+      "evidence": "AutomationTests: volume follows the fader taper between points (exact values midway and a quarter of the way), held before and after, pan automation, mute still applies, live playback in 333-frame blocks matches the offline export sample for sample, save/reopen (format 6, also at 44.1 kHz) and undo. App self-test adds, drags and deletes points through the timeline and clears a lane from the Track menu. Plug-in parameter automation and Touch/Latch writing are covered by plug-in hosting and GUI self-tests; generated-audio checks verify the live override remains active across a backward transport jump. Automation following clip moves remains open. MuteAndSendAutomation: muted exactly between its two points (sample-exact silence), a send lane dropping 12 dB lowers the bus by 12 dB (±0.2), non-0/1 mute values refused, saved and reopened (format 19). Self-test: the View menu's mute and send lanes."
     },
     {
       "id": "vst3",

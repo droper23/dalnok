@@ -319,7 +319,7 @@ final class Session {
         let ok = dalnok_take_folder_set_comp(h, folder, segments, Int32(segments.count)) == DALNOK_OK
         refresh(); return ok
     }
-    private func automationPoints(_ t: DalnokTrackId, _ target: Int32) -> [DalnokAutoPoint] {
+    func automationPoints(_ t: DalnokTrackId, _ target: Int32) -> [DalnokAutoPoint] {
         let n = dalnok_track_automation(h, t, target, nil, 0)
         guard n > 0 else { return [] }
         var out = [DalnokAutoPoint](repeating: DalnokAutoPoint(), count: Int(n))

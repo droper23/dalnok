@@ -2453,6 +2453,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     }
     @objc func automateVolume(_ sender: Any?) { timeline.pluginLanes = [:]; TimelineView.automationTarget = 0; if !timeline.showAutomation { toggleAutomation(nil) }; timeline.needsDisplay = true }
     @objc func automatePan(_ sender: Any?) { timeline.pluginLanes = [:]; TimelineView.automationTarget = 1; if !timeline.showAutomation { toggleAutomation(nil) }; timeline.needsDisplay = true }
+    @objc func automateMute(_ sender: Any?) { timeline.pluginLanes = [:]; TimelineView.automationTarget = 2; if !timeline.showAutomation { toggleAutomation(nil) }; timeline.needsDisplay = true }
+    /// View ▸ Automate Send N (the tag): each track's Nth send level.
+    @objc func automateSend(_ sender: NSMenuItem) { timeline.pluginLanes = [:]; TimelineView.automationTarget = Int32(16 + sender.tag); if !timeline.showAutomation { toggleAutomation(nil) }; timeline.needsDisplay = true }
     /// Track ▸ Automation Mode: Read plays lanes; Touch and Latch write volume and pan moves while playing.
     @objc func automationRead(_ sender: Any?) { setAutomationMode(.read) }
     @objc func automationTouch(_ sender: Any?) { setAutomationMode(.touch) }

@@ -284,6 +284,7 @@ std::unique_ptr<RenderState> RenderCompiler::compile(const CompileInputs &inputs
         for (const auto &p : t.volumeAuto) // fader taper: amplitude^(1/4); -inf at the bottom
             rt.volumeAuto.push_back({p.frame, p.value <= -95 ? 0.0f : std::pow(dbToGain(p.value), 0.25f)});
         for (const auto &p : t.panAuto) rt.panAuto.push_back({p.frame, p.value});
+        for (const auto &p : t.muteAuto) rt.muteAuto.push_back({p.frame, p.value >= 0.5f ? 1.0f : 0.0f});
         for (const auto &lane : t.pluginAuto) {
             auto it = instances.find(lane.slot);
             if (it == instances.end() || !it->second || lane.points.empty()) continue;
@@ -378,8 +379,11 @@ std::unique_ptr<RenderState> RenderCompiler::compile(const CompileInputs &inputs
         auto out = indexOf.find(t.output);
         rt.output = t.output && out != indexOf.end() ? out->second : -1;
         for (const auto &snd : t.sends)
-            if (auto d = indexOf.find(snd.bus); d != indexOf.end())
-                rt.sends.push_back({d->second, dbToGain(snd.db), snd.pre});
+            if (auto d = indexOf.find(snd.bus); d != indexOf.end()) {
+                rt.sends.push_back({d->second, dbToGain(snd.db), {}, snd.pre});
+                for (const auto &[f, db] : snd.automation) // fader taper: amplitude^(1/4), -inf at the bottom
+                    rt.sends.back().autoGain.push_back({f, db <= -95 ? 0.0f : std::pow(dbToGain(db), 0.25f)});
+            }
     }
     for (auto &rt : s->tracks) {
         if (rt.output >= 0) rt.output = s->tracks[static_cast<size_t>(rt.output)].busSlot;

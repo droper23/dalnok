@@ -745,8 +745,16 @@ DalnokStatus dalnok_track_set_automation(DalnokEngine *e, DalnokTrackId t, int32
 }
 int32_t dalnok_track_automation(const DalnokEngine *e, DalnokTrackId t, int32_t target, DalnokAutoPoint *out, int32_t cap) {
     const auto *tr = e ? e->impl.model().track(t) : nullptr;
-    if (!tr || (target != 0 && target != 1)) return 0;
-    const auto &pts = target == 0 ? tr->volumeAuto : tr->panAuto;
+    if (!tr) return 0;
+    if (target >= dalnok::kAutoSend) {
+        const auto k = static_cast<size_t>(target - dalnok::kAutoSend);
+        if (k >= tr->sends.size()) return 0;
+        const auto &sp = tr->sends[k].automation;
+        for (int32_t i = 0; out && i < cap && i < static_cast<int32_t>(sp.size()); ++i) out[i] = {sp[static_cast<size_t>(i)].first, sp[static_cast<size_t>(i)].second};
+        return static_cast<int32_t>(sp.size());
+    }
+    if (target < 0 || target > 2) return 0;
+    const auto &pts = target == 0 ? tr->volumeAuto : target == 1 ? tr->panAuto : tr->muteAuto;
     for (int32_t i = 0; out && i < cap && i < static_cast<int32_t>(pts.size()); ++i) out[i] = {pts[static_cast<size_t>(i)].frame, pts[static_cast<size_t>(i)].value};
     return static_cast<int32_t>(pts.size());
 }

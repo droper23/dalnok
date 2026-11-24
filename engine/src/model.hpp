@@ -25,6 +25,7 @@ struct Send {
     DalnokTrackId bus = 0;
     float db = 0;
     bool pre = false;
+    std::vector<std::pair<int64_t, float>> automation; // send level in dB by timeline frame (empty: `db` applies)
     bool operator==(const Send &) const = default;
 };
 
@@ -62,7 +63,8 @@ struct AutoPoint {
     float value = 0;
     bool operator==(const AutoPoint &) const = default;
 };
-enum AutoTarget : int32_t { kAutoVolume = 0, kAutoPan = 1 };
+// Targets: volume, pan, mute (values 0 or 1, stepped), and send k's level in dB (kAutoSend + k).
+enum AutoTarget : int32_t { kAutoVolume = 0, kAutoPan = 1, kAutoMute = 2, kAutoSend = 16 };
 // A plug-in parameter lane: values are normalized 0-1 (the plug-in's own range is applied at render).
 struct PluginAuto {
     int32_t slot = 0;
@@ -77,6 +79,7 @@ constexpr float kMinTrackHeight = 40, kMaxTrackHeight = 400;
 struct TrackState {
     DalnokTrackId id = 0;
     std::vector<AutoPoint> volumeAuto, panAuto; // empty = not automated (the fader and knob apply)
+    std::vector<AutoPoint> muteAuto;            // 0 or 1, stepped (empty: the mute button applies)
     std::vector<PluginAuto> pluginAuto;         // plug-in parameter lanes
     int32_t kind = kTrackAudio;
     DalnokTrackId output = 0;  // 0 = master; otherwise a bus track

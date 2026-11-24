@@ -1,0 +1,115 @@
+{
+ "format": "dalnok-project",
+ "version": 19,
+ "sampleRate": 48000,
+ "tempo": 120,
+ "meter": [
+  4,
+  4
+ ],
+ "media": [
+  {
+   "id": 1,
+   "path": "/nonexistent/dalnok-fixture/source1.wav",
+   "relativePath": "Audio Files/source1.wav",
+   "frames": 48000,
+   "channels": 1
+  }
+ ],
+ "tracks": [
+  {
+   "id": 1,
+   "name": "Audio",
+   "color": 0,
+   "gainDb": 0,
+   "pan": 0,
+   "mute": false,
+   "height": 140,
+   "plugins": [
+    {
+     "id": 1,
+     "format": "dalnok",
+     "path": "channel-eq",
+     "class": "",
+     "name": "Dalnok Channel EQ",
+     "state": "",
+     "folded": true
+    }
+   ],
+   "clips": [
+    {
+     "id": 1,
+     "media": 1,
+     "start": 0,
+     "offset": 0,
+     "length": 4800,
+     "name": "Clip 1",
+     "followTempo": true
+    }
+   ],
+   "phaseInvert": true,
+   "muteAutomation": [
+    [
+     0,
+     0
+    ],
+    [
+     4800,
+     1
+    ]
+   ]
+  },
+  {
+   "id": 2,
+   "name": "Synth",
+   "color": 0,
+   "gainDb": 0,
+   "pan": 0,
+   "mute": false,
+   "kind": "instrument",
+   "instrument": "dalnok.poly",
+   "armed": true,
+   "clips": [
+    {
+     "id": 2,
+     "kind": "midi",
+     "start": 0,
+     "offset": 0,
+     "length": 9600,
+     "name": "MIDI",
+     "notes": [
+      [
+       0,
+       2400,
+       60,
+       100
+      ],
+      [
+       2400,
+       2400,
+       64,
+       90
+      ]
+     ],
+     "controllers": [
+      [
+       0,
+       1,
+       64
+      ],
+      [
+       2400,
+       128,
+       12000
+      ],
+      [
+       4800,
+       64,
+       127
+      ]
+     ]
+    }
+   ]
+  }
+ ]
+}

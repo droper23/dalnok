@@ -218,3 +218,39 @@ import Testing
         #expect(try FileManager.default.contentsOfDirectory(atPath: only.path) == ["03 Keys.wav"])
     }
 }
+
+@Suite struct MuteAndSendAutomation {
+    @Test func muteStepsAndSendLevelsFollowTheirLanes() throws {
+        let n = 48_000
+        let tone = (0..<n).map { Float(0.5 * sin(2 * Double.pi * 300 * Double($0) / 48_000)) }
+        let e = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(e) }
+        let t = dalnok_track_add(e, "Vox")
+        let m = makeMedia([tone]); defer { dalnok_media_release(m) }
+        DalnokEngine.dalnok_clip_add(e, t, dalnok_pool_add(e, m, ""), 0, 0, 0)
+        // Muted from 12,000 to 24,000 (stepped).
+        var mute = [DalnokAutoPoint(frame: 0, value: 0), DalnokAutoPoint(frame: 12_000, value: 1), DalnokAutoPoint(frame: 24_000, value: 0)]
+        #expect(dalnok_track_set_automation(e, t, Int32(DALNOK_AUTO_MUTE.rawValue), &mute, 3) == DALNOK_OK && undoName(e) == "Mute Automation")
+        var (l, _) = render(e, frames: n)
+        #expect(l[11_000..<11_900].map { abs($0) }.max()! > 0.1 && l[12_100..<23_900].allSatisfy { $0 == 0 } && l[24_100..<25_000].map { abs($0) }.max()! > 0.1,
+                "silent only while muted")
+        var bad = [DalnokAutoPoint(frame: 0, value: 0.5)]
+        #expect(dalnok_track_set_automation(e, t, Int32(DALNOK_AUTO_MUTE.rawValue), &bad, 1) != DALNOK_OK)
+        // A pre-fader send to a bus, with the track's fader down: what we hear is the send.
+        _ = dalnok_track_set_automation(e, t, Int32(DALNOK_AUTO_MUTE.rawValue), nil, 0)
+        let bus = dalnok_track_add_bus(e, "FX")
+        #expect(runCommand(e, "track.setSend", "{\"track\":\(t),\"bus\":\(bus),\"db\":0,\"pre\":true}").0 == DALNOK_OK)
+        dalnok_track_set_gain_db(e, t, -200)
+        var send = [DalnokAutoPoint(frame: 0, value: 0), DalnokAutoPoint(frame: 23_999, value: 0), DalnokAutoPoint(frame: 24_000, value: -12)]
+        #expect(dalnok_track_set_automation(e, t, Int32(DALNOK_AUTO_SEND.rawValue), &send, 3) == DALNOK_OK && undoName(e) == "Send Automation")
+        (l, _) = render(e, frames: n)
+        func peak(_ a: Int, _ b: Int) -> Double { 20 * log10(Double(l[a..<b].map { abs($0) }.max()!)) }
+        #expect(abs((peak(30_000, 40_000) - peak(5_000, 15_000)) + 12) < 0.2, "the send drops 12 dB: \(peak(30_000, 40_000) - peak(5_000, 15_000))")
+        // Saved and reopened.
+        let path = tempDir().appendingPathComponent("auto.dalnok").path
+        var err = [CChar](repeating: 0, count: 256)
+        #expect(dalnok_project_save(e, path, &err, 256) == DALNOK_OK)
+        let r = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(r) }
+        #expect(dalnok_project_load(r, path, nil, &err, 256) == DALNOK_OK, "\(cstr(err))")
+        #expect(dalnok_track_automation(r, dalnok_track_at(r, 0), Int32(DALNOK_AUTO_SEND.rawValue), nil, 0) == 3)
+    }
+}
