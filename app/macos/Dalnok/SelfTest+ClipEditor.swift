@@ -285,6 +285,29 @@ extension SelfTest {
         check(w.clipEditor.clipId == audioClip && !w.clipEditor.audio.isHidden && w.clipEditor.roll.isHidden,
               "double-clicking an audio clip opens it in the clip editor's sample view")
         try? w.snapshot(to: workdir.appendingPathComponent("clip-editor-audio.png"))
+        // Warp markers by hand: double-click adds one, dragging it moves that moment, ⌥-click removes it.
+        if let ac = s.clip(audioClip), ac.warp.isEmpty, !ac.isStretched {
+            let av = w.clipEditor.audio
+            av.layoutSubtreeIfNeeded()
+            let mid = Double(ac.offset) + Double(ac.sourceSpan) / 2
+            let at = av.convert(CGPoint(x: av.x(mid), y: av.bounds.midY), to: nil)
+            func avEvent(_ type: NSEvent.EventType, _ p: CGPoint, clicks: Int = 1, mods: NSEvent.ModifierFlags = []) -> NSEvent {
+                NSEvent.mouseEvent(with: type, location: p, modifierFlags: mods, timestamp: ProcessInfo.processInfo.systemUptime,
+                                   windowNumber: w.window!.windowNumber, context: nil, eventNumber: 0, clickCount: clicks, pressure: 1)!
+            }
+            av.mouseDown(with: avEvent(.leftMouseDown, at, clicks: 2)); av.mouseUp(with: avEvent(.leftMouseUp, at, clicks: 2))
+            let added = s.clip(audioClip)?.warp ?? []
+            check(added.count == 3, "double-clicking the sample view adds a warp marker (\(added.count) anchors)")
+            let before = added.count == 3 ? added[1].source : 0
+            let to = CGPoint(x: at.x + 30, y: at.y)
+            av.mouseDown(with: avEvent(.leftMouseDown, at)); av.mouseDragged(with: avEvent(.leftMouseDragged, to)); av.mouseUp(with: avEvent(.leftMouseUp, to))
+            let moved = s.clip(audioClip)?.warp ?? []
+            check(moved.count == 3 && moved[1].source > before, "dragging the marker pins later audio there (\(before) → \(moved.count == 3 ? moved[1].source : -1))")
+            av.mouseDown(with: avEvent(.leftMouseDown, to, mods: .option)); av.mouseUp(with: avEvent(.leftMouseUp, to, mods: .option))
+            check(s.clip(audioClip)?.warp.isEmpty == true, "⌥-click removes it (one speed again)")
+            _ = perform("Undo"); _ = perform("Undo"); _ = perform("Undo")
+            check(s.clip(audioClip)?.warp.isEmpty == true, "undo takes the marker gestures back")
+        }
         w.timeline.selectClips([audioClip])
         w.clipEditor.focused = false
         check(perform("Quantize Selection", exact: true) && s.track(drums)?.clips.count == 1 && (s.clip(audioClip)?.warp.count ?? 0) > 2,

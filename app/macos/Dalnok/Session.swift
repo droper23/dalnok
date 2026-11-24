@@ -772,6 +772,30 @@ extension ClipView {
     }
 }
 
+extension ClipView {
+    /// The warp with a new marker pinning source frame `s` where it plays now (double-click in the sample view). A clip
+    /// with no warp gets one: its start and end plus the marker. Nil when too close (10 ms) to another anchor.
+    func warpAdding(source s: Int64, sampleRate: Double) -> [(source: Int64, time: Int64)]? {
+        let base = warp.count >= 2 ? warp : [(source: fields.offset, time: Int64(0)), (source: fields.offset + sourceSpan, time: fields.length)]
+        guard let first = base.first, let last = base.last, s > first.source, s < last.source else { return nil }
+        let near = Int64(sampleRate * 0.01)
+        if base.contains(where: { abs($0.source - s) < near }) { return nil }
+        var lo = 0.0, hi = Double(fields.length) // the clip time whose source is `s` (the map is monotonic)
+        for _ in 0..<50 { let mid = (lo + hi) / 2; if sourceFrame(atClipTime: mid) < Double(s) { lo = mid } else { hi = mid } }
+        var w = base
+        w.append((source: s, time: Int64(hi.rounded())))
+        w.sort { $0.source < $1.source }
+        return w
+    }
+    /// The warp without marker `i` (⌥-click); a map left with only its ends goes (one speed again).
+    func warpRemoving(_ i: Int) -> [(source: Int64, time: Int64)]? {
+        guard i > 0, i < warp.count - 1 else { return nil }
+        var w = warp
+        w.remove(at: i)
+        return w.count <= 2 ? [] : w
+    }
+}
+
 extension Session {
     /// Replaces a clip's warp (one undo step, or part of the current gesture's group).
     @discardableResult func setWarp(_ c: DalnokClipId, _ w: [(source: Int64, time: Int64)]) -> Bool {

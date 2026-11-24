@@ -745,8 +745,8 @@
           "verified"
         ],
         [
-          "Flex/warp markers editable in the clip",
-          "todo"
+          "Warp markers editable in the clip (double-click adds, drag moves, ⌥-click removes)",
+          "verified"
         ],
         [
           "Transient detection",
@@ -755,9 +755,13 @@
         [
           "Audio follows tempo (Follow Tempo per clip: stays on its beats, time-stretched with pitch kept)",
           "verified"
+        ],
+        [
+          "Warp modes (Beats, Tones, Complex)",
+          "todo"
         ]
       ],
-      "evidence": "TimeStretch tests measure pitch (±1%) and level (±1.5 dB) on rendered output; mutation-checked. Self-test ⌥-drag. 2026-11-23 (API 47): AudioQuantizeTests: transients found within 1 ms of the real attacks, none in a held tone; off-grid eighth notes (up to 30 ms) render on the grid within 0.5 ms in one warped clip, every hit once, each correlating above 0.98 with the original, no sample step above 0.05 between hits; split and save/reopen keep the timing; one undo; half strength moves hits halfway and requantizing starts from the recording. Self-test (all six looks at 48 and 44.1 kHz): double-click lane makes a MIDI clip on an empty track, MIDI clip right-edge resize, the docked editor, double-click-drag draws a two-beat note, ⌘C/⌘V/⌘D notes, Q, Play from selected notes or clip, Clip / Devices switch, plug-in ⌘C/⌘V with settings, audio Q (every hit within 1 ms of its eighth note), hover playhead. AudioFollowsTempo: at 120→60 BPM a following clip moves from beat 1 at 24,000 to 48,000, doubles its length at rate 0.5 and renders 1 kHz at 1 kHz (±3 Hz); a clip that doesn't follow keeps its time; undo. Format 18 fixture. Self-test: the Inspector's Follow Tempo box."
+      "evidence": "TimeStretch tests measure pitch (±1%) and level (±1.5 dB) on rendered output; mutation-checked. Self-test ⌥-drag. 2026-11-23 (API 47): AudioQuantizeTests: transients found within 1 ms of the real attacks, none in a held tone; off-grid eighth notes (up to 30 ms) render on the grid within 0.5 ms in one warped clip, every hit once, each correlating above 0.98 with the original, no sample step above 0.05 between hits; split and save/reopen keep the timing; one undo; half strength moves hits halfway and requantizing starts from the recording. Self-test (all six looks at 48 and 44.1 kHz): double-click lane makes a MIDI clip on an empty track, MIDI clip right-edge resize, the docked editor, double-click-drag draws a two-beat note, ⌘C/⌘V/⌘D notes, Q, Play from selected notes or clip, Clip / Devices switch, plug-in ⌘C/⌘V with settings, audio Q (every hit within 1 ms of its eighth note), hover playhead. AudioFollowsTempo: at 120→60 BPM a following clip moves from beat 1 at 24,000 to 48,000, doubles its length at rate 0.5 and renders 1 kHz at 1 kHz (±3 Hz); a clip that doesn't follow keeps its time; undo. Format 18 fixture. Self-test: the Inspector's Follow Tempo box. Self-test: double-clicking an unwarped clip's sample view adds a marker (3 anchors), dragging it pins later audio there, ⌥-click removes it, undo restores."
     },
     {
       "id": "flexpitch",

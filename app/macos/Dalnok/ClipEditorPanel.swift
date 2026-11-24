@@ -397,6 +397,19 @@ final class AudioClipView: NSView {
         onFocus?()
         let p = convert(event.locationInWindow, from: nil)
         guard let c = clip else { return }
+        if event.modifierFlags.contains(.option), case .anchor(let i)? = edge(at: p) { // ⌥-click removes a warp marker
+            if let w = c.warpRemoving(i) { session.setWarp(c.id, w) }
+            needsDisplay = true
+            return
+        }
+        if event.clickCount == 2, edge(at: p) == nil, !c.isMidi { // double-click adds a warp marker where the audio plays
+            // The anchor sits where markers are drawn from (pinOffset before what the marker shows).
+            if let w = c.warpAdding(source: Int64(source(atX: p.x).rounded()) - pinOffset, sampleRate: session.engine.sampleRate) {
+                if session.setWarp(c.id, w) { session.onMessage?("Warp marker added: drag it to move that moment of the audio") }
+            }
+            needsDisplay = true
+            return
+        }
         if let e = edge(at: p), !c.isStretched || { if case .anchor = e { return true }; return false }() {
             drag = (e, p.x, c, false)
             if case .anchor = e { session.engine.beginGroup("Move Quantized Hit") } else { session.engine.beginGroup("Trim Clip") }
