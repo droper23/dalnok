@@ -12,6 +12,18 @@ import Testing
     }
 }
 
+@Suite struct HostileCommands {
+    @Test func moveClipRejectsEndOverflow() {
+        let e = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(e) }
+        let m = makeMedia([[Float](repeating: 0.1, count: 1_000)]); defer { dalnok_media_release(m) }
+        let c = dalnok_clip_add(e, dalnok_track_add(e, "A"), m, 0, 0, 0)
+        let (st, _) = runCommand(e, "clip.move", "{\"clip\":\(c),\"start\":9223372036854775807}")
+        #expect(st != DALNOK_OK)
+        #expect(clipInfo(e, c).start == 0, "clip stays where it was")
+        #expect(runCommand(e, "clip.move", "{\"clip\":\(c),\"start\":5000}").0 == DALNOK_OK)
+    }
+}
+
 @Suite struct HostileAudio {
     /// Mono 32-bit float WAV from raw samples.
     func floatWav(_ s: [Float], rate: Int = 48_000) -> Data {

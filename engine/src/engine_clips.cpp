@@ -129,6 +129,7 @@ bool Engine::moveClip(DalnokClipId id, DalnokTrackId track, int64_t start, std::
         if (it == m.clips.end()) return fail(err, "no such clip");
         if (!m.track(track)) return fail(err, "no such track");
         if (start < 0) return fail(err, "start must be >= 0");
+        if (it->length > INT64_MAX - start) return fail(err, "move exceeds the supported timeline");
         if (m.track(track)->kind == kTrackBus) return fail(err, "buses don't hold clips");
         if ((m.track(track)->kind == kTrackInstrument) != it->midi())
             return fail(err, it->midi() ? "MIDI clips go on instrument tracks" : "audio clips go on audio tracks");
