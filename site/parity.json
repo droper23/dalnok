@@ -1389,6 +1389,10 @@
           "verified"
         ],
         [
+          "Dalnok Synth: two oscillators, sub, resonant filter with envelope, ADSR, glide, pitch envelope, poly/mono",
+          "verified"
+        ],
+        [
           "Sampler (Dalnok Sampler: root key, transpose, ADSR, velocity, one shot)",
           "verified"
         ],
@@ -1405,7 +1409,7 @@
           "todo"
         ]
       ],
-      "evidence": "MidiTests measure pitch (440 Hz within 0.5 Hz), onset, release and velocity scaling; a mutation check confirmed the pitch test catches a 2 Hz error. Most instruments are expected to come from plugins (ADR-0009), so the stock set stays small. SamplerTests: the Sampler plays a 440 Hz sample at 440 Hz on its root key and 880 Hz an octave up (±1/±2 Hz), at its level (±0.01) and releases to silence; Drums play each pad's sample from the note's exact frame, sample for sample (1e-5), an empty pad is silent, and a saved kit reopens identical. Self-test: dropping two sounds on Dalnok Drums fills pads 1 and 2 and note 36 plays. SliceToDrums: four bursts sliced at their hits onto five pads replay the clip sample for sample (1e-5) with the clip muted; one undo. Self-test: Clip ▸ Slice to Drums."
+      "evidence": "MidiTests measure pitch (440 Hz within 0.5 Hz), onset, release and velocity scaling; a mutation check confirmed the pitch test catches a 2 Hz error. Most instruments are expected to come from plugins (ADR-0009), so the stock set stays small. SamplerTests: the Sampler plays a 440 Hz sample at 440 Hz on its root key and 880 Hz an octave up (±1/±2 Hz), at its level (±0.01) and releases to silence; Drums play each pad's sample from the note's exact frame, sample for sample (1e-5), an empty pad is silent, and a saved kit reopens identical. Self-test: dropping two sounds on Dalnok Drums fills pads 1 and 2 and note 36 plays. SliceToDrums: four bursts sliced at their hits onto five pads replay the clip sample for sample (1e-5) with the clip muted; one undo. Self-test: Clip ▸ Slice to Drums. DalnokSynth: a sine A4 at 440 Hz (±1) at -6 dB × 70 % sustain (±0.01), silent after its 200 ms release; a 400 Hz low-pass cuts a saw's 36th harmonic by over 30 dB; a 12-semitone pitch envelope starts high and settles at 220 Hz; mono glide passes between 220 and 440 Hz and lands on 440."
     },
     {
       "id": "midi",

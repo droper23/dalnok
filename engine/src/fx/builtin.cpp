@@ -7,6 +7,7 @@
 #include "fx/time_fx.hpp"
 #include "fx/sampler.hpp"
 #include "fx/mix_fx.hpp"
+#include "fx/synth_fx.hpp"
 #include "json.hpp"
 
 #include <algorithm>
@@ -29,6 +30,7 @@ const std::vector<BuiltinInfo> &builtinPlugins() {
         {"filter", "Dalnok Filter", "Filter"},
         {"chorus", "Dalnok Chorus", "Modulation"},
         {"utility", "Dalnok Utility", "Tools"},
+        {"synth", "Dalnok Synth", "Synth", true},
         {"sampler", "Dalnok Sampler", "Sampler", true},
         {"drums", "Dalnok Drums", "Drums", true},
     };
@@ -48,6 +50,7 @@ std::unique_ptr<PluginProcessor> loadBuiltin(const std::string &id, double sampl
     if (id == "filter") return std::make_unique<fx::Filter>(sampleRate);
     if (id == "chorus") return std::make_unique<fx::Chorus>(sampleRate);
     if (id == "utility") return std::make_unique<fx::Utility>(sampleRate);
+    if (id == "synth") return std::make_unique<fx::Synth>(sampleRate);
     if (id == "sampler") return std::make_unique<fx::Sampler>(sampleRate);
     if (id == "drums") return std::make_unique<fx::Drums>(sampleRate);
     err = "unknown built-in plug-in " + id;

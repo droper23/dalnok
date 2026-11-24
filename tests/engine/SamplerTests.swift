@@ -117,3 +117,66 @@ private func wav(_ x: [Float], _ name: String) -> String {
         #expect(dalnok_undo(e) && dalnok_track_count(e) == 1 && !clipInfo(e, c).muted, "one undo")
     }
 }
+
+@Suite struct DalnokSynth {
+    /// An instrument track with Dalnok Synth set by plain values (and choices by normalized value).
+    func synth(_ values: [UInt32: Double], normalized: [UInt32: Double] = [:], notes: [DalnokNote]) -> OpaquePointer {
+        let e = dalnok_engine_create(48_000)!
+        let t = dalnok_track_add_instrument(e, "Synth")
+        var err = [CChar](repeating: 0, count: 256)
+        let slot = dalnok_plugin_add(e, t, "dalnok:synth", nil, &err, 256)
+        #expect(slot != 0, "\(cstr(err))")
+        for (pid, plain) in values {
+            var lo = 0.0, hi = 1.0
+            for _ in 0..<60 {
+                let mid = (lo + hi) / 2
+                var buf = [CChar](repeating: 0, count: 64)
+                _ = dalnok_plugin_parameter_text(e, slot, pid, mid, &buf, 64)
+                if (Double(cstr(buf)) ?? 0) < plain { lo = mid } else { hi = mid }
+            }
+            _ = dalnok_plugin_set_parameter(e, slot, pid, hi)
+        }
+        for (pid, v) in normalized { _ = dalnok_plugin_set_parameter(e, slot, pid, v) }
+        let c = dalnok_midi_clip_add(e, t, 0, 192_000)
+        var n = notes
+        _ = dalnok_midi_clip_set_notes(e, c, &n, Int32(n.count))
+        return e
+    }
+
+    @Test func pitchLevelFilterAndRelease() {
+        // Sine, no detune, filter wide open and no filter envelope: A4 at 440 Hz, level -6 dB × sustain 70 %.
+        let a = synth([1: 0, 3: 20_000, 5: 0], normalized: [0: 1], notes: [DalnokNote(start: 0, length: 48_000, pitch: 69, velocity: 127)])
+        defer { dalnok_engine_destroy(a) }
+        let l = render(a, 0, 96_000)
+        #expect(abs(frequency(l[20_000..<44_000]) - 440) < 1, "\(frequency(l[20_000..<44_000])) Hz")
+        let peak = l[30_000..<44_000].map { abs($0) }.max()!
+        #expect(abs(peak - 0.5 * Float(pow(10, -6.0 / 20)) * 0.7) < 0.01, "sustain level \(peak)")
+        #expect(l[60_000..<96_000].allSatisfy { abs($0) < 1e-4 }, "released (200 ms) to silence")
+        // A 110 Hz saw through a 400 Hz low-pass: its 36th harmonic (3,960 Hz, a decade up) drops over 30 dB (12 dB/octave).
+        func harmonic(_ cutoff: Double) -> Double {
+            let e = synth([1: 0, 3: cutoff, 5: 0], notes: [DalnokNote(start: 0, length: 48_000, pitch: 45, velocity: 127)])
+            defer { dalnok_engine_destroy(e) }
+            let x = render(e, 0, 48_000)
+            var s = 0.0, c = 0.0
+            for i in 10_000..<40_000 { let ph = 2 * Double.pi * 3_960 * Double(i) / 48_000; s += Double(x[i]) * sin(ph); c += Double(x[i]) * cos(ph) }
+            return sqrt(s * s + c * c)
+        }
+        let cut = 20 * log10(harmonic(400) / harmonic(20_000))
+        #expect(cut < -30, "the filter cuts the 36th harmonic by \(cut) dB")
+    }
+
+    @Test func pitchEnvelopeAndMonoGlide() {
+        // Pitch envelope: 12 semitones falling over 50 ms: the start is an octave up, later it settles.
+        let p = synth([1: 0, 3: 20_000, 5: 0, 12: 12, 13: 50], normalized: [0: 1], notes: [DalnokNote(start: 0, length: 48_000, pitch: 57, velocity: 127)])
+        defer { dalnok_engine_destroy(p) }
+        let lp = render(p, 0, 48_000)
+        #expect(frequency(lp[0..<2_400]) > 330 && abs(frequency(lp[24_000..<48_000]) - 220) < 1, "\(frequency(lp[0..<2_400])) then \(frequency(lp[24_000..<48_000]))")
+        // Mono with 300 ms glide: the second note slides up from the first.
+        let g = synth([1: 0, 3: 20_000, 5: 0, 11: 300], normalized: [0: 1, 15: 1],
+                      notes: [DalnokNote(start: 0, length: 48_000, pitch: 57, velocity: 127), DalnokNote(start: 48_000, length: 48_000, pitch: 69, velocity: 127)])
+        defer { dalnok_engine_destroy(g) }
+        let lg = render(g, 0, 96_000)
+        let mid = frequency(lg[49_000..<52_000]), settled = frequency(lg[80_000..<96_000])
+        #expect(mid > 225 && mid < 430 && abs(settled - 440) < 1, "mid-glide \(mid) Hz, then \(settled)")
+    }
+}
