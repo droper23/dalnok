@@ -15,11 +15,15 @@ Same branch (API 47). Every bug from the ten-tester hunt fixed; then features to
   BS.1770 loudness (`loudness.*`, master strip, `dalnok_render_loudness`); seven export formats (`openAudioWriter`,
   `dalnok_render_to_file`); Export Stems (`Scratch::stemL`, `dalnok_export_stems`); MIDI Functions
   (`Engine::transformNotes`, `dalnok_midi_transform`). Offline renders share `Engine::renderBlocks`.
-- **Verified:** `swift test` 330 pass; self-test matrix 12/12 PASS after each UI change.
+- **Also new (later):** clip loop (`ClipState::loopLength/loopPhase`, compiled per pass, format 16); MIDI controllers
+  and pitch bend (`MidiCC`, `PluginNote` kinds 2/3, AU/CLAP MIDI, VST3 `IMidiMapping`, live passthrough, piano roll
+  controller lanes in `PianoRoll+Controllers.swift`, format 17).
+- **Verified:** `swift test` 335 pass; self-test matrix 12/12 PASS after each UI change; `plugin-host.sh` and
+  `plugin-isolation.sh` PASS (controller test in and out of process); fuzz 60 s clean after the reader changes.
 - **Not reproduced:** "a hit near a trimmed audio clip's start isn't quantized" (two tests added, both pass before and after).
-- **Next for parity (ranked):** clip loop brace per clip; CC / pitch-bend lanes; sampler / drum instrument; warp
-  markers editable + warp modes; region inspector; step input; MP3 export (needs an encoder library); render queue;
-  spectrum and correlation meters; racks / macros; capture MIDI; groove pool.
+- **Next for parity (ranked):** sampler / drum instrument; recording controllers from a keyboard; editable warp markers
+  and warp modes; region inspector; step input; built-in synth responding to bend and sustain; MP3 export (needs an
+  encoder library); render queue; spectrum and correlation meters; racks / macros; capture MIDI; groove pool.
 
 ## Earlier (2026-11-24): ten-tester bug hunt
 Same branch. Ten agents (one on real input), 12 fix commits; journal 2026-11-24 has the list.
