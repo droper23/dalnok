@@ -141,3 +141,45 @@ import Testing
         }
     }
 }
+
+@Suite struct ExportStems {
+    @Test func stemsSumToTheMix() throws {
+        // Two tracks (one at -6 dB panned left, one with a delay), a bus that gets nothing, a muted track: two stems
+        // whose sum is the mix, sample for sample.
+        let n = 48_000
+        let a = (0..<n).map { Float(0.3 * sin(2 * Double.pi * 220 * Double($0) / 48_000)) }
+        let b = (0..<n).map { $0 < 6_000 ? Float(0.4 * sin(2 * Double.pi * 660 * Double($0) / 48_000)) : 0 }
+        let e = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(e) }
+        func track(_ name: String, _ x: [Float]) -> DalnokTrackId {
+            let t = dalnok_track_add(e, name)
+            let m = makeMedia([x]); defer { dalnok_media_release(m) }
+            DalnokEngine.dalnok_clip_add(e, t, dalnok_pool_add(e, m, ""), 0, 0, 0)
+            return t
+        }
+        let t1 = track("Bass", a), t2 = track("Lead/Hi", b), t3 = track("Muted", a)
+        dalnok_track_set_gain_db(e, t1, -6); dalnok_track_set_pan(e, t1, -0.5)
+        var err = [CChar](repeating: 0, count: 256)
+        #expect(dalnok_plugin_add(e, t2, "dalnok:delay", nil, &err, 256) != 0)
+        dalnok_track_set_mute(e, t3, true)
+        _ = dalnok_track_add_bus(e, "Bus")
+        let (mixL, mixR) = render(e, frames: n)
+        let dir = tempDir().appendingPathComponent("stems")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        #expect(dalnok_export_stems(e, dir.path, Int32(DALNOK_FORMAT_WAV32F.rawValue), 0, Int64(n), 0, &err, 256) == 2, "\(cstr(err))")
+        let files = try FileManager.default.contentsOfDirectory(atPath: dir.path).sorted()
+        #expect(files == ["01 Bass.wav", "02 Lead-Hi.wav"], "\(files)")
+        var sumL = [Float](repeating: 0, count: n), sumR = sumL
+        for f in files {
+            var media: OpaquePointer?
+            #expect(dalnok_media_load(dir.appendingPathComponent(f).path, 48_000, &media, &err, 256) == DALNOK_OK)
+            let m = try #require(media); defer { dalnok_media_release(m) }
+            #expect(Int(dalnok_media_frames(m)) == n)
+            let p = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(p) }
+            DalnokEngine.dalnok_clip_add(p, dalnok_track_add(p, "R"), dalnok_pool_add(p, m, ""), 0, 0, 0)
+            let (l, r) = render(p, frames: n)
+            for i in 0..<n { sumL[i] += l[i]; sumR[i] += r[i] }
+        }
+        let worst = max(zip(sumL, mixL).map { abs($0 - $1) }.max()!, zip(sumR, mixR).map { abs($0 - $1) }.max()!)
+        #expect(worst < 1e-5, "stems sum to the mix within \(worst)")
+    }
+}

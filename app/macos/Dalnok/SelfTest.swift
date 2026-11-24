@@ -498,6 +498,13 @@ final class SelfTest {
         check(w.exportMix(to: flac, format: DALNOK_FORMAT_FLAC) && dalnok_media_load(flac.path, e.sampleRate, &flacMedia, nil, 0) == DALNOK_OK
               && dalnok_media_frames(flacMedia) == s.length, "export as FLAC decodes to the session length")
         if let flacMedia { dalnok_media_release(flacMedia) }
+        let stemDir = workdir.appendingPathComponent("exported-stems", isDirectory: true)
+        try? FileManager.default.createDirectory(at: stemDir, withIntermediateDirectories: true)
+        let audible = s.tracks.filter { !$0.isBus && !$0.muted }.count
+        let stems = w.exportStems(to: stemDir, format: DALNOK_FORMAT_WAV24)
+        check(stems == audible && (try? FileManager.default.contentsOfDirectory(atPath: stemDir.path).count) == audible,
+              "File ▸ Export Stems writes one file per track (\(stems) of \(audible))")
+        check(menuItem("Export Stems…", exact: true) != nil, "File ▸ Export Stems… is in the menu")
         check(Engine.exportFormats.count == 7 && Engine.exportFormats.allSatisfy { UTType(filenameExtension: $0.ext) != nil },
               "the export panel offers seven formats, each a known file type")
         // DAWproject: the File menu offers it; the export imports back with the same clips.

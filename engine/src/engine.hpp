@@ -385,7 +385,14 @@ public:
     // The offline render loop behind renderToWav and renderLoudness: blocks of [start, start+frames) (plus the
     // tail, see renderToWav) go to `sink` in order; a false return stops it.
     bool renderBlocks(int64_t start, int64_t frames, int64_t maxTail, int64_t *tailWritten, std::string &err,
-                      const std::function<bool(const float *, const float *, int64_t)> &sink);
+                      const std::function<bool(const float *, const float *, int64_t)> &sink,
+                      const std::function<void(Scratch &, const RenderState &)> &prepare = {},
+                      const std::function<void(const Scratch &, int)> &onBlock = {});
+    // Export Stems: every track that isn't a bus and isn't muted, post-fader (what reaches its output; sends left
+    // out), one file each in `folder` named "NN Name.ext", all the same length (the range plus the mix's tail).
+    // Returns the paths written.
+    bool exportStems(const std::string &folder, int32_t format, int64_t start, int64_t frames, int64_t maxTail,
+                     std::vector<std::string> &paths, std::string &err);
 
     void stats(DalnokStats &out) const;
     void resetStats();

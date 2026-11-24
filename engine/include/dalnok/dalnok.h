@@ -1010,6 +1010,11 @@ typedef enum {
 /* As dalnok_render_to_wav_tail, in any DalnokFileFormat. */
 DalnokStatus dalnok_render_to_file(DalnokEngine *engine, const char *path, int64_t start_frame, int64_t frames,
                                    int32_t format, int64_t max_tail, int64_t *tail_written, char *err, size_t err_len);
+/* Export Stems (API 47): one file per track that isn't a bus and isn't muted, post-fader (sends left out), into the
+ * existing `folder` as "NN Name.<ext>", all the same length (the range, plus up to max_tail frames of tail).
+ * Returns the number of files written, or -1 with a message in `err`. */
+int32_t dalnok_export_stems(DalnokEngine *engine, const char *folder, int32_t format, int64_t start_frame, int64_t frames,
+                            int64_t max_tail, char *err, size_t err_len);
 DalnokTrackId dalnok_track_bounce_in_place(DalnokEngine *engine, DalnokTrackId track, const char *path, char *err,
                                            size_t err_len);
 

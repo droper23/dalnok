@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <functional>
 #include <cmath>
+#include <cstdio>
 #include <set>
 #include <unordered_map>
 #include <utility>
@@ -88,7 +89,9 @@ bool Engine::renderToFile(const std::string &path, int64_t start, int64_t frames
 }
 
 bool Engine::renderBlocks(int64_t start, int64_t frames, int64_t maxTail, int64_t *tailWritten, std::string &err,
-                          const std::function<bool(const float *, const float *, int64_t)> &sink) {
+                          const std::function<bool(const float *, const float *, int64_t)> &sink,
+                          const std::function<void(Scratch &, const RenderState &)> &prepare,
+                          const std::function<void(const Scratch &, int)> &onBlock) {
     [[maybe_unused]] const FlushDenormals flushDenormals;
     if (start < 0 || frames <= 0) {
         err = "invalid range";
@@ -101,6 +104,10 @@ bool Engine::renderBlocks(int64_t start, int64_t frames, int64_t maxTail, int64_
     std::vector<SynthState> synths(state->tracks.size());
     std::vector<float> l(kMaxBlock * 64), r(kMaxBlock * 64);
     const int64_t m = state->compensation; // pre-roll, as in renderOffline
+    Scratch *const pre = scratch.get();
+    if (prepare) prepare(*pre, *state);
+    const size_t stems = pre->stemTracks;
+    pre->stemTracks = 0; // not during the pre-roll
     StreamCache::Lease lease; // streamed media (A-09), as in renderOffline
     const int64_t window = static_cast<int64_t>(sampleRate_);
     int64_t leasedTo = start;
@@ -116,6 +123,7 @@ bool Engine::renderBlocks(int64_t start, int64_t frames, int64_t maxTail, int64_
         renderBlock(*state, start + done, n, l.data(), r.data(), *scratch, false, soloCount_.load() > 0, synths.data());
         done += n;
     }
+    pre->stemTracks = stems;
     for (int64_t done = 0; done < frames;) {
         const auto chunk = std::min<int64_t>(static_cast<int64_t>(l.size()), frames - done);
         for (int64_t o = 0; o < chunk;) {
@@ -123,6 +131,7 @@ bool Engine::renderBlocks(int64_t start, int64_t frames, int64_t maxTail, int64_
             lease_(start + m + done + o, n);
             renderBlock(*state, start + m + done + o, n, l.data() + o, r.data() + o, *scratch, false, soloCount_.load() > 0,
                         synths.data());
+            if (onBlock) onBlock(*scratch, n);
             o += n;
         }
         if (!sink(l.data(), r.data(), chunk)) return false;
@@ -140,6 +149,7 @@ bool Engine::renderBlocks(int64_t start, int64_t frames, int64_t maxTail, int64_
         lease_(start + m + frames + rendered, n);
         renderBlock(*state, start + m + frames + rendered, n, l.data(), r.data(), *scratch, false,
                     soloCount_.load() > 0, synths.data());
+        if (onBlock) onBlock(*scratch, n);
         rendered += n;
         float peak = 0;
         for (int i = 0; i < n; ++i) peak = std::max({peak, std::fabs(l[i]), std::fabs(r[i])});
@@ -160,6 +170,51 @@ bool Engine::renderBlocks(int64_t start, int64_t frames, int64_t maxTail, int64_
         tail += n;
     }
     if (tailWritten) *tailWritten = tail;
+    return true;
+}
+
+bool Engine::exportStems(const std::string &folder, int32_t format, int64_t start, int64_t frames, int64_t maxTail,
+                         std::vector<std::string> &paths, std::string &err) {
+    static const char *const kExt[] = {"wav", "wav", "wav", "aif", "m4a", "m4a", "flac"};
+    if (format < 0 || format > 6) return fail(err, "unknown export format");
+    struct Stem { DalnokTrackId id; std::unique_ptr<WavWriter> writer; size_t index = 0; };
+    std::vector<Stem> stems;
+    int n = 0;
+    for (const auto &t : model_.tracks) {
+        ++n;
+        if (t.kind == kTrackBus || t.muted) continue;
+        std::string name;
+        for (char ch : t.name) name += (ch == '/' || ch == ':' || ch == '\\') ? '-' : ch;
+        char prefix[8];
+        snprintf(prefix, sizeof prefix, "%02d ", n);
+        const std::string path = folder + "/" + prefix + name + "." + kExt[format];
+        std::unique_ptr<WavWriter> w(openAudioWriter(path, sampleRate_, format, err));
+        if (!w) return false;
+        paths.push_back(path);
+        stems.push_back({t.id, std::move(w)});
+    }
+    if (stems.empty()) return fail(err, "no tracks to export (buses and muted tracks are left out)");
+    std::vector<float> bufL, bufR;
+    bool failed = false;
+    const bool ok = renderBlocks(start, frames, maxTail, nullptr, err,
+        [&](const float *, const float *, int64_t) { return !failed; },
+        [&](Scratch &s, const RenderState &state) {
+            bufL.assign(state.tracks.size() * kMaxBlock, 0.0f);
+            bufR.assign(state.tracks.size() * kMaxBlock, 0.0f);
+            s.stemL = bufL.data();
+            s.stemR = bufR.data();
+            s.stemTracks = state.tracks.size();
+            for (auto &st : stems)
+                for (size_t i = 0; i < state.tracks.size(); ++i)
+                    if (state.tracks[i].id == static_cast<int32_t>(st.id)) st.index = i;
+        },
+        [&](const Scratch &s, int count) {
+            for (auto &st : stems)
+                if (!failed && !st.writer->write(s.stemL + st.index * kMaxBlock, s.stemR + st.index * kMaxBlock, count, err))
+                    failed = true;
+        });
+    if (!ok || failed) return false;
+    for (auto &st : stems) if (!st.writer->close(err)) return false;
     return true;
 }
 

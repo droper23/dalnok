@@ -1765,11 +1765,15 @@
           "verified"
         ],
         [
-          "Stems and render queue",
+          "Stems (one file per track, post-fader, same length)",
+          "verified"
+        ],
+        [
+          "Render queue",
           "todo"
         ]
       ],
-      "evidence": "renderToWavRoundTrips; self-test export decodes to the session length. ExportDither recovers a 0.4 LSB sine at 16 bits; ExportTail renders a synth release past the last clip and keeps silent endings exact. BounceInPlace: the bounced track (fader −6 dB, pan 0.3, a delay tail past the clip) renders the same mix within 1e-5 once the source is muted; one undo. Self-test: Track ▸ Bounce Track in Place in all six looks at 48 and 44.1 kHz. ExportFormats: WAV, AIFF, FLAC and ALAC decode back sample-exact (within 1e-6) at the same length; AAC keeps the level within 0.2 dB. Self-test exports FLAC from the app."
+      "evidence": "renderToWavRoundTrips; self-test export decodes to the session length. ExportDither recovers a 0.4 LSB sine at 16 bits; ExportTail renders a synth release past the last clip and keeps silent endings exact. BounceInPlace: the bounced track (fader −6 dB, pan 0.3, a delay tail past the clip) renders the same mix within 1e-5 once the source is muted; one undo. Self-test: Track ▸ Bounce Track in Place in all six looks at 48 and 44.1 kHz. ExportFormats: WAV, AIFF, FLAC and ALAC decode back sample-exact (within 1e-6) at the same length; AAC keeps the level within 0.2 dB. Self-test exports FLAC from the app. ExportStems: two stems (fader, pan, a delay) sum to the mix within 1e-5; buses and muted tracks are left out; names are sanitized. Self-test: File ▸ Export Stems."
     },
     {
       "id": "interchange",

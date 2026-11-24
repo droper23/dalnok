@@ -1608,6 +1608,32 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     }
     @objc private func exportFormatPicked(_ sender: NSPopUpButton) { exportFormatChanged?(sender.indexOfSelectedItem) }
 
+    /// File ▸ Export Stems…: one file per track (not buses or muted tracks), post-fader, all the same length, in the
+    /// export panel's last format, into a folder chosen here.
+    @objc func exportStems(_ sender: Any?) {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.prompt = "Export Stems"
+        panel.message = "One \(Engine.exportFormats[Self.exportFormatIndex].title) file per track goes into this folder (buses and muted tracks are left out)."
+        panel.beginSheetModal(for: window!) { [weak self] resp in
+            guard resp == .OK, let url = panel.url else { return }
+            MainActor.assumeIsolated { () -> Void in _ = self?.exportStems(to: url) }
+        }
+    }
+    func exportStems(to folder: URL, format: DalnokFileFormat? = nil) -> Int {
+        let c = session.cycle
+        let start = c.on ? c.start : 0, frames = (c.on ? c.end : session.engine.sessionLength) - start
+        let tail = c.on ? Int64(0) : Int64(10 * dalnok_engine_sample_rate(session.engine.handle))
+        var err = [CChar](repeating: 0, count: 512)
+        let fmt = format ?? Engine.exportFormats[Self.exportFormatIndex].format
+        let n = frames > 0 ? dalnok_export_stems(session.engine.handle, folder.path, Int32(fmt.rawValue), start, frames, tail, &err, err.count) : -1
+        if n > 0 { flash("Exported \(n) stems to \(folder.lastPathComponent)") }
+        else { flash(frames > 0 ? String(cString: err) : "Nothing to export") }
+        return Int(n)
+    }
+
     /// File ▸ Export as DAWproject…: the arrangement and mixer for other DAWs (Bitwig, Studio One, Cubase, ...).
     @objc func exportDawproject(_ sender: Any?) {
         let panel = NSSavePanel()

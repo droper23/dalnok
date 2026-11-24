@@ -264,6 +264,10 @@ struct Scratch {
     float trackR[kMaxBlock];
     float tmp[kMaxBlock];
     float fadeL[kMaxBlock], fadeR[kMaxBlock]; // a track after its fader and pan
+    // Stem export: when set, each track's post-fader signal (what goes to its output) is copied to
+    // stemL/R + track index * kMaxBlock every block (silent tracks give silence). Offline only.
+    float *stemL = nullptr, *stemR = nullptr;
+    size_t stemTracks = 0;
     float edgeL[kMaxBlock], edgeR[kMaxBlock]; // one connection's signal while it is delayed
     PluginNote events[512];
     // Live-input notes for the live track's plugin instrument in this block (set by the live path).

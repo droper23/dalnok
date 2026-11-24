@@ -274,6 +274,7 @@ void renderBlock(const RenderState &state, int64_t pos, int frames, float *left,
     for (size_t b = 0; b < busCount; ++b) { clear(busL + b * kMaxBlock, frames); clear(busR + b * kMaxBlock, frames); }
     const size_t count = state.tracks.size();
     if (state.steps.size() < count || state.chainL.size() < count * kMaxBlock) return; // not compiled for rendering
+    for (size_t i = 0; i < s.stemTracks; ++i) { clear(s.stemL + i * kMaxBlock, frames); clear(s.stemR + i * kMaxBlock, frames); }
     TrackStep *steps = state.steps.data();
     for (size_t i = 0; i < count; ++i) steps[i] = TrackStep{};
 
@@ -475,6 +476,10 @@ void renderBlock(const RenderState &state, int64_t pos, int frames, float *left,
         // (the chain buffer, silenced by mute and solo) to pre-fader sends.
         auto deliver = [&]() DALNOK_NONBLOCKING {
             addTo(outL, outR, s.fadeL, s.fadeR, 1.0f, t.outDelay);
+            if (i < s.stemTracks) {
+                vec::addScaled(s.fadeL, 1.0f, s.stemL + i * kMaxBlock, frames);
+                vec::addScaled(s.fadeR, 1.0f, s.stemR + i * kMaxBlock, frames);
+            }
             for (const RenderSend &snd : t.sends) {
                 if (snd.slot < 0) continue;
                 float *dl = busL + static_cast<size_t>(snd.slot) * kMaxBlock, *dr = busR + static_cast<size_t>(snd.slot) * kMaxBlock;
