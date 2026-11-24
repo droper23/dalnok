@@ -153,6 +153,20 @@ private func attacks(_ x: [Float], rate: Double = 48_000) -> [Int] {
         for (f, g) in zip(attacks(renderAll(e, 60_000)), [12_000, 24_000, 36_000]) { #expect(abs(f - g) <= 24, "requantized hit at \(f), grid \(g)") }
     }
 
+    @Test func transposingAQuantizedClipKeepsItsQuantize() {
+        let truth = [12_000 + 1_200, 24_000 - 800, 36_000 + 1_000]
+        let (e, _, c) = session(hits(at: truth, frames: 60_000)); defer { dalnok_engine_destroy(e) }
+        #expect(dalnok_audio_quantize(e, c, 0.5, 1, 0.5) == DALNOK_OK)
+        let points = clipInfo(e, c).warp_points
+        #expect(points > 0)
+        // Transpose (same length and rate, new pitch): the hits stay where quantize put them.
+        #expect(dalnok_clip_set_stretch(e, c, 60_000, 1, 3, true) == DALNOK_OK)
+        #expect(clipInfo(e, c).warp_points == points, "a pitch change does not undo the quantize")
+        // A new speed is a different clip: the old anchors no longer apply.
+        #expect(dalnok_clip_set_stretch(e, c, 30_000, 2, 3, true) == DALNOK_OK)
+        #expect(clipInfo(e, c).warp_points == 0)
+    }
+
     @Test func refusesMidiAndSilence() {
         let (e, _, c) = session([Float](repeating: 0, count: 48_000)); defer { dalnok_engine_destroy(e) }
         #expect(dalnok_audio_quantize(e, c, 0.25, 1, 0.5) != DALNOK_OK, "silence has nothing to quantize")

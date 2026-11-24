@@ -42,9 +42,11 @@ bool Engine::setClipStretch(DalnokClipId id, int64_t length, double rate, float 
         const PoolEntry *pe = poolEntry(c->media);
         const auto span = static_cast<int64_t>(std::llround(static_cast<double>(length) * rate));
         if (!pe || c->offset + span > pe->frames + 1) return fail(err, "stretch reads past the end of the source");
+        // One speed again (a quantized clip loses its warp), unless only pitch or formant handling changes: a
+        // transpose must not undo the quantize.
+        if (length != c->length || std::fabs(rate - c->rate) > 1e-12) c->warp = nullptr;
         c->length = length;
         c->rate = rate;
-        c->warp = nullptr; // one speed again (a quantized clip loses its warp)
         c->pitch = preservePitch ? pitch : 0;
         c->preservePitch = preservePitch;
         return true;
