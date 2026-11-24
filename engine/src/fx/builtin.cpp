@@ -6,6 +6,7 @@
 #include "fx/compressor.hpp"
 #include "fx/time_fx.hpp"
 #include "fx/sampler.hpp"
+#include "fx/mix_fx.hpp"
 #include "json.hpp"
 
 #include <algorithm>
@@ -23,6 +24,11 @@ const std::vector<BuiltinInfo> &builtinPlugins() {
         {"delay", "Dalnok Delay", "Delay"},
         {"reverb", "Dalnok Reverb", "Reverb"},
         {"analyzer", "Dalnok Analyzer", "Analyzer"},
+        {"limiter", "Dalnok Limiter", "Dynamics"},
+        {"saturator", "Dalnok Saturator", "Distortion"},
+        {"filter", "Dalnok Filter", "Filter"},
+        {"chorus", "Dalnok Chorus", "Modulation"},
+        {"utility", "Dalnok Utility", "Tools"},
         {"sampler", "Dalnok Sampler", "Sampler", true},
         {"drums", "Dalnok Drums", "Drums", true},
     };
@@ -37,6 +43,11 @@ std::unique_ptr<PluginProcessor> loadBuiltin(const std::string &id, double sampl
     if (id == "delay") return std::make_unique<fx::Delay>(sampleRate);
     if (id == "reverb") return std::make_unique<fx::Reverb>(sampleRate);
     if (id == "analyzer") return std::make_unique<fx::Analyzer>(sampleRate);
+    if (id == "limiter") return std::make_unique<fx::Limiter>(sampleRate);
+    if (id == "saturator") return std::make_unique<fx::Saturator>(sampleRate);
+    if (id == "filter") return std::make_unique<fx::Filter>(sampleRate);
+    if (id == "chorus") return std::make_unique<fx::Chorus>(sampleRate);
+    if (id == "utility") return std::make_unique<fx::Utility>(sampleRate);
     if (id == "sampler") return std::make_unique<fx::Sampler>(sampleRate);
     if (id == "drums") return std::make_unique<fx::Drums>(sampleRate);
     err = "unknown built-in plug-in " + id;
