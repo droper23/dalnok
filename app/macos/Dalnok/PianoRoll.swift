@@ -106,6 +106,7 @@ final class PianoRollView: NSView {
                 if let lo = vels.min(), let hi = vels.max() { parts.append(lo == hi ? "velocity \(lo)" : "velocity \(lo)–\(hi)") }
             }
         }
+        setAccessibilityValue(parts.joined(separator: ", "))
         if let onStatus { onStatus(parts.joined(separator: "  ·  ")) } else { window?.subtitle = parts.joined(separator: "  ·  ") }
     }
     var scrollX: Double = 0 { didSet { needsDisplay = true; shownPlayhead = .nan; updatePlayhead() } }   // timeline frame at the grid's left edge
@@ -135,6 +136,10 @@ final class PianoRollView: NSView {
         playheadLayer.zPosition = 10
         playheadLayer.isHidden = true
         layer?.addSublayer(playheadLayer)
+        setAccessibilityElement(true)
+        setAccessibilityRole(.group)
+        setAccessibilityLabel("Piano roll")
+        setAccessibilityHelp("] and [ select the next and previous note, Return inserts a note at the entry cursor, Option-arrows move the cursor.")
         toolTip = "Drag empty space to select notes. Option-arrow keys move the entry cursor; Return inserts a note."
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -716,11 +721,36 @@ final class PianoRollView: NSView {
         case "midi.nudge_left": nudge(by: -Int64(snapFrames))
         case "midi.nudge_right": nudge(by: Int64(snapFrames))
         case "midi.select_all": selection = Set(visibleNotes(c).map(key))
+        case "midi.select_next": moveNoteSelection(forward: true)
+        case "midi.select_previous": moveNoteSelection(forward: false)
         case "midi.quantize": quantizeSelection()
         default:
             if action?.item != nil, ShortcutRegistry.shared.perform(action!) { return } // a global command (e.g. Play)
             super.keyDown(with: event)
         }
+    }
+
+    /// ] and [ walk the notes in time order without a mouse (the arrows edit the selection: transpose and nudge).
+    func moveNoteSelection(forward: Bool) {
+        guard let c = clip else { return }
+        let notes = visibleNotes(c).sorted { ($0.start, $0.pitch) < ($1.start, $1.pitch) }
+        guard !notes.isEmpty else { return }
+        let chosen = notes.filter { selection.contains(key($0)) }
+        let target: DalnokNote?
+        if forward {
+            target = chosen.last.map { a in notes.first { ($0.start, $0.pitch) > (a.start, a.pitch) } ?? a } ?? notes.first
+        } else {
+            target = chosen.first.map { a in notes.last { ($0.start, $0.pitch) < (a.start, a.pitch) } ?? a } ?? notes.last
+        }
+        guard let t = target else { return }
+        selection = [key(t)]
+        // Scroll the note into view.
+        let f = Double(c.start + t.start - c.offset), g = grid
+        if x(f) < g.minX || x(f) > g.maxX - 8 { scrollX = max(0, f - Double(g.width / 3) * framesPerPoint) }
+        if y(Int(t.pitch)) < g.minY { scrollY = CGFloat(127 - Int(t.pitch)) * rowHeight }
+        else if y(Int(t.pitch)) + rowHeight > g.maxY { scrollY += y(Int(t.pitch)) + rowHeight - g.maxY }
+        previewNote(t.pitch, t.velocity)
+        NSAccessibility.post(element: self, notification: .valueChanged)
     }
 
     func deleteSelection() {

@@ -370,6 +370,18 @@ extension SelfTest {
         let added = s.clip(clip)?.notes.first { $0.pitch == 74 }
         check(s.clip(clip)?.notes.count == before + 1 && added?.start == c.offset + 2 * beat, "double-click adds a snapped note (\(added?.start ?? -1))")
         check(e.undoName == "Add Note", "adding a note is one undo step")
+        // Keyboard only: ] and [ walk the notes in time order; the piano roll reports its selection to VoiceOver.
+        if let a = added {
+            roll.selection = [roll.key(a)]
+            let all = (s.clip(clip)?.notes ?? []).sorted { ($0.start, $0.pitch) < ($1.start, $1.pitch) }
+            let next = all.first { ($0.start, $0.pitch) > (a.start, a.pitch) }
+            key(30, "]")
+            check(roll.selection == [roll.key(next ?? a)], "] selects the next note in time")
+            key(33, "[")
+            check(roll.selection == [roll.key(a)] || next == nil, "[ returns to the previous note")
+            check(!(roll.accessibilityValue() as? String ?? "").isEmpty, "the piano roll reports its selection to VoiceOver")
+            roll.selection = [roll.key(a)]
+        }
         guard let n = added, let cur = s.clip(clip) else { return }
         // Drag the note up two rows and right one beat: one undo step "Move Notes".
         let r = roll.rect(n, cur)

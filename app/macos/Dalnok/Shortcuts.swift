@@ -281,6 +281,8 @@ private let specs: [String: Spec] = [
 private let viewActions: [(id: String, title: String, detail: String, keys: [KeyCombo])] = [
     ("midi.quantize", "Quantize Selected Notes", "Snap the selected notes to the grid.", [KeyCombo("q")]),
     ("midi.select_all", "Select All Notes", "Select every note in the clip.", [KeyCombo("a", .command)]),
+    ("midi.select_next", "Select Next Note", "Select the note after the selected one (keyboard-only editing).", [KeyCombo("]")]),
+    ("midi.select_previous", "Select Previous Note", "Select the note before the selected one.", [KeyCombo("[")]),
     ("midi.transpose_up", "Transpose Notes Up", "Raise the selected notes a semitone.", [KeyCombo("up")]),
     ("midi.transpose_down", "Transpose Notes Down", "Lower the selected notes a semitone.", [KeyCombo("down")]),
     ("midi.transpose_octave_up", "Transpose Notes Up an Octave", "Raise the selected notes an octave.", [KeyCombo("up", .shift)]),
