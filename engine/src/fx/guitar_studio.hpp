@@ -1,35 +1,42 @@
-// Original guitar channel strip; no third-party models or cabinet recordings.
+// Guitar Studio: an eight-slot chain; each slot holds any module from guitar_modules.hpp (gate, compressor, drives,
+// amps, cabinet, EQ, wah, chorus, flanger, phaser, tremolo, vibrato, delay, reverb, spring), in any order.
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 #include "fx/builtin.hpp"
-#include <array>
-#include <vector>
+#include "fx/guitar_modules.hpp"
 
 namespace dalnok::fx {
 class GuitarStudio final : public BuiltinProcessor {
 public:
     explicit GuitarStudio(double sampleRate);
     void process(float *, float *, int, const PluginNote *, int) DALNOK_NONBLOCKING override;
-    enum : uint32_t {
-        kInput, kGate, kCompression, kVoice, kDrive, kBass, kMiddle, kTreble,
-        kCabinet, kCabinetMix, kChorusRate, kChorusDepth, kChorusMix,
-        kTremoloRate, kTremoloDepth, kDelayTime, kDelayFeedback, kDelayMix,
-        kReverbDecay, kReverbTone, kReverbMix, kOutput, kMix, kCount
-    };
+    // Titles, units, text and defaults follow each slot's module; parameters an empty slot or module doesn't use
+    // are hidden. Choosing a module resets that slot's switch and knobs to the module's defaults.
+    bool parameter(int32_t index, PluginParameter &out) override;
+    bool parameterText(uint32_t id, double normalized, std::string &out) override;
+    bool setParameter(uint32_t id, double normalized) override;
+
+    // Parameter ids (index == id): 0 input, 1 output, then per slot: module, on, six knobs (normalized 0-1).
+    static constexpr int kSlots = 8, kPerSlot = 2 + guitar::kKnobs;
+    static constexpr uint32_t kInput = 0, kOutput = 1;
+    static constexpr uint32_t typeId(int s) { return 2 + static_cast<uint32_t>(s * kPerSlot); }
+    static constexpr uint32_t onId(int s) { return typeId(s) + 1; }
+    static constexpr uint32_t knobId(int s, int k) { return typeId(s) + 2 + static_cast<uint32_t>(k); }
+
 private:
     void changed() DALNOK_NONBLOCKING override;
-    double read(const std::vector<float> &, double delay) const DALNOK_NONBLOCKING;
-    double rate_, smoothing_, envelope_ = 0, gate_ = 0, chorusPhase_ = 0, tremoloPhase_ = 0;
-    double bassCoef_, midCoef_, dcCoef_, attack_, release_;
-    std::array<double, kCount> target_{}, current_{};
+    int typeAt(int slot) const;
+    void prime(int s, int type) DALNOK_NONBLOCKING;
+    void refresh(int s, int frames) DALNOK_NONBLOCKING;
+
+    struct Slot {
+        int running = 0, wanted = 0;
+        bool on = true, idle = true;
+        double active = 0, knob[guitar::kKnobs]{}, target[guitar::kKnobs]{};
+        guitar::ModuleDsp dsp;
+    };
+    Slot slots_[kSlots];
+    double rate_, inGain_ = 1, outGain_ = 1, inTarget_ = 1, outTarget_ = 1, smoothing_, knobSmoothing_, fadeStep_;
     bool primed_ = false;
-    uint64_t write_ = 0;
-    struct Channel {
-        double previous = 0, dc = 0, bass = 0, middle = 0, cab[3]{}, down[4]{}, echoTone = 0;
-        std::vector<float> chorus, echo;
-    } channel_[2];
-    std::array<std::vector<float>, 4> room_;
-    std::array<size_t, 4> roomPos_{};
-    std::array<double, 4> roomDamp_{}, roomGain_{}, roomGainTarget_{};
 };
 } // namespace dalnok::fx

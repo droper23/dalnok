@@ -28,10 +28,85 @@ extension SelfTest {
         check(studioSlot != 0, "Guitar Studio inserts after Guitar Tune")
         defer { if studioSlot != 0 { s.removePlugin(track, studioSlot) } }
         if let studio = w.devicePanel.devices.first(where: { $0.slot == studioSlot }) {
-            checkGuitarPresets(studio)
-            check(studio.current(22) != nil, "Guitar Studio exposes its complete effects chain")
+            try? w.snapshot(to: workdir.appendingPathComponent("guitar-tune.png"))
+            checkStudioModules(studio)
+            checkStudioPresets(studio)
         } else { check(false, "Guitar Studio device appears") }
-        try? w.snapshot(to: workdir.appendingPathComponent("guitar-tune.png"))
+    }
+
+    /// Guitar Studio: the default rig, its faceplate, and every module edit through the real device menu.
+    private func checkStudioModules(_ d: DeviceView) {
+        let h = s.engine.handle, undoName = s.engine.undoName
+        func names() -> [String] { d.studioChain().map(\.name) }
+        func fire(_ path: [String]) -> Bool {
+            var menu: NSMenu? = d.deviceMenu(), item: NSMenuItem?
+            for title in path {
+                item = menu?.items.first { $0.title == title }
+                menu = item?.submenu
+            }
+            guard let item, item.isEnabled, let action = item.action else { return false }
+            return NSApp.sendAction(action, to: item.target, from: item)
+        }
+        func title(_ id: UInt32) -> String { d.current(id).map { fixedString($0.title) } ?? "(hidden)" }
+        let engineNames = StudioLayout.catalog.indices.map { t -> String in
+            var buf = [CChar](repeating: 0, count: 64)
+            dalnok_plugin_parameter_text(h, d.slot, StudioLayout.typeId(0), StudioLayout.normalized(t), &buf, 64)
+            return String(decoding: buf.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
+        }
+        check(engineNames == StudioLayout.catalog.map(\.name), "the app's module catalog matches the engine's")
+        check(names() == ["Noise Gate", "Compressor", "Amp Crunch", "Cabinet", "Delay", "Reverb"], "a new Guitar Studio is a complete rig (\(names()))")
+        let ids = d.controlIds
+        check(ids.first == StudioLayout.input && ids.last == StudioLayout.output && ids.contains(StudioLayout.knobId(2, 0))
+              && !ids.contains(StudioLayout.typeId(0)) && !ids.contains(StudioLayout.knobId(6, 0)),
+              "the faceplate shows every module's controls in chain order, between input and output")
+        check(title(StudioLayout.knobId(2, 0)) == "3 Amp Crunch Gain", "controls are labelled by slot and module (\(title(StudioLayout.knobId(2, 0))))")
+        let reverb = d.studioChain()[5]
+        check(fire(["Add Module", "Time", "Spring"]) && names().last == "Spring" && names().count == 7, "Add Module ▸ Time ▸ Spring adds it at the end")
+        check(title(StudioLayout.knobId(6, 0)) == "7 Spring Decay" && d.controlIds.contains(StudioLayout.knobId(6, 0)), "the new module's controls appear")
+        check(fire(["Modules", "7 · Spring", "Move Earlier"]) && names()[5] == "Spring" && names()[6] == "Reverb", "Move Earlier swaps it with the reverb")
+        check(d.studioChain()[6].knobs == reverb.knobs, "moving keeps every knob of the module it passes")
+        check(fire(["Modules", "6 · Spring", "Replace With", "Modulation", "Flanger"]) && names()[5] == "Flanger"
+              && title(StudioLayout.knobId(5, 0)) == "6 Flanger Rate", "Replace With ▸ Flanger swaps the module and its controls")
+        check(fire(["Modules", "6 · Flanger", "Turn Off"]) && !d.studioChain()[5].on
+              && d.deviceMenu().items.first { $0.title == "Modules" }?.submenu?.items.contains { $0.title == "6 · Flanger (off)" } == true,
+              "Turn Off switches the module off and the menu says so")
+        check(fire(["Modules", "6 · Flanger (off)", "Remove"]) && names() == ["Noise Gate", "Compressor", "Amp Crunch", "Cabinet", "Delay", "Reverb"],
+              "Remove closes the gap")
+        check(fire(["Add Module", "Modulation", "Chorus"]) && fire(["Add Module", "Drive", "Fuzz"]) && names().count == 8
+              && !fire(["Add Module", "Time", "Delay"]), "all eight slots fill, then Add Module is unavailable")
+        check(fire(["Modules", "8 · Fuzz", "Remove"]) && fire(["Modules", "7 · Chorus", "Remove"]) && names().count == 6, "remove the extra modules")
+        check(s.engine.undoName == undoName, "module edits leave the undo history alone (plug-in settings, like knob moves)")
+    }
+
+    /// Guitar Studio's factory rigs: each replaces the whole chain, and applying one again gives the identical state.
+    private func checkStudioPresets(_ d: DeviceView) {
+        let h = s.engine.handle, undoName = s.engine.undoName
+        func state() -> String {
+            let n = dalnok_plugin_get_state(h, d.slot, nil, 0)
+            var b = [CChar](repeating: 0, count: n + 1)
+            dalnok_plugin_get_state(h, d.slot, &b, b.count)
+            return String(decoding: b.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
+        }
+        func apply(_ name: String) -> Bool {
+            guard let item = d.deviceMenu().items.first(where: { $0.title == "Factory Presets" })?.submenu?.items.first(where: { $0.title == name }),
+                  let action = item.action else { return false }
+            return NSApp.sendAction(action, to: item.target, from: item)
+        }
+        check(StudioPreset.factory.count >= 6, "Guitar Studio offers \(StudioPreset.factory.count) factory rigs")
+        for preset in StudioPreset.factory {
+            check(apply(preset.name), "apply \(preset.name) through the real menu")
+            let chain = d.studioChain()
+            let matches = chain.count == preset.modules.count && zip(chain, preset.modules).allSatisfy { got, want in
+                got.type == want.type && got.on == want.on && want.knobs.allSatisfy { abs((got.knobs[$0.key] ?? -1) - $0.value) < 1e-9 }
+            }
+            check(matches, "\(preset.name) sets exactly its modules and knobs (\(chain.map(\.name)))")
+            let first = state()
+            dalnok_plugin_set_parameter(h, d.slot, StudioLayout.knobId(0, 0), 0.123)
+            check(apply(StudioPreset.factory[0].name) && apply(preset.name) && state() == first, "\(preset.name) replaces every setting")
+        }
+        check(s.engine.undoName == undoName, "presets leave the undo history alone")
+        check(apply("High-Gain Lead"), "end on a full rig for the snapshot")
+        try? w.snapshot(to: workdir.appendingPathComponent("guitar-studio.png"))
     }
 
     private func checkGuitarPresets(_ device: DeviceView) {

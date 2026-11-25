@@ -5,12 +5,13 @@ milestone: 0.4.0 released 2026-11-23 (four themes in six looks with their own fi
 ---
 # Current State
 
-## Guitar processors (2026-11-24)
-- Added Guitar Tune (recorded single-note correction) and Guitar Studio (guitar effects chain), as native built-ins; see ADR-0017.
-- GuitarTuneTests / GuitarStudioTests: 11 tests pass, including 44.1/48 kHz pitch correction within 5 cents, stereo consistency, compensated unity, scales, bend tolerance, state/save/load, delay/room, cabinet and alias attenuation.
-- Self-test (`SelfTest+Guitar`, all six looks at 48 and 44.1 kHz, 37 checks each): insertion, the pitch display, Tune then Studio, all six factory presets through the real device menu with every parameter replaced and the prior settings restorable.
-- Factory presets (device ▸ right-click ▸ Factory Presets) are not undo steps: plug-in parameters live outside the undoable model, like knob moves. Undoable plug-in state would be an engine change (ADR needed).
-- Intended order: clean DI → Guitar Tune → Guitar Studio. Commercial sound parity and listening validation remain unproven; no chord correction, formant preservation or cabinet IR loader.
+## Guitar processors (2026-11-24, modular Studio 2026-11-25)
+- Guitar Tune (recorded single-note correction) and Guitar Studio, native built-ins; see ADR-0017.
+- Guitar Studio is a modular rig: 8 slots, any of 20 modules in any order (gate, compressor, boost, overdrive, distortion, fuzz, three amps, cabinet, EQ, wah, chorus, flanger, phaser, tremolo, vibrato, delay, reverb, spring). Right-click the device: Add Module ▸ category, Modules ▸ n · name ▸ Turn Off / Move Earlier / Move Later / Replace With / Remove, Factory Presets (8 rigs). A new instance is gate → compressor → crunch amp → cabinet → delay → reverb.
+- GuitarTuneTests / GuitarStudioTests: 15 tests pass (44.1/48 kHz): every module finite, bounded and bit-exact when off; empty chain transparent; delay repeat on the sample and feedback ratio; reverb RT60 within 35 % and decorrelated; compressor 20 dB → <6 dB; gate −60 dB on noise; cabinet ≥25 dB fizz roll-off; EQ shelf; aliases < −45 dB under full distortion; tremolo depth; live module switching without steps.
+- Self-test (`SelfTest+Guitar`, six looks × two rates, 64 checks each): catalog matches the engine, default rig, faceplate in chain order, every module menu action, all eight rigs replace every setting, undo history untouched.
+- CPU (release): 8 heavy modules render 23x real time at 48 kHz (~4 % of a core).
+- Presets and module edits are not undo steps (plug-in parameters sit outside the undoable model). In the pedalboard look the whole chain is one wide pedal with abbreviated labels. Commercial sound parity and listening validation remain unproven; no chord correction, formant preservation or cabinet IR loader.
 
 ## Latest (2026-11-24, day): open bugs fixed, parity features
 Same branch (API 47). Every bug from the ten-tester hunt fixed; then features toward Logic/Ableton parity.

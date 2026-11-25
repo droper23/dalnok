@@ -657,6 +657,7 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
     private var analyzer: SpectrumAnalyzer?
     private var tick = 0
     private var isGuitarTune: Bool { path == "guitar-tune" || path == "dalnok:guitar-tune" }
+    var isGuitarStudio: Bool { path == "guitar-studio" || path == "dalnok:guitar-studio" }
     private var instrument = false
     private weak var faceRow: NSStackView?
     private let path: String
@@ -1006,7 +1007,19 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         var ids = [UInt32](repeating: 0, count: 32)
         let n = Int(dalnok_plugin_controls(session.engine.handle, trackId, slot, &ids, 32))
         if n > 0 { return Array(ids.prefix(n)) }
-        return Array(allParameters.filter { $0.automatable && !$0.read_only }.prefix(Self.defaultCount).map(\.id))
+        let automatable = allParameters.filter { $0.automatable && !$0.read_only }
+        if isGuitarStudio { // every control of every module, in chain order, between input and output
+            let modules = automatable.filter { $0.id >= StudioLayout.typeId(0) }.map(\.id)
+            return [StudioLayout.input] + modules + [StudioLayout.output]
+        }
+        return Array(automatable.prefix(Self.defaultCount).map(\.id))
+    }
+
+    /// For a plug-in whose parameter set changes (Guitar Studio's modules): re-read the parameters, rebuild the controls.
+    func reloadParameters() {
+        loadParameters()
+        knobs = []
+        refreshControls()
     }
 
     func current(_ id: UInt32) -> DalnokPluginParameter? {
@@ -2027,6 +2040,7 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         let i = chain.firstIndex(of: slot) ?? 0
         if isSampler { sampleMenuItems(m); m.addItem(.separator()) }
         if let presets = guitarPresetMenu() { m.addItem(presets); m.addItem(.separator()) }
+        if isGuitarStudio, loaded { studioModuleItems().forEach(m.addItem); m.addItem(.separator()) }
         m.addItem(item(bypassed ? "Turn On" : "Bypass", { [weak self] in self?.toggleBypass() }, enabled: loaded))
         m.addItem(item("Open Plug-in Window", { [weak self] in self?.onOpen?() }, enabled: loaded))
         m.addItem(item("Show Controls", { [weak self] in self?.onShowControls?() }, enabled: loaded))

@@ -15,11 +15,19 @@ using the existing parameter, automation, state, undo, render and discovery inte
   The shifting heads vary around that latency; this is not phase-coherent parallel processing.
   The bend control releases correction outside the specified distance from a scale target; it does
   not identify musical intent. It is not chord separation, formant preservation or note editing.
-- `dalnok:guitar-studio` (Guitar Studio): linked gate/compression, oversampled nonlinear drive,
-  tone and original cabinet filters, chorus/tremolo, echo and room. Cabinet labels describe voicings;
-  these are not captured cabinets, IR convolution, or reproductions of commercial amplifiers.
+- `dalnok:guitar-studio` (Guitar Studio), revised 2026-11-25 into a modular rig so a guitar track needs no
+  separate effect plug-ins: eight slots in series, each holding any of 20 modules (Noise Gate, Compressor, Boost,
+  Overdrive, Distortion, Fuzz, Amp Clean/Crunch/Lead, Cabinet, EQ, Wah, Chorus, Flanger, Phaser, Tremolo, Vibrato,
+  Delay, Reverb, Spring) in any order (`fx/guitar_modules.*`). The module set lives in ordinary parameters
+  (per slot: module, switch, six knobs) so state, automation, presets and the C API need nothing new; titles, text,
+  defaults and visibility follow the chosen module, and choosing a module resets its slot to that module's defaults.
+  Slots crossfade over 10 ms when switched or swapped, so edits while playing don't click. Drives and amps clip at
+  4x oversampling (8th-order Chebyshev I, zero latency) with first-order antiderivative anti-aliasing. Cabinet
+  labels describe voicings; these are not captured cabinets, IR convolution, or reproductions of commercial amplifiers.
+  A stereo delay may use 2 x 2.05 s of buffer per slot, so each slot preallocates that pool (about 0.8 MB at 48 kHz).
 - Native themed device controls and a real input-pitch/error/confidence display, plus factory
-  starting presets (Device ▸ Factory Presets). Like knob moves, a preset changes plug-in parameters, which sit
+  starting presets (Device ▸ Factory Presets: three for Tune, eight complete rigs for Studio; Studio's modules
+  are edited from Device ▸ Add Module and ▸ Modules). Like knob moves, a preset or module edit changes plug-in parameters, which sit
   outside the undoable model, so it is not an undo step. Both remain independently insertable, with Tune before Studio recommended.
 - No external dependency, proprietary asset, importer translation or project-format change.
 
