@@ -639,6 +639,8 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
     private(set) var knobs: [(knob: any ParameterControl, label: NSTextField, value: NSTextField, id: UInt32)] = []
     /// Warm Analog: the plug-in drawn as a stomp box (nil in Graphite).
     private(set) var pedal: PedalBody?
+    /// Guitar Studio: its modules in signal order, above the controls (every look).
+    private(set) var studioStrip: StudioStrip?
     /// Graphite: the faceplate's sections (between the input and output meters).
     private let sectionsRow = NSStackView()
     let inMeter = FaceplateMeter(caption: "IN"), outMeter = FaceplateMeter(caption: "OUT")
@@ -656,6 +658,8 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
     private var displaySize: [NSLayoutConstraint] = []
     private var analyzer: SpectrumAnalyzer?
     private var tick = 0
+    private var isGuitarTune: Bool { path == "guitar-tune" || path == "dalnok:guitar-tune" }
+    var isGuitarStudio: Bool { path == "guitar-studio" || path == "dalnok:guitar-studio" }
     private var instrument = false
     private weak var faceRow: NSStackView?
     private let path: String
@@ -780,7 +784,10 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         foldButton.setAccessibilityLabel("Fold \(name)")
         if Theme.look.devices == .schematic { labelFoldButton() } // Atelier: say it (the owner couldn't find a way to fold)
         // One button opens the plug-in; choosing the controller's parameters is in the unit's menu (Edit Controls…).
-        let header = NSStackView(views: [foldButton, power, title, etchedTitle, NSView(), sidechain, openButton])
+        // Guitar Studio's slot strip: in the header row on a faceplate (its spare width), a row of its own on a pedal.
+        if isGuitarStudio && loaded { studioStrip = StudioStrip(device: self) }
+        let headerStrip: NSView = Theme.look.pedalboard ? NSView() : (studioStrip ?? NSView())
+        let header = NSStackView(views: [foldButton, power, title, etchedTitle, headerStrip, sidechain, openButton])
         header.spacing = 6
         header.setContentHuggingPriority(.required, for: .vertical) // stays at the top whatever the controls' height
         if Theme.look.pedalboard && !isDrums { // Dalnok Drums keeps its pad grid on a faceplate in every look
@@ -818,7 +825,9 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         }
         // Atelier: the name is a caption under the station, not a header over it (the owner's fourth round).
         let schematicCaption = Theme.look.devices == .schematic && pedal == nil
-        let body = NSStackView(views: pedal.map { [header, $0] } ?? (schematicCaption ? [above, faceRow, below, header] : [header, above, faceRow, below]))
+        let strip: [NSView] = Theme.look.pedalboard ? (studioStrip.map { [$0] } ?? []) : []
+        let body = NSStackView(views: pedal.map { [header] + strip + [$0] }
+                               ?? (schematicCaption ? strip + [above, faceRow, below, header] : [header] + strip + [above, faceRow, below]))
         body.orientation = .vertical
         body.alignment = pedal == nil ? .leading : .centerX
         body.spacing = 4
@@ -842,6 +851,11 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
             minWidth = widthAnchor.constraint(greaterThanOrEqualToConstant: 220)
         }
         minWidth.isActive = true
+        if let studioStrip {
+            if Theme.look.pedalboard { studioStrip.widthAnchor.constraint(equalTo: header.widthAnchor).isActive = true }
+            else { studioStrip.setContentHuggingPriority(.defaultLow, for: .horizontal) }
+            minWidth.constant = max(minWidth.constant, 420) // room for the rig's names
+        }
         loadParameters()
         refreshControls()
         setAccessibilityElement(true)
@@ -1007,7 +1021,19 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         var ids = [UInt32](repeating: 0, count: 32)
         let n = Int(dalnok_plugin_controls(session.engine.handle, trackId, slot, &ids, 32))
         if n > 0 { return Array(ids.prefix(n)) }
-        return Array(allParameters.filter { $0.automatable && !$0.read_only }.prefix(Self.defaultCount).map(\.id))
+        let automatable = allParameters.filter { $0.automatable && !$0.read_only }
+        if isGuitarStudio { // every control of every module, in chain order, between input and output
+            let modules = automatable.filter { $0.id >= StudioLayout.typeId(0) }.map(\.id)
+            return [StudioLayout.input] + modules + [StudioLayout.output]
+        }
+        return Array(automatable.prefix(Self.defaultCount).map(\.id))
+    }
+
+    /// For a plug-in whose parameter set changes (Guitar Studio's modules): re-read the parameters, rebuild the controls.
+    func reloadParameters() {
+        loadParameters()
+        knobs = []
+        refreshControls()
     }
 
     func current(_ id: UInt32) -> DalnokPluginParameter? {
@@ -1245,6 +1271,19 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         }
         tick += 1
         let screen = pedal.screen
+        if let tuner = screen.subviews.first(where: { $0 is GuitarTuneDisplay }) { tuner.isHidden = true }
+        if isGuitarTune && FaceplateDisplay.override(title.stringValue) == nil {
+            let tuner: GuitarTuneDisplay
+            if let existing = screen.subviews.first(where: { $0 is GuitarTuneDisplay }) as? GuitarTuneDisplay { tuner = existing }
+            else {
+                tuner = GuitarTuneDisplay(frame: screen.bounds)
+                tuner.autoresizingMask = [.width, .height]
+                screen.addSubview(tuner)
+            }
+            tuner.isHidden = screen.showingValue
+            tuner.update(guitarTuneReading())
+            if !screen.showingValue { return }
+        }
         if screen.showingValue { screen.needsDisplay = true; return } // let it time out
         guard tick % 2 == 0, !bypassed else { return }
         switch automaticKind() {
@@ -1293,9 +1332,19 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         }
     }
 
+    private func guitarTuneReading() -> GuitarTuneDisplay.Reading {
+        .init(hz: (current(7)?.value ?? 0) * 1500,
+              cents: (current(8)?.value ?? 0.5) * 200 - 100,
+              confidence: (current(9)?.value ?? 0) * 100,
+              reference: 430 + (current(3)?.value ?? 0.5) * 20,
+              tolerance: (current(2)?.value ?? 0) * 200,
+              bypassed: bypassed)
+    }
+
     /// The display's data: gain reduction (reported or measured), the response curve and spectrum, or the scope trace.
     private func updateDisplay() {
         guard let display else { return }
+        if let tuner = display as? GuitarTuneDisplay { tuner.update(guitarTuneReading()); return }
         let h = session.engine.handle
         let off = bypassed
         switch displayKind {
@@ -1382,6 +1431,9 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
     private func makeDisplay(_ kind: FaceplateDisplay.Kind) -> NSView {
         displayKind = kind
         analyzer = nil
+        if isGuitarTune && FaceplateDisplay.override(title.stringValue) == nil {
+            return GuitarTuneDisplay(frame: .zero)
+        }
         let d: NSView = switch kind {
         case .gainReduction: MovingCoilMeter(mode: .gainReduction)
         case .vu: MovingCoilMeter(mode: .output)
@@ -1553,6 +1605,7 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
     /// External changes (the plug-in's own editor) glide the knob and light its ring.
     func refreshValues() {
         refreshBypass()
+        studioStrip?.reload()
         for k in knobs where !k.knob.tracking {
             guard let p = current(k.id) else { continue }
             if abs(p.value - k.knob.value) > 1e-6 { k.knob.glide(to: p.value) }
@@ -1985,7 +2038,7 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
             c.onKindChange = { [weak pedal] k in if let pedal { PedalStore.setKind(pedal.name, id, k) } }
             c.setAccessibilityLabel(fixedString(p.title))
             c.toolTip = "\(fixedString(p.title)): \(display(p)). Drag up or down (⇧ fine), double-click for the default; right-click to change the control."
-            let name = NSTextField(labelWithString: PedalLabel.short(fixedString(p.title)))
+            let name = NSTextField(labelWithString: isGuitarStudio ? PedalLabel.studio(fixedString(p.title)) : PedalLabel.short(fixedString(p.title)))
             name.font = Theme.ui(6.8, .bold)
             name.alignment = .center
             name.lineBreakMode = .byTruncatingTail
@@ -2008,6 +2061,8 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         let i = chain.firstIndex(of: slot) ?? 0
         if isSampler { sampleMenuItems(m); m.addItem(.separator()) }
         if loaded { presetMenuItems(m); m.addItem(.separator()) }
+        if let presets = guitarPresetMenu() { m.addItem(presets); m.addItem(.separator()) }
+        if isGuitarStudio, loaded { studioModuleItems().forEach(m.addItem); m.addItem(.separator()) }
         m.addItem(item(bypassed ? "Turn On" : "Bypass", { [weak self] in self?.toggleBypass() }, enabled: loaded))
         m.addItem(item("Open Plug-in Window", { [weak self] in self?.onOpen?() }, enabled: loaded))
         m.addItem(item("Show Controls", { [weak self] in self?.onShowControls?() }, enabled: loaded))
@@ -2379,7 +2434,25 @@ enum PedalLabel {
         "pre-delay": "PRE", "predelay": "PRE", "damping": "DAMP", "size": "SIZE", "sidechain": "SC", "filter": "FILT",
         "cutoff": "CUT", "bandwidth": "BW", "type": "TYPE", "mode": "MODE", "stereo": "ST", "pan": "PAN", "spread": "SPREAD",
     ]
+    static let studioWords: [String: String] = [
+        "low-cut": "LO CUT", "high-cut": "HI CUT", "ping-pong": "PING", "presence": "PRES", "distance": "DIST", "modulation": "MOD",
+        "treble": "TREB", "middle": "MID", "bass": "BASS", "manual": "MAN", "stages": "STAGES", "pedal": "PEDAL", "shape": "SHAPE",
+        "bias": "BIAS", "fuzz": "FUZZ", "auto": "AUTO", "drip": "DRIP", "range": "RANGE", "mic": "MIC", "frequency": "FREQ",
+    ]
+    /// Guitar Studio ("3 Amp Crunch Gain"): the slot number (the strip above names its module) and the knob ("3 GAIN").
+    static func studio(_ title: String) -> String {
+        let parts = title.split(separator: " ").map(String.init)
+        guard parts.count >= 3, let slot = Int(parts[0]), let last = parts.last else { return short(title) }
+        let own = studioWords[last.lowercased()] ?? words[last.lowercased()] ?? String(last.prefix(6)).uppercased()
+        return "\(slot) \(own)"
+    }
+    /// Whole titles whose abbreviation would be cryptic (Guitar Tune's "Correction Amount" was "C AMOU…").
+    static let fixed: [String: String] = [
+        "Correction Amount": "AMOUNT", "Correction Retune": "RETUNE", "Bend Tolerance": "BEND", "Tuning Reference": "REF",
+        "Tuning Root": "ROOT", "Tuning Scale": "SCALE", "Output Mix": "MIX",
+    ]
     static func short(_ title: String) -> String {
+        if let f = fixed[title] { return f }
         let parts = title.replacingOccurrences(of: "_", with: " ").split(whereSeparator: { $0 == " " || $0 == "(" || $0 == ")" }).map(String.init)
         guard let last = parts.last else { return title.uppercased() }
         let own = words[last.lowercased()] ?? (last.count > 7 ? String(last.prefix(6)) : last).uppercased()

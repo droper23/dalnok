@@ -5,9 +5,9 @@ milestone: 0.4.0 released 2026-11-23 (four themes in six looks with their own fi
 ---
 # Current State
 
-## Latest (2026-11-24, night): parity backlog, branch `feat/parity-2`
-Built in a separate worktree (`.claude/worktrees/parity`) off 1edb58c while another session works on Guitar in the
-main tree; merge later. Producer agents ranked what Logic/Ableton users miss most; items 1–10 are now done.
+## Latest (2026-11-25): parity backlog and guitar plug-ins, merged to main
+Built in a separate worktree (`.claude/worktrees/parity`) off 1edb58c while Guitar work went on in the main tree;
+both branches merged into main on 2026-11-25. Producer agents ranked what Logic/Ableton users miss most; items 1–10 are now done.
 - **New:** Poly bend/sustain; CC recording; Sampler and Drums (`fx/sampler.*`, pad grid); step input; Capture MIDI;
   Inspector Clip section; grooves; Follow Tempo (format 18) and hand warp markers; Slice to Drums; clip tools
   (`engine_cliptools.cpp`); Limiter/Saturator/Filter/Chorus/Utility (`fx/mix_fx.*`); Analyzer; Synth (`fx/synth_fx.*`);
@@ -20,6 +20,15 @@ main tree; merge later. Producer agents ranked what Logic/Ableton users miss mos
 - **Verified:** `swift test` 377 pass; self-test matrix 12/12 PASS (`-j 4`; more parallel runs overload the machine).
 - **Next for parity:** warp modes, tempo ramps; MIDI channel/program and articulations; Flex Pitch editor; racks and macros; MP3 (needs
   a permissive encoder); video track and SMPTE; VCA/PFL/track delay; clip-gain envelope; tap tempo.
+
+## Guitar processors (2026-11-24, modular Studio 2026-11-25)
+- Guitar Tune (recorded single-note correction) and Guitar Studio, native built-ins; see ADR-0017.
+- Guitar Studio is a modular rig: 8 slots, any of 20 modules in any order (gate, compressor, boost, overdrive, distortion, fuzz, three amps, cabinet, EQ, wah, chorus, flanger, phaser, tremolo, vibrato, delay, reverb, spring). Right-click the device: Add Module ▸ category, Modules ▸ n · name ▸ Turn Off / Move Earlier / Move Later / Replace With / Remove, Factory Presets (8 rigs). A new instance is gate → compressor → crunch amp → cabinet → delay → reverb.
+- GuitarTuneTests / GuitarStudioTests: 15 tests pass (44.1/48 kHz): every module finite, bounded and bit-exact when off; empty chain transparent; delay repeat on the sample and feedback ratio; reverb RT60 within 35 % and decorrelated; compressor 20 dB → <6 dB; gate −60 dB on noise; cabinet ≥25 dB fizz roll-off; EQ shelf; aliases < −45 dB under full distortion; tremolo depth; live module switching without steps.
+- Self-test (`SelfTest+Guitar`, six looks × two rates, 64 checks each): catalog matches the engine, default rig, faceplate in chain order, every module menu action, all eight rigs replace every setting, undo history untouched.
+- CPU (release): 8 heavy modules render 23x real time at 48 kHz (~4 % of a core).
+- Review fixes (2026-11-25): Tune bypasses to one exact tap when no shift is under way (no comb), ~24 kHz analysis spread over samples, normalized-function vertex, soft bend-tolerance edge, even span (exact latency at 44.1 kHz); Studio migrates first-version states, no double clear on a swap, block-size-independent knob smoothing, Flanger line 70 ms, delay input unsaturated, audio-thread check on for all three files; slot strip (`StudioStrip.swift`), pedal labels, Tune display target/±50 c/IN TUNE. 368 engine tests pass; self-test matrix passes (three transport-timing flakes under load passed on rerun).
+- Presets and module edits are not undo steps (plug-in parameters sit outside the undoable model). In the pedalboard look the whole chain is one wide pedal (labelled by slot and knob, the strip above names the modules). Commercial sound parity and listening validation remain unproven; no chord correction, formant preservation or cabinet IR loader.
 
 ## Earlier (2026-11-24, day): open bugs fixed, parity features
 Same branch (API 47). Every bug from the ten-tester hunt fixed; then features toward Logic/Ableton parity.

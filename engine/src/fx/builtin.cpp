@@ -5,6 +5,8 @@
 #include "fx/channel_eq.hpp"
 #include "fx/compressor.hpp"
 #include "fx/time_fx.hpp"
+#include "fx/guitar_tune.hpp"
+#include "fx/guitar_studio.hpp"
 #include "fx/sampler.hpp"
 #include "fx/mix_fx.hpp"
 #include "fx/synth_fx.hpp"
@@ -20,6 +22,8 @@ namespace dalnok {
 
 const std::vector<BuiltinInfo> &builtinPlugins() {
     static const std::vector<BuiltinInfo> list = {
+        {"guitar-tune", "Dalnok Guitar Tune", "Pitch"},
+        {"guitar-studio", "Dalnok Guitar Studio", "Distortion"},
         {"channel-eq", "Dalnok Channel EQ", "EQ"},
         {"compressor", "Dalnok Compressor", "Dynamics"},
         {"gate", "Dalnok Gate", "Dynamics"},
@@ -41,6 +45,8 @@ const std::vector<BuiltinInfo> &builtinPlugins() {
 
 std::unique_ptr<PluginProcessor> loadBuiltin(const std::string &id, double sampleRate, int maxBlock, std::string &err) {
     (void)maxBlock;
+    if (id == "guitar-tune") return std::make_unique<fx::GuitarTune>(sampleRate);
+    if (id == "guitar-studio") return std::make_unique<fx::GuitarStudio>(sampleRate);
     if (id == "channel-eq") return std::make_unique<fx::ChannelEq>(sampleRate);
     if (id == "compressor") return std::make_unique<fx::Compressor>(sampleRate);
     if (id == "gate") return std::make_unique<fx::Gate>(sampleRate);
