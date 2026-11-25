@@ -26,14 +26,12 @@ GuitarTune::GuitarTune(double rate) : BuiltinProcessor("guitar-tune", "Dalnok Gu
     {7, "Detected Pitch", "Hz", 0, 1500, 0, P::Linear, nullptr, true},
     {8, "Pitch Error", "cents", -100, 100, 0, P::Linear, nullptr, true},
     {9, "Confidence", "%", 0, 100, 0, P::Linear, nullptr, true}
-}), rate_(rate), analysisRate_(rate / std::max(1, int(rate / 12000))),
-    span_(std::round(rate * .05)), filterCoef_(1 - std::exp(-2 * pi * 1800 / rate)),
-    decimation_(std::max(1, int(rate / 12000))), latency_(uint32_t(span_ / 2 + 8)) {
+}), rate_(rate), analysisRate_(rate / std::max(1.0, std::round(rate / 24000))),
+    span_(2 * std::round(rate * .025)), filterCoef_(1 - std::exp(-2 * pi * 1800 / rate)),
+    decimation_(int(std::max(1.0, std::round(rate / 24000)))), latency_(uint32_t(span_ / 2 + 8)) {
     for (auto &d : delay_) d.assign(size_t(span_) + 32, 0);
+    steadyStep_ = 1 / (.02 * rate);
 }
-// libm here is allocation/lock-free; all buffers are allocated by the constructor.
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wfunction-effects"
 void GuitarTune::changed() DALNOK_NONBLOCKING {
     smoothing_ = 1 - std::exp(-1 / (rate_ * rt(1) * .001));
 }
@@ -43,39 +41,61 @@ double GuitarTune::meter(uint32_t id) const {
     if (id == 9) return confidence_.load(std::memory_order_relaxed);
     return 0;
 }
-void GuitarTune::detect() DALNOK_NONBLOCKING {
-    constexpr int window = 384;
-    const int maxLag = std::min(254, int(analysisRate_ / 65));
-    const int minLag = std::max(2, int(analysisRate_ / 1400));
-    auto sample = [&](int back) { return double(history_[size_t((count_ - 1 - back) & 1023)]); };
+// The detection window: 768 analysis samples (32 ms at the ~24 kHz analysis rate) ending at the anchor (frozen when the hop starts, so spreading the
+// lags over the next few samples analyses one consistent window).
+void GuitarTune::startDetect() DALNOK_NONBLOCKING {
+    constexpr int window = 768;
+    anchor_ = count_;
+    maxLag_ = std::min(510, int(analysisRate_ / 65));
     double energy = 0;
-    for (int i = 0; i < window; ++i) energy += sample(i) * sample(i);
+    for (int i = 0; i < window; ++i) {
+        const double x = history_[size_t((anchor_ - 1 - i) & 2047)];
+        energy += x * x;
+    }
+    lag_ = 0;
+    if (energy / window < 1e-8) { // silence: nothing to correct
+        target_ = 1;
+        pitch_.store(0, std::memory_order_relaxed);
+        confidence_.store(0, std::memory_order_relaxed);
+        cents_.store(0, std::memory_order_relaxed);
+        return;
+    }
+    sum_ = 0;
+    normalized_[0] = 1;
+    lag_ = 1;
+}
+void GuitarTune::detectSome() DALNOK_NONBLOCKING {
+    constexpr int window = 768, perSample = 2; // 2 x 256 samples per hop covers the (at most 510) lags
+    auto sample = [&](int back) DALNOK_NONBLOCKING { return double(history_[size_t((anchor_ - 1 - back) & 2047)]); };
+    for (int k = 0; k < perSample && lag_ > 0 && lag_ <= maxLag_; ++k, ++lag_) {
+        double d = 0;
+        for (int i = 0; i < window; ++i) {
+            const double delta = sample(i) - sample(i + lag_);
+            d += delta * delta;
+        }
+        difference_[size_t(lag_)] = d;
+        sum_ += d;
+        normalized_[size_t(lag_)] = sum_ > 1e-20 ? d * lag_ / sum_ : 1;
+    }
+    if (lag_ > maxLag_) { lag_ = 0; finishDetect(); }
+}
+void GuitarTune::finishDetect() DALNOK_NONBLOCKING {
+    const int maxLag = maxLag_, minLag = std::max(2, int(analysisRate_ / 1400));
     target_ = 1;
     pitch_.store(0, std::memory_order_relaxed);
     confidence_.store(0, std::memory_order_relaxed);
     cents_.store(0, std::memory_order_relaxed);
-    if (energy / window < 1e-8) return;
-    double sum = 0;
-    normalized_[0] = 1;
-    for (int lag = 1; lag <= maxLag; ++lag) {
-        double d = 0;
-        for (int i = 0; i < window; ++i) {
-            const double delta = sample(i) - sample(i + lag);
-            d += delta * delta;
-        }
-        difference_[lag] = d;
-        sum += d;
-        normalized_[lag] = sum > 1e-20 ? d * lag / sum : 1;
-    }
     int best = 0;
     for (int lag = minLag; lag < maxLag; ++lag) {
-        if (normalized_[lag] < .12) {
-            while (lag + 1 < maxLag && normalized_[lag + 1] < normalized_[lag]) ++lag;
+        if (normalized_[size_t(lag)] < .12) {
+            while (lag + 1 < maxLag && normalized_[size_t(lag) + 1] < normalized_[size_t(lag)]) ++lag;
             best = lag; break;
         }
     }
     if (!best || best >= maxLag) return;
-    const double a = difference_[best - 1], b = difference_[best], c = difference_[best + 1];
+    // The minimum between lags, on the normalized function (YIN's step 5): at high notes the lag is only a dozen
+    // analysis samples, and the raw difference's slope (it grows with the lag) would bias the vertex by cents.
+    const double a = normalized_[size_t(best) - 1], b = normalized_[size_t(best)], c = normalized_[size_t(best) + 1];
     const double denom = a - 2 * b + c;
     const double offset = std::abs(denom) > 1e-20 ? std::clamp(.5 * (a - c) / denom, -.5, .5) : 0;
     const double hz = analysisRate_ / (best + offset);
@@ -92,9 +112,12 @@ void GuitarTune::detect() DALNOK_NONBLOCKING {
     const double error = (note - nearest) * 100;
     pitch_.store(float(hz), std::memory_order_relaxed);
     cents_.store(float(std::clamp(error, -100.0, 100.0)), std::memory_order_relaxed);
-    confidence_.store(float(100 * (1 - normalized_[best])), std::memory_order_relaxed);
-    if (rt(2) > 0 && std::abs(error) > rt(2)) return;
-    target_ = std::pow(2.0, -error * rt(0) / 120000);
+    confidence_.store(float(100 * (1 - normalized_[size_t(best)])), std::memory_order_relaxed);
+    // Bend Tolerance: notes further than this from the target are bends and left alone (0: correct everything).
+    // Correction fades out over the 15 cents past it, so a bend leaving the tolerance doesn't jump.
+    double amount = rt(0) / 100;
+    if (rt(2) > 0) amount *= std::clamp((rt(2) + 15 - std::abs(error)) / 15, 0.0, 1.0);
+    target_ = std::pow(2.0, -error * amount / 1200);
 }
 double GuitarTune::read(int channel, double delay) const DALNOK_NONBLOCKING {
     const int size = int(delay_[channel].size());
@@ -115,13 +138,19 @@ void GuitarTune::process(float *left, float *right, int frames, const PluginNote
         filter_[1] += filterCoef_ * (filter_[0] - filter_[1]);
         if (++decimated_ == decimation_) {
             decimated_ = 0;
-            history_[size_t(count_ & 1023)] = float(filter_[1]);
-            count_ = (count_ + 1) & 2047;
-            if (++hop_ >= 128) { hop_ = 0; detect(); }
+            history_[size_t(count_ & 2047)] = float(filter_[1]);
+            count_ = (count_ + 1) & 4095;
+            if (++hop_ >= 256) { hop_ = 0; startDetect(); }
+            else detectSome();
         }
         ratio_ += smoothing_ * (target_ - ratio_);
         mix_ += .002 * (rt(6) * .01 - mix_);
-        phase_ += (1 - ratio_) / span_;
+        // No shift under way (within a cent): fade to one exact tap at the reported latency and park the heads
+        // at it, so a finished correction never leaves the two heads straddling (a comb) or off the latency.
+        const bool still = std::abs(1 - ratio_) < 6e-4 && std::abs(1 - target_) < 6e-4;
+        steady_ = still ? std::min(1.0, steady_ + steadyStep_) : std::max(0.0, steady_ - 4 * steadyStep_);
+        if (steady_ >= 1) phase_ = .5;
+        else phase_ += (1 - ratio_) / span_;
         if (phase_ >= 1) phase_ -= 1;
         if (phase_ < 0) phase_ += 1;
         const double other = phase_ < .5 ? phase_ + .5 : phase_ - .5;
@@ -129,11 +158,12 @@ void GuitarTune::process(float *left, float *right, int frames, const PluginNote
         for (int ch = 0; ch < 2; ++ch) {
             float &out = ch ? right[i] : left[i];
             delay_[ch][write_] = out;
-            const double wet = weight * read(ch, 8 + phase_ * span_) + (1 - weight) * read(ch, 8 + other * span_);
-            out = float(read(ch, latency_) * (1 - mix_) + wet * mix_);
+            const double exact = read(ch, latency_);
+            const double heads = weight * read(ch, 8 + phase_ * span_) + (1 - weight) * read(ch, 8 + other * span_);
+            const double wet = steady_ * exact + (1 - steady_) * heads;
+            out = float(exact * (1 - mix_) + wet * mix_);
         }
         if (++write_ == int(delay_[0].size())) write_ = 0;
     }
 }
-#pragma clang diagnostic pop
 }

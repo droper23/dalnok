@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- **Guitar plug-ins, after review:** Guitar Tune no longer leaves a hollow (comb-filtered) tone after a correction, tracks high notes to within 3 cents, shows the target note, a ±50 cent scale with the bend band and an IN TUNE mark. Guitar Studio has a slot strip (drag to reorder, click a light to switch, + to add, the loaded rig named), short pedal labels, and opens projects saved with its first version as the same rig.
 - **Guitar Tune / Guitar Studio:** native single-note guitar pitch correction with scale targets, adjustable strength/speed/bend tolerance and pitch display; Guitar Studio is a modular rig: eight slots, any of 20 modules in any order (gate, compressor, boost, overdrive, distortion, fuzz, clean/crunch/lead amps, cabinet, EQ, wah, chorus, flanger, phaser, tremolo, vibrato, delay, reverb, spring), added and arranged from the device menu, click-free while playing, with eight factory rigs.
 
 - **Clip loop** (Clip ▸ Loop Clip, L): a looped clip repeats its audio or notes for as long as its end is dragged out; splitting and trimming keep the loop. Project format 16.

@@ -15,6 +15,8 @@ public:
     bool parameter(int32_t index, PluginParameter &out) override;
     bool parameterText(uint32_t id, double normalized, std::string &out) override;
     bool setParameter(uint32_t id, double normalized) override;
+    // States from the first Guitar Studio (a fixed chain, parameters 0-22) load as the equivalent modular rig.
+    bool setState(const std::string &bytes) override;
 
     // Parameter ids (index == id): 0 input, 1 output, then per slot: module, on, six knobs (normalized 0-1).
     static constexpr int kSlots = 8, kPerSlot = 2 + guitar::kKnobs;
@@ -31,12 +33,13 @@ private:
 
     struct Slot {
         int running = 0, wanted = 0;
-        bool on = true, idle = true;
+        bool on = true, idle = true, clean = true; // clean: primed and not run since (no need to clear again)
         double active = 0, knob[guitar::kKnobs]{}, target[guitar::kKnobs]{};
         guitar::ModuleDsp dsp;
     };
     Slot slots_[kSlots];
-    double rate_, inGain_ = 1, outGain_ = 1, inTarget_ = 1, outTarget_ = 1, smoothing_, knobSmoothing_, fadeStep_;
+    double rate_, inGain_ = 1, outGain_ = 1, inTarget_ = 1, outTarget_ = 1, smoothing_, fadeStep_;
+    double knobSmoothing_[17]{}; // by chunk length (1-16 frames), so smoothing doesn't depend on the host's block size
     bool primed_ = false;
 };
 } // namespace dalnok::fx

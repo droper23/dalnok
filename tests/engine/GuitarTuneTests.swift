@@ -54,14 +54,59 @@ import Testing
             #expect(l.allSatisfy { $0.isFinite && abs($0) < 1 })
         }
     }
-    @Test func zeroAmountPreservesAudioWithCompensatedLatency() {
-        let (e, slot) = session(rate: 48000, hz: 226)
+    @Test(arguments: [44100.0, 48000.0])
+    func zeroAmountPreservesAudioWithCompensatedLatency(rate: Double) {
+        let (e, slot) = session(rate: rate, hz: 226)
         defer { dalnok_engine_destroy(e) }
         dalnok_plugin_set_parameter(e, slot, 0, 0)
-        let wet = renderStereo(e, 144000).0
-        let dry = (0..<144000).map { Float(0.3 * sin(2 * Double.pi * 226 * Double($0) / 48000)) }
-        let error = zip(wet[4800..<130000], dry[4800..<130000]).map { abs($0 - $1) }.max() ?? 1
-        #expect(error < 1e-5, "zero amount nulls after host delay compensation: \(error)")
+        let n = Int(rate * 3)
+        let wet = renderStereo(e, n).0
+        let dry = (0..<n).map { Float(0.3 * sin(2 * Double.pi * 226 * Double($0) / rate)) }
+        let error = zip(wet[4800..<(n - 14000)], dry[4800..<(n - 14000)]).map { abs($0 - $1) }.max() ?? 1
+        #expect(error < 1e-5, "\(rate) Hz: zero amount nulls after host delay compensation: \(error)")
+    }
+    /// A sharp note is corrected, then an in-tune note follows: once it settles the output is the input again,
+    /// exactly (one tap at the reported latency), not two heads left straddling it (a comb that hollows the tone).
+    @Test(arguments: [44100.0, 48000.0])
+    func returnsToTransparentAfterACorrection(rate: Double) {
+        let e = dalnok_engine_create(rate)!
+        defer { dalnok_engine_destroy(e) }
+        let t = dalnok_track_add(e, "Guitar DI")
+        let n = Int(rate * 4), split = Int(rate * 1.5)
+        var phase = 0.0
+        let x = (0..<n).map { i -> Float in
+            phase += 2 * Double.pi * (i < split ? 220 * pow(2, 30.0 / 1200) : 220) / rate
+            return Float(0.3 * sin(phase))
+        }
+        let m = makeMedia([x, x], rate: rate)
+        dalnok_clip_add(e, t, m, 0, 0, 0); dalnok_media_release(m)
+        let slot = dalnok_plugin_add(e, t, "dalnok:guitar-tune", nil, nil, 0)
+        _ = dalnok_plugin_set_parameter(e, slot, 0, 1)
+        _ = dalnok_plugin_set_parameter(e, slot, 2, 0)
+        let y = renderStereo(e, n).0
+        let tail = Int(rate * 3)..<Int(rate * 3.9)
+        let error = tail.map { abs(y[$0] - x[$0]) }.max()!
+        #expect(error < 1e-4, "\(rate) Hz: after the correction, the in-tune note passes unchanged (max error \(error))")
+        // And the correction did happen: the sharp note left the plug-in near 220 Hz.
+        let early = Array(y[Int(rate * 0.5)..<split])
+        var best = 0.0, bestHz = 0.0
+        for c in -60...60 {
+            let hz = 220 * pow(2, Double(c) / 1200), w = 2 * Double.pi * hz / rate
+            var re = 0.0, im = 0.0
+            for (i, v) in early.enumerated() { re += Double(v) * cos(w * Double(i)); im += Double(v) * sin(w * Double(i)) }
+            if re * re + im * im > best { best = re * re + im * im; bestHz = hz }
+        }
+        #expect(abs(1200 * log2(bestHz / 220)) <= 5, "the sharp note was corrected (\(1200 * log2(bestHz / 220)) cents)")
+    }
+    /// High notes: the lag is only a dozen analysis samples, so the vertex must be found on the normalized function.
+    @Test(arguments: [44100.0, 48000.0])
+    func highNotesCorrectWithinThreeCents(rate: Double) {
+        for (target, detune) in [(880.0, 18.0), (1046.5, -22.0), (1318.51, 15.0)] {
+            let (e, _) = session(rate: rate, hz: target * pow(2, detune / 1200), harmonic: true)
+            defer { dalnok_engine_destroy(e) }
+            let error = 1200 * log2(dominant(renderStereo(e, Int(rate * 3)).0, rate: rate, target: target) / target)
+            #expect(abs(error) <= 3, "\(rate) Hz: \(target) corrected within 3 cents, got \(error)")
+        }
     }
     @Test func bendToleranceLeavesOutsideNotesUncorrected() {
         let hz = 220 * pow(2.0, 30.0 / 1200)

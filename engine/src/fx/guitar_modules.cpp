@@ -139,8 +139,6 @@ std::string knobText(const Knob &k, double n) {
     return t;
 }
 
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wfunction-effects" // libm only; buffers come from the pool made in prepare()
 
 // ---- Filters --------------------------------------------------------------------------------------------------
 
@@ -249,7 +247,7 @@ void ModuleDsp::reset(int type) DALNOK_NONBLOCKING {
     fresh_ = true;
     switch (type) {
     case Chorus: case Vibrato: line_[0] = carve(0.06); line_[1] = carve(0.06); break;
-    case Flanger: line_[0] = carve(0.03); line_[1] = carve(0.03); break;
+    case Flanger: line_[0] = carve(0.07); line_[1] = carve(0.07); break; // Manual 8 ms x the sweep's 8x = 64 ms
     case Cabinet: line_[0] = carve(0.01); line_[1] = carve(0.01); break;
     case Delay: line_[0] = carve(2.05); line_[1] = carve(2.05); break;
     case Spring: line_[0] = carve(0.06); line_[1] = carve(0.06); break;
@@ -569,8 +567,9 @@ void ModuleDsp::process(int type, double &l, double &r) DALNOK_NONBLOCKING {
             f[c] = c_[1] * (one_[c] - two_[c]);
         }
         const double pp = c_[5], mono = 0.5 * (l + r);
-        line_[0].push(std::tanh((1 - pp) * l + pp * mono + (1 - pp) * f[0] + pp * f[1]));
-        line_[1].push(std::tanh((1 - pp) * r + (1 - pp) * f[1] + pp * f[0]));
+        // The input goes in clean; only the repeats saturate (gently), which keeps high feedback bounded.
+        line_[0].push((1 - pp) * l + pp * mono + std::tanh((1 - pp) * f[0] + pp * f[1]));
+        line_[1].push((1 - pp) * r + std::tanh((1 - pp) * f[1] + pp * f[0]));
         l = l * c_[6] + y[0] * c_[7];
         r = r * c_[6] + y[1] * c_[7];
         break;
@@ -702,6 +701,5 @@ void ModuleDsp::processSpring(double &l, double &r) DALNOK_NONBLOCKING {
     l = l * c_[7] + wet[0] * c_[8];
     r = r * c_[7] + wet[1] * c_[8];
 }
-#pragma clang diagnostic pop
 
 } // namespace dalnok::fx::guitar

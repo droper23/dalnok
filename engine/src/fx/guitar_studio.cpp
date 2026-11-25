@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <string>
+#include "json.hpp"
 
 namespace dalnok::fx {
 namespace {
@@ -51,7 +52,7 @@ int typeOf(double plain) DALNOK_NONBLOCKING { return std::clamp(static_cast<int>
 
 GuitarStudio::GuitarStudio(double rate) : BuiltinProcessor("guitar-studio", "Dalnok Guitar Studio", table()), rate_(rate) {
     smoothing_ = 1 - std::exp(-1 / (0.02 * rate));
-    knobSmoothing_ = 1 - std::exp(-kChunk / (0.03 * rate));
+    for (int n = 1; n <= kChunk; ++n) knobSmoothing_[n] = 1 - std::exp(-n / (0.03 * rate));
     fadeStep_ = 1 / (0.01 * rate);
     for (auto &s : slots_) s.dsp.prepare(rate);
 }
@@ -65,8 +66,9 @@ bool GuitarStudio::parameter(int32_t index, PluginParameter &out) {
     const int type = typeAt(s);
     const Module &m = module(type);
     const std::string prefix = std::to_string(s + 1) + " " + m.name;
+    if (f == 0) out.automatable = false; // choosing a module resets the slot: not something to automate
     if (type == Empty) { out.hidden = true; return true; }
-    if (f == 0) { out.title = prefix + " Module"; out.automatable = false; return true; }
+    if (f == 0) { out.title = prefix + " Module"; return true; }
     if (f == 1) { out.title = prefix + " On/Off"; return true; }
     const int k = f - 2;
     if (k >= m.knobs) { out.hidden = true; return true; }
@@ -102,6 +104,49 @@ bool GuitarStudio::setParameter(uint32_t id, double normalized) {
     return true;
 }
 
+bool GuitarStudio::setState(const std::string &bytes) {
+    json::Value doc;
+    std::string err;
+    const json::Value *values = json::parse(bytes, doc, err) && doc.isObject() ? doc.get("values") : nullptr;
+    if (!values || !values->isObject() || values->get("22") == nullptr || values->get("23") != nullptr)
+        return BuiltinProcessor::setState(bytes);
+    // The first Guitar Studio: gate -> compression -> amp (voice, drive, bass/middle/treble in dB) -> cabinet ->
+    // chorus -> tremolo -> echo -> room, each effect in use when its mix or depth was above zero.
+    auto old = [&](int id, double fallback) {
+        const json::Value *v = values->get(std::to_string(id));
+        return v && v->isNumber() && std::isfinite(v->number) ? v->number : fallback;
+    };
+    json::Value out = json::Value::makeObject();
+    out.set("plugin", std::string("guitar-studio"));
+    out.set("version", 1);
+    json::Value nv = json::Value::makeObject();
+    nv.set(std::to_string(kInput), old(0, 0));
+    nv.set(std::to_string(kOutput), old(21, -6));
+    int slot = 0;
+    auto add = [&](int type, std::initializer_list<double> knobs) {
+        const Module &m = module(type);
+        nv.set(std::to_string(typeId(slot)), static_cast<double>(type));
+        nv.set(std::to_string(onId(slot)), 1.0);
+        int k = 0;
+        for (double v : knobs) { nv.set(std::to_string(knobId(slot, k)), knobNormalized(m.knob[k], v)); ++k; }
+        for (; k < kKnobs; ++k) nv.set(std::to_string(knobId(slot, k)), k < m.knobs ? knobNormalized(m.knob[k], m.knob[k].def) : 0.0);
+        ++slot;
+    };
+    auto tone = [](double db) { return std::clamp(5 + db / 12 * 5, 0.0, 10.0); }; // ±12 dB onto the amp's 0-10
+    add(Gate, {old(1, -70), 120, 70});
+    if (const double c = old(2, 20); c > 0) add(Compressor, {-12 - 0.24 * c, 1 + 0.07 * c, 10, 150, 0.08 * c, 100});
+    const int voice = std::clamp(static_cast<int>(std::lround(old(3, 0))), 0, 2);
+    add(AmpClean + voice, {old(4, 30), tone(old(5, 0)), tone(old(6, 0)), tone(old(7, 0)), 5, 0});
+    add(Cabinet, {std::clamp(std::round(old(8, 0)), 0.0, 2.0), 30, 20, 70, 7000, old(9, 100)});
+    if (old(12, 0) > 0) add(Chorus, {old(10, 0.7), std::clamp(old(11, 2) / 6 * 100, 0.0, 100.0), 12, 70, old(12, 0)});
+    if (old(14, 0) > 0) add(Tremolo, {old(13, 4), old(14, 0), 0, 0});
+    if (old(17, 0) > 0) add(Delay, {old(15, 375), old(16, 30), 4500, 15, 0, old(17, 0)});
+    if (old(20, 12) > 0) add(Reverb, {old(18, 1.8), 60, 15, old(19, 5000), 30, old(20, 12)});
+    for (; slot < kSlots; ++slot) nv.set(std::to_string(typeId(slot)), static_cast<double>(Empty));
+    out.set("values", std::move(nv));
+    return BuiltinProcessor::setState(json::serialize(out));
+}
+
 void GuitarStudio::changed() DALNOK_NONBLOCKING {
     inTarget_ = db(rt(kInput));
     outTarget_ = db(rt(kOutput));
@@ -126,6 +171,7 @@ void GuitarStudio::prime(int s, int type) DALNOK_NONBLOCKING {
     Slot &sl = slots_[s];
     sl.running = type;
     sl.dsp.reset(type);
+    sl.clean = true;
     for (int k = 0; k < kKnobs; ++k) sl.knob[k] = sl.target[k];
     refresh(s, kChunk);
 }
@@ -136,14 +182,12 @@ void GuitarStudio::refresh(int s, int frames) DALNOK_NONBLOCKING {
     double v[kKnobs]{};
     for (int k = 0; k < m.knobs; ++k) {
         if (m.knob[k].curve == Knob::Steps) sl.knob[k] = sl.target[k];
-        else sl.knob[k] += knobSmoothing_ * (sl.target[k] - sl.knob[k]);
+        else sl.knob[k] += knobSmoothing_[std::clamp(frames, 1, kChunk)] * (sl.target[k] - sl.knob[k]);
         v[k] = knobValue(m.knob[k], sl.knob[k]);
     }
     sl.dsp.update(sl.running, v, frames);
 }
 
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wfunction-effects" // std::isfinite only; the slots' DSP is checked in guitar_modules.cpp
 void GuitarStudio::process(float *left, float *right, int frames, const PluginNote *, int) DALNOK_NONBLOCKING {
     applyPending();
     for (int start = 0; start < frames; start += kChunk) {
@@ -163,7 +207,11 @@ void GuitarStudio::process(float *left, float *right, int frames, const PluginNo
                     sl.idle = true;
                     continue;
                 }
-                if (sl.idle) { prime(s, sl.running); sl.idle = false; } // back on: start clean, no stale tails
+                if (sl.idle) { // back on: start clean, no stale tails (a module just swapped in already is)
+                    if (!sl.clean) prime(s, sl.running);
+                    sl.idle = false;
+                }
+                sl.clean = false;
                 sl.active = want ? std::min(1.0, sl.active + fadeStep_) : std::max(0.0, sl.active - fadeStep_);
                 double wl = l, wr = r;
                 sl.dsp.process(sl.running, wl, wr);
@@ -177,5 +225,4 @@ void GuitarStudio::process(float *left, float *right, int frames, const PluginNo
         for (int s = 0; s < kSlots; ++s) if (ran[s]) slots_[s].dsp.flush();
     }
 }
-#pragma clang diagnostic pop
 } // namespace dalnok::fx

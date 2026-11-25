@@ -134,7 +134,7 @@ private func amplitude(_ x: ArraySlice<Float>, _ hz: Double, _ rate: Double) -> 
         #expect(abs(l[100] - 0.2) < 1e-6, "dry stays at full level at 50 % mix")
         let first = l[(100 + d - 40)...(100 + d + 40)], second = l[(100 + 2 * d - 40)...(100 + 2 * d + 40)]
         let at = first.indices.max { abs(l[$0]) < abs(l[$1]) }!
-        #expect(at == 100 + d && abs(Double(l[at]) - tanh(0.2)) < 0.002)
+        #expect(at == 100 + d && abs(Double(l[at]) - 0.2) < 0.002, "the first repeat is the input, unsaturated: \(l[at])")
         let ratio = srms(second) / srms(first)
         #expect(ratio > 0.3 && ratio < 0.55, "second repeat \(ratio) of the first")
         #expect(l == r, "no ping-pong: both sides repeat alike")
@@ -227,4 +227,54 @@ private func amplitude(_ x: ArraySlice<Float>, _ hz: Double, _ rate: Double) -> 
         let step = zip(out.dropFirst(), out).map { abs($0 - $1) }.dropFirst(2048).max()!
         #expect(step < 0.02, "largest sample step \(step) (the note's own is 0.0043)")
     }
+
+    /// A project saved with the first Guitar Studio (a fixed chain, parameters 0-22) opens as the same rig of modules.
+    @Test func firstVersionStatesLoadAsTheEquivalentRig() throws {
+        let rate = 48_000.0
+        let (e, slot) = studio(pluck(Int(rate), rate), rate: rate); defer { dalnok_engine_destroy(e) }
+        let old: [String: Double] = ["0": 3, "1": -60, "2": 40, "3": 2, "4": 70, "5": 6, "6": -3, "7": 0, "8": 1, "9": 80,
+                                     "10": 0.7, "11": 2, "12": 0, "13": 4, "14": 50, "15": 375, "16": 30, "17": 20,
+                                     "18": 1.8, "19": 5000, "20": 0, "21": -10, "22": 100]
+        let json = try JSONSerialization.data(withJSONObject: ["plugin": "guitar-studio", "version": 1, "values": old])
+        #expect(dalnok_plugin_set_state(e, slot, json.base64EncodedString()) == DALNOK_OK)
+        let names = (0..<8).map { text(e, slot, typeId($0), parameter(e, slot, typeId($0)).value) }
+        // Chorus (mix 0) and room (mix 0) were unused, so they're left out.
+        #expect(names == ["Noise Gate", "Compressor", "Amp Lead", "Cabinet", "Tremolo", "Delay", "Empty", "Empty"], "\(names)")
+        func shown(_ s: Int, _ k: Int) -> String { text(e, slot, knobId(s, k), parameter(e, slot, knobId(s, k)).value) }
+        #expect(shown(0, 0) == "-60.0 dB", "gate threshold \(shown(0, 0))")
+        #expect(shown(2, 0) == "70 %" && shown(2, 1) == "7.5" && shown(2, 2) == "3.8" && shown(2, 3) == "5.0",
+                "amp gain and tone stack \([0, 1, 2, 3].map { shown(2, $0) })")
+        #expect(shown(3, 0) == "2x12" && shown(3, 5) == "80 %", "cabinet \(shown(3, 0)), mix \(shown(3, 5))")
+        #expect(shown(4, 1) == "50 %" && shown(5, 0) == "375 ms" && shown(5, 5) == "20 %")
+        #expect(abs(parameter(e, slot, 0).value - 27.0 / 48) < 1e-9 && abs(parameter(e, slot, 1).value - 26.0 / 48) < 1e-9,
+                "input +3 dB, output -10 dB")
+        let (l, _) = renderStereo(e, Int(rate))
+        #expect(l.allSatisfy(\.isFinite) && srms(l[...]) > 0.01)
+        // A current state round-trips unchanged (not mistaken for an old one).
+        var buf = [CChar](repeating: 0, count: 16_384)
+        _ = dalnok_plugin_get_state(e, slot, &buf, buf.count)
+        #expect(dalnok_plugin_set_state(e, slot, String(cString: buf)) == DALNOK_OK)
+        #expect((0..<8).map { text(e, slot, typeId($0), parameter(e, slot, typeId($0)).value) } == names)
+    }
+
+    /// Knob smoothing follows time, not the host's block size: a drive change sounds the same in 8- and 64-frame blocks.
+    @Test func knobSmoothingIsIndependentOfBlockSize() {
+        let rate = 48_000.0, n = 9_600
+        func run(_ block: Int) -> [Float] {
+            let (e, slot) = studio(sine(220, 0.3, n, rate), rate: rate, chain: [(.overdrive, [0: 0])]); defer { dalnok_engine_destroy(e) }
+            dalnok_transport_play(e)
+            var l = [Float](repeating: 0, count: block), r = l, out: [Float] = []
+            while out.count < n {
+                if out.count == 4_096 { #expect(dalnok_plugin_set_parameter(e, slot, knobId(0, 0), 1) == DALNOK_OK) }
+                dalnok_engine_pump(e, &l, &r, Int32(block))
+                out += l
+            }
+            return out
+        }
+        let a = run(8), b = run(64)
+        let w = 96 // 2 ms loudness windows through the change
+        let diff = stride(from: 4_096, to: 8_000, by: w).map { abs(dB(srms(a[$0..<($0 + w)])) - dB(srms(b[$0..<($0 + w)]))) }.max()!
+        #expect(diff < 0.1, "loudness through a drive change differs by \(diff) dB between block sizes")
+    }
 }
+

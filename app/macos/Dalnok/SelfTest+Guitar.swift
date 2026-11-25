@@ -10,6 +10,11 @@ extension SelfTest {
         check(GuitarTuneDisplay.Reading(hz: 82.4069, confidence: 99).note == "E2", "Guitar Tune names the low E string")
         check(!GuitarTuneDisplay.Reading(hz: 440, confidence: 30).tracking, "Guitar Tune hides unreliable pitch")
         check(!GuitarTuneDisplay.Reading(hz: 440, confidence: 99, bypassed: true).tracking, "Guitar Tune hides bypassed telemetry")
+        let sharp = GuitarTuneDisplay.Reading(hz: 440 * pow(2, 0.6 / 12), cents: 60, confidence: 97)
+        check(sharp.note == "A♯4" && sharp.target == "A4", "Guitar Tune shows the target as well as the note played (\(sharp.note) → \(sharp.target))")
+        check(GuitarTuneDisplay.Reading(hz: 440, cents: 2, confidence: 97).status == "✓ IN TUNE", "within 3 cents reads IN TUNE (not colour alone)")
+        check(GuitarTuneDisplay.Reading(hz: 440, cents: 30, confidence: 97, tolerance: 20).status.contains("BEND"),
+              "outside the Bend Tolerance it says the bend is left alone")
         guard let track = s.tracks.first(where: { !$0.isInstrument })?.id else { return check(false, "guitar effects need an audio track") }
         w.headers.select(track)
         let slot = (try? s.addPlugin(track, path: "dalnok:guitar-tune")) ?? 0
@@ -20,6 +25,12 @@ extension SelfTest {
         let tuner = (device.display as? GuitarTuneDisplay) ?? device.subviewsDeep.compactMap { $0 as? GuitarTuneDisplay }.first
         check(tuner != nil, "Guitar Tune has a native pitch display in this look")
         check(device.controlIds.contains(0) && !device.controlIds.contains(7), "Guitar Tune offers correction controls, not editable telemetry")
+        if let tuner { // a tracking reading, for the snapshot (live input isn't available here)
+            tuner.update(.init(hz: 196 * pow(2, -0.12 / 12), cents: -12, confidence: 95, tolerance: 45))
+            tuner.display()
+            try? w.snapshot(to: workdir.appendingPathComponent("guitar-tune-tracking.png"))
+            check(tuner.reading.target == "G3", "the tracking display names its target (G3)")
+        }
         check(dalnok_plugin_set_parameter(s.engine.handle, slot, 0, 0.42) == DALNOK_OK, "Guitar Tune correction amount edits")
         device.refreshValues()
         check(abs((device.current(0)?.value ?? -1) - 0.42) < 1e-6, "Guitar Tune controls re-query the engine")
@@ -55,6 +66,7 @@ extension SelfTest {
         }
         check(engineNames == StudioLayout.catalog.map(\.name), "the app's module catalog matches the engine's")
         check(names() == ["Noise Gate", "Compressor", "Amp Crunch", "Cabinet", "Delay", "Reverb"], "a new Guitar Studio is a complete rig (\(names()))")
+        checkStudioStrip(d)
         let ids = d.controlIds
         check(ids.first == StudioLayout.input && ids.last == StudioLayout.output && ids.contains(StudioLayout.knobId(2, 0))
               && !ids.contains(StudioLayout.typeId(0)) && !ids.contains(StudioLayout.knobId(6, 0)),
@@ -76,6 +88,42 @@ extension SelfTest {
               && !fire(["Add Module", "Time", "Delay"]), "all eight slots fill, then Add Module is unavailable")
         check(fire(["Modules", "8 · Fuzz", "Remove"]) && fire(["Modules", "7 · Chorus", "Remove"]) && names().count == 6, "remove the extra modules")
         check(s.engine.undoName == undoName, "module edits leave the undo history alone (plug-in settings, like knob moves)")
+    }
+
+    /// The slot strip: the rig in order, drag to reorder, click a light to switch, VoiceOver actions; pedal labels.
+    private func checkStudioStrip(_ d: DeviceView) {
+        func names() -> [String] { d.studioChain().map(\.name) }
+        check(PedalLabel.studio("3 Amp Crunch Gain") == "3 GAIN" && PedalLabel.studio("1 Noise Gate Threshold") == "1 THRESH"
+              && PedalLabel.studio("4 Cabinet High-cut") == "4 HI CUT"
+              && PedalLabel.short("Correction Amount") == "AMOUNT" && PedalLabel.short("Bend Tolerance") == "BEND", "pedal labels are the slot and the knob (no truncated module names)")
+        guard let strip = d.studioStrip else { return check(false, "Guitar Studio shows its slot strip") }
+        w.window?.layoutIfNeeded()
+        let before = names()
+        check(strip.chain.map(\.name) == before && strip.bounds.width > 300, "the strip shows the rig in signal order (\(strip.chain.map(\.name)), \(strip.bounds.width) pt)")
+        check(strip.accessibilityChildren()?.count == before.count + 1, "VoiceOver: one button per module and Add Module")
+        var c = strip.cells
+        func at(_ x: CGFloat, _ y: CGFloat) -> CGPoint { strip.convert(CGPoint(x: x, y: y), to: nil) }
+        strip.mouseDown(with: mouse(.leftMouseDown, at(c[0].midX, c[0].midY)))
+        strip.mouseDragged(with: mouse(.leftMouseDragged, at((c[1].midX + c[2].midX) / 2, c[0].midY)))
+        strip.mouseDragged(with: mouse(.leftMouseDragged, at(c[2].midX, c[0].midY)))
+        strip.mouseUp(with: mouse(.leftMouseUp, at(c[2].midX, c[0].midY)))
+        check(names() == [before[1], before[2], before[0]] + before.dropFirst(3), "dragging slot 1 onto slot 3 moves it there (\(names()))")
+        check(strip.chain.map(\.name) == names(), "the strip follows the move")
+        c = strip.cells
+        let lightAt = strip.light(c[2])
+        strip.mouseDown(with: mouse(.leftMouseDown, at(lightAt.midX, lightAt.midY)))
+        strip.mouseUp(with: mouse(.leftMouseUp, at(lightAt.midX, lightAt.midY)))
+        check(!d.studioChain()[2].on, "clicking a module's light switches it off")
+        strip.mouseDown(with: mouse(.leftMouseDown, at(lightAt.midX, lightAt.midY)))
+        strip.mouseUp(with: mouse(.leftMouseUp, at(lightAt.midX, lightAt.midY)))
+        check(d.studioChain()[2].on, "and on again")
+        func act(_ i: Int, _ name: String) -> Bool {
+            guard let e = strip.accessibilityChildren()?[i] as? NSAccessibilityElement,
+                  let a = e.accessibilityCustomActions()?.first(where: { $0.name == name }) else { return false }
+            return a.handler?() ?? false
+        }
+        check(act(2, "Move Earlier") && act(1, "Move Earlier") && names() == before, "VoiceOver's Move Earlier puts it back (\(names()))")
+        try? w.snapshot(to: workdir.appendingPathComponent("guitar-studio-strip.png"))
     }
 
     /// Guitar Studio's factory rigs: each replaces the whole chain, and applying one again gives the identical state.
@@ -106,6 +154,14 @@ extension SelfTest {
         }
         check(s.engine.undoName == undoName, "presets leave the undo history alone")
         check(apply("High-Gain Lead"), "end on a full rig for the snapshot")
+        d.refreshValues()
+        check(d.studioStrip?.preset?.name == "High-Gain Lead" && d.studioStrip?.preset?.edited == false, "the strip names the loaded rig")
+        let knob = StudioLayout.knobId(0, 0), was = d.current(knob)?.value ?? 0
+        dalnok_plugin_set_parameter(h, d.slot, knob, was > 0.5 ? 0.2 : 0.8)
+        d.refreshValues()
+        check(d.studioStrip?.preset?.edited == true, "and marks it edited after a knob moves")
+        dalnok_plugin_set_parameter(h, d.slot, knob, was)
+        d.refreshValues()
         try? w.snapshot(to: workdir.appendingPathComponent("guitar-studio.png"))
     }
 
