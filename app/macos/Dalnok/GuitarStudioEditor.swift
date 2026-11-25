@@ -76,7 +76,7 @@ final class GuitarStudioEditor: NSView {
         r.same = r.value == v ? r.same + 1 : 0
         r.value = v
         raw[id] = r
-        return r.same > 6 ? 0 : CGFloat(rig.level(id))
+        return r.same > 6 && !rig.engine.isPlaying ? 0 : CGFloat(rig.level(id))
     }
 
     /// Follows the engine: rebuilds when modules change (here, in the device panel, by undo or a preset), otherwise
@@ -339,7 +339,7 @@ final class SpaceStage: NSView {
         self.rig = rig
         super.init(frame: .zero)
         add.onPress = { [weak self] in
-            guard let self, let menu = self.rig.addMenu() else { return }
+            guard let self, let menu = self.rig.quickAddMenu() else { return }
             menu.popUp(positioning: nil, at: CGPoint(x: 20, y: self.add.bounds.midY), in: self.add)
         }
         addSubview(add)

@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Guitar Studio’s add-module picker now lists modules in one categorized menu; its playback displays retain steady signal levels.
+
 - **Multi-sampled Sampler:** up to 16 zones, each with its own keys, velocities and root. Drop several files named by note (Piano_C4.wav, Gtr F#2.aif) and they map across the keyboard; layers on one note split by velocity.
 - **Dalnok Sampler for 808s:** a sustain loop (start, end, crossfade), a resonant low-pass, glide and a mono legato mode.
 - **Export options:** Export Mix can write at another sample rate (44.1–96 kHz) and normalize (peak to −0.1 or −1 dBFS, or loudness to −14, −16 or −23 LUFS, held under −1 dBTP).

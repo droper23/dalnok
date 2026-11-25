@@ -306,6 +306,23 @@ final class StudioRig {
         }
         return menu
     }
+    /// A single-level picker keeps all modules visible and avoids navigating nested menus.
+    func quickAddMenu() -> NSMenu? {
+        guard chain().count < StudioLayout.slots else { return nil }
+        let menu = NSMenu(title: "Add Module")
+        for category in StudioLayout.categories {
+            if !menu.items.isEmpty { menu.addItem(.separator()) }
+            let heading = NSMenuItem(title: category.uppercased(), action: nil, keyEquivalent: "")
+            heading.isEnabled = false
+            menu.addItem(heading)
+            for (type, entry) in StudioLayout.catalog.enumerated() where entry.category == category {
+                let item = ClosureMenuItem(title: entry.name) { [weak self] in self?.add(type) }
+                item.indentationLevel = 1
+                menu.addItem(item)
+            }
+        }
+        return menu
+    }
     /// Add Module ▸ by category (nil when all eight slots are used).
     func addMenu() -> NSMenu? {
         chain().count < StudioLayout.slots ? catalogMenu("Add Module") { [weak self] in self?.add($0) } : nil

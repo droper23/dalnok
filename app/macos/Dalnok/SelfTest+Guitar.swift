@@ -93,6 +93,13 @@ extension SelfTest {
         editor.tick()
         editor.layoutSubtreeIfNeeded()
         let stage = editor.stage
+        if let picker = rig.quickAddMenu() {
+            let choices = picker.items.filter { $0.action != nil }.map(\.title)
+            check(choices == StudioLayout.categories.flatMap { category in StudioLayout.catalog.filter { $0.category == category }.map(\.name) },
+                  "Guitar Studio's single-level picker offers every module in category order")
+            check(picker.items.filter { $0.action == nil && !$0.isSeparatorItem }.allSatisfy { !$0.isEnabled },
+                  "picker category headings cannot be selected")
+        } else { check(false, "picker is available with free slots") }
         check(stage.modules.map(\.name) == rig.chain().map(\.name), "every module is on the stage in signal order (\(stage.modules.map(\.name)))")
         check(stage.modules.count >= 2 && stage.modules[0].roundLeft && !stage.modules[1].roundLeft, "neighbouring modules snap together")
         // A round screen dragged up raises the engine's value; double-click returns it to the default.
