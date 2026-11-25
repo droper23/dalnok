@@ -87,44 +87,58 @@ extension SelfTest {
             return check(false, "Guitar Studio's window shows its own editor")
         }
         defer { pw.window?.close() }
-        check(pw.tabs.selectedSegment == 0 && !editor.isHidden && editor.window === pw.window, "Open shows Guitar Studio's rig editor first")
+        check(pw.tabs.selectedSegment == 0 && !editor.isHidden && editor.window === pw.window, "Open shows Guitar Studio's editor first")
         let rig = editor.rig
         rig.apply(StudioPreset.factory[0])
         editor.tick()
-        check(editor.stage.units.map(\.name) == rig.chain().map(\.name), "the stage shows every module in signal order (\(editor.stage.units.map(\.name)))")
-        // A knob dragged up raises the engine's value; double-click returns it to the default.
-        if let amp = editor.stage.units.first(where: { $0 is AmpUnit }), let gain = amp.knobViews.first {
-            let id = StudioLayout.knobId(amp.slot, 0), was = rig.value(id)
-            dragUp(gain, 40)
-            check(rig.value(id) > was + 0.1, "dragging the amp's Gain knob up turns it up (\(was) → \(rig.value(id)))")
-            click(gain, clicks: 2)
-            check(abs(rig.value(id) - gain.defaultValue) < 1e-6, "double-clicking a knob resets it")
-            check(gain.accessibilityRole() == .slider && (gain.accessibilityValue() as? String)?.isEmpty == false, "VoiceOver: knobs are sliders with the plug-in's text")
-        } else { check(false, "the rig has an amp head") }
-        // The stomp's footswitch switches the module, and the device panel's strip follows.
-        if let stomp = editor.stage.units.first(where: { $0 is StompUnit }), let sw = stomp.onSwitch {
-            click(sw)
-            check(!rig.chain()[stomp.index].on && d.studioStrip?.chain[stomp.index].on == false, "stomping the footswitch switches \(stomp.name) off, in the device panel too")
+        editor.layoutSubtreeIfNeeded()
+        let stage = editor.stage
+        check(stage.modules.map(\.name) == rig.chain().map(\.name), "every module is on the stage in signal order (\(stage.modules.map(\.name)))")
+        check(stage.modules.count >= 2 && stage.modules[0].roundLeft && !stage.modules[1].roundLeft, "neighbouring modules snap together")
+        // A round screen dragged up raises the engine's value; double-click returns it to the default.
+        if let m = stage.modules.first, let dial = m.dials.first {
+            let id = StudioLayout.knobId(m.slot, 0)
+            rig.set(id, 0.2); editor.tick()
+            dragUp(dial, 40)
+            check(rig.value(id) > 0.3, "dragging \(m.name)'s first control up turns it up (0.2 → \(rig.value(id)))")
+            click(dial, clicks: 2)
+            check(abs(rig.value(id) - dial.defaultValue) < 1e-6, "double-clicking a control resets it")
+            check(dial.accessibilityRole() == .slider && (dial.accessibilityValue() as? String)?.isEmpty == false, "VoiceOver: controls are sliders with the plug-in's text")
+        }
+        // The power button switches the module, and the device panel's strip follows.
+        if let m = stage.modules.first {
+            click(m.power)
+            check(!rig.chain()[0].on && d.studioStrip?.chain[0].on == false, "the power button switches \(m.name) off, in the device panel too")
             editor.tick()
-            click(editor.stage.units[stomp.index].onSwitch!)
-            check(rig.chain()[stomp.index].on, "and on again")
-        } else { check(false, "the rig has a stompbox") }
-        // The cabinet's mic: dragging across the cone sets Mic.
-        if let cab = editor.stage.units.first(where: { $0 is CabinetUnit }) {
-            let id = StudioLayout.knobId(cab.slot, 1)
-            rig.set(id, 0)
-            cab.refresh()
-            let mic = (cab as? CabinetUnit)?.mic.center ?? .zero
-            cab.mouseDown(with: event(cab, .leftMouseDown, mic))
-            cab.mouseDragged(with: event(cab, .leftMouseDragged, CGPoint(x: mic.x + 60, y: mic.y)))
-            cab.mouseUp(with: event(cab, .leftMouseUp, CGPoint(x: mic.x + 60, y: mic.y)))
-            check(rig.value(id) > 0.2, "dragging the cabinet's mic toward the edge moves Mic off-centre (\(rig.value(id)))")
-        } else { check(false, "the rig has a cabinet") }
-        // Edits elsewhere rebuild the stage.
+            click(stage.modules[0].power)
+            check(rig.chain()[0].on, "and on again")
+        }
+        // Dragging a module's body past its neighbours moves it there; the others close up.
+        let before = rig.chain().map(\.name)
+        if stage.modules.count >= 3 {
+            let m = stage.modules[0], target = stage.modules[2]
+            let grab = m.convert(CGPoint(x: m.bounds.midX, y: 30), to: nil)
+            let drop = target.convert(CGPoint(x: target.bounds.maxX - 20, y: 30), to: nil) // just past its centre, on its row
+            func at(_ type: NSEvent.EventType, _ p: CGPoint) -> NSEvent {
+                NSEvent.mouseEvent(with: type, location: p, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                   windowNumber: m.window?.windowNumber ?? 0, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!
+            }
+            m.mouseDown(with: at(.leftMouseDown, grab))
+            for k in 1...12 { m.mouseDragged(with: at(.leftMouseDragged, CGPoint(x: grab.x + (drop.x - grab.x) * CGFloat(k) / 12, y: grab.y + (drop.y - grab.y) * CGFloat(k) / 12))) }
+            m.mouseUp(with: at(.leftMouseUp, drop))
+            editor.tick()
+            let after = rig.chain().map(\.name)
+            check(after == [before[1], before[2], before[0]] + before.dropFirst(3), "dragging module 1 past module 3 moves it there (\(after))")
+            check(stage.modules.map(\.name) == after, "and the stage follows")
+            rig.move(from: 2, to: 0)
+        }
+        check(!stage.add.isHidden, "an Add Module socket ends a rig with free slots")
         d.moveStudioModule(from: 0, to: 1)
-        check(editor.stage.units.map(\.name) == rig.chain().map(\.name), "moving a module in the device panel reorders the stage")
+        editor.tick()
+        check(stage.modules.map(\.name) == rig.chain().map(\.name), "moving a module in the device panel reorders the editor")
+        for m in stage.modules { m.update(time: 1.7, level: 0.75, input: 0.7) } // lit, for the snapshot (no live input here)
         save(editor, "guitar-studio-editor.png")
-        // Every unit design, eight at a time, the whole stage each.
+        // Every module's screen, eight at a time.
         let sets: [[String]] = [
             ["Noise Gate", "Compressor", "Boost", "Overdrive", "Distortion", "Fuzz", "Wah", "Chorus"],
             ["Flanger", "Phaser", "Tremolo", "Vibrato", "Amp Clean", "Amp Crunch", "Amp Lead", "Cabinet"],
@@ -134,7 +148,10 @@ extension SelfTest {
             rig.write(names.map { StudioModule($0) })
             if n == 2 { rig.set(StudioLayout.knobId(4, 0), 0.5); rig.set(StudioLayout.knobId(5, 0), 0) }
             editor.tick()
-            check(editor.stage.units.map(\.name) == names, "set \(n + 1): every unit appears (\(editor.stage.units.map(\.name)))")
+            editor.layoutSubtreeIfNeeded()
+            check(stage.modules.map(\.name) == names, "set \(n + 1): every module appears (\(stage.modules.map(\.name)))")
+            check(stage.add.isHidden == (names.count == 8), "the Add Module socket shows only with a free slot")
+            for m in stage.modules { m.update(time: 1.7, level: 0.75, input: 0.7) }
             save(editor, "guitar-studio-units-\(n + 1).png")
         }
         rig.apply(StudioPreset.factory[0])
@@ -147,7 +164,7 @@ extension SelfTest {
         }
         defer { tw.window?.close() }
         tuner.layoutSubtreeIfNeeded()
-        let amount = tuner.subviews.compactMap { $0 as? RigKnob }.first { $0.identifier?.rawValue == "tune-knob-0" }
+        let amount = tuner.dials.first { $0.id == 0 }?.view
         if let amount {
             dalnok_plugin_set_parameter(h, tune, 0, 0.2)
             tuner.tick()
@@ -156,7 +173,7 @@ extension SelfTest {
             dalnok_plugin_parameter(h, tune, 0, &p)
             check(p.value > 0.3, "dragging Guitar Tune's Amount knob turns it up (\(p.value))")
         } else { check(false, "Guitar Tune's editor has its Amount knob") }
-        check(tuner.subviews.compactMap { $0 as? RigKnob }.count == 7, "Guitar Tune's editor has all seven controls")
+        check(tuner.dials.count == 7, "Guitar Tune's editor has all seven controls")
         save(tuner, "guitar-tune-editor-idle.png")
         tuner.preview(.init(hz: 196 * pow(2, -0.12 / 12), cents: -12, confidence: 95, tolerance: 45))
         save(tuner, "guitar-tune-editor-tracking.png")

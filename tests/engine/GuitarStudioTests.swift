@@ -228,6 +228,25 @@ private func amplitude(_ x: ArraySlice<Float>, _ hz: Double, _ rate: Double) -> 
         #expect(step < 0.02, "largest sample step \(step) (the note's own is 0.0043)")
     }
 
+    /// The editor's meters: the input after its gain, then the level after each slot; they fall back in silence.
+    @Test(arguments: [44_100.0, 48_000.0])
+    func levelMetersFollowTheChain(rate: Double) {
+        let n = Int(rate / 2)
+        let (e, slot) = studio(sine(440, 0.25, n, rate), rate: rate, chain: [(.boost, [0: lin(6, 0, 24), 1: lin(0, -9, 9), 2: lin(0, -24, 6)])])
+        defer { dalnok_engine_destroy(e) }
+        let input = UInt32(2 + 8 * 8)
+        func level(_ id: UInt32) -> Double { parameter(e, slot, id).value * 102 - 90 } // normalized over −90…+12 dB
+        #expect(parameter(e, slot, input).read_only && !parameter(e, slot, input).automatable, "meters are read-only")
+        dalnok_transport_play(e)
+        var l = [Float](repeating: 0, count: 256), r = l
+        for _ in 0..<(Int(rate * 0.4) / 256) { dalnok_engine_pump(e, &l, &r, 256) }
+        #expect(abs(level(input) - dB(0.25)) < 0.3, "input \(level(input)) dB (\(dB(0.25)))")
+        #expect(abs(level(input + 1) - (dB(0.25) + 6)) < 1.5, "after the +6 dB boost \(level(input + 1)) dB")
+        for s in 2...8 { #expect(abs(level(input + UInt32(s)) - level(input + 1)) < 0.05, "empty slot \(s) passes the level on") }
+        for _ in 0..<(Int(rate * 1.6) / 256) { dalnok_engine_pump(e, &l, &r, 256) }
+        #expect(level(input) < -60 && level(input + 1) < -60, "silence lets the meters fall (\(level(input)), \(level(input + 1)) dB)")
+    }
+
     /// A project saved with the first Guitar Studio (a fixed chain, parameters 0-22) opens as the same rig of modules.
     @Test func firstVersionStatesLoadAsTheEquivalentRig() throws {
         let rate = 48_000.0

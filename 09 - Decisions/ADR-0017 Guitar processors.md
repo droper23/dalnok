@@ -44,3 +44,7 @@ establish defined behavior, not listening preference or parity with premium comm
 Both plug-ins get native editors in the plug-in window instead of the generic parameter list. They talk to the engine only
 through the plug-in parameter API, poll it (Studio 10 Hz, Tune 30 Hz), and show only measured telemetry. All hardware is
 drawn procedurally from shapes and seeded noise; names, colours and layouts are Dalnok's own, with no product's trade dress.
+Revised the same day at the owner's request: the hardware-rig look was replaced by the "space" style (pale matte modules on a
+black chassis, raised black controls, orange and blue light). It emulates the lighting and materials of Baby Audio's Spaced Out
+but not its layout, controls or branding. Guitar Studio gained read-only level meters (input, and after each slot) so the
+screens react to real audio.

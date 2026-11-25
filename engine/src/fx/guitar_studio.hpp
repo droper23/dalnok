@@ -4,6 +4,7 @@
 #pragma once
 #include "fx/builtin.hpp"
 #include "fx/guitar_modules.hpp"
+#include <atomic>
 
 namespace dalnok::fx {
 class GuitarStudio final : public BuiltinProcessor {
@@ -24,6 +25,10 @@ public:
     static constexpr uint32_t typeId(int s) { return 2 + static_cast<uint32_t>(s * kPerSlot); }
     static constexpr uint32_t onId(int s) { return typeId(s) + 1; }
     static constexpr uint32_t knobId(int s, int k) { return typeId(s) + 2 + static_cast<uint32_t>(k); }
+    // Meters (read-only, dBFS peak with a 150 ms fall): the input after its gain, then the signal after each slot.
+    static constexpr uint32_t kInputLevel = 2 + static_cast<uint32_t>(kSlots * kPerSlot);
+    static constexpr uint32_t levelId(int s) { return kInputLevel + 1 + static_cast<uint32_t>(s); }
+    double meter(uint32_t id) const override;
 
 private:
     void changed() DALNOK_NONBLOCKING override;
@@ -41,5 +46,7 @@ private:
     double rate_, inGain_ = 1, outGain_ = 1, inTarget_ = 1, outTarget_ = 1, smoothing_, fadeStep_;
     double knobSmoothing_[17]{}; // by chunk length (1-16 frames), so smoothing doesn't depend on the host's block size
     bool primed_ = false;
+    double held_[kSlots + 1]{}, fall_ = 0.99; // audio thread: decaying peaks (input, then each slot)
+    std::atomic<float> levels_[kSlots + 1]{};
 };
 } // namespace dalnok::fx

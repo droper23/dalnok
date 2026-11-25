@@ -37,6 +37,14 @@ const std::vector<P> &table() {
             for (int k = 0; k < kKnobs; ++k)
                 p.push_back({GuitarStudio::knobId(s, k), title(2 + k), "", 0, 1, k < m.knobs ? knobNormalized(m.knob[k], m.knob[k].def) : 0});
         }
+        static const std::vector<std::string> meters = [] {
+            std::vector<std::string> t = {"Input Level"};
+            for (int s = 0; s < GuitarStudio::kSlots; ++s) t.push_back(std::to_string(s + 1) + " Level");
+            return t;
+        }();
+        for (int s = 0; s <= GuitarStudio::kSlots; ++s)
+            p.push_back({GuitarStudio::kInputLevel + static_cast<uint32_t>(s), meters[static_cast<size_t>(s)].c_str(), "dB", -90, 12, -90,
+                         P::Linear, nullptr, true});
         return p;
     }();
     return list;
@@ -54,6 +62,7 @@ GuitarStudio::GuitarStudio(double rate) : BuiltinProcessor("guitar-studio", "Dal
     smoothing_ = 1 - std::exp(-1 / (0.02 * rate));
     for (int n = 1; n <= kChunk; ++n) knobSmoothing_[n] = 1 - std::exp(-n / (0.03 * rate));
     fadeStep_ = 1 / (0.01 * rate);
+    fall_ = std::exp(-1 / (0.15 * rate / kChunk)); // per 16-frame chunk: 150 ms to fall by 1/e
     for (auto &s : slots_) s.dsp.prepare(rate);
 }
 
@@ -61,7 +70,7 @@ int GuitarStudio::typeAt(int s) const { return typeOf(value(typeId(s))); }
 
 bool GuitarStudio::parameter(int32_t index, PluginParameter &out) {
     if (!BuiltinProcessor::parameter(index, out)) return false;
-    if (out.id < typeId(0)) return true;
+    if (out.id < typeId(0) || out.id >= kInputLevel) return true; // gains and meters keep their table entries
     const int s = static_cast<int>(out.id - typeId(0)) / kPerSlot, f = static_cast<int>(out.id - typeId(0)) % kPerSlot;
     const int type = typeAt(s);
     const Module &m = module(type);
@@ -79,6 +88,12 @@ bool GuitarStudio::parameter(int32_t index, PluginParameter &out) {
     out.defaultValue = knobNormalized(knob, knob.def);
     out.stepCount = knob.curve == Knob::Steps ? static_cast<int32_t>(knob.max - knob.min) : 0;
     return true;
+}
+
+double GuitarStudio::meter(uint32_t id) const {
+    if (id < kInputLevel || id > levelId(kSlots - 1)) return -90;
+    const double peak = levels_[id - kInputLevel].load(std::memory_order_relaxed);
+    return peak > 3.2e-5 ? std::clamp(20 * std::log10(peak), -90.0, 12.0) : -90;
 }
 
 bool GuitarStudio::parameterText(uint32_t id, double normalized, std::string &out) {
@@ -193,18 +208,21 @@ void GuitarStudio::process(float *left, float *right, int frames, const PluginNo
     for (int start = 0; start < frames; start += kChunk) {
         const int n = std::min(kChunk, frames - start);
         bool ran[kSlots]{};
+        double peak[kSlots + 1]{};
         for (int s = 0; s < kSlots; ++s)
             if (slots_[s].running != Empty && !slots_[s].idle) refresh(s, n);
         for (int i = start; i < start + n; ++i) {
             inGain_ += smoothing_ * (inTarget_ - inGain_);
             outGain_ += smoothing_ * (outTarget_ - outGain_);
             double l = std::isfinite(left[i]) ? left[i] * inGain_ : 0, r = std::isfinite(right[i]) ? right[i] * inGain_ : 0;
+            peak[0] = std::max(peak[0], std::max(std::abs(l), std::abs(r)));
             for (int s = 0; s < kSlots; ++s) {
                 Slot &sl = slots_[s];
                 const bool want = sl.on && sl.wanted == sl.running && sl.running != Empty;
                 if (!want && sl.active <= 0) {
                     if (sl.wanted != sl.running) prime(s, sl.wanted); // faded out: swap in the new module
                     sl.idle = true;
+                    peak[s + 1] = std::max(peak[s + 1], std::max(std::abs(l), std::abs(r)));
                     continue;
                 }
                 if (sl.idle) { // back on: start clean, no stale tails (a module just swapped in already is)
@@ -218,11 +236,16 @@ void GuitarStudio::process(float *left, float *right, int frames, const PluginNo
                 l += sl.active * (wl - l);
                 r += sl.active * (wr - r);
                 ran[s] = true;
+                peak[s + 1] = std::max(peak[s + 1], std::max(std::abs(l), std::abs(r)));
             }
             left[i] = static_cast<float>(l * outGain_);
             right[i] = static_cast<float>(r * outGain_);
         }
         for (int s = 0; s < kSlots; ++s) if (ran[s]) slots_[s].dsp.flush();
+        for (int m = 0; m <= kSlots; ++m) {
+            held_[m] = std::max(peak[m], held_[m] * fall_);
+            levels_[m].store(static_cast<float>(held_[m]), std::memory_order_relaxed);
+        }
     }
 }
 } // namespace dalnok::fx

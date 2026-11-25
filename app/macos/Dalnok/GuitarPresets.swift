@@ -38,6 +38,9 @@ enum StudioLayout {
     static func typeId(_ s: Int) -> UInt32 { UInt32(2 + s * (2 + knobs)) }
     static func onId(_ s: Int) -> UInt32 { typeId(s) + 1 }
     static func knobId(_ s: Int, _ k: Int) -> UInt32 { typeId(s) + 2 + UInt32(k) }
+    /// Meters (read-only, dBFS over −90…+12): the input after its gain, then the signal after each slot.
+    static let inputLevel = typeId(slots)
+    static func levelId(_ s: Int) -> UInt32 { inputLevel + 1 + UInt32(s) }
     static let catalog: [(name: String, category: String)] = [
         ("Empty", ""), ("Noise Gate", "Dynamics"), ("Compressor", "Dynamics"),
         ("Boost", "Drive"), ("Overdrive", "Drive"), ("Distortion", "Drive"), ("Fuzz", "Drive"),
@@ -196,6 +199,8 @@ final class StudioRig {
         return dalnok_plugin_parameter(h, slot, Int32(id), &p) == DALNOK_OK ? p : nil // index == id
     }
     func value(_ id: UInt32) -> Double { parameter(id)?.value ?? 0 }
+    /// A meter's level as 0 (−60 dB or less) to 1 (0 dBFS).
+    func level(_ id: UInt32) -> Double { max(0, min(1, (value(id) * 102 - 90 + 60) / 60)) }
     func set(_ id: UInt32, _ value: Double) { dalnok_plugin_set_parameter(h, slot, id, max(0, min(1, value))) }
     func text(_ id: UInt32, at value: Double) -> String? {
         var buf = [CChar](repeating: 0, count: 64)
