@@ -5,7 +5,21 @@ milestone: 0.4.0 released 2026-11-23 (four themes in six looks with their own fi
 ---
 # Current State
 
-## Latest (2026-11-24, day): open bugs fixed, parity features
+## Latest (2026-11-24, night): parity backlog, branch `feat/parity-2`
+Built in a separate worktree (`.claude/worktrees/parity`) off 1edb58c while another session works on Guitar in the
+main tree; merge later. Producer agents ranked what Logic/Ableton users miss most; items 1–10 are now done.
+- **New:** Poly bend/sustain; CC recording; Sampler and Drums (`fx/sampler.*`, pad grid); step input; Capture MIDI;
+  Inspector Clip section; grooves; Follow Tempo (format 18) and hand warp markers; Slice to Drums; clip tools
+  (`engine_cliptools.cpp`); Limiter/Saturator/Filter/Chorus/Utility (`fx/mix_fx.*`); Analyzer; Synth (`fx/synth_fx.*`);
+  SMF import/export (`midi_file.*`, fuzz kind 7); export queue; stems by track/bus (`dalnok_export_stems_of`);
+  presets and templates (`PresetsAndTemplates.swift`); mute/send automation (format 19); stereo inputs (format 20);
+  Pitch Correct (`fx/pitch_fx.*`, YIN + streaming shifter `engine/dsp/src/shifter.cpp`, 80 ms blocks).
+- **Verified:** `swift test` 363 pass; self-test matrix 12/12 PASS (`-j 4`; more parallel runs overload the machine).
+- **Next for parity:** sampler loop points/filter/glide and zones; tempo detection, warp modes, tempo ramps; export
+  sample rate and normalize; MIDI channel/program and articulations; Flex Pitch editor; racks and macros; MP3 (needs
+  a permissive encoder); video track and SMPTE; VCA/PFL/track delay; clip-gain envelope; tap tempo.
+
+## Earlier (2026-11-24, day): open bugs fixed, parity features
 Same branch (API 47). Every bug from the ten-tester hunt fixed; then features toward Logic/Ableton parity.
 - **Fixed:** tempo changes move markers, automation and the cycle with the beats (`remapMidi`, `cycleFollowsTempo`, also on
   undo); same start+pitch notes merge (`sortedNotes`, later wins); velocity lane draws chords loudest first; 16-bit

@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+- **Dalnok Poly** answers pitch bend (±2 semitones) and the sustain pedal; **MIDI recording** keeps the keyboard's controllers and pitch bend.
+- **Dalnok Sampler** (one sample across the keys: root, transpose, fine, ADSR, velocity, one shot) and **Dalnok Drums** (16 one-shot pads in a 4×4 grid; click to hear, drop a file on a pad). Pad names show on the piano roll's keys.
+- **Dalnok Synth:** two oscillators with detune and sub, resonant low-pass with its own envelope, ADSR, glide, pitch envelope, poly or mono, velocity, bend and sustain.
+- **More stock effects:** Limiter (5 ms look-ahead brickwall), Saturator, Filter, Chorus, Utility, Analyzer (level, correlation, balance) and **Pitch Correct** (a monophonic voice tuned to a key and scale; speed and amount).
+- **Step input** and **Capture MIDI** (⇧⌘C: the last phrase played becomes a clip, recording or not).
+- **Inspector Clip section:** the selected clip's name, place, length, gain, transpose, fades, loop and quantize.
+- **Grooves:** swing in Quantize; Copy Groove from Clip / Apply Groove.
+- **Follow Tempo** audio clips stay on their beats when the tempo changes (time-stretched, pitch kept); **warp markers** by hand (double-click to add, drag, ⌥-click to remove). Project format 18.
+- **Clip tools:** Join Clips (⌘J), Normalize, Reverse, Strip Silence, Slice to Drums.
+- **Standard MIDI Files:** File ▸ Import MIDI File… (⌥⌘I, or drop a `.mid`), Clip ▸ Export MIDI Clip….
+- **Export Queue** (mix and stems jobs rendered in one go); Export Stems can pick tracks and include buses.
+- **Presets and templates:** Save Preset… / Presets in every plug-in's menu; File ▸ Save as Template… and New from Template.
+- **Mute and send automation** lanes (View ▸ Automate Mute / Automate Send). Project format 19.
+- **Stereo inputs:** a track can record an input pair (Inputs 1+2 …) as one stereo take. Project format 20.
 - **Clip loop** (Clip ▸ Loop Clip, L): a looped clip repeats its audio or notes for as long as its end is dragged out; splitting and trimming keep the loop. Project format 16.
 - **MIDI controllers and pitch bend:** the piano roll's lower lane can show mod wheel, breath, volume, pan, expression, sustain or pitch bend instead of velocity (choose it from the lane's title); click or drag to draw. Plug-in instruments play them, and a plug-in instrument played live now gets the keyboard's sustain pedal, mod wheel and pitch bend. Project format 17.
 - **Stock effects:** Dalnok Delay (stereo or ping-pong, filtered feedback), Dalnok Reverb (predelay, decay, size, damping, width) and Dalnok Gate (threshold, range, hold, hysteresis, sidechain key).
