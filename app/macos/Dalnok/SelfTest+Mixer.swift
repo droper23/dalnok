@@ -532,6 +532,16 @@ extension SelfTest {
         if w.exportMix(to: url), let f = try? AVAudioFile(forReading: url) {
             check(abs(f.length - (s.cycle.end - s.cycle.start)) <= 1, "Export Mix exports the cycle range (\(f.length) frames)")
         } else { check(false, "Export Mix with cycle on") }
+        // Export options: 44.1 kHz and peak normalized to -1 dBFS.
+        let resampled = workdir.appendingPathComponent("cycle-export-44k.wav")
+        let opts = Engine.ExportSettings(rate: 44_100, normalize: 1, target: -1)
+        if w.exportMix(to: resampled, format: DALNOK_FORMAT_WAV32F, settings: opts), let f = try? AVAudioFile(forReading: resampled),
+           let buf = AVAudioPCMBuffer(pcmFormat: f.processingFormat, frameCapacity: AVAudioFrameCount(f.length)), (try? f.read(into: buf)) != nil {
+            let want = Double(s.cycle.end - s.cycle.start) * 44_100 / e.sampleRate
+            check(f.processingFormat.sampleRate == 44_100 && abs(Double(f.length) - want) <= 2, "export at 44.1 kHz (\(f.length) frames, want \(want))")
+            let peak = (0..<Int(buf.frameLength)).reduce(Float(0)) { max($0, abs(buf.floatChannelData![0][$1]), abs(buf.floatChannelData![1][$1])) }
+            check(peak == 0 || abs(peak - 0.8913) < 0.01, "export normalized to -1 dBFS peak (\(peak))")
+        } else { check(false, "Export Mix at 44.1 kHz, normalized") }
         _ = s.setCycle(false, s.cycle.start, s.cycle.end)
     }
 

@@ -239,6 +239,34 @@ extension SelfTest {
             _ = perform("Undo")
             check(s.tracks.count == n && s.clip(c.id)?.muted == false, "one undo takes the slicing back")
         }
+        // Clip ▸ Set Project Tempo from Clip: a 110 BPM kick loop sets the tempo; one undo takes it back.
+        do {
+            let rate = Int(e.sampleRate), beat = 60.0 / 110
+            var data = Data()
+            func le<T: FixedWidthInteger>(_ v: T) { withUnsafeBytes(of: v.littleEndian) { data.append(contentsOf: $0) } }
+            let frames = rate * 8, bytes = frames * 2
+            data.append(contentsOf: Array("RIFF".utf8)); le(UInt32(36 + bytes)); data.append(contentsOf: Array("WAVEfmt ".utf8))
+            le(UInt32(16)); le(UInt16(1)); le(UInt16(1)); le(UInt32(rate)); le(UInt32(rate * 2)); le(UInt16(2)); le(UInt16(16))
+            data.append(contentsOf: Array("data".utf8)); le(UInt32(bytes))
+            for i in 0..<frames {
+                let t = Double(i) / Double(rate), since = t.truncatingRemainder(dividingBy: beat)
+                le(Int16(exp(-since * 14) * sin(2 * .pi * 55 * since) * 20_000))
+            }
+            let wav = workdir.appendingPathComponent("kick-110.wav")
+            try? data.write(to: wav)
+            let before = s.tracks.count, oldBpm = s.bpm
+            await withCheckedContinuation { cont in s.importFiles([wav]) { cont.resume() } }
+            s.refresh()
+            if s.tracks.count == before + 1, let c = s.tracks.last?.clips.first {
+                tl.selectClips([c.id])
+                check(perform("Set Project Tempo from Clip", exact: true) && abs(s.bpm - 110) < 0.2,
+                      "Clip ▸ Set Project Tempo from Clip hears 110 BPM (\(s.bpm))")
+                _ = perform("Undo")
+                check(abs(s.bpm - oldBpm) < 1e-9, "one undo restores the tempo (\(s.bpm))")
+                _ = perform("Undo")
+            } else { check(false, "the kick loop imports") }
+            check(s.tracks.count == before, "the kick loop's import is undone")
+        }
         // Hide Track / Show All Tracks: out of view, still playing; the header title counts them.
         if let t = s.tracks.first {
             w.headers.select(t.id)

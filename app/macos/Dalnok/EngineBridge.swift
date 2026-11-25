@@ -161,14 +161,34 @@ final class Engine {
         ("FLAC (lossless)", "flac", DALNOK_FORMAT_FLAC), ("Apple Lossless (.m4a)", "m4a", DALNOK_FORMAT_ALAC),
         ("AAC 256 kbit/s (.m4a)", "m4a", DALNOK_FORMAT_AAC),
     ]
-    func export(to url: URL, format: DalnokFileFormat, range: (start: Int64, end: Int64)? = nil) throws {
+    /// Export options beyond the format: the file's sample rate (0: the project's) and normalization.
+    struct ExportSettings: Equatable {
+        var rate: Double = 0
+        var normalize: Int32 = 0 // 0 off, 1 peak (target dBFS), 2 loudness (target LUFS)
+        var target: Double = 0
+    }
+    static let exportRates: [(title: String, rate: Double)] = [
+        ("Project rate", 0), ("44.1 kHz", 44_100), ("48 kHz", 48_000), ("88.2 kHz", 88_200), ("96 kHz", 96_000),
+    ]
+    static let exportNormalizes: [(title: String, mode: Int32, target: Double)] = [
+        ("Off", 0, 0), ("Peak to −0.1 dBFS", 1, -0.1), ("Peak to −1 dBFS", 1, -1),
+        ("Loudness −14 LUFS (streaming)", 2, -14), ("Loudness −16 LUFS (podcasts)", 2, -16),
+        ("Loudness −23 LUFS (broadcast)", 2, -23),
+    ]
+    /// Exports `range` (default: the whole arrangement, with its tail); returns the normalize gain in dB.
+    @discardableResult
+    func export(to url: URL, format: DalnokFileFormat, range: (start: Int64, end: Int64)? = nil,
+                settings: ExportSettings = ExportSettings()) throws -> Double {
         var err = [CChar](repeating: 0, count: 512)
         let start = range?.start ?? 0, frames = (range?.end ?? sessionLength) - start
         guard frames > 0 else { throw EngineError(description: "Nothing to export") }
         let tail = range == nil ? Int64(10 * dalnok_engine_sample_rate(handle)) : 0
-        guard dalnok_render_to_file(handle, url.path, start, frames, Int32(format.rawValue), tail, nil, &err, 512) == DALNOK_OK else {
+        var o = DalnokExportOptions(format: Int32(format.rawValue), sample_rate: settings.rate, normalize: settings.normalize, target: settings.target)
+        var gain = 0.0
+        guard dalnok_render_export(handle, url.path, start, frames, &o, tail, nil, &gain, &err, 512) == DALNOK_OK else {
             throw EngineError(description: cString(err))
         }
+        return gain
     }
 
     // Devices

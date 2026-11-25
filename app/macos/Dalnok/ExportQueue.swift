@@ -11,6 +11,7 @@ struct ExportJob {
     let format: DalnokFileFormat
     let stems: Bool
     let range: (start: Int64, end: Int64)?
+    var settings = Engine.ExportSettings()
     var title: String { (stems ? "Stems → " : "Mix → ") + url.lastPathComponent + (range == nil ? "" : " (cycle)") }
 }
 
@@ -26,7 +27,7 @@ extension MainWindowController {
         panel.prompt = "Add to Queue"
         panel.beginSheetModal(for: window!) { [weak self] resp in
             guard resp == .OK, let url = panel.url else { return }
-            MainActor.assumeIsolated { () -> Void in self?.enqueue(ExportJob(url: url, format: f.format, stems: false, range: self?.currentRange)) }
+            MainActor.assumeIsolated { () -> Void in self?.enqueue(ExportJob(url: url, format: f.format, stems: false, range: self?.currentRange, settings: Self.exportSettings)) }
         }
     }
     @objc func queueStemsExport(_ sender: Any?) {
@@ -60,7 +61,7 @@ extension MainWindowController {
                 if frames > 0, dalnok_export_stems(session.engine.handle, job.url.path, Int32(job.format.rawValue), start, frames, tail, &err, err.count) > 0 { done += 1 }
                 else { failed.append(job.title) }
             } else {
-                do { try session.engine.export(to: job.url, format: job.format, range: job.range); done += 1 } catch { failed.append(job.title) }
+                do { try session.engine.export(to: job.url, format: job.format, range: job.range, settings: job.settings); done += 1 } catch { failed.append(job.title) }
             }
         }
         exportQueue.removeAll()

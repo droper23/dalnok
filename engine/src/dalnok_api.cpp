@@ -1119,6 +1119,33 @@ DalnokStatus dalnok_render_to_file(DalnokEngine *e, const char *path, int64_t st
     }
     return DALNOK_OK;
 }
+DalnokStatus dalnok_clip_detect_tempo(const DalnokEngine *e, DalnokClipId clip, double *bpm, int64_t *first_beat,
+                                      double *confidence, char *err, size_t err_len) {
+    if (!e) return DALNOK_ERR_INVALID_ARG;
+    double b = 0, c = 0;
+    int64_t f = 0;
+    std::string msg;
+    if (!e->impl.clipTempo(clip, b, f, c, msg)) {
+        copyOut(err, err_len, msg);
+        return DALNOK_ERR_INVALID_ARG;
+    }
+    if (bpm) *bpm = b;
+    if (first_beat) *first_beat = f;
+    if (confidence) *confidence = c;
+    return DALNOK_OK;
+}
+DalnokStatus dalnok_render_export(DalnokEngine *e, const char *path, int64_t start, int64_t frames,
+                                  const DalnokExportOptions *o, int64_t max_tail, int64_t *tail_written, double *gain_db,
+                                  char *err, size_t err_len) {
+    if (!e || !path || !o || max_tail < 0) return DALNOK_ERR_INVALID_ARG;
+    std::string msg;
+    if (!e->impl.renderToFileWith(path, start, frames, o->format, o->sample_rate, o->normalize, o->target, msg, max_tail,
+                                  tail_written, gain_db)) {
+        copyOut(err, err_len, msg);
+        return DALNOK_ERR_IO;
+    }
+    return DALNOK_OK;
+}
 int32_t dalnok_export_stems(DalnokEngine *e, const char *folder, int32_t format, int64_t start, int64_t frames,
                             int64_t max_tail, char *err, size_t err_len) {
     if (!e || !folder || frames <= 0 || max_tail < 0) return -1;

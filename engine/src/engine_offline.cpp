@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "engine.hpp"
 #include "engine_internal.hpp"
+#include "loudness.hpp"
+#include "media.hpp"
 
 #include <algorithm>
 #include <array>
@@ -85,6 +87,80 @@ bool Engine::renderToFile(const std::string &path, int64_t start, int64_t frames
     if (!w) return false;
     if (!renderBlocks(start, frames, maxTail, tailWritten, err,
                       [&](const float *l, const float *r, int64_t n) { return w->write(l, r, n, err); }))
+        return false;
+    return w->close(err);
+}
+
+bool Engine::renderToFileWith(const std::string &path, int64_t start, int64_t frames, int32_t format, double outRate,
+                              int32_t normalize, double target, std::string &err, int64_t maxTail, int64_t *tailWritten,
+                              double *gainDb) {
+    if (gainDb) *gainDb = 0;
+    if (outRate <= 0) outRate = sampleRate_;
+    if (outRate < 8'000 || outRate > 384'000) { err = "sample rate out of range (8-384 kHz)"; return false; }
+    if (normalize < 0 || normalize > 2 || !std::isfinite(target) || target > 0 || target < -60) {
+        err = normalize < 0 || normalize > 2 ? "unknown normalize mode" : "normalize target out of range (-60 to 0)";
+        return false;
+    }
+    if (normalize == 0 && outRate == sampleRate_) return renderToFile(path, start, frames, format, err, maxTail, tailWritten);
+    // Pass 1: the mix as 32-bit float at the engine's rate, measured on the way.
+    const std::string temp = path + ".dalnok-render.wav";
+    struct Cleanup { const std::string &p; ~Cleanup() { std::remove(p.c_str()); } } cleanup{temp};
+    std::unique_ptr<WavWriter> raw(openWavWriter(temp, sampleRate_, 32, err));
+    if (!raw) return false;
+    LoudnessMeter meter(sampleRate_);
+    float peak = 0;
+    if (!renderBlocks(start, frames, maxTail, tailWritten, err, [&](const float *l, const float *r, int64_t n) {
+            for (int64_t i = 0; i < n; ++i) peak = std::max({peak, std::fabs(l[i]), std::fabs(r[i])});
+            for (int64_t o = 0; o < n;) {
+                const int k = static_cast<int>(std::min<int64_t>(n - o, 1 << 16));
+                meter.process(l + o, r + o, k);
+                o += k;
+            }
+            return raw->write(l, r, n, err);
+        }))
+        return false;
+    if (!raw->close(err)) return false;
+    raw.reset();
+    // The gain.
+    double gain = 0; // dB
+    if (normalize == 1 && peak > 0) gain = target - 20 * std::log10(static_cast<double>(peak));
+    if (normalize == 2) {
+        const LoudnessReading m = meter.reading();
+        if (std::isfinite(m.integrated)) {
+            gain = target - m.integrated;
+            if (std::isfinite(m.truePeak)) gain = std::min(gain, -1.0 - m.truePeak); // the true-peak ceiling
+        }
+    }
+    // Converting to another rate can raise sample peaks (the filter rings on sharp hits): measure them converted.
+    if (normalize == 1 && outRate != sampleRate_) {
+        float converted = 0;
+        int32_t ch = 0;
+        if (!decodeAudioFileChunked(temp, outRate, [&](const float *const *c, int32_t count, int64_t n) {
+                for (int32_t k = 0; k < count; ++k)
+                    for (int64_t i = 0; i < n; ++i) converted = std::max(converted, std::fabs(c[k][i]));
+                return true;
+            }, ch, err))
+            return false;
+        gain = converted > 0 ? target - 20 * std::log10(static_cast<double>(converted)) : 0;
+    }
+    if (gainDb) *gainDb = gain;
+    const auto g = static_cast<float>(std::pow(10.0, gain / 20));
+    // Pass 2: converted to the output rate (the system's sample-rate converter), with the gain, in the format.
+    std::unique_ptr<WavWriter> w(openAudioWriter(path, outRate, format, err));
+    if (!w) return false;
+    std::vector<float> l, r;
+    int32_t channels = 0;
+    bool wrote = true;
+    if (!decodeAudioFileChunked(temp, outRate, [&](const float *const *ch, int32_t count, int64_t n) {
+            l.resize(static_cast<size_t>(n));
+            r.resize(static_cast<size_t>(n));
+            for (int64_t i = 0; i < n; ++i) {
+                l[static_cast<size_t>(i)] = ch[0][i] * g;
+                r[static_cast<size_t>(i)] = ch[count > 1 ? 1 : 0][i] * g;
+            }
+            wrote = w->write(l.data(), r.data(), n, err);
+            return wrote;
+        }, channels, err) || !wrote)
         return false;
     return w->close(err);
 }

@@ -842,6 +842,11 @@ DalnokStatus dalnok_midi_transform(DalnokEngine *engine, DalnokClipId clip, int3
 /* Audio quantize (API 47; Logic's Flex quantize, with slices). The clip's transients (attack starts, in source frames;
  * `sensitivity` 0-1, 0.5 typical): returns the total count, writes up to `capacity`, -1 if not an audio clip. */
 int32_t dalnok_audio_transients(const DalnokEngine *engine, DalnokClipId clip, double sensitivity, int64_t *out, int32_t capacity);
+/* Tempo detection (API 47): the tempo of an audio clip's audio (60-200 BPM; at least 4 s), the first beat in source
+ * frames after the clip's start, and a confidence from 0 to 1 (under about 0.2: no steady beat). Any out pointer may
+ * be NULL. Fails (with a message) for MIDI, offline or short clips, or audio without a pulse. */
+DalnokStatus dalnok_clip_detect_tempo(const DalnokEngine *engine, DalnokClipId clip, double *bpm, int64_t *first_beat,
+                                      double *confidence, char *err, size_t err_len);
 /* Quantizes an audio clip in place (one clip, one undo step): a warp map moves each transient toward the grid of
  * `grid_beats` (tempo map) by `strength` (0-1]. Each attack (its first 50 ms) plays at the clip's own speed; the rest
  * between two transients is time-stretched (pitch kept) to fit, with a 5 ms crossfade centred on every anchor, 6 ms
@@ -1043,6 +1048,18 @@ typedef enum {
 /* As dalnok_render_to_wav_tail, in any DalnokFileFormat. */
 DalnokStatus dalnok_render_to_file(DalnokEngine *engine, const char *path, int64_t start_frame, int64_t frames,
                                    int32_t format, int64_t max_tail, int64_t *tail_written, char *err, size_t err_len);
+/* As dalnok_render_to_file, with export options (API 47): `sample_rate` (0 = the engine's; 8-384 kHz, converted
+ * after rendering) and `normalize`: 0 none, 1 the sample peak to `target` dBFS, 2 the integrated loudness to `target`
+ * LUFS (held under -1 dBTP true peak). *gain_db (optional) gets the gain applied. */
+typedef struct {
+    int32_t format;     /* DalnokFileFormat */
+    double sample_rate; /* 0: the engine's rate */
+    int32_t normalize;  /* 0 none, 1 peak, 2 loudness */
+    double target;      /* dBFS (peak) or LUFS (loudness), -60 to 0 */
+} DalnokExportOptions;
+DalnokStatus dalnok_render_export(DalnokEngine *engine, const char *path, int64_t start_frame, int64_t frames,
+                                  const DalnokExportOptions *options, int64_t max_tail, int64_t *tail_written,
+                                  double *gain_db, char *err, size_t err_len);
 /* Export Stems (API 47): one file per track that isn't a bus and isn't muted, post-fader (sends left out), into the
  * existing `folder` as "NN Name.<ext>", all the same length (the range, plus up to max_tail frames of tail).
  * Returns the number of files written, or -1 with a message in `err`. */

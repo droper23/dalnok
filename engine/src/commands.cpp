@@ -496,6 +496,17 @@ const CommandDef kCommands[] = {
          if (!(db <= 0 && db >= -60)) return err = "db must be -60..0", DALNOK_ERR_INVALID_ARG;
          return status(e.normalizeClip(c, db, err), err);
      }},
+    {"clip.tempoToProject", "Set Project Tempo from Clip", "{clip, minConfidence?: 0..1 (default 0.2)}", [](ARGS) {
+         DalnokClipId c;
+         if (!needInt(a, "clip", c, err)) return DALNOK_ERR_INVALID_ARG;
+         const double need = a.getNumber("minConfidence", 0.2);
+         if (!(need >= 0 && need <= 1)) return err = "minConfidence must be 0..1", DALNOK_ERR_INVALID_ARG;
+         double bpm = 0, conf = 0;
+         int64_t first = 0;
+         if (!e.clipTempo(c, bpm, first, conf, err)) return DALNOK_ERR_INVALID_ARG;
+         if (conf < need) return err = "no steady beat (confidence " + std::to_string(conf) + ")", DALNOK_ERR_INVALID_ARG;
+         return status(e.setTempo(std::round(bpm * 100) / 100, e.model().meters.front().num, e.model().meters.front().den, err), err);
+     }},
     {"clip.stripSilence", "Strip Silence", "{clip, threshold?: dB (default -50), minSilence?: seconds (default 0.15)}", [](ARGS) {
          DalnokClipId c;
          if (!needInt(a, "clip", c, err)) return DALNOK_ERR_INVALID_ARG;

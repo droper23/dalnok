@@ -12,6 +12,7 @@
 // Control thread only (reads media, may block on a streamed source's cache file).
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "engine.hpp"
+#include "tempo_detect.hpp"
 #include "engine_internal.hpp"
 
 #include <algorithm>
@@ -177,6 +178,25 @@ std::vector<int64_t> Engine::audioTransients(DalnokClipId id, double sensitivity
     auto t = detectTransients(l, static_cast<double>(m.sampleRate()), sensitivity);
     for (auto &v : t) v += c->offset;
     return t;
+}
+
+bool Engine::clipTempo(DalnokClipId id, double &bpm, int64_t &firstBeat, double &confidence, std::string &err) const {
+    bpm = 0, firstBeat = 0, confidence = 0;
+    const ClipState *c = model_.clip(id);
+    if (!c) return fail(err, "no such clip");
+    if (c->midi()) return fail(err, "MIDI clips have no audio to analyze");
+    const PoolEntry *pe = poolEntry(c->media);
+    if (!pe || !pe->handle->impl) return fail(err, "the clip's audio is offline");
+    const Media &m = *pe->handle->impl;
+    const int64_t span = std::min(c->sourceLength(), m.frames() - c->offset);
+    if (span < static_cast<int64_t>(4 * m.sampleRate())) return fail(err, "the clip is too short to hear a tempo (4 s at least)");
+    std::vector<float> l(static_cast<size_t>(span)), r(static_cast<size_t>(span));
+    m.read(c->offset, span, l.data(), r.data());
+    for (size_t i = 0; i < l.size(); ++i) l[i] = 0.5f * (l[i] + r[i]);
+    const TempoEstimate t = detectTempo(l, m.sampleRate());
+    if (t.bpm <= 0) return fail(err, "no steady beat found");
+    bpm = t.bpm, firstBeat = t.firstBeat, confidence = t.confidence;
+    return true;
 }
 
 bool Engine::quantizeAudio(DalnokClipId id, double gridBeats, double strength, double sensitivity, std::string &err) {

@@ -276,6 +276,8 @@ public:
     // Audio quantize (API 47, audio_quantize.cpp): the clip's transients (source frames), and a warp map that moves
     // them to the grid by `strength` (attacks at their own speed, the rest stretched to fit; one undo step).
     std::vector<int64_t> audioTransients(DalnokClipId id, double sensitivity, std::string &err) const;
+    // The tempo of an audio clip's audio (tempo_detect.hpp); firstBeat in source frames after the clip's start.
+    bool clipTempo(DalnokClipId id, double &bpm, int64_t &firstBeat, double &confidence, std::string &err) const;
     bool quantizeAudio(DalnokClipId id, double gridBeats, double strength, double sensitivity, std::string &err);
     bool setClipWarp(DalnokClipId id, WarpList warp, std::string &err); // empty: remove (one speed again)
     // Plugins (ADR-0009 stage 3). Loading runs plugin code in this process (control thread).
@@ -393,6 +395,12 @@ public:
                      int64_t maxTail = 0, int64_t *tailWritten = nullptr);
     bool renderToFile(const std::string &path, int64_t start, int64_t frames, int32_t format, std::string &err,
                       int64_t maxTail = 0, int64_t *tailWritten = nullptr);
+    // As renderToFile, at another sample rate and/or normalized (normalize 1: peak to `target` dBFS; 2: integrated
+    // loudness to `target` LUFS, held under -1 dBTP). Renders once to a float file beside `path`, then converts.
+    // *gainDb (optional) gets the gain applied.
+    bool renderToFileWith(const std::string &path, int64_t start, int64_t frames, int32_t format, double outRate,
+                          int32_t normalize, double target, std::string &err, int64_t maxTail = 0,
+                          int64_t *tailWritten = nullptr, double *gainDb = nullptr);
 
     // Dalnok Sampler / Drums: decode `path` into a zone (the Sampler has one; Drums pad 0-15 = notes 36-51). Saved with
     // the plug-in's state (the file's path); not undoable, like other plug-in state.

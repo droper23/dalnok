@@ -1378,6 +1378,21 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         else { flash(String(cString: err)) }
     }
 
+    /// Clip ▸ Set Project Tempo from Clip (Logic's Smart Tempo, Ableton's tempo from a warped clip): hears the audio
+    /// clip's tempo and makes it the project's (one undo step).
+    @objc func tempoFromClip(_ sender: Any?) {
+        guard let c = selectedClipView, !c.isMidi else { return flash("Select an audio clip to take the tempo from") }
+        var bpm = 0.0, conf = 0.0, first: Int64 = 0
+        var err = [CChar](repeating: 0, count: 256)
+        guard dalnok_clip_detect_tempo(session.engine.handle, c.id, &bpm, &first, &conf, &err, err.count) == DALNOK_OK else {
+            return flash(String(cString: err))
+        }
+        guard conf >= 0.2 else { return flash(String(format: "No steady beat in %@ (heard %.1f BPM, unsure)", c.name, bpm)) }
+        let rounded = (bpm * 100).rounded() / 100
+        let (num, den) = session.meter
+        if session.setTempo(rounded, num, den) { flash(String(format: "Tempo %.2f BPM from %@", rounded, c.name)) }
+    }
+
     @objc func setFadeCurveLinear(_ sender: Any?) { setCurve(DALNOK_FADE_LINEAR) }
     @objc func setFadeCurveEqualPower(_ sender: Any?) { setCurve(DALNOK_FADE_EQUAL_POWER) }
     private func setCurve(_ curve: DalnokFadeCurve) {
@@ -1709,6 +1724,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         get { min(max(0, UserDefaults.standard.integer(forKey: "exportFormat")), Engine.exportFormats.count - 1) }
         set { UserDefaults.standard.set(newValue, forKey: "exportFormat") }
     }
+    /// The export panel's sample rate and normalize choices (remembered, like the format).
+    static var exportSettings: Engine.ExportSettings {
+        let r = min(max(0, UserDefaults.standard.integer(forKey: "exportRate")), Engine.exportRates.count - 1)
+        let n = Engine.exportNormalizes[min(max(0, UserDefaults.standard.integer(forKey: "exportNormalize")), Engine.exportNormalizes.count - 1)]
+        return Engine.ExportSettings(rate: Engine.exportRates[r].rate, normalize: n.mode, target: n.target)
+    }
     @objc func exportMix(_ sender: Any?) {
         let panel = NSSavePanel()
         let formats = Engine.exportFormats
@@ -1722,8 +1743,18 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         let popup = NSPopUpButton(frame: .zero, pullsDown: false)
         popup.addItems(withTitles: formats.map(\.title))
         popup.selectItem(at: Self.exportFormatIndex)
-        let label = NSTextField(labelWithString: "Format:")
-        let row = NSStackView(views: [label, popup])
+        let rates = NSPopUpButton(frame: .zero, pullsDown: false)
+        rates.addItems(withTitles: Engine.exportRates.map(\.title))
+        rates.selectItem(at: min(max(0, UserDefaults.standard.integer(forKey: "exportRate")), Engine.exportRates.count - 1))
+        let norm = NSPopUpButton(frame: .zero, pullsDown: false)
+        norm.addItems(withTitles: Engine.exportNormalizes.map(\.title))
+        norm.selectItem(at: min(max(0, UserDefaults.standard.integer(forKey: "exportNormalize")), Engine.exportNormalizes.count - 1))
+        let grid = NSGridView(views: [[NSTextField(labelWithString: "Format:"), popup],
+                                      [NSTextField(labelWithString: "Sample rate:"), rates],
+                                      [NSTextField(labelWithString: "Normalize:"), norm]])
+        grid.column(at: 0).xPlacement = .trailing
+        grid.rowSpacing = 6
+        let row = NSStackView(views: [grid])
         row.edgeInsets = NSEdgeInsets(top: 8, left: 12, bottom: 8, right: 12)
         panel.accessoryView = row
         apply(Self.exportFormatIndex)
@@ -1735,7 +1766,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
                              : "Exports the full arrangement, with its reverb and delay tails."
         panel.beginSheetModal(for: window!) { [weak self] resp in
             guard resp == .OK, let url = panel.url else { return }
-            MainActor.assumeIsolated { () -> Void in self?.exportMix(to: url, format: formats[Self.exportFormatIndex].format) }
+            MainActor.assumeIsolated { () -> Void in
+                UserDefaults.standard.set(rates.indexOfSelectedItem, forKey: "exportRate")
+                UserDefaults.standard.set(norm.indexOfSelectedItem, forKey: "exportNormalize")
+                self?.exportMix(to: url, format: formats[Self.exportFormatIndex].format, settings: Self.exportSettings)
+            }
         }
     }
     @objc private func exportFormatPicked(_ sender: NSPopUpButton) { exportFormatChanged?(sender.indexOfSelectedItem) }
@@ -1806,12 +1841,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     }
 
     @discardableResult
-    func exportMix(to url: URL, format: DalnokFileFormat = DALNOK_FORMAT_WAV24) -> Bool {
+    func exportMix(to url: URL, format: DalnokFileFormat = DALNOK_FORMAT_WAV24, settings: Engine.ExportSettings = Engine.ExportSettings()) -> Bool {
         do {
             let t0 = Date()
             let c = session.cycle
-            try session.engine.export(to: url, format: format, range: c.on ? (c.start, c.end) : nil)
-            flash(String(format: "Exported %@ in %.0f ms", url.lastPathComponent, Date().timeIntervalSince(t0) * 1000))
+            let gain = try session.engine.export(to: url, format: format, range: c.on ? (c.start, c.end) : nil, settings: settings)
+            let normalized = settings.normalize == 0 ? "" : String(format: ", normalized %+.1f dB", gain)
+            flash(String(format: "Exported %@ in %.0f ms%@", url.lastPathComponent, Date().timeIntervalSince(t0) * 1000, normalized))
             return true
         } catch {
             presentError(title: "Export failed", error)

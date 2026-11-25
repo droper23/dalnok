@@ -502,6 +502,7 @@ func buildMenu(target: MainWindowController) -> NSMenu {
         item("Mute Clip", #selector(W.toggleClipMute(_:)), ""),
         item("Loop Clip", #selector(W.toggleClipLoop(_:)), "l", []),
         item("Slice to Drums", #selector(W.sliceToDrums(_:)), ""),
+        item("Set Project Tempo from Clip", #selector(W.tempoFromClip(_:)), ""),
         item("Export MIDI Clip…", #selector(W.exportMidiClip(_:)), ""),
         item("Join Clips", #selector(W.joinClips(_:)), "j"),
         item("Normalize", #selector(W.normalizeClips(_:)), ""),
