@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+- **Dalnok Sampler for 808s:** a sustain loop (start, end, crossfade), a resonant low-pass, glide and a mono legato mode.
+- **Export options:** Export Mix can write at another sample rate (44.1–96 kHz) and normalize (peak to −0.1 or −1 dBFS, or loudness to −14, −16 or −23 LUFS, held under −1 dBTP).
+- **Tempo detection:** Clip ▸ Set Project Tempo from Clip hears an audio clip's tempo (60–200 BPM) and makes it the project's.
 - **Dalnok Poly** answers pitch bend (±2 semitones) and the sustain pedal; **MIDI recording** keeps the keyboard's controllers and pitch bend.
 - **Dalnok Sampler** (one sample across the keys: root, transpose, fine, ADSR, velocity, one shot) and **Dalnok Drums** (16 one-shot pads in a 4×4 grid; click to hear, drop a file on a pad). Pad names show on the piano roll's keys.
 - **Dalnok Synth:** two oscillators with detune and sub, resonant low-pass with its own envelope, ADSR, glide, pitch envelope, poly or mono, velocity, bend and sustain.

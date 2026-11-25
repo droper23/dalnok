@@ -13,10 +13,11 @@ main tree; merge later. Producer agents ranked what Logic/Ableton users miss mos
   (`engine_cliptools.cpp`); Limiter/Saturator/Filter/Chorus/Utility (`fx/mix_fx.*`); Analyzer; Synth (`fx/synth_fx.*`);
   SMF import/export (`midi_file.*`, fuzz kind 7); export queue; stems by track/bus (`dalnok_export_stems_of`);
   presets and templates (`PresetsAndTemplates.swift`); mute/send automation (format 19); stereo inputs (format 20);
-  Pitch Correct (`fx/pitch_fx.*`, YIN + streaming shifter `engine/dsp/src/shifter.cpp`, 80 ms blocks).
-- **Verified:** `swift test` 363 pass; self-test matrix 12/12 PASS (`-j 4`; more parallel runs overload the machine).
-- **Next for parity:** sampler loop points/filter/glide and zones; tempo detection, warp modes, tempo ramps; export
-  sample rate and normalize; MIDI channel/program and articulations; Flex Pitch editor; racks and macros; MP3 (needs
+  Pitch Correct (`fx/pitch_fx.*`, YIN + streaming shifter `engine/dsp/src/shifter.cpp`, 80 ms blocks); Sampler
+  loop/filter/glide/mono; export sample rate and normalize (`Engine::renderToFileWith`, `dalnok_render_export`);
+  tempo detection (`tempo_detect.*`, `dalnok_clip_detect_tempo`, `clip.tempoToProject`).
+- **Verified:** `swift test` 373 pass; self-test matrix 12/12 PASS (`-j 4`; more parallel runs overload the machine).
+- **Next for parity:** sampler zones; warp modes, tempo ramps; MIDI channel/program and articulations; Flex Pitch editor; racks and macros; MP3 (needs
   a permissive encoder); video track and SMPTE; VCA/PFL/track delay; clip-gain envelope; tap tempo.
 
 ## Earlier (2026-11-24, day): open bugs fixed, parity features
