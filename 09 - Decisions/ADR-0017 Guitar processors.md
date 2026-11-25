@@ -39,3 +39,8 @@ using the existing parameter, automation, state, undo, render and discovery inte
 
 Verification is recorded in GuitarTuneTests, GuitarStudioTests and SelfTest+Guitar. Numerical checks
 establish defined behavior, not listening preference or parity with premium commercial products.
+
+## Addendum (2026-11-25): editors
+Both plug-ins get native editors in the plug-in window instead of the generic parameter list. They talk to the engine only
+through the plug-in parameter API, poll it (Studio 10 Hz, Tune 30 Hz), and show only measured telemetry. All hardware is
+drawn procedurally from shapes and seeded noise; names, colours and layouts are Dalnok's own, with no product's trade dress.

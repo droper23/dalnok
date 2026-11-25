@@ -136,7 +136,7 @@ extension DeviceView {
     func guitarPresetMenu() -> NSMenuItem? {
         var entries: [(String, () -> Void)] = []
         if isGuitarStudio {
-            entries = StudioPreset.factory.map { p in (p.name, { [weak self] in self?.applyStudioPreset(p) }) }
+            entries = StudioPreset.factory.map { p in (p.name, { [weak self] in self?.studioRig.apply(p) }) }
         } else {
             entries = GuitarPreset.factory(for: pluginPath).map { p in (p.name, { [weak self] in self?.applyGuitarPreset(p) }) }
         }
@@ -163,41 +163,72 @@ extension DeviceView {
         session.onMessage?("Loaded \(preset.name)")
     }
 
-    private func applyStudioPreset(_ preset: StudioPreset) {
-        writeStudioChain(preset.modules)
-        let h = session.engine.handle
-        dalnok_plugin_set_parameter(h, slot, StudioLayout.input, (preset.input + 24) / 48)
-        dalnok_plugin_set_parameter(h, slot, StudioLayout.output, (preset.output + 36) / 48)
-        Self.appliedPresets[slot] = (preset.name, studioState())
-        studioChanged("Loaded \(preset.name)")
-    }
+    // Guitar Studio: the device panel's view of the shared rig controller.
+    func studioChain() -> [StudioModule] { studioRig.chain() }
+    func writeStudioChain(_ chain: [StudioModule]) { studioRig.write(chain) }
+    func toggleStudioModule(_ i: Int) { studioRig.toggle(i) }
+    func moveStudioModule(from: Int, to: Int) { studioRig.move(from: from, to: to) }
+    func removeStudioModule(_ i: Int) { studioRig.remove(i) }
+    func addStudioModule(_ type: Int) { studioRig.add(type) }
+    func studioAddMenu() -> NSMenu? { studioRig.addMenu() }
+    func studioModuleMenu(_ i: Int) -> NSMenu? { studioRig.moduleMenu(i) }
+    func studioModuleItems() -> [NSMenuItem] { studioRig.moduleItems() }
+    static var appliedPresets: [Int32: (name: String, state: String)] { StudioRig.appliedPresets }
+    func studioState() -> String { studioRig.state() }
+    func studioPresetStatus() -> (name: String, edited: Bool)? { studioRig.presetStatus() }
+}
 
-    // MARK: Guitar Studio modules
+/// One Guitar Studio instance's rig, read and written through its parameters: the device panel, its slot strip and the
+/// plug-in window's rig editor all edit through this. Every structural edit posts `changed` (object: the plug-in slot)
+/// so each view of the same instance follows.
+@MainActor
+final class StudioRig {
+    static let changed = Notification.Name("DalnokStudioRigChanged")
+    let engine: Engine
+    let slot: Int32
+    /// Shows a status message (the main window's flash).
+    var onMessage: ((String) -> Void)?
+    init(engine: Engine, slot: Int32) { self.engine = engine; self.slot = slot }
+    private var h: OpaquePointer { engine.handle }
 
-    private func studioValue(_ id: UInt32) -> Double {
+    func parameter(_ id: UInt32) -> DalnokPluginParameter? {
         var p = DalnokPluginParameter()
-        return dalnok_plugin_parameter(session.engine.handle, slot, Int32(id), &p) == DALNOK_OK ? p.value : 0 // index == id
+        return dalnok_plugin_parameter(h, slot, Int32(id), &p) == DALNOK_OK ? p : nil // index == id
+    }
+    func value(_ id: UInt32) -> Double { parameter(id)?.value ?? 0 }
+    func set(_ id: UInt32, _ value: Double) { dalnok_plugin_set_parameter(h, slot, id, max(0, min(1, value))) }
+    func text(_ id: UInt32, at value: Double) -> String? {
+        var buf = [CChar](repeating: 0, count: 64)
+        guard dalnok_plugin_parameter_text(h, slot, id, value, &buf, 64) == DALNOK_OK else { return nil }
+        return String(cString: buf)
     }
 
+    private func module(at s: Int) -> StudioModule {
+        let knobs = Dictionary(uniqueKeysWithValues: (0..<StudioLayout.knobs).map { ($0, value(StudioLayout.knobId(s, $0))) })
+        return StudioModule(type: StudioLayout.type(value(StudioLayout.typeId(s))), on: value(StudioLayout.onId(s)) >= 0.5, knobs: knobs)
+    }
     /// The modules in slot order (empty slots skipped), with every knob's position.
-    func studioChain() -> [StudioModule] {
-        (0..<StudioLayout.slots).compactMap { s in
-            let type = StudioLayout.type(studioValue(StudioLayout.typeId(s)))
-            guard type != 0 else { return nil }
-            let knobs = Dictionary(uniqueKeysWithValues: (0..<StudioLayout.knobs).map { ($0, studioValue(StudioLayout.knobId(s, $0))) })
-            return StudioModule(type: type, on: studioValue(StudioLayout.onId(s)) >= 0.5, knobs: knobs)
+    func chain() -> [StudioModule] { (0..<StudioLayout.slots).map(module(at:)).filter { $0.type != 0 } }
+    /// The engine slot of each module in `chain()`.
+    func slots() -> [Int] { (0..<StudioLayout.slots).filter { StudioLayout.type(value(StudioLayout.typeId($0))) != 0 } }
+
+    /// One module's knobs as the engine names and prints them (unused knobs are hidden by the engine).
+    struct Knob { let id: UInt32; let name: String; let display: String; let value: Double; let defaultValue: Double; let steps: Int }
+    func knobs(slot s: Int) -> [Knob] {
+        let prefix = "\(s + 1) \(StudioLayout.catalog[StudioLayout.type(value(StudioLayout.typeId(s)))].name) "
+        return (0..<StudioLayout.knobs).compactMap { k in
+            guard let p = parameter(StudioLayout.knobId(s, k)), !p.hidden else { return nil }
+            let title = fixedString(p.title)
+            return Knob(id: p.id, name: title.hasPrefix(prefix) ? String(title.dropFirst(prefix.count)) : title,
+                        display: fixedString(p.display), value: p.value, defaultValue: p.default_value, steps: Int(p.step_count))
         }
     }
 
     /// Writes `chain` into slots 1… and empties the rest. Each slot is set to Empty and then to its module, so the
     /// module starts from its defaults and only the given knobs change. Slots already holding exactly that module
     /// with all its knobs are left alone (nothing restarts while playing).
-    func writeStudioChain(_ chain: [StudioModule]) {
-        let h = session.engine.handle
-        let current = (0..<StudioLayout.slots).map { s -> StudioModule in
-            let knobs = Dictionary(uniqueKeysWithValues: (0..<StudioLayout.knobs).map { ($0, studioValue(StudioLayout.knobId(s, $0))) })
-            return StudioModule(type: StudioLayout.type(studioValue(StudioLayout.typeId(s))), on: studioValue(StudioLayout.onId(s)) >= 0.5, knobs: knobs)
-        }
+    func write(_ chain: [StudioModule]) {
+        let current = (0..<StudioLayout.slots).map(module(at:))
         for s in 0..<StudioLayout.slots {
             let m = s < chain.count ? chain[s] : StudioModule(type: 0, on: true, knobs: [:])
             if m.knobs.count == StudioLayout.knobs, current[s] == m { continue }
@@ -214,15 +245,50 @@ extension DeviceView {
         }
     }
 
-    private func studioChanged(_ message: String) {
-        session.refresh()
-        reloadParameters()
-        studioStrip?.reload()
-        session.onMessage?(message)
+    private func changed(_ message: String) {
+        NotificationCenter.default.post(name: Self.changed, object: NSNumber(value: slot))
+        onMessage?(message)
+    }
+    func edit(_ message: String, _ change: (inout [StudioModule]) -> Void) {
+        var next = chain()
+        change(&next)
+        write(next)
+        changed(message)
+    }
+    func toggle(_ i: Int) {
+        let c = chain()
+        guard c.indices.contains(i) else { return }
+        edit("\(c[i].name) \(c[i].on ? "off" : "on")") { $0[i].on.toggle() }
+    }
+    func move(from: Int, to: Int) {
+        let c = chain()
+        guard c.indices.contains(from), c.indices.contains(to), from != to else { return }
+        edit("Moved \(c[from].name) to slot \(to + 1)") { $0.insert($0.remove(at: from), at: to) }
+    }
+    func remove(_ i: Int) {
+        let c = chain()
+        guard c.indices.contains(i) else { return }
+        edit("Removed \(c[i].name)") { $0.remove(at: i) }
+    }
+    func add(_ type: Int) {
+        guard chain().count < StudioLayout.slots else { return }
+        edit("Added \(StudioLayout.catalog[type].name)") { $0.append(StudioModule(type: type, on: true, knobs: [:])) }
+    }
+    func replace(_ i: Int, with type: Int) {
+        let c = chain()
+        guard c.indices.contains(i) else { return }
+        edit("Replaced \(c[i].name) with \(StudioLayout.catalog[type].name)") { $0[i] = StudioModule(type: type, on: true, knobs: [:]) }
+    }
+    func apply(_ preset: StudioPreset) {
+        write(preset.modules)
+        set(StudioLayout.input, (preset.input + 24) / 48)
+        set(StudioLayout.output, (preset.output + 36) / 48)
+        Self.appliedPresets[slot] = (preset.name, state())
+        changed("Loaded \(preset.name)")
     }
 
     /// The module catalog by category; `pick` gets the module type.
-    private func catalogMenu(_ title: String, _ pick: @escaping (Int) -> Void) -> NSMenu {
+    func catalogMenu(_ title: String, _ pick: @escaping (Int) -> Void) -> NSMenu {
         let menu = NSMenu(title: title)
         for category in StudioLayout.categories {
             let sub = NSMenu(title: category)
@@ -235,42 +301,15 @@ extension DeviceView {
         }
         return menu
     }
-
-    private func editChain(_ message: String, _ change: (inout [StudioModule]) -> Void) {
-        var next = studioChain()
-        change(&next)
-        writeStudioChain(next)
-        studioChanged(message)
-    }
-    func toggleStudioModule(_ i: Int) {
-        let chain = studioChain()
-        guard chain.indices.contains(i) else { return }
-        editChain("\(chain[i].name) \(chain[i].on ? "off" : "on")") { $0[i].on.toggle() }
-    }
-    func moveStudioModule(from: Int, to: Int) {
-        let chain = studioChain()
-        guard chain.indices.contains(from), chain.indices.contains(to), from != to else { return }
-        editChain("Moved \(chain[from].name) to slot \(to + 1)") { $0.insert($0.remove(at: from), at: to) }
-    }
-    func removeStudioModule(_ i: Int) {
-        let chain = studioChain()
-        guard chain.indices.contains(i) else { return }
-        editChain("Removed \(chain[i].name)") { $0.remove(at: i) }
-    }
-    func addStudioModule(_ type: Int) {
-        guard studioChain().count < StudioLayout.slots else { return }
-        editChain("Added \(StudioLayout.catalog[type].name)") { $0.append(StudioModule(type: type, on: true, knobs: [:])) }
-    }
-
     /// Add Module ▸ by category (nil when all eight slots are used).
-    func studioAddMenu() -> NSMenu? {
-        studioChain().count < StudioLayout.slots ? catalogMenu("Add Module") { [weak self] in self?.addStudioModule($0) } : nil
+    func addMenu() -> NSMenu? {
+        chain().count < StudioLayout.slots ? catalogMenu("Add Module") { [weak self] in self?.add($0) } : nil
     }
-    /// One module's menu: switch, move, replace, remove (the strip and the device menu's Modules ▸ share it).
-    func studioModuleMenu(_ i: Int) -> NSMenu? {
-        let chain = studioChain()
-        guard chain.indices.contains(i) else { return nil }
-        let m = chain[i]
+    /// One module's menu: switch, move, replace, remove (the strip, the rig editor and the device menu share it).
+    func moduleMenu(_ i: Int) -> NSMenu? {
+        let c = chain()
+        guard c.indices.contains(i) else { return nil }
+        let m = c[i]
         let sub = NSMenu(title: m.name)
         sub.autoenablesItems = false
         func edit(_ title: String, enabled: Bool = true, _ run: @escaping () -> Void) {
@@ -278,36 +317,40 @@ extension DeviceView {
             item.isEnabled = enabled
             sub.addItem(item)
         }
-        edit(m.on ? "Turn Off" : "Turn On") { [weak self] in self?.toggleStudioModule(i) }
-        edit("Move Earlier", enabled: i > 0) { [weak self] in self?.moveStudioModule(from: i, to: i - 1) }
-        edit("Move Later", enabled: i < chain.count - 1) { [weak self] in self?.moveStudioModule(from: i, to: i + 1) }
+        edit(m.on ? "Turn Off" : "Turn On") { [weak self] in self?.toggle(i) }
+        edit("Move Earlier", enabled: i > 0) { [weak self] in self?.move(from: i, to: i - 1) }
+        edit("Move Later", enabled: i < c.count - 1) { [weak self] in self?.move(from: i, to: i + 1) }
         let replace = NSMenuItem(title: "Replace With", action: nil, keyEquivalent: "")
-        replace.submenu = catalogMenu("Replace With") { [weak self] type in
-            self?.editChain("Replaced \(m.name) with \(StudioLayout.catalog[type].name)") { $0[i] = StudioModule(type: type, on: true, knobs: [:]) }
-        }
+        replace.submenu = catalogMenu("Replace With") { [weak self] type in self?.replace(i, with: type) }
         sub.addItem(replace)
         sub.addItem(.separator())
-        edit("Remove") { [weak self] in self?.removeStudioModule(i) }
+        edit("Remove") { [weak self] in self?.remove(i) }
         return sub
+    }
+    /// Factory rigs, for a menu.
+    func presetMenu() -> NSMenu {
+        let menu = NSMenu(title: "Factory Rigs")
+        for p in StudioPreset.factory { menu.addItem(ClosureMenuItem(title: p.name) { [weak self] in self?.apply(p) }) }
+        return menu
     }
 
     /// Device menu entries: Add Module ▸ (by category) and Modules ▸ (each module: switch, move, replace, remove).
-    func studioModuleItems() -> [NSMenuItem] {
-        let chain = studioChain()
+    func moduleItems() -> [NSMenuItem] {
+        let c = chain()
         let add = NSMenuItem(title: "Add Module", action: nil, keyEquivalent: "")
-        add.submenu = studioAddMenu()
+        add.submenu = addMenu()
         if add.submenu == nil {
             add.isEnabled = false
             add.title = "Add Module (all \(StudioLayout.slots) slots used)"
         }
         let modules = NSMenu(title: "Modules")
         modules.autoenablesItems = false
-        for (i, m) in chain.enumerated() {
+        for (i, m) in c.enumerated() {
             let item = NSMenuItem(title: "\(i + 1) · \(m.name)\(m.on ? "" : " (off)")", action: nil, keyEquivalent: "")
-            item.submenu = studioModuleMenu(i)
+            item.submenu = moduleMenu(i)
             modules.addItem(item)
         }
-        if chain.isEmpty { let none = NSMenuItem(title: "No modules yet", action: nil, keyEquivalent: ""); none.isEnabled = false; modules.addItem(none) }
+        if c.isEmpty { let none = NSMenuItem(title: "No modules yet", action: nil, keyEquivalent: ""); none.isEnabled = false; modules.addItem(none) }
         let parent = NSMenuItem(title: "Modules", action: nil, keyEquivalent: "")
         parent.submenu = modules
         return [add, parent]
@@ -318,14 +361,14 @@ extension DeviceView {
     /// The rig last applied to each Guitar Studio (by plug-in slot) and the state it left, so the strip can name it
     /// and mark it edited. Kept for the session only: a saved project's rig is simply its modules.
     nonisolated(unsafe) static var appliedPresets: [Int32: (name: String, state: String)] = [:]
-    func studioState() -> String {
-        let n = dalnok_plugin_get_state(session.engine.handle, slot, nil, 0)
+    func state() -> String {
+        let n = dalnok_plugin_get_state(h, slot, nil, 0)
         var b = [CChar](repeating: 0, count: n + 1)
-        dalnok_plugin_get_state(session.engine.handle, slot, &b, b.count)
+        dalnok_plugin_get_state(h, slot, &b, b.count)
         return String(decoding: b.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
     }
-    func studioPresetStatus() -> (name: String, edited: Bool)? {
+    func presetStatus() -> (name: String, edited: Bool)? {
         guard let p = Self.appliedPresets[slot] else { return nil }
-        return (p.name, studioState() != p.state)
+        return (p.name, state() != p.state)
     }
 }

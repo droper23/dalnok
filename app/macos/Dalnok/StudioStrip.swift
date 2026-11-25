@@ -8,16 +8,18 @@ import AppKit
 @MainActor
 final class StudioStrip: NSView {
     static let height: CGFloat = 22
-    weak var device: DeviceView?
+    let rig: StudioRig
     private(set) var chain: [StudioModule] = []
     /// The factory rig last applied, and whether the rig has changed since.
     private(set) var preset: (name: String, edited: Bool)?
     private var drag: (index: Int, start: CGFloat, now: CGFloat)?
     private var elements: [StripElement] = []
     private var loadedOnce = false
+    /// Names the loaded rig at the end (off where something else already names it).
+    var showsPreset = true { didSet { needsDisplay = true } }
 
-    init(device: DeviceView) {
-        self.device = device
+    init(rig: StudioRig) {
+        self.rig = rig
         super.init(frame: .zero)
         setAccessibilityElement(true)
         setAccessibilityRole(.group)
@@ -31,8 +33,7 @@ final class StudioStrip: NSView {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     func reload() {
-        guard let device else { return }
-        let next = device.studioChain(), status = device.studioPresetStatus()
+        let next = rig.chain(), status = rig.presetStatus()
         if loadedOnce, next == chain, status?.name == preset?.name, status?.edited == preset?.edited { return }
         loadedOnce = true
         chain = next
@@ -44,7 +45,7 @@ final class StudioStrip: NSView {
     // MARK: Geometry
 
     private var presetWidth: CGFloat {
-        guard let preset else { return 0 }
+        guard showsPreset, let preset else { return 0 }
         return min(150, (preset.name + " •").size(withAttributes: [.font: Theme.ui(9, .semibold)]).width + 14)
     }
     private var canAdd: Bool { chain.count < StudioLayout.slots }
@@ -112,7 +113,7 @@ final class StudioStrip: NSView {
             ctx.move(to: CGPoint(x: r.midX - 4, y: r.midY)); ctx.addLine(to: CGPoint(x: r.midX + 4, y: r.midY))
             ctx.move(to: CGPoint(x: r.midX, y: r.midY - 4)); ctx.addLine(to: CGPoint(x: r.midX, y: r.midY + 4)); ctx.strokePath()
         }
-        if let preset {
+        if showsPreset, let preset {
             let text = preset.name + (preset.edited ? " •" : "")
             let para = NSMutableParagraphStyle(); para.alignment = .right; para.lineBreakMode = .byTruncatingTail
             (text as NSString).draw(in: CGRect(x: bounds.width - presetWidth, y: bounds.midY - 6.5, width: presetWidth, height: 13),
@@ -126,7 +127,7 @@ final class StudioStrip: NSView {
         let p = convert(event.locationInWindow, from: nil)
         guard let i = index(at: p) else { return }
         if i >= chain.count { return showAddMenu() }
-        if light(cells[i]).insetBy(dx: -3, dy: -3).contains(p) { return device?.toggleStudioModule(i) ?? () }
+        if light(cells[i]).insetBy(dx: -3, dy: -3).contains(p) { return rig.toggle(i) }
         drag = (i, p.x, p.x)
     }
     override func mouseDragged(with event: NSEvent) {
@@ -141,18 +142,18 @@ final class StudioStrip: NSView {
         needsDisplay = true
         if abs(d.now - d.start) < 4 { return showModuleMenu(d.index) }
         let to = dropIndex(cells[d.index].midX + d.now - d.start)
-        if to != d.index { device?.moveStudioModule(from: d.index, to: to) }
+        if to != d.index { rig.move(from: d.index, to: to) }
     }
     override func rightMouseDown(with event: NSEvent) {
         let p = convert(event.locationInWindow, from: nil)
         if let i = index(at: p), i < chain.count { showModuleMenu(i) } else { showAddMenu() }
     }
     func showModuleMenu(_ i: Int) {
-        guard let menu = device?.studioModuleMenu(i), i < cells.count else { return }
+        guard let menu = rig.moduleMenu(i), i < cells.count else { return }
         menu.popUp(positioning: nil, at: CGPoint(x: cells[i].minX, y: cells[i].maxY + 2), in: self)
     }
     func showAddMenu() {
-        guard let menu = device?.studioAddMenu() else { return }
+        guard let menu = rig.addMenu() else { return }
         menu.popUp(positioning: nil, at: CGPoint(x: (cells.last?.minX ?? 0), y: bounds.maxY + 2), in: self)
     }
 
@@ -165,10 +166,10 @@ final class StudioStrip: NSView {
             e.setAccessibilityLabel("Slot \(i + 1) of \(StudioLayout.slots): \(m.name), \(m.on ? "on" : "off")")
             e.setAccessibilityHelp("Opens the module's menu")
             e.press = { [weak self] in self?.showModuleMenu(i) }
-            var actions = [NSAccessibilityCustomAction(name: m.on ? "Turn Off" : "Turn On") { [weak self] in self?.device?.toggleStudioModule(i); return true }]
-            if i > 0 { actions.append(NSAccessibilityCustomAction(name: "Move Earlier") { [weak self] in self?.device?.moveStudioModule(from: i, to: i - 1); return true }) }
-            if i < chain.count - 1 { actions.append(NSAccessibilityCustomAction(name: "Move Later") { [weak self] in self?.device?.moveStudioModule(from: i, to: i + 1); return true }) }
-            actions.append(NSAccessibilityCustomAction(name: "Remove") { [weak self] in self?.device?.removeStudioModule(i); return true })
+            var actions = [NSAccessibilityCustomAction(name: m.on ? "Turn Off" : "Turn On") { [weak self] in self?.rig.toggle(i); return true }]
+            if i > 0 { actions.append(NSAccessibilityCustomAction(name: "Move Earlier") { [weak self] in self?.rig.move(from: i, to: i - 1); return true }) }
+            if i < chain.count - 1 { actions.append(NSAccessibilityCustomAction(name: "Move Later") { [weak self] in self?.rig.move(from: i, to: i + 1); return true }) }
+            actions.append(NSAccessibilityCustomAction(name: "Remove") { [weak self] in self?.rig.remove(i); return true })
             e.setAccessibilityCustomActions(actions)
             return e
         }

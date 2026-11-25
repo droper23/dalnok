@@ -81,8 +81,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     func openPluginWindow(track: DalnokTrackId, slot: Int32) {
         guard let t = session.track(track), let p = t.plugins.first(where: { $0.id == slot }) else { return }
         guard p.loaded else { return flash("\(p.name) is not loaded: \(p.error)") }
-        let hasGUI = dalnok_plugin_has_editor(session.engine.handle, slot)
-        if p.isolated && hasGUI {
+        let hasGUI = dalnok_plugin_has_editor(session.engine.handle, slot) || BuiltinEditors.has(p.path)
+        if p.isolated && hasGUI && !BuiltinEditors.has(p.path) {
             var err = [CChar](repeating: 0, count: 256)
             if dalnok_plugin_show_editor_window(session.engine.handle, slot, "\(p.name) — \(t.name)", .nan, .nan, &err, 256) != DALNOK_OK {
                 flash("\(p.name): \(cString(err))")
@@ -102,7 +102,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     }
     private func makePluginWindow(_ t: TrackView, _ p: TrackView.Plugin) -> PluginWindowController? {
         let track = t.id, slot = p.id
-        let w = PluginWindowController(engine: session.engine, slot: slot, title: "\(p.name) — \(t.name)", isolated: p.isolated)
+        let w = PluginWindowController(engine: session.engine, slot: slot, title: "\(p.name) — \(t.name)", isolated: p.isolated && !BuiltinEditors.has(p.path),
+                                        path: p.path)
         w.onAutomate = { [weak self] slot, param, name in
             guard let self else { return }
             self.timeline.pluginLanes[track] = .plugin(slot: slot, param: param, name: "\(p.name): \(name)")

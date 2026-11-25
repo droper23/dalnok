@@ -42,7 +42,126 @@ extension SelfTest {
             try? w.snapshot(to: workdir.appendingPathComponent("guitar-tune.png"))
             checkStudioModules(studio)
             checkStudioPresets(studio)
+            checkGuitarEditors(track: track, tune: slot, studio: studio)
         } else { check(false, "Guitar Studio device appears") }
+    }
+
+    /// The plug-in windows' own editors: Guitar Studio's stage of hardware units and Guitar Tune's rack, driven with
+    /// real mouse events, and snapshots of every unit design.
+    private func checkGuitarEditors(track: DalnokTrackId, tune: Int32, studio d: DeviceView) {
+        let h = s.engine.handle
+        func save(_ v: NSView, _ name: String) {
+            v.layoutSubtreeIfNeeded()
+            let scale: CGFloat = 2
+            guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(v.bounds.width * scale), pixelsHigh: Int(v.bounds.height * scale),
+                                             bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
+                                             bytesPerRow: 0, bitsPerPixel: 0) else { return }
+            rep.size = v.bounds.size
+            v.cacheDisplay(in: v.bounds, to: rep)
+            try? rep.representation(using: .png, properties: [:])?.write(to: workdir.appendingPathComponent(name))
+        }
+        func event(_ v: NSView, _ type: NSEvent.EventType, _ p: CGPoint, clicks: Int = 1, mods: NSEvent.ModifierFlags = []) -> NSEvent {
+            NSEvent.mouseEvent(with: type, location: v.convert(p, to: nil), modifierFlags: mods, timestamp: ProcessInfo.processInfo.systemUptime,
+                               windowNumber: v.window?.windowNumber ?? 0, context: nil, eventNumber: 0, clickCount: clicks, pressure: 1)!
+        }
+        /// Drags `v` from its centre by `dy` points up (window coordinates).
+        func dragUp(_ v: NSView, _ dy: CGFloat) {
+            let start = v.convert(CGPoint(x: v.bounds.midX, y: v.bounds.midY), to: nil)
+            func at(_ type: NSEvent.EventType, _ y: CGFloat) -> NSEvent {
+                NSEvent.mouseEvent(with: type, location: CGPoint(x: start.x, y: y), modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                   windowNumber: v.window?.windowNumber ?? 0, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!
+            }
+            v.mouseDown(with: at(.leftMouseDown, start.y))
+            for k in 1...8 { v.mouseDragged(with: at(.leftMouseDragged, start.y + dy * CGFloat(k) / 8)) }
+            v.mouseUp(with: at(.leftMouseUp, start.y + dy))
+        }
+        func click(_ v: NSView, _ p: CGPoint? = nil, clicks: Int = 1) {
+            let c = p ?? CGPoint(x: v.bounds.midX, y: v.bounds.midY)
+            v.mouseDown(with: event(v, .leftMouseDown, c, clicks: clicks))
+            v.mouseUp(with: event(v, .leftMouseUp, c, clicks: clicks))
+        }
+
+        // Guitar Studio.
+        w.openPluginWindow(track: track, slot: d.slot)
+        guard let pw = w.pluginWindows[d.slot], let editor = pw.builtinEditor as? GuitarStudioEditor else {
+            return check(false, "Guitar Studio's window shows its own editor")
+        }
+        defer { pw.window?.close() }
+        check(pw.tabs.selectedSegment == 0 && !editor.isHidden && editor.window === pw.window, "Open shows Guitar Studio's rig editor first")
+        let rig = editor.rig
+        rig.apply(StudioPreset.factory[0])
+        editor.tick()
+        check(editor.stage.units.map(\.name) == rig.chain().map(\.name), "the stage shows every module in signal order (\(editor.stage.units.map(\.name)))")
+        // A knob dragged up raises the engine's value; double-click returns it to the default.
+        if let amp = editor.stage.units.first(where: { $0 is AmpUnit }), let gain = amp.knobViews.first {
+            let id = StudioLayout.knobId(amp.slot, 0), was = rig.value(id)
+            dragUp(gain, 40)
+            check(rig.value(id) > was + 0.1, "dragging the amp's Gain knob up turns it up (\(was) → \(rig.value(id)))")
+            click(gain, clicks: 2)
+            check(abs(rig.value(id) - gain.defaultValue) < 1e-6, "double-clicking a knob resets it")
+            check(gain.accessibilityRole() == .slider && (gain.accessibilityValue() as? String)?.isEmpty == false, "VoiceOver: knobs are sliders with the plug-in's text")
+        } else { check(false, "the rig has an amp head") }
+        // The stomp's footswitch switches the module, and the device panel's strip follows.
+        if let stomp = editor.stage.units.first(where: { $0 is StompUnit }), let sw = stomp.onSwitch {
+            click(sw)
+            check(!rig.chain()[stomp.index].on && d.studioStrip?.chain[stomp.index].on == false, "stomping the footswitch switches \(stomp.name) off, in the device panel too")
+            editor.tick()
+            click(editor.stage.units[stomp.index].onSwitch!)
+            check(rig.chain()[stomp.index].on, "and on again")
+        } else { check(false, "the rig has a stompbox") }
+        // The cabinet's mic: dragging across the cone sets Mic.
+        if let cab = editor.stage.units.first(where: { $0 is CabinetUnit }) {
+            let id = StudioLayout.knobId(cab.slot, 1)
+            rig.set(id, 0)
+            cab.refresh()
+            let mic = (cab as? CabinetUnit)?.mic.center ?? .zero
+            cab.mouseDown(with: event(cab, .leftMouseDown, mic))
+            cab.mouseDragged(with: event(cab, .leftMouseDragged, CGPoint(x: mic.x + 60, y: mic.y)))
+            cab.mouseUp(with: event(cab, .leftMouseUp, CGPoint(x: mic.x + 60, y: mic.y)))
+            check(rig.value(id) > 0.2, "dragging the cabinet's mic toward the edge moves Mic off-centre (\(rig.value(id)))")
+        } else { check(false, "the rig has a cabinet") }
+        // Edits elsewhere rebuild the stage.
+        d.moveStudioModule(from: 0, to: 1)
+        check(editor.stage.units.map(\.name) == rig.chain().map(\.name), "moving a module in the device panel reorders the stage")
+        save(editor, "guitar-studio-editor.png")
+        // Every unit design, eight at a time, the whole stage each.
+        let sets: [[String]] = [
+            ["Noise Gate", "Compressor", "Boost", "Overdrive", "Distortion", "Fuzz", "Wah", "Chorus"],
+            ["Flanger", "Phaser", "Tremolo", "Vibrato", "Amp Clean", "Amp Crunch", "Amp Lead", "Cabinet"],
+            ["EQ", "Delay", "Reverb", "Spring", "Cabinet", "Cabinet"],
+        ]
+        for (n, names) in sets.enumerated() {
+            rig.write(names.map { StudioModule($0) })
+            if n == 2 { rig.set(StudioLayout.knobId(4, 0), 0.5); rig.set(StudioLayout.knobId(5, 0), 0) }
+            editor.tick()
+            check(editor.stage.units.map(\.name) == names, "set \(n + 1): every unit appears (\(editor.stage.units.map(\.name)))")
+            save(editor, "guitar-studio-units-\(n + 1).png")
+        }
+        rig.apply(StudioPreset.factory[0])
+        editor.tick()
+
+        // Guitar Tune.
+        w.openPluginWindow(track: track, slot: tune)
+        guard let tw = w.pluginWindows[tune], let tuner = tw.builtinEditor as? GuitarTuneEditor else {
+            return check(false, "Guitar Tune's window shows its own editor")
+        }
+        defer { tw.window?.close() }
+        tuner.layoutSubtreeIfNeeded()
+        let amount = tuner.subviews.compactMap { $0 as? RigKnob }.first { $0.identifier?.rawValue == "tune-knob-0" }
+        if let amount {
+            dalnok_plugin_set_parameter(h, tune, 0, 0.2)
+            tuner.tick()
+            dragUp(amount, 40)
+            var p = DalnokPluginParameter()
+            dalnok_plugin_parameter(h, tune, 0, &p)
+            check(p.value > 0.3, "dragging Guitar Tune's Amount knob turns it up (\(p.value))")
+        } else { check(false, "Guitar Tune's editor has its Amount knob") }
+        check(tuner.subviews.compactMap { $0 as? RigKnob }.count == 7, "Guitar Tune's editor has all seven controls")
+        save(tuner, "guitar-tune-editor-idle.png")
+        tuner.preview(.init(hz: 196 * pow(2, -0.12 / 12), cents: -12, confidence: 95, tolerance: 45))
+        save(tuner, "guitar-tune-editor-tracking.png")
+        tuner.preview(.init(hz: 440, cents: 1.5, confidence: 98, tolerance: 45))
+        save(tuner, "guitar-tune-editor-intune.png")
     }
 
     /// Guitar Studio: the default rig, its faceplate, and every module edit through the real device menu.

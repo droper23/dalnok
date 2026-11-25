@@ -31,8 +31,12 @@ final class PluginWindowController: NSWindowController, NSWindowDelegate, NSTabl
     private(set) var hostEditorOpen = false
     private let editorTitle: String
 
-    init(engine: Engine, slot: Int32, title: String, isolated: Bool = false) {
+    /// Dalnok's own editor for one of its plug-ins (Guitar Studio, Guitar Tune), in place of a hosted GUI.
+    private(set) var builtinEditor: NSView?
+
+    init(engine: Engine, slot: Int32, title: String, isolated: Bool = false, path: String = "") {
         self.engine = engine
+        builtinEditor = BuiltinEditors.make(path, engine: engine, slot: slot)
         self.slot = slot
         self.isolated = isolated
         self.editorTitle = title
@@ -115,7 +119,7 @@ final class PluginWindowController: NSWindowController, NSWindowDelegate, NSTabl
     /// Shows the window: the plug-in's GUI, or its controls (`controls`, and always when it has no GUI).
     func show(controls: Bool = false) {
         if isolated { return showIsolated() }
-        let wantsEditor = dalnok_plugin_has_editor(engine.handle, slot) && openEditor()
+        let wantsEditor = builtinEditor != nil ? openBuiltinEditor() : dalnok_plugin_has_editor(engine.handle, slot) && openEditor()
         tabs.selectedSegment = wantsEditor && !controls ? 0 : 1
         tabs.setEnabled(editorOpen, forSegment: 0)
         tabChanged(nil)
@@ -157,6 +161,19 @@ final class PluginWindowController: NSWindowController, NSWindowDelegate, NSTabl
         guard let ctx else { return }
         let me = Unmanaged<PluginWindowController>.fromOpaque(ctx).takeUnretainedValue()
         MainActor.assumeIsolated { me.fitEditor(width: CGFloat(w), height: CGFloat(h)) }
+    }
+
+    private func openBuiltinEditor() -> Bool {
+        guard let v = builtinEditor else { return false }
+        v.frame = editorHost.bounds
+        v.autoresizingMask = [.width, .height]
+        editorHost.addSubview(v)
+        editorOpen = true
+        let size = (v as? GuitarStudioEditor).map { _ in GuitarStudioEditor.preferredSize } ?? GuitarTuneEditor.preferredSize
+        fitEditor(width: size.width, height: size.height)
+        v.frame = editorHost.bounds
+        window?.contentMinSize = CGSize(width: 640, height: 300)
+        return true
     }
 
     private func openEditor() -> Bool {
@@ -230,7 +247,8 @@ final class PluginWindowController: NSWindowController, NSWindowDelegate, NSTabl
         refreshTimer = nil
         // An embedded GUI goes with this window. An isolated plug-in's own window is separate (the unit's Open shows it,
         // its title bar's Controls shows this one), so it stays open.
-        if editorOpen { dalnok_plugin_close_editor(engine.handle, slot) }
+        if editorOpen && builtinEditor == nil { dalnok_plugin_close_editor(engine.handle, slot) }
+        builtinEditor?.removeFromSuperview()
         editorOpen = false
         hostEditorOpen = false
         onClose?()

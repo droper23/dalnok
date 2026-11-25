@@ -641,6 +641,11 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
     private(set) var pedal: PedalBody?
     /// Guitar Studio: its modules in signal order, above the controls (every look).
     private(set) var studioStrip: StudioStrip?
+    private(set) lazy var studioRig: StudioRig = {
+        let r = StudioRig(engine: session.engine, slot: slot)
+        r.onMessage = { [weak self] in self?.session.onMessage?($0) }
+        return r
+    }()
     /// Graphite: the faceplate's sections (between the input and output meters).
     private let sectionsRow = NSStackView()
     let inMeter = FaceplateMeter(caption: "IN"), outMeter = FaceplateMeter(caption: "OUT")
@@ -785,7 +790,10 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
         if Theme.look.devices == .schematic { labelFoldButton() } // Atelier: say it (the owner couldn't find a way to fold)
         // One button opens the plug-in; choosing the controller's parameters is in the unit's menu (Edit Controls…).
         // Guitar Studio's slot strip: in the header row on a faceplate (its spare width), a row of its own on a pedal.
-        if isGuitarStudio && loaded { studioStrip = StudioStrip(device: self) }
+        if isGuitarStudio && loaded {
+            studioStrip = StudioStrip(rig: studioRig)
+            NotificationCenter.default.addObserver(self, selector: #selector(studioRigChanged(_:)), name: StudioRig.changed, object: nil)
+        }
         let headerStrip: NSView = Theme.look.pedalboard ? NSView() : (studioStrip ?? NSView())
         let header = NSStackView(views: [foldButton, power, title, etchedTitle, headerStrip, sidechain, openButton])
         header.spacing = 6
@@ -1615,6 +1623,13 @@ final class DeviceView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSe
     }
 
     @objc private func openTapped() { onOpen?() }
+    /// Any view of this Guitar Studio changed its modules: the controls follow the new rig.
+    @objc private func studioRigChanged(_ n: Notification) {
+        guard (n.object as? NSNumber)?.int32Value == slot else { return }
+        session.refresh()
+        reloadParameters()
+        studioStrip?.reload()
+    }
 
     /// Atelier: the chain's line through this station: in from the left edge to the first part, out from the last part to
     /// the right edge (never under the key's text). Bypassed, a dashed shunt arcs over the station instead.
