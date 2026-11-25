@@ -5,7 +5,7 @@ import Foundation
 import Testing
 
 /// Sets parameters by plain value (`values`, found through their display text) or normalized (`normalized`, for choices).
-private func run(_ l: [Float], _ r: [Float], _ id: String, _ values: [UInt32: Double], normalized: [UInt32: Double] = [:]) -> ([Float], [Float]) {
+func run(_ l: [Float], _ r: [Float], _ id: String, _ values: [UInt32: Double], normalized: [UInt32: Double] = [:]) -> ([Float], [Float]) {
     let e = dalnok_engine_create(48_000)!; defer { dalnok_engine_destroy(e) }
     let t = dalnok_track_add(e, "M")
     let m = makeMedia([l, r]); defer { dalnok_media_release(m) }
@@ -91,5 +91,23 @@ private func dB(_ x: Double) -> Double { 20 * log10(max(x, 1e-12)) }
         #expect(abs(il[123] + a[123]) < 1e-6 && abs(ir[123] - b[123]) < 1e-6, "left inverted")
         let (wl, wr) = run(a, b, "utility", [1: 0])
         #expect(zip(wl, wr).allSatisfy { abs($0 - $1) < 1e-6 }, "width 0 is mono")
+    }
+}
+
+@Suite struct PitchCorrection {
+    func correct(_ hz: Double, scale: Double = 0, key: Double = 0, amount: Double = 100) -> Double {
+        let n = 96_000
+        let x = (0..<n).map { Float(0.4 * sin(2 * Double.pi * hz * Double($0) / 48_000)) }
+        // Key and scale are choices (normalized k / count-1); speed 0 (at once); amount in %.
+        let (l, _) = run(x, x, "pitch-correct", [3: amount], normalized: [0: key / 11, 1: scale / 8, 2: 0])
+        return frequency(l[48_000..<90_000])
+    }
+    @Test func snapsToTheNearestNoteOfTheScale() {
+        let a = correct(450) // A4 + 39 cents, chromatic
+        #expect(abs(a - 440) < 2, "450 Hz to A4: \(a) Hz")
+        let b = correct(480, scale: 1) // between A and B in C major (nearer B)
+        #expect(abs(b - 493.88) < 2.5, "480 Hz to B4 in C major: \(b) Hz")
+        let off = correct(450, amount: 0)
+        #expect(abs(off - 450) < 2, "amount 0 leaves it: \(off) Hz")
     }
 }

@@ -16,6 +16,15 @@ extern "C" {
 int dalnok_dsp_render_stretch(const float *const *in, int32_t channels, int64_t in_frames, float *const *out,
                               int64_t out_frames, double sample_rate, double semitones, int32_t preserve_pitch);
 
+/* A real-time pitch shifter (Signalsmith Stretch in streaming use). create allocates; process does not.
+ * process: `frames` of planar input to as many of planar output, shifted by `factor` (2 = an octave up).
+ * latency: frames between input and output. */
+typedef struct DalnokShifter DalnokShifter;
+DalnokShifter *dalnok_dsp_shifter_create(int32_t channels, double sample_rate);
+void dalnok_dsp_shifter_process(DalnokShifter *s, const float *const *in, float *const *out, int32_t frames, double factor);
+int32_t dalnok_dsp_shifter_latency(const DalnokShifter *s);
+void dalnok_dsp_shifter_destroy(DalnokShifter *s);
+
 #ifdef __cplusplus
 }
 #endif

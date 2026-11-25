@@ -796,9 +796,13 @@
         [
           "Per-note pitch and formant editing",
           "todo"
+        ],
+        [
+          "Automatic pitch correction to a key and scale (Dalnok Pitch Correct: speed, amount)",
+          "verified"
         ]
       ],
-      "evidence": "transposeKeepsLength: +12 semitones measured at 880 Hz with length unchanged."
+      "evidence": "transposeKeepsLength: +12 semitones measured at 880 Hz with length unchanged. PitchCorrection: 450 Hz in, chromatic: 440 Hz out (±2); 480 Hz in C major: B4 at 493.9 Hz (±2.5); amount 0 leaves 450 Hz; detection reads the note to 0.001 semitone."
     },
     {
       "id": "spectral",
