@@ -17,6 +17,7 @@ namespace dalnok::fx {
 namespace {
 using P = BuiltinProcessor::Param;
 const char *const kOnOff[] = {"Off", "On"};
+const char *const kModes[] = {"Poly", "Mono"};
 constexpr int64_t kMaxSampleSeconds = 120;
 
 const std::vector<P> &samplerParams() {
@@ -31,6 +32,14 @@ const std::vector<P> &samplerParams() {
         {Sampler::kGain, "Level", "dB", -60, 12, 0, P::Linear},
         {Sampler::kVelocity, "Velocity", "%", 0, 100, 100, P::Linear},
         {Sampler::kOneShot, "One Shot", "", 0, 1, 0, P::Toggle, kOnOff},
+        {Sampler::kLoop, "Loop", "", 0, 1, 0, P::Toggle, kOnOff},
+        {Sampler::kLoopStart, "Loop Start", "%", 0, 100, 0, P::Linear},
+        {Sampler::kLoopEnd, "Loop End", "%", 0, 100, 100, P::Linear},
+        {Sampler::kLoopFade, "Loop Crossfade", "%", 0, 50, 0, P::Linear},
+        {Sampler::kCutoff, "Cutoff", "Hz", 20, 20000, 20000, P::Log},
+        {Sampler::kResonance, "Resonance", "", 0.5, 15, 0.707, P::Log},
+        {Sampler::kGlide, "Glide", "ms", 0, 2000, 0, P::Linear},
+        {Sampler::kVoiceMode, "Voices", "", 0, 1, 0, P::Choice, kModes},
     };
     return params;
 }
@@ -138,25 +147,55 @@ bool SamplerBase::setState(const std::string &bytes) {
     return true;
 }
 
+void SamplerBase::setFilter(double cutoffHz, double resonance) DALNOK_NONBLOCKING {
+    filter_ = cutoffHz < 19'999;
+    const double g = std::tan(3.14159265358979323846 * std::min(cutoffHz, sampleRate_ * 0.45) / sampleRate_);
+    fk_ = 1 / std::max(0.5, resonance);
+    fa1_ = 1 / (1 + g * (g + fk_));
+    fa2_ = g * fa1_;
+    fa3_ = g * fa2_;
+}
+
 void SamplerBase::noteOn(uint8_t note, uint8_t velocity) DALNOK_NONBLOCKING {
     const int zone = zoneFor(note);
     if (zone < 0) return;
     const SampleBuffer *buf = live_[static_cast<size_t>(zone)].load(std::memory_order_acquire);
     if (!buf || buf->l.empty()) return;
+    const double ratio = ratioFor(zone, note);
     Voice *slot = nullptr;
-    for (auto &v : voices_) if (v.stage == Voice::idle) { slot = &v; break; }
-    if (!slot) { // steal the quietest
+    if (mono_) {
         slot = &voices_[0];
-        for (auto &v : voices_) if (v.env < slot->env) slot = &v;
+        for (size_t i = 1; i < voices_.size(); ++i) voices_[i].stage = Voice::idle;
+        if (slot->stage != Voice::idle && slot->held && slot->buf == buf) { // legato: the same voice slides on
+            slot->note = note;
+            slot->targetInc = ratio;
+            if (glide_ <= 0) slot->inc = ratio;
+            slot->gain = levelFor(zone, velocity);
+            lastInc_ = ratio;
+            return;
+        }
+        const double from = slot->stage != Voice::idle ? slot->inc : lastInc_;
+        const float env = slot->stage != Voice::idle ? slot->env : 0.0f;
+        *slot = Voice{};
+        slot->inc = glide_ > 0 && from > 0 ? from : ratio;
+        slot->env = env; // retriggered from where it was: no click
+    } else {
+        for (auto &v : voices_) if (v.stage == Voice::idle) { slot = &v; break; }
+        if (!slot) { // steal the quietest
+            slot = &voices_[0];
+            for (auto &v : voices_) if (v.env < slot->env) slot = &v;
+        }
+        *slot = Voice{};
+        slot->inc = glide_ > 0 && lastInc_ > 0 ? lastInc_ : ratio;
     }
-    *slot = Voice{};
     slot->buf = buf;
     slot->zone = zone;
     slot->note = note;
-    slot->inc = ratioFor(zone, note);
+    slot->targetInc = ratio;
     slot->gain = levelFor(zone, velocity);
     slot->stage = Voice::attack;
     slot->held = true;
+    lastInc_ = ratio;
     ++age_;
 }
 
@@ -179,6 +218,24 @@ void SamplerBase::process(float *left, float *right, int frames, const PluginNot
         for (auto &v : voices_) {
             if (v.stage == Voice::idle) continue;
             const auto n = static_cast<int64_t>(v.buf->l.size());
+            // The sustain loop (not for one-shots, which ignore note-off and would never end).
+            int64_t ls = 0, le = n, fade = 0;
+            const bool looping = loop_ && !oneShot(v.zone);
+            if (looping) {
+                ls = std::clamp<int64_t>(static_cast<int64_t>(loopStart_ * static_cast<double>(n)), 0, n);
+                le = std::clamp<int64_t>(static_cast<int64_t>(loopEnd_ * static_cast<double>(n)), 0, n);
+                if (le - ls < 2) { ls = 0; le = n; }
+                fade = std::min<int64_t>(static_cast<int64_t>(loopFade_ * static_cast<double>(le - ls)), ls);
+            }
+            const int64_t span = le - ls;
+            auto at = [&](double p, float &outL, float &outR) DALNOK_NONBLOCKING {
+                const auto k = static_cast<int64_t>(p);
+                const float f = static_cast<float>(p - static_cast<double>(k));
+                const auto a = static_cast<size_t>(k);
+                const size_t b = k + 1 < (looping ? le : n) ? a + 1 : looping ? static_cast<size_t>(ls) : a; // the last frame plays as itself
+                outL = v.buf->l[a] + f * (v.buf->l[b] - v.buf->l[a]);
+                outR = v.buf->r[a] + f * (v.buf->r[b] - v.buf->r[a]);
+            };
             for (int i = done; i < end; ++i) {
                 switch (v.stage) {
                 case Voice::attack: v.env += attackStep_; if (v.env >= 1) { v.env = 1; v.stage = decayStep_ > 0 ? Voice::decay : Voice::sustain; } break;
@@ -186,12 +243,32 @@ void SamplerBase::process(float *left, float *right, int frames, const PluginNot
                 case Voice::release: v.env -= releaseStep_; if (v.env <= 0) { v.env = 0; v.stage = Voice::idle; } break;
                 default: break;
                 }
+                if (looping && v.pos >= static_cast<double>(le)) v.pos -= static_cast<double>(span);
                 const auto k = static_cast<int64_t>(v.pos);
-                if (v.stage == Voice::idle || k >= n) { v.stage = Voice::idle; break; }
-                const float f = static_cast<float>(v.pos - static_cast<double>(k)), g = v.gain * v.env;
-                const auto a = static_cast<size_t>(k), b = k + 1 < n ? a + 1 : a; // the last frame plays as itself
-                left[i] += (v.buf->l[a] + f * (v.buf->l[b] - v.buf->l[a])) * g;
-                right[i] += (v.buf->r[a] + f * (v.buf->r[b] - v.buf->r[a])) * g;
+                if (v.stage == Voice::idle || k >= n || k < 0) { v.stage = Voice::idle; break; }
+                float sl, sr;
+                at(v.pos, sl, sr);
+                if (fade > 0 && v.pos >= static_cast<double>(le - fade)) { // crossfade into the loop start
+                    const float t = static_cast<float>((v.pos - static_cast<double>(le - fade)) / static_cast<double>(fade));
+                    float xl, xr;
+                    at(v.pos - static_cast<double>(span), xl, xr);
+                    sl = sl * (1 - t) + xl * t;
+                    sr = sr * (1 - t) + xr * t;
+                }
+                if (filter_) {
+                    double *ic = v.ic;
+                    for (int c = 0; c < 2; ++c) {
+                        const double x = c == 0 ? sl : sr;
+                        const double v3 = x - ic[2 * c + 1], v1 = fa1_ * ic[2 * c] + fa2_ * v3, v2 = ic[2 * c + 1] + fa2_ * ic[2 * c] + fa3_ * v3;
+                        ic[2 * c] = 2 * v1 - ic[2 * c];
+                        ic[2 * c + 1] = 2 * v2 - ic[2 * c + 1];
+                        (c == 0 ? sl : sr) = static_cast<float>(v2);
+                    }
+                }
+                const float g = v.gain * v.env;
+                left[i] += sl * g;
+                right[i] += sr * g;
+                v.inc = v.targetInc + (v.inc - v.targetInc) * glide_;
                 v.pos += v.inc;
             }
         }
@@ -229,6 +306,14 @@ void Sampler::changed() DALNOK_NONBLOCKING {
     attackStep_ = static_cast<float>(1.0 / std::max(1.0, rt(kAttack) * 1e-3 * sampleRate_));
     decayStep_ = sustain_ < 1 ? static_cast<float>((1.0 - sustain_) / std::max(1.0, rt(kDecay) * 1e-3 * sampleRate_)) : 0.0f;
     releaseStep_ = static_cast<float>(1.0 / std::max(1.0, rt(kRelease) * 1e-3 * sampleRate_));
+    loop_ = rt(kLoop) >= 0.5;
+    loopStart_ = std::clamp(rt(kLoopStart) / 100, 0.0, 1.0);
+    loopEnd_ = std::clamp(rt(kLoopEnd) / 100, 0.0, 1.0);
+    loopFade_ = std::clamp(rt(kLoopFade) / 100, 0.0, 0.5);
+    setFilter(rt(kCutoff), rt(kResonance));
+    const double glideMs = rt(kGlide);
+    glide_ = glideMs < 0.5 ? 0.0 : std::exp(-1.0 / std::max(1.0, glideMs / 4 * 1e-3 * sampleRate_)); // ~98 % there in glideMs
+    mono_ = rt(kVoiceMode) >= 0.5;
 }
 
 double Sampler::ratioFor(int, uint8_t note) const DALNOK_NONBLOCKING {

@@ -1,7 +1,9 @@
 // Dalnok Sampler and Dalnok Drums: the stock sample instruments (Logic's Quick Sampler and Drum Machine Designer,
 // Ableton's Simpler and Drum Rack cover the same ground). Dalnok's own design.
 //   Sampler: one sample played across the keyboard, transposed from its root key (linear interpolation), with an
-//            ADSR envelope, tuning, velocity sensitivity and a one-shot mode.
+//            ADSR envelope, tuning, velocity sensitivity, a one-shot mode, a sustain loop (start and end as a share
+//            of the sample, with a crossfade), a resonant low-pass, glide and a mono (legato) mode: an 808 is a
+//            looped sine-ish sample in mono with glide.
 //   Drums:   16 pads on notes 36-51 (C1-D#2, the General MIDI drum area), one sample each, played one-shot with
 //            its own level and tuning.
 // Samples are decoded on the control thread (dalnok_plugin_set_sample, or a saved state naming their files) into
@@ -43,7 +45,8 @@ protected:
         const SampleBuffer *buf = nullptr;
         int zone = -1;
         uint8_t note = 0;
-        double pos = 0, inc = 1;
+        double pos = 0, inc = 1, targetInc = 1; // inc glides toward targetInc
+        double ic[4] = {0, 0, 0, 0};             // low-pass state, left and right
         float gain = 0, env = 0;
         enum Stage : uint8_t { idle, attack, decay, sustain, release } stage = idle;
         bool held = false;
@@ -56,6 +59,13 @@ protected:
     // Envelope steps per sample (attack and release always; decay to sustain for the Sampler).
     float attackStep_ = 1, decayStep_ = 0, sustain_ = 1, releaseStep_ = 1;
     double sampleRate_;
+    // Sampler only (Drums leaves them off). Loop points are shares of the sample (0-1); the low-pass is off at 0.
+    bool loop_ = false, mono_ = false;
+    double loopStart_ = 0, loopEnd_ = 1, loopFade_ = 0;  // fade: frames crossfaded before the loop end (a share)
+    double glide_ = 0;                                    // how much of the pitch gap is left each sample (0: none)
+    bool filter_ = false;
+    double fa1_ = 1, fa2_ = 0, fa3_ = 0, fk_ = 1.4;      // state-variable low-pass coefficients
+    void setFilter(double cutoffHz, double resonance) DALNOK_NONBLOCKING;
 
 private:
     void noteOn(uint8_t note, uint8_t velocity) DALNOK_NONBLOCKING;
@@ -68,13 +78,17 @@ private:
     std::atomic<uint64_t> blocks_{0};
     std::array<Voice, kVoices> voices_{};
     uint64_t age_ = 0;
+    double lastInc_ = 0; // the last note's pitch ratio (glide starts there)
     bool pedal_ = false;
 };
 
 class Sampler final : public SamplerBase {
 public:
     explicit Sampler(double sampleRate);
-    enum : uint32_t { kRoot = 0, kTune, kFine, kAttack, kDecay, kSustain, kRelease, kGain, kVelocity, kOneShot };
+    enum : uint32_t {
+        kRoot = 0, kTune, kFine, kAttack, kDecay, kSustain, kRelease, kGain, kVelocity, kOneShot,
+        kLoop, kLoopStart, kLoopEnd, kLoopFade, kCutoff, kResonance, kGlide, kVoiceMode,
+    };
 
 private:
     void changed() DALNOK_NONBLOCKING override;

@@ -1421,7 +1421,11 @@
           "verified"
         ],
         [
-          "Sampler loop points and multi-sample zones",
+          "Sampler loop (start, end, crossfade), low-pass, glide and mono legato (808s)",
+          "verified"
+        ],
+        [
+          "Sampler multi-sample zones",
           "todo"
         ],
         [
@@ -1429,7 +1433,7 @@
           "verified"
         ]
       ],
-      "evidence": "MidiTests measure pitch (440 Hz within 0.5 Hz), onset, release and velocity scaling; a mutation check confirmed the pitch test catches a 2 Hz error. Most instruments are expected to come from plugins (ADR-0009), so the stock set stays small. SamplerTests: the Sampler plays a 440 Hz sample at 440 Hz on its root key and 880 Hz an octave up (±1/±2 Hz), at its level (±0.01) and releases to silence; Drums play each pad's sample from the note's exact frame, sample for sample (1e-5), an empty pad is silent, and a saved kit reopens identical. Self-test: dropping two sounds on Dalnok Drums fills pads 1 and 2 and note 36 plays. SliceToDrums: four bursts sliced at their hits onto five pads replay the clip sample for sample (1e-5) with the clip muted; one undo. Self-test: Clip ▸ Slice to Drums. DalnokSynth: a sine A4 at 440 Hz (±1) at -6 dB × 70 % sustain (±0.01), silent after its 200 ms release; a 400 Hz low-pass cuts a saw's 36th harmonic by over 30 dB; a 12-semitone pitch envelope starts high and settles at 220 Hz; mono glide passes between 220 and 440 Hz and lands on 440. Self-test: Dalnok Drums shows its 16 pads in every look; snapshots of the pads (with loaded sample names) and of the piano roll with pad names."
+      "evidence": "MidiTests measure pitch (440 Hz within 0.5 Hz), onset, release and velocity scaling; a mutation check confirmed the pitch test catches a 2 Hz error. Most instruments are expected to come from plugins (ADR-0009), so the stock set stays small. SamplerTests: the Sampler plays a 440 Hz sample at 440 Hz on its root key and 880 Hz an octave up (±1/±2 Hz), at its level (±0.01) and releases to silence; Drums play each pad's sample from the note's exact frame, sample for sample (1e-5), an empty pad is silent, and a saved kit reopens identical. Self-test: dropping two sounds on Dalnok Drums fills pads 1 and 2 and note 36 plays. SliceToDrums: four bursts sliced at their hits onto five pads replay the clip sample for sample (1e-5) with the clip muted; one undo. Self-test: Clip ▸ Slice to Drums. DalnokSynth: a sine A4 at 440 Hz (±1) at -6 dB × 70 % sustain (±0.01), silent after its 200 ms release; a 400 Hz low-pass cuts a saw's 36th harmonic by over 30 dB; a 12-semitone pitch envelope starts high and settles at 220 Hz; mono glide passes between 220 and 440 Hz and lands on 440. SamplerShaping: a 0.1 s sample looped holds 440 Hz (±1) at its level (±0.01) for a held second and still releases; a half loop with a 20 % crossfade has no step over 0.05; a 500 Hz low-pass cuts 5 kHz by over 30 dB; mono glide 60→72 passes between and lands on 440 Hz (±1.5) with one voice's level, while poly overlaps (mutation-checked). Self-test: Dalnok Drums shows its 16 pads in every look; snapshots of the pads (with loaded sample names) and of the piano roll with pad names."
     },
     {
       "id": "midi",

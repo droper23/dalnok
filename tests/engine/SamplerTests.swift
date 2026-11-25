@@ -118,6 +118,85 @@ private func wav(_ x: [Float], _ name: String) -> String {
     }
 }
 
+/// Dalnok Sampler's loop, low-pass, glide and mono mode (the 808 workflow).
+@Suite struct SamplerShaping {
+    /// A Sampler holding `sample` (root 60) with parameters by plain value (choices and toggles by normalized value).
+    func sampler(_ sample: [Float], _ name: String, _ values: [UInt32: Double] = [:], normalized: [UInt32: Double] = [:],
+                 notes: [DalnokNote]) -> OpaquePointer {
+        let e = dalnok_engine_create(48_000)!
+        let t = dalnok_track_add_instrument(e, "S")
+        var err = [CChar](repeating: 0, count: 256)
+        let slot = dalnok_plugin_add(e, t, "dalnok:sampler", nil, &err, 256)
+        #expect(slot != 0 && dalnok_plugin_set_sample(e, slot, 0, wav(sample, name), &err, 256) == DALNOK_OK, "\(cstr(err))")
+        for (pid, plain) in values {
+            var lo = 0.0, hi = 1.0
+            for _ in 0..<60 {
+                let mid = (lo + hi) / 2
+                var buf = [CChar](repeating: 0, count: 64)
+                _ = dalnok_plugin_parameter_text(e, slot, pid, mid, &buf, 64)
+                if (Double(cstr(buf)) ?? 0) < plain { lo = mid } else { hi = mid }
+            }
+            _ = dalnok_plugin_set_parameter(e, slot, pid, hi)
+        }
+        for (pid, v) in normalized { _ = dalnok_plugin_set_parameter(e, slot, pid, v) }
+        let c = dalnok_midi_clip_add(e, t, 0, 192_000)
+        var n = notes
+        _ = dalnok_midi_clip_set_notes(e, c, &n, Int32(n.count))
+        return e
+    }
+    let held = [DalnokNote(start: 0, length: 48_000, pitch: 60, velocity: 127)]
+    func power(_ x: ArraySlice<Float>) -> Double { sqrt(x.reduce(0.0) { $0 + Double($1) * Double($1) } / Double(x.count)) }
+
+    @Test func loopSustainsWhileTheNoteIsHeld() {
+        let short = (0..<4_800).map { Float(0.5 * sin(2 * Double.pi * 440 * Double($0) / 48_000)) } // 44 whole cycles
+        let plain = sampler(short, "loop0.wav", notes: held); defer { dalnok_engine_destroy(plain) }
+        let a = render(plain, 0, 60_000)
+        #expect(a[10_000..<40_000].allSatisfy { abs($0) < 1e-6 }, "without a loop the 0.1 s sample ends")
+        let looped = sampler(short, "loop1.wav", normalized: [10: 1], notes: held); defer { dalnok_engine_destroy(looped) }
+        let b = render(looped, 0, 60_000)
+        #expect(abs(frequency(b[30_000..<40_000]) - 440) < 1, "looping: \(frequency(b[30_000..<40_000])) Hz")
+        let peak = b[30_000..<40_000].map { abs($0) }.max()!
+        #expect(abs(peak - 0.5) < 0.01, "level held: \(peak)")
+        #expect(b[52_000..<60_000].allSatisfy { abs($0) < 1e-6 }, "note-off still releases (50 ms)")
+        // A loop over the second half with a crossfade: still sounds, no click larger than a sine step at the seam.
+        let half = sampler(short, "loop2.wav", [11: 50, 13: 20], normalized: [10: 1], notes: held); defer { dalnok_engine_destroy(half) }
+        let c = render(half, 0, 48_000)
+        let maxStep = zip(c[5_000..<40_000], c[5_001..<40_001]).map { abs($0 - $1) }.max()!
+        #expect(maxStep < 0.05, "smooth across the loop seam: \(maxStep)")
+        #expect(power(c[30_000..<40_000]) > 0.3, "still sounding: \(power(c[30_000..<40_000]))")
+    }
+
+    @Test func lowPassCutsHighs() {
+        let bright = (0..<48_000).map { Float(0.5 * sin(2 * Double.pi * 5_000 * Double($0) / 48_000)) }
+        let open = sampler(bright, "lp0.wav", notes: held); defer { dalnok_engine_destroy(open) }
+        let closed = sampler(bright, "lp1.wav", [14: 500], notes: held); defer { dalnok_engine_destroy(closed) }
+        let a = power(render(open, 0, 40_000)[10_000..<40_000]), b = power(render(closed, 0, 40_000)[10_000..<40_000])
+        #expect(abs(a - 0.5 / 2.squareRoot()) < 0.01, "wide open passes: \(a)")
+        #expect(20 * log10(b / a) < -30, "5 kHz through a 500 Hz low-pass: \(20 * log10(b / a)) dB")
+    }
+
+    @Test func monoGlideSlidesBetweenNotes() {
+        let tone = (0..<96_000).map { Float(0.5 * sin(2 * Double.pi * 220 * Double($0) / 48_000)) }
+        // Overlapping notes (legato) a fifth apart... an octave: 60 → 72, glide 100 ms, mono.
+        let notes = [DalnokNote(start: 0, length: 30_000, pitch: 60, velocity: 127),
+                     DalnokNote(start: 24_000, length: 24_000, pitch: 72, velocity: 127)]
+        let e = sampler(tone, "glide.wav", [16: 100], normalized: [17: 1], notes: notes); defer { dalnok_engine_destroy(e) }
+        let l = render(e, 0, 48_000)
+        #expect(abs(frequency(l[14_000..<23_000]) - 220) < 1, "first note: \(frequency(l[14_000..<23_000]))")
+        let mid = frequency(l[24_200..<25_600])
+        #expect(mid > 240 && mid < 420, "on the way: \(mid) Hz")
+        #expect(abs(frequency(l[36_000..<47_000]) - 440) < 1.5, "arrived: \(frequency(l[36_000..<47_000]))")
+        let peak = l[26_000..<47_000].map { abs($0) }.max()!
+        #expect(abs(peak - 0.5) < 0.02, "one voice, not two: \(peak)")
+        // Poly without glide: the overlap is two voices.
+        let p = sampler(tone, "poly.wav", notes: notes); defer { dalnok_engine_destroy(p) }
+        let q = render(p, 0, 48_000)
+        #expect(q[24_500..<29_000].map { abs($0) }.max()! > 0.8, "poly overlaps")
+        #expect(abs(frequency(q[31_000..<47_000]) - 440) < 1.5, "poly jumps: \(frequency(q[31_000..<47_000]))")
+    }
+}
+private func rms(_ x: ArraySlice<Float>) -> Double { sqrt(x.reduce(0) { $0 + Double($1) * Double($1) } / Double(x.count)) }
+
 @Suite struct DalnokSynth {
     /// An instrument track with Dalnok Synth set by plain values (and choices by normalized value).
     func synth(_ values: [UInt32: Double], normalized: [UInt32: Double] = [:], notes: [DalnokNote]) -> OpaquePointer {
