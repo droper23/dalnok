@@ -21,7 +21,7 @@ enum BuiltinEditors {
 
 @MainActor
 final class GuitarStudioEditor: NSView {
-    static let preferredSize = CGSize(width: 1320, height: 700)
+    static let preferredSize = CGSize(width: 1480, height: 760)
     let rig: StudioRig
     let stage: SpaceStage
     let header = SpaceHeader()
@@ -253,12 +253,8 @@ final class SpaceModule: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
-        let body = Space.capsule(bounds.insetBy(dx: 0.5, dy: 0.5), left: roundLeft ? 22 : 14, right: roundRight ? 22 : 14)
+        let body = Space.rounded(bounds.insetBy(dx: 0.5, dy: 0.5), 20)
         Space.plastic(ctx, body, lift: lifted ? 1.8 : 1)
-        if !roundLeft { // the seam where this module snaps to the one before
-            ctx.setFillColor(Space.hex(0x9a9ca3, 0.45).cgColor); ctx.fill(CGRect(x: 0, y: 10, width: 1, height: bounds.height - 20))
-            ctx.setFillColor(NSColor.white.cgColor); ctx.fill(CGRect(x: 1, y: 10, width: 1, height: bounds.height - 20))
-        }
         Space.text(String(format: "%02d", index + 1), CGRect(x: 22, y: 18, width: 26, height: 20), font: Space.mono(10), color: Space.inkDim, align: .left)
         Space.text(name.uppercased(), CGRect(x: 48, y: 18, width: bounds.width - 66, height: 20), font: Space.font(13, .regular), color: Space.ink,
                    align: .left, kern: 3.2)
@@ -334,9 +330,9 @@ final class SpaceStage: NSView {
     private var drag: (module: SpaceModule, start: CGPoint, origin: CGPoint, moved: Bool)?
     /// Where a dragged module would land.
     private(set) var dropIndex: Int?
-    static let gap: CGFloat = 46, margin: CGFloat = 48, joint: CGFloat = 7
-    /// The black chassis under each row of modules (stage coordinates).
-    private var chassis: [CGRect] = []
+    static let gap: CGFloat = 46, margin: CGFloat = 48, joint: CGFloat = 2
+    /// DALNOK_SLOW_MOTION=<n> slows these moves n times (for watching or recording them).
+    static let pace = ProcessInfo.processInfo.environment["DALNOK_SLOW_MOTION"].flatMap(Double.init) ?? 1
     private typealias Item = (view: NSView, width: CGFloat)
 
     init(rig: StudioRig) {
@@ -347,6 +343,7 @@ final class SpaceStage: NSView {
             menu.popUp(positioning: nil, at: CGPoint(x: 20, y: self.add.bounds.midY), in: self.add)
         }
         addSubview(add)
+        wantsLayer = true // the pedals' moves are layer animations
         setAccessibilityElement(true)
         setAccessibilityRole(.group)
         setAccessibilityLabel("Guitar Studio rig, in signal order")
@@ -355,7 +352,9 @@ final class SpaceStage: NSView {
     override var isFlipped: Bool { true }
 
     func load(_ next: [SpaceModule]) {
-        modules.forEach { $0.removeFromSuperview() }
+        // Where each pedal was (matched by name, in order), so the new layout is reached by motion rather than a jump.
+        let oldViews = modules
+        let oldSocket = add.isHidden ? nil : add.frame
         modules = next
         for m in modules {
             m.onDrag = { [weak self] m, e, t in self?.dragged(m, e, t) }
@@ -363,10 +362,103 @@ final class SpaceStage: NSView {
         }
         add.isHidden = modules.count >= StudioLayout.slots
         arrange(modules)
+        let animate = window != nil && !Motion.reduced && !oldViews.isEmpty
+        var pool = oldViews
+        var arriving: [SpaceModule] = [], moves: [(NSView, CGRect)] = []
+        for m in modules {
+            let end = m.frame
+            if let k = pool.firstIndex(where: { $0.name == m.name }) {
+                // Travel by position only (the size is set at once: the drawing is scaled to it), centred where it was.
+                let was = pool.remove(at: k).frame
+                let start = CGRect(x: was.midX - end.width / 2, y: was.midY - end.height / 2, width: end.width, height: end.height)
+                if animate, abs(start.minX - end.minX) > 0.5 || abs(start.minY - end.minY) > 0.5 { m.frame = start; moves.append((m, end)) }
+            } else { arriving.append(m) }
+        }
+        guard animate else { oldViews.forEach { $0.removeFromSuperview() }; return }
+        if let was = oldSocket, !add.isHidden, abs(was.minX - add.frame.minX) > 0.5 || abs(was.minY - add.frame.minY) > 0.5 {
+            let end = add.frame // the socket travels with the rig
+            add.frame = CGRect(x: was.midX - end.width / 2, y: was.midY - end.height / 2, width: end.width, height: end.height)
+            moves.append((add, end))
+        }
+        // Removed pedals drop away and fade; the rest then pull together.
+        let leaving = pool
+        oldViews.filter { o in !leaving.contains { $0 === o } }.forEach { $0.removeFromSuperview() }
+        for v in leaving {
+            v.onDrag = nil
+            NSAnimationContext.runAnimationGroup({ c in
+                c.duration = (0.2) * Self.pace
+                c.timingFunction = CAMediaTimingFunction(name: .easeIn)
+                v.animator().alphaValue = 0
+                v.animator().frame = v.frame.offsetBy(dx: 0, dy: 24 * scale)
+            }, completionHandler: { MainActor.assumeIsolated { v.removeFromSuperview() } })
+        }
+        if arriving.count > 2 { // a whole new rig: it simply fades in
+            for m in arriving { m.alphaValue = 0; NSAnimationContext.runAnimationGroup { c in c.duration = 0.25 * Self.pace; m.animator().alphaValue = 1 } }
+        } else if !arriving.isEmpty {
+            // The rig first settles into its new spacing; then the new pedal comes in from the side and snaps onto the end.
+            let settle = moves.isEmpty ? 0 : 0.26
+            if !moves.isEmpty {
+                NSAnimationContext.runAnimationGroup { c in
+                    c.duration = settle * Self.pace
+                    c.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                    for (v, end) in moves { v.animator().frame = end }
+                }
+            }
+            add.alphaValue = 0
+            let flights = arriving.map { m -> (NSView, CGRect) in
+                let end = m.frame
+                m.frame = CGRect(origin: CGPoint(x: bounds.maxX + 30, y: end.minY), size: end.size)
+                return (m, end)
+            }
+            snap(flights, push: -1, strength: 8, delay: settle)
+            return
+        }
+        guard !moves.isEmpty else { return }
+        let push: CGFloat = moves.contains { $0.1.minX < $0.0.frame.minX } ? -1 : 1
+        let strength: CGFloat = !arriving.isEmpty ? 8 : !leaving.isEmpty ? 6 : 4
+        if !arriving.isEmpty { add.alphaValue = 0 }
+        snap(moves, push: push, strength: strength, delay: leaving.isEmpty ? 0 : 0.12)
     }
+
+    /// Magnetic travel: the pedals accelerate toward their places and snap on; the knock carries through the whole rig,
+    /// which gives a little in the direction of travel and springs back. (With Reduce Motion pedals appear in place.)
+    func snap(_ moves: [(NSView, CGRect)], push dir: CGFloat, strength: CGFloat, delay: Double = 0) {
+        let distance = moves.map { hypot($0.1.minX - $0.0.frame.minX, $0.1.minY - $0.0.frame.minY) }.max() ?? 0
+        let run = { [weak self] in
+            NSAnimationContext.runAnimationGroup({ c in
+                c.duration = (min(0.42, 0.16 + Double(distance) / 3500)) * Self.pace
+                c.timingFunction = CAMediaTimingFunction(controlPoints: 0.55, 0, 1, 0.55) // accelerating, like a magnet closing in
+                for (v, end) in moves { v.animator().frame = end }
+            }, completionHandler: { MainActor.assumeIsolated { self?.knock(dir, strength) } })
+        }
+        if delay > 0 { DispatchQueue.main.asyncAfter(deadline: .now() + delay * Self.pace) { MainActor.assumeIsolated(run) } } else { run() }
+    }
+    /// The impact: every pedal shifts a little in the direction of travel, then springs back a touch past and settles.
+    private func knock(_ dir: CGFloat, _ strength: CGFloat) {
+        guard drag == nil else { return }
+        let homes = frames(modules)
+        NSAnimationContext.runAnimationGroup({ c in
+            c.duration = (0.08) * Self.pace
+            c.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            for (v, f, _, _) in homes where v is SpaceModule { v.animator().frame = f.offsetBy(dx: dir * strength * scale, dy: 0) }
+        }, completionHandler: { [weak self] in
+            MainActor.assumeIsolated {
+                NSAnimationContext.runAnimationGroup { c in
+                    c.duration = (0.3) * Self.pace
+                    c.timingFunction = CAMediaTimingFunction(controlPoints: 0.3, 0, 0.25, 1.6)
+                    for (v, f, _, _) in homes { v.animator().frame = f }
+                    self?.add.animator().alphaValue = 1
+                }
+            }
+        })
+    }
+    /// The size last laid out for: layout passes that don't change it leave moving pedals alone.
+    private var laidOut = CGSize.zero
     override func layout() {
         super.layout()
-        if drag == nil { arrange(modules) }
+        guard drag == nil, bounds.size != laidOut else { return }
+        laidOut = bounds.size
+        arrange(modules)
     }
 
     /// Lays out `order` (and the add socket) in as many rows (1-3) as shows them largest, snapping neighbours.
@@ -385,57 +477,35 @@ final class SpaceStage: NSView {
         var items: [Item] = order.map { ($0, SpaceModule.width(dials: $0.dials.count)) }
         if !add.isHidden { items.append((add, SpaceAddSlot.width)) }
         func width(_ row: ArraySlice<Item>) -> CGFloat { row.reduce(2 * Self.margin - Self.joint) { $0 + $1.width + Self.joint } }
-        func split(_ n: Int) -> [ArraySlice<Item>] {
-            let target = width(items[...]) / CGFloat(n)
-            var rows: [ArraySlice<Item>] = []
-            var start = 0
-            for i in items.indices where rows.count < n - 1 && i > start && width(items[start...i]) > target * 1.06 {
-                rows.append(items[start..<i]); start = i
-            }
-            rows.append(items[start...])
-            return rows
-        }
         let rowH = SpaceModule.height + Self.gap
-        var best: (scale: CGFloat, rows: [ArraySlice<Item>]) = (0, [items[...]])
-        for n in 1...3 {
-            let rows = split(n)
-            let s = min(min(1.15, (bounds.height - 20) / (CGFloat(rows.count) * rowH)), bounds.width / (rows.map { width($0) }.max() ?? 1))
-            if s > best.scale * 1.02 { best = (s, rows) }
+        // One size for every rig: the largest at which a full rig (eight of the widest pedals) fits the window in 1-3
+        // rows. Pedals never grow or shrink as they come and go; only the window's size changes it.
+        let widest = SpaceModule.width(dials: StudioLayout.knobs)
+        scale = (1...3).map { n -> CGFloat in
+            let perRow = CGFloat((StudioLayout.slots + n - 1) / n)
+            let rowWidth = 2 * Self.margin + perRow * (widest + Self.joint) - Self.joint
+            return min(1.15, (bounds.height - 20) / (CGFloat(n) * rowH), bounds.width / rowWidth)
+        }.max() ?? 1
+        // Rows: as many pedals as fit across, then the next row.
+        var rows: [ArraySlice<Item>] = []
+        var start = 0
+        for i in items.indices where i > start && width(items[start...i]) * scale > bounds.width {
+            rows.append(items[start..<i]); start = i
         }
-        scale = best.scale
+        rows.append(items[start...])
         var out: [(NSView, CGRect, Bool, Bool)] = []
-        var frames: [CGRect] = []
-        let top = (bounds.height / scale - CGFloat(best.rows.count) * rowH) / 2 + Self.gap / 2
-        for (r, row) in best.rows.enumerated() {
+        let top = (bounds.height / scale - CGFloat(rows.count) * rowH) / 2 + Self.gap / 2
+        for (r, row) in rows.enumerated() {
             var x = (bounds.width / scale - width(row)) / 2 + Self.margin
             let y = top + CGFloat(r) * rowH
             let inRow = row.compactMap { $0.view as? SpaceModule }
-            let x0 = x
             for item in row {
                 out.append((item.view, CGRect(x: x * scale, y: y * scale, width: item.width * scale, height: SpaceModule.height * scale),
                             item.view === inRow.first, item.view === inRow.last))
                 x += item.width + Self.joint
             }
-            let modulesWidth = row.filter { $0.view is SpaceModule }.reduce(-Self.joint) { $0 + $1.width + Self.joint }
-            if modulesWidth > 0 {
-                frames.append(CGRect(x: x0 - Self.joint, y: y - Self.joint, width: modulesWidth + 2 * Self.joint, height: SpaceModule.height + 2 * Self.joint))
-            }
         }
-        chassis = frames
-        needsDisplay = true
         return out
-    }
-    override func draw(_ dirtyRect: NSRect) {
-        guard let ctx = NSGraphicsContext.current?.cgContext else { return }
-        for r in chassis {
-            let rect = CGRect(x: r.minX * scale, y: r.minY * scale, width: r.width * scale, height: r.height * scale)
-            let p = Space.rounded(rect, 28 * scale)
-            ctx.saveGState()
-            ctx.setShadow(offset: CGSize(width: 8 * scale, height: -16 * scale), blur: 34 * scale, color: Space.hex(0x000000, 0.35).cgColor)
-            ctx.addPath(p); ctx.setFillColor(Space.hex(0x0d0d0e).cgColor); ctx.fillPath()
-            ctx.restoreGState()
-            Space.innerShadow(ctx, p, alpha: 0.35, blur: 1.5, offset: CGSize(width: 1, height: -1), color: .white)
-        }
     }
 
     /// The others' places with the dragged module taken out (fixed for the drag, so the landing can't oscillate).
@@ -455,16 +525,21 @@ final class SpaceStage: NSView {
                 homes = frames(modules.filter { $0 !== m }).filter { $0.0 is SpaceModule }.map(\.1)
             }
             drag = d
-            m.frame.origin = CGPoint(x: d.origin.x + p.x - d.start.x, y: d.origin.y + p.y - d.start.y)
+            // Picked up: it rises off the surface (and follows the pointer, a little above it).
+            m.frame.origin = CGPoint(x: d.origin.x + p.x - d.start.x, y: d.origin.y + p.y - d.start.y - 10 * scale)
             let to = landing(for: m)
             if to != dropIndex { // the others close up around where it would land
                 dropIndex = to
                 var order = modules.filter { $0 !== m }
                 order.insert(m, at: to)
-                NSAnimationContext.runAnimationGroup { ctx in
-                    ctx.duration = Motion.reduced ? 0 : 0.16
+                NSAnimationContext.runAnimationGroup { ctx in // the others glide aside to open its gap
+                    ctx.duration = (Motion.reduced ? 0 : 0.26) * Self.pace
+                    ctx.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.9, 0.3, 1.0)
                     ctx.allowsImplicitAnimation = true
-                    arrange(order)
+                    for (v, f, left, right) in frames(order) where v !== m {
+                        if let o = v as? SpaceModule { o.roundLeft = left; o.roundRight = right }
+                        v.animator().frame = f
+                    }
                 }
             }
             m.roundLeft = true; m.roundRight = true
@@ -474,7 +549,10 @@ final class SpaceStage: NSView {
             m.lifted = false
             let to = dropIndex ?? m.index
             dropIndex = nil
-            if d.moved, to != m.index { rig.move(from: m.index, to: to) } else { arrange(modules) }
+            if d.moved, to != m.index { rig.move(from: m.index, to: to) } // the stage reloads and pulls it into place
+            else if d.moved, !Motion.reduced, let home = frames(modules).first(where: { $0.0 === m })?.1 {
+                snap([(m, home)], push: home.minX < m.frame.minX ? -1 : 1, strength: 3) // back where it was
+            } else { arrange(modules) }
         default: break
         }
     }

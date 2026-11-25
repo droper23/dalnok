@@ -108,11 +108,6 @@ final class GuitarTuneEditor: NSView {
     }
 
     private func drawModule(_ ctx: CGContext) {
-        let frame = Space.rounded(CGRect(origin: .zero, size: Self.module).insetBy(dx: -8, dy: -8), 34)
-        ctx.saveGState()
-        ctx.setShadow(offset: CGSize(width: 8, height: -16), blur: 34, color: Space.hex(0x000000, 0.35).cgColor)
-        ctx.addPath(frame); ctx.setFillColor(Space.hex(0x0d0d0e).cgColor); ctx.fillPath()
-        ctx.restoreGState()
         let body = Space.rounded(CGRect(origin: .zero, size: Self.module), 26)
         Space.plastic(ctx, body)
         Space.text("GUITAR TUNE", CGRect(x: 26, y: 20, width: 260, height: 22), font: Space.font(15, .regular), color: Space.ink, align: .left, kern: 4)
