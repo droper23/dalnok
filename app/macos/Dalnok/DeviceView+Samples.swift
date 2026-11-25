@@ -1,6 +1,7 @@
 // Dalnok Sampler and Dalnok Drums in the device chain: load samples from the unit's menu or by dropping audio files on
-// it (the Sampler takes one; Drums fill their pads in order from the first empty one, or every pad from the first
-// when all are full). The unit's subtitle names what is loaded.
+// it (the Sampler takes one, or maps several across the keyboard by the note names in their file names; Drums fill
+// their pads in order from the first empty one, or every pad from the first when all are full). The unit's subtitle
+// names what is loaded.
 // SPDX-License-Identifier: GPL-3.0-or-later
 import AppKit
 import DalnokEngine
@@ -11,7 +12,35 @@ extension DeviceView {
     var isDrums: Bool { pluginPath.hasSuffix("drums") }
     static let padNames = ["Kick", "Rim", "Snare", "Clap", "Snare 2", "Low Tom", "Closed Hat", "Mid Tom",
                            "Pedal Hat", "Tom", "Open Hat", "High Tom", "Crash", "High Tom 2", "Ride", "Pad 16"]
-    var zoneCount: Int { isDrums ? 16 : 1 }
+    var zoneCount: Int { 16 }
+    static let noteNames = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+    static func noteName(_ n: Int32) -> String { "\(noteNames[Int(n) % 12])\(Int(n) / 12 - 1)" } // C4 = 60, as the piano roll
+    func sampleZone(_ zone: Int) -> DalnokSampleZone? {
+        var m = DalnokSampleZone()
+        return dalnok_plugin_sample_zone(session.engine.handle, slot, Int32(zone), &m) ? m : nil
+    }
+    /// The Sampler's loaded zones beyond a lone sample: "C2–B3, root E3" (and velocities when they're split).
+    func zoneSummary(_ zone: Int) -> String {
+        guard let m = sampleZone(zone) else { return "" }
+        var text = m.lo == m.hi ? Self.noteName(m.lo) : "\(Self.noteName(m.lo))–\(Self.noteName(m.hi))"
+        if m.root >= 0 { text += ", root \(Self.noteName(m.root))" }
+        if m.vlo > 1 || m.vhi < 127 { text += ", velocity \(m.vlo)–\(m.vhi)" }
+        return text
+    }
+    /// Several files on the Sampler: mapped across the keyboard by their names. Returns how many loaded.
+    @discardableResult
+    func mapSamples(_ urls: [URL]) -> Int {
+        var err = [CChar](repeating: 0, count: 1_024)
+        let ptrs = urls.map { strdup($0.path) }; defer { ptrs.forEach { free($0) } }
+        let n = ptrs.map { UnsafePointer($0) }.withUnsafeBufferPointer {
+            dalnok_plugin_map_samples(session.engine.handle, slot, $0.baseAddress, Int32(urls.count), &err, err.count)
+        }
+        session.refresh()
+        let skipped = String(cString: err)
+        session.onMessage?(n <= 0 ? "Couldn't map the samples" + (skipped.isEmpty ? "" : ": \(skipped)")
+                           : "Mapped \(n) sample\(n == 1 ? "" : "s") across the keyboard" + (skipped.isEmpty ? "" : " (\(skipped))"))
+        return Int(n)
+    }
 
     func samplePath(_ zone: Int) -> String {
         var buf = [CChar](repeating: 0, count: 2_048)
@@ -37,10 +66,37 @@ extension DeviceView {
             MainActor.assumeIsolated { () -> Void in _ = self?.loadSample(url, zone: zone) }
         }
     }
+    func chooseSamplesToMap() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.audio]
+        panel.allowsMultipleSelection = true
+        panel.message = "Choose samples named by note (Piano_C4.wav, Gtr F#2.aif) to map across the keyboard"
+        guard let win = window else { return }
+        panel.beginSheetModal(for: win) { [weak self] resp in
+            guard resp == .OK else { return }
+            let urls = panel.urls
+            MainActor.assumeIsolated { () -> Void in _ = self?.mapSamples(urls) }
+        }
+    }
     func sampleMenuItems(_ m: NSMenu) {
         if !isDrums {
+            let loaded = (0..<16).filter { !samplePath($0).isEmpty }
+            if loaded.count > 1 { // multi-sampled: the zones, and a way back to one sample
+                let sub = NSMenu(title: "Zones")
+                for z in loaded {
+                    let name = (samplePath(z) as NSString).lastPathComponent
+                    let item = NSMenuItem(title: "\(name) — \(zoneSummary(z))", action: nil, keyEquivalent: "")
+                    item.isEnabled = false
+                    sub.addItem(item)
+                }
+                let parent = NSMenuItem(title: "Zones (\(loaded.count))", action: nil, keyEquivalent: "")
+                parent.submenu = sub
+                m.addItem(parent)
+            }
             let name = (samplePath(0) as NSString).lastPathComponent
-            m.addItem(ClosureMenuItem(title: name.isEmpty ? "Load Sample…" : "Replace Sample (\(name))…", action: { [weak self] in self?.chooseSample(zone: 0) }))
+            m.addItem(ClosureMenuItem(title: loaded.count > 1 ? "Replace with One Sample…" : name.isEmpty ? "Load Sample…" : "Replace Sample (\(name))…",
+                                      action: { [weak self] in self?.chooseSample(zone: 0) }))
+            m.addItem(ClosureMenuItem(title: "Map Samples by Note Name…", action: { [weak self] in self?.chooseSamplesToMap() }))
             return
         }
         let sub = NSMenu(title: "Pads")
@@ -61,7 +117,7 @@ extension DeviceView {
     }
     func dropSamples(_ urls: [URL]) -> Bool {
         guard !urls.isEmpty else { return false }
-        if !isDrums { return loadSample(urls[0], zone: 0) }
+        if !isDrums { return urls.count == 1 ? loadSample(urls[0], zone: 0) : mapSamples(urls) > 0 }
         var zone = (0..<16).first { samplePath($0).isEmpty } ?? 0
         var loaded = 0
         for url in urls where zone < 16 { if loadSample(url, zone: zone) { loaded += 1 }; zone += 1 }

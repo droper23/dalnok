@@ -1047,6 +1047,28 @@ std::string Engine::pluginSample(int32_t slot, int32_t zone) const {
     return sampler ? sampler->samplePath(zone) : "";
 }
 
+bool Engine::setPluginSampleZone(int32_t slot, int32_t zone, fx::ZoneMap map, std::string &err) {
+    auto *sampler = dynamic_cast<fx::Sampler *>(pluginInstance(slot));
+    if (!sampler) return fail(err, "not a Dalnok Sampler");
+    if (zone < 0 || zone >= fx::SamplerBase::kMaxZones) return fail(err, "no such zone");
+    sampler->setZoneMap(zone, map);
+    bumpRevisionAll();
+    return true;
+}
+bool Engine::pluginSampleZone(int32_t slot, int32_t zone, fx::ZoneMap &out) const {
+    auto *sampler = dynamic_cast<fx::Sampler *>(pluginInstance(slot));
+    if (!sampler || zone < 0 || zone >= fx::SamplerBase::kMaxZones) return false;
+    out = sampler->zoneMap(zone);
+    return true;
+}
+int32_t Engine::mapPluginSamples(int32_t slot, const std::vector<std::string> &paths, std::string &err) {
+    auto *sampler = dynamic_cast<fx::Sampler *>(pluginInstance(slot));
+    if (!sampler) { err = "not a Dalnok Sampler"; return -1; }
+    const int n = sampler->mapSamples(paths, err);
+    bumpRevisionAll();
+    return n;
+}
+
 DalnokTrackId Engine::sliceToDrums(DalnokClipId id, std::string &err) {
     const ClipState *c = model_.clip(id);
     if (!c) return fail(err, "no such clip"), 0;

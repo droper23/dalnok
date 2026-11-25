@@ -15,9 +15,10 @@ main tree; merge later. Producer agents ranked what Logic/Ableton users miss mos
   presets and templates (`PresetsAndTemplates.swift`); mute/send automation (format 19); stereo inputs (format 20);
   Pitch Correct (`fx/pitch_fx.*`, YIN + streaming shifter `engine/dsp/src/shifter.cpp`, 80 ms blocks); Sampler
   loop/filter/glide/mono; export sample rate and normalize (`Engine::renderToFileWith`, `dalnok_render_export`);
-  tempo detection (`tempo_detect.*`, `dalnok_clip_detect_tempo`, `clip.tempoToProject`).
-- **Verified:** `swift test` 373 pass; self-test matrix 12/12 PASS (`-j 4`; more parallel runs overload the machine).
-- **Next for parity:** sampler zones; warp modes, tempo ramps; MIDI channel/program and articulations; Flex Pitch editor; racks and macros; MP3 (needs
+  tempo detection (`tempo_detect.*`, `dalnok_clip_detect_tempo`, `clip.tempoToProject`); Sampler zones
+  (`fx::ZoneMap`, `dalnok_plugin_map_samples`, API 48).
+- **Verified:** `swift test` 377 pass; self-test matrix 12/12 PASS (`-j 4`; more parallel runs overload the machine).
+- **Next for parity:** warp modes, tempo ramps; MIDI channel/program and articulations; Flex Pitch editor; racks and macros; MP3 (needs
   a permissive encoder); video track and SMPTE; VCA/PFL/track delay; clip-gain envelope; tap tempo.
 
 ## Earlier (2026-11-24, day): open bugs fixed, parity features

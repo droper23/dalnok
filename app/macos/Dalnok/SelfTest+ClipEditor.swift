@@ -242,6 +242,43 @@ extension SelfTest {
         } else { check(false, "the Drums unit is in the device chain") }
         s.removeTrack(kit)
 
+        // Dalnok Sampler: dropping files named by note maps them across the keyboard (C4 up to F#4, C5 above).
+        let keys = s.addTrack("Selftest Keys")
+        w.headers.select(keys)
+        let keysSlot = (try? s.addPlugin(keys, path: "dalnok:sampler")) ?? 0
+        w.setBottomMode(.devices)
+        w.devicePanel.rebuild()
+        if keysSlot != 0, let unit = w.devicePanel.devices.first(where: { $0.slot == keysSlot }) {
+            func tone(_ note: Int, _ amp: Double, _ name: String) -> URL {
+                let rate = Int(e.sampleRate), f = 440 * pow(2, Double(note - 69) / 12), frames = rate
+                var data = Data()
+                func le<T: FixedWidthInteger>(_ v: T) { withUnsafeBytes(of: v.littleEndian) { data.append(contentsOf: $0) } }
+                data.append(contentsOf: Array("RIFF".utf8)); le(UInt32(36 + frames * 2)); data.append(contentsOf: Array("WAVEfmt ".utf8))
+                le(UInt32(16)); le(UInt16(1)); le(UInt16(1)); le(UInt32(rate)); le(UInt32(rate * 2)); le(UInt16(2)); le(UInt16(16))
+                data.append(contentsOf: Array("data".utf8)); le(UInt32(frames * 2))
+                for i in 0..<frames { le(Int16(amp * sin(2 * .pi * f * Double(i) / Double(rate)) * 32_767)) }
+                let url = workdir.appendingPathComponent(name)
+                try? data.write(to: url)
+                return url
+            }
+            let files = [tone(72, 0.5, "Selftest Keys C5.wav"), tone(60, 0.25, "Selftest Keys C4.wav")]
+            check(unit.dropSamples(files) && unit.samplePath(0).hasSuffix("C4.wav") && unit.samplePath(1).hasSuffix("C5.wav"),
+                  "dropping two note-named files on Dalnok Sampler loads both, lowest first")
+            check(unit.zoneSummary(0) == "C-1–F#4, root C4" && unit.zoneSummary(1) == "G4–G9, root C5",
+                  "the zones meet halfway (\(unit.zoneSummary(0)); \(unit.zoneSummary(1)))")
+            check(unit.deviceMenu().items.contains { $0.title == "Zones (2)" }, "the unit's menu lists its two zones")
+            let clip = dalnok_midi_clip_add(e.handle, keys, 0, 48_000)
+            var notes = [DalnokNote(start: 0, length: 12_000, pitch: 55, velocity: 127), DalnokNote(start: 24_000, length: 12_000, pitch: 79, velocity: 127)]
+            _ = dalnok_midi_clip_set_notes(e.handle, clip, &notes, 2)
+            var l = [Float](repeating: 0, count: 48_000), r = l
+            s.setSolo(keys, true)
+            _ = dalnok_render_offline(e.handle, 0, 48_000, &l, &r)
+            s.setSolo(keys, false)
+            let low = l[2_000..<10_000].map(abs).max()!, high = l[26_000..<34_000].map(abs).max()!
+            check(abs(low - 0.25) < 0.02 && abs(high - 0.5) < 0.02, "G3 plays the C4 sample, G5 the C5 sample (\(low), \(high))")
+        } else { check(false, "the Sampler unit is in the device chain") }
+        s.removeTrack(keys)
+
         // Plug-ins: copy a unit on one track and paste it on another (new instance, same settings).
         let fx = s.addTrack("Selftest FX")
         w.headers.select(fx)

@@ -28,7 +28,7 @@
 extern "C" {
 #endif
 
-#define DALNOK_API_VERSION 47
+#define DALNOK_API_VERSION 48
 
 typedef enum {
     DALNOK_OK = 0,
@@ -1077,6 +1077,21 @@ DalnokStatus dalnok_plugin_set_sample(DalnokEngine *engine, int32_t slot, int32_
  * playing the slices where they were; the audio clip is muted. One undo step. Returns the new track (0 on failure). */
 DalnokTrackId dalnok_clip_slice_to_drums(DalnokEngine *engine, DalnokClipId clip, char *err, size_t err_len);
 size_t dalnok_plugin_sample_path(const DalnokEngine *engine, int32_t slot, int32_t zone, char *out, size_t out_len);
+/* Dalnok Sampler zones (API 48): up to 16 samples (zones 0-15), each playing the keys lo-hi (0-127) at velocities
+ * vlo-vhi (1-127) from its own root key (-1: the Root Key parameter). The first loaded zone that covers a note and its
+ * velocity plays it. A new Sampler's zones cover every key and velocity from the Root Key parameter. */
+typedef struct DalnokSampleZone {
+    int32_t lo, hi, root, vlo, vhi;
+} DalnokSampleZone;
+DalnokStatus dalnok_plugin_set_sample_zone(DalnokEngine *engine, int32_t slot, int32_t zone, const DalnokSampleZone *map,
+                                           char *err, size_t err_len);
+bool dalnok_plugin_sample_zone(const DalnokEngine *engine, int32_t slot, int32_t zone, DalnokSampleZone *out);
+/* Loads `count` files into a Dalnok Sampler's zones 0.. (clearing the others) and maps them by the note names in their
+ * file names (Piano_C4.wav, Gtr F#2.aif; C4 = 60): each zone reaches halfway to its neighbours' roots, and files on the
+ * same note split the velocities in the order given (softest first). Files without note names go one per key from
+ * C4 when none has one, and are skipped otherwise. Returns how many loaded (-1 on error); `err` names any skipped. */
+int32_t dalnok_plugin_map_samples(DalnokEngine *engine, int32_t slot, const char *const *paths, int32_t count, char *err,
+                                  size_t err_len);
 /* Clip loop (API 47): on, the clip's current window repeats for as long as the clip is extended (drag its right
  * edge); off, it plays its window once. Not for time-stretched or quantized audio or launcher slots. One undo step. */
 DalnokStatus dalnok_clip_set_loop(DalnokEngine *engine, DalnokClipId clip, bool looped);

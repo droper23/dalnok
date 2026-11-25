@@ -20,6 +20,7 @@
 #include "stretch_cache.hpp"
 #include "tempo_map.hpp"
 #include "loudness.hpp"
+#include "fx/sampler.hpp"
 
 #include <algorithm>
 #include <array>
@@ -406,6 +407,9 @@ public:
     // the plug-in's state (the file's path); not undoable, like other plug-in state.
     bool setPluginSample(int32_t slot, int32_t zone, const std::string &path, std::string &err);
     std::string pluginSample(int32_t slot, int32_t zone) const;
+    bool setPluginSampleZone(int32_t slot, int32_t zone, fx::ZoneMap map, std::string &err);
+    bool pluginSampleZone(int32_t slot, int32_t zone, fx::ZoneMap &out) const;
+    int32_t mapPluginSamples(int32_t slot, const std::vector<std::string> &paths, std::string &err);
     // Slice to Drums (Ableton's Slice to New MIDI Track): cuts an audio clip at its hits (up to 16 slices) onto the pads
     // of a Dalnok Drums on a new track below, writes a MIDI clip that plays them where they were, and mutes the
     // clip. One undo step. Returns the new track (0 on failure).

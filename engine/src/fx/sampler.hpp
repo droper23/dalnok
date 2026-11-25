@@ -3,7 +3,9 @@
 //   Sampler: one sample played across the keyboard, transposed from its root key (linear interpolation), with an
 //            ADSR envelope, tuning, velocity sensitivity, a one-shot mode, a sustain loop (start and end as a share
 //            of the sample, with a crossfade), a resonant low-pass, glide and a mono (legato) mode: an 808 is a
-//            looped sine-ish sample in mono with glide.
+//            looped sine-ish sample in mono with glide. Up to 16 zones (multi-sampling): each covers a key range and
+//            a velocity range and plays from its own root key; a lone sample covers every key from the Root Key
+//            parameter. Dropping several files maps them by the note names in their names (Piano_C4.wav, Gtr F#2).
 //   Drums:   16 pads on notes 36-51 (C1-D#2, the General MIDI drum area), one sample each, played one-shot with
 //            its own level and tuning.
 // Samples are decoded on the control thread (dalnok_plugin_set_sample, or a saved state naming their files) into
@@ -52,7 +54,7 @@ protected:
         bool held = false;
     };
     // Which zone a note plays (-1 = none), and its pitch ratio and level (velocity 1-127).
-    virtual int zoneFor(uint8_t note) const DALNOK_NONBLOCKING = 0;
+    virtual int zoneFor(uint8_t note, uint8_t velocity) const DALNOK_NONBLOCKING = 0;
     virtual double ratioFor(int zone, uint8_t note) const DALNOK_NONBLOCKING = 0;
     virtual float levelFor(int zone, uint8_t velocity) const DALNOK_NONBLOCKING = 0;
     virtual bool oneShot(int zone) const DALNOK_NONBLOCKING = 0;
@@ -71,7 +73,10 @@ private:
     void noteOn(uint8_t note, uint8_t velocity) DALNOK_NONBLOCKING;
     void noteOff(uint8_t note) DALNOK_NONBLOCKING;
     int zones_;
+protected:
     std::array<std::atomic<const SampleBuffer *>, kMaxZones> live_{}; // what the audio thread plays
+
+private:
     std::array<std::shared_ptr<const SampleBuffer>, kMaxZones> owned_{}; // control thread: keeps live_ alive
     struct Retired { std::shared_ptr<const SampleBuffer> buf; uint64_t after; };
     std::vector<Retired> retired_;                                     // freed once the audio thread has moved on
@@ -82,9 +87,28 @@ private:
     bool pedal_ = false;
 };
 
+// A Sampler zone's keys (lo-hi), root key (kParamRoot: the Root Key parameter) and velocities (vlo-vhi, 1-127).
+struct ZoneMap {
+    static constexpr int kParamRoot = 255;
+    int lo = 0, hi = 127, root = kParamRoot, vlo = 1, vhi = 127;
+    bool operator==(const ZoneMap &) const = default;
+};
+
+// The MIDI note a file's name gives ("Piano_C4", "Gtr F#2", "Db-1"; C4 = 60, as the piano roll names notes), or -1.
+int noteFromName(const std::string &fileName);
+
 class Sampler final : public SamplerBase {
 public:
     explicit Sampler(double sampleRate);
+    // Control thread. A zone's map (clamped and ordered); its sample is loaded with loadSample.
+    void setZoneMap(int zone, ZoneMap m);
+    ZoneMap zoneMap(int zone) const;
+    // Loads `paths` into zones 0.. (clearing the rest) and maps them by the note names in their file names: each zone
+    // reaches halfway to its neighbours' roots; files on the same note split the velocities, in the order given.
+    // With no note names the files go one per key from C4. Returns how many loaded; `err` names the files skipped.
+    int mapSamples(const std::vector<std::string> &paths, std::string &err);
+    bool getState(std::string &bytes) override;
+    bool setState(const std::string &bytes) override;
     enum : uint32_t {
         kRoot = 0, kTune, kFine, kAttack, kDecay, kSustain, kRelease, kGain, kVelocity, kOneShot,
         kLoop, kLoopStart, kLoopEnd, kLoopFade, kCutoff, kResonance, kGlide, kVoiceMode,
@@ -92,8 +116,11 @@ public:
 
 private:
     void changed() DALNOK_NONBLOCKING override;
-    int zoneFor(uint8_t) const DALNOK_NONBLOCKING override { return 0; }
-    double ratioFor(int, uint8_t note) const DALNOK_NONBLOCKING override;
+    int zoneFor(uint8_t note, uint8_t velocity) const DALNOK_NONBLOCKING override;
+    double ratioFor(int zone, uint8_t note) const DALNOK_NONBLOCKING override;
+    static uint64_t pack(const ZoneMap &m);
+    static ZoneMap unpack(uint64_t v);
+    std::array<std::atomic<uint64_t>, kMaxZones> map_{}; // packed ZoneMaps the audio thread reads
     float levelFor(int, uint8_t velocity) const DALNOK_NONBLOCKING override;
     bool oneShot(int) const DALNOK_NONBLOCKING override { return oneShot_; }
     double root_ = 60, tune_ = 0;
@@ -110,7 +137,7 @@ public:
 
 private:
     void changed() DALNOK_NONBLOCKING override;
-    int zoneFor(uint8_t note) const DALNOK_NONBLOCKING override {
+    int zoneFor(uint8_t note, uint8_t) const DALNOK_NONBLOCKING override {
         return note >= kFirstNote && note < kFirstNote + kMaxZones ? note - kFirstNote : -1;
     }
     double ratioFor(int zone, uint8_t) const DALNOK_NONBLOCKING override { return ratio_[static_cast<size_t>(zone)]; }

@@ -1178,6 +1178,31 @@ size_t dalnok_plugin_sample_path(const DalnokEngine *e, int32_t slot, int32_t zo
     copyOut(out, out_len, p);
     return p.size();
 }
+DalnokStatus dalnok_plugin_set_sample_zone(DalnokEngine *e, int32_t slot, int32_t zone, const DalnokSampleZone *m, char *err, size_t err_len) {
+    if (!e || !m) return DALNOK_ERR_INVALID_ARG;
+    std::string msg;
+    if (!e->impl.setPluginSampleZone(slot, zone, {m->lo, m->hi, m->root, m->vlo, m->vhi}, msg)) {
+        copyOut(err, err_len, msg);
+        return DALNOK_ERR_INVALID_ARG;
+    }
+    return DALNOK_OK;
+}
+bool dalnok_plugin_sample_zone(const DalnokEngine *e, int32_t slot, int32_t zone, DalnokSampleZone *out) {
+    if (!e || !out) return false;
+    dalnok::fx::ZoneMap m;
+    if (!e->impl.pluginSampleZone(slot, zone, m)) return false;
+    *out = {m.lo, m.hi, m.root == dalnok::fx::ZoneMap::kParamRoot ? -1 : m.root, m.vlo, m.vhi};
+    return true;
+}
+int32_t dalnok_plugin_map_samples(DalnokEngine *e, int32_t slot, const char *const *paths, int32_t count, char *err, size_t err_len) {
+    if (!e || (count > 0 && !paths) || count < 0) return -1;
+    std::vector<std::string> list;
+    for (int32_t i = 0; i < count; ++i) if (paths[i]) list.emplace_back(paths[i]);
+    std::string msg;
+    const int32_t n = e->impl.mapPluginSamples(slot, list, msg);
+    copyOut(err, err_len, msg);
+    return n;
+}
 int32_t dalnok_midi_take_input_notes(DalnokEngine *e, DalnokInputNote *out, int32_t capacity) {
     return e && out && capacity > 0 ? e->impl.takeInputNotes(out, capacity) : 0;
 }
