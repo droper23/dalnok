@@ -242,8 +242,10 @@ final class SpaceModule: NSView {
         power.isOn = on
         power.light = level
         let moving = !Motion.reduced && on && (level > 0.01 || animatesIdle)
-        if knobs != state.knobs || on != isOn || abs(level - state.level) > 0.01 || moving {
-            state = .init(module: name, knobs: knobs, level: level, input: input, on: on, time: time)
+        let key = StudioLayout.knobId(slot, SpaceScreen.readout(for: name).knob)
+        let readout = rig.parameter(key).map { fixedString($0.display) } ?? ""
+        if knobs != state.knobs || on != isOn || abs(level - state.level) > 0.01 || moving || readout != state.readout {
+            state = .init(module: name, knobs: knobs, level: level, input: input, on: on, time: time, readout: readout)
             isOn = on
             needsDisplay = true
         }

@@ -345,7 +345,6 @@ enum SpaceScreen {
         ctx.setStrokeColor(Space.orange.cgColor); ctx.setLineWidth(1)
         ctx.move(to: CGPoint(x: first.x, y: first.y + rad + 6)); ctx.addLine(to: CGPoint(x: mic.x, y: first.y + rad + 6)); ctx.strokePath()
         Space.glowDot(ctx, mic, 2.5 + 2.5 * (1 - s.k(2)), Space.orange)
-        Space.text(["1×12", "2×12", "4×12"][size], CGRect(x: baffle.maxX + 6, y: baffle.minY, width: 40, height: 12), font: Space.mono(8), color: cyan, align: .left)
     }
 
     // MARK: Filter (analyser)
